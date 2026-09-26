@@ -21,6 +21,12 @@ branch + PR flow instead of direct-to-main commits, specifically to avoid
 silent conflicts when multiple sessions/agents work on the project
 concurrently. Design rationale and full detail: bdboard-3tw.74.
 
+## 待ち方
+
+長い処理は `run_in_background` で投げて完了通知を待つ。Bash の同期実行は
+既定 2 分、`timeout` を付けても最長 10 分で打ち切られる。verify のスロット待ち (`waiting for a verify slot`) は
+FIFO 待ちであってハングではない — kill して再実行しない。
+
 ## worktree
 
 `.claude/worktrees/<ticket-id>/`, created at claim time from
@@ -48,7 +54,7 @@ merge-pr とマージ後の片付けは、`git worktree list --porcelain` の
 `worktree-agent-<id>` ブランチと、手順3で作ったローカルの `bd/<ticket-id>` ブランチも
 `git branch -D` で消す (worktree が残っている間は `--delete-branch` がローカル側を消せないため、
 worker の `bd/<ticket-id>` はここで消さないと残り続ける。bdboard-cm2q.12)。
-それ以外の文書への反映は H-8 (bdboard-cm2q.11) に任せる。
+「Cleanup after merge」節にも同じ手順を書いてある (bdboard-cm2q.11)。
 
 ## bd チケット title の命名規約
 
@@ -83,12 +89,18 @@ GitHub issue（別端末・別アカウントから起票されることもあ�
 4. **公開リポジトリの注意**: このリポジトリは public なので、issue コメントに内部パス・
    端末固有の設定・非公開の運用履歴やシークレットを書かない。
 
-## Direct-to-main の禁止とその唯一の例外
+## Direct-to-main の禁止 (例外なし)
 
-**Direct-to-main commits are banned**, with exactly one exception:
-CI-recovery commits touching only `.github/workflows/`. Even a one-line
-fix goes through a PR — the consistency is what makes "main is always
-PR-gated" a reliable invariant for concurrent sessions.
+**Direct-to-main commits are banned, with no exception** — not even a
+CI-recovery commit touching only `.github/workflows/`. Even a one-line
+fix goes through a PR; the consistency is what makes "main is always
+PR-gated" a reliable invariant for concurrent sessions. Since 2026-09-26
+the GitHub ruleset's bypass mode is "pull requests only" (see "ブランチ保護"
+below), so even the repository owner cannot push straight to `main` any
+more — CI recovery too goes in as a PR, merged via the ruleset bypass only
+when Actions itself cannot run (a PR that edits a workflow normally runs its
+own version and needs no bypass; a renamed check is fixed in the ruleset, see
+"ブランチ保護").
 
 **This repo does not track `.beads/` in git** (see root `.gitignore`) —
 it is local to the maintainer's own environment. **`.beads/` is never
@@ -269,8 +281,8 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   that worktree last installed — a failing `npm ci` is reported, not recorded as `failure`), posts
   `pending`, runs the contract's `verify` while re-posting `pending` every `leaseMinutes / 3` (so a
   verify queued behind the machine-wide verify slots does not look abandoned), posts `success` /
-  `failure`, and checks the branch out again. It never touches the main checkout, so hook rule 7
-  does not apply. The verify log is `<git common dir>/bdboard-merge/landed-verify-<sha>.log`.
+  `failure`, and checks the branch out again. It never touches the main checkout. The verify log
+  is `<git common dir>/bdboard-merge/landed-verify-<sha>.log`.
 - **The next merger's gate** reads that ledger for its PRED_BASE: `success` → go on; `failure` →
   do not merge; `pending` / none → wait (30 s polls) until `merge.leaseMinutes` (8) after the last
   update (or the commit time), then verify that SHA itself and post the result (self-heal —
@@ -392,7 +404,8 @@ revert:
    name) → the printed merge line → `finish`, which keeps the slot unless the fix's landed verify is
    `success`, and releases it when it is. `--repair` is only for the fix PR of the P0 bug.
    `--repair`, like `gate` generally, requires `BDBOARD_MERGER=chair`; only the chair is responsible
-   for running it. Hook rule 9 (worktree ownership) remains a secondary defense where applicable.
+   for running it. Each ticket's isolated worker (`isolation: "worktree"` for the `bdboard-worker`
+   agent) and the GitHub ruleset's bypass mode ("pull requests only") remain as secondary defenses.
 5. Once the fix's landed-verify is `success` (and the slot is released), reopen the ticket of the
    breaking PR with the reason, and add the case to failure-catalog.md.
 
@@ -402,12 +415,21 @@ Other mergers that see `failure` stop; they neither merge nor take the slot.
 
 (the merging session's responsibility):
 `git worktree remove .claude/worktrees/<id>` → `git branch -d bd/<id>` →
-`git remote prune origin`. Restarting the always-on server is **not** part of
+`git remote prune origin`. For a `bdboard-worker` PR, find the worktree by
+`branch refs/heads/bd/<id>` in `git worktree list --porcelain` (its directory name
+is a Claude-chosen slug); it is `locked`, so after the `lsof` check remove it with
+`git worktree remove -f -f <path>` and delete both `worktree-agent-<slug>` and the
+local `bd/<id>` with `git branch -D` (see the bdboard-worker paragraph in "worktree"
+above). Restarting the always-on server is **not** part of
 the cleanup a subagent does: the chair (top-level session) runs
 `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh deploy --expect-pid <pid>`
-(pull --ff-only / build:web / restart; see skill `bdboard-server-ops`), and hook
-rule 7 denies a subagent's main-checkout pull / start / kill (bdboard-hpu8). A
-subagent that merged a PR just reports that a restart is needed. At session start,
+(pull --ff-only / build:web / restart; see skill `bdboard-server-ops`). Kill commands
+are blocked for every agent via `permissions.deny`; a `bdboard-worker` subagent's
+main-checkout pull / start is additionally blocked by its `isolation: "worktree"`
+sandbox (bdboard-hpu8, bdboard-cm2q.10) — a non-isolated subagent has no such
+backstop and relies on the written rules (AGENTS.md, this document, the agent
+definitions). A subagent that merged a PR just
+reports that a restart is needed. At session start,
 sweep `git worktree list` for merged leftovers left behind by a prior
 session.
 
@@ -415,8 +437,8 @@ session.
 Hooks and skills are read from the checkout the session was started in
 (`$CLAUDE_PROJECT_DIR`), and every subagent the chair launches reads its hooks
 from that same checkout — so a chair checkout left behind `origin/main` silently
-runs old guards for everyone (in 2026-09 hook rule 7 never fired for a month
-this way). Nothing updates it automatically, on purpose: the chair may have work
+runs old guards for everyone (in 2026-09 the since-removed hook rule 7 never
+fired for a month this way). Nothing updates it automatically, on purpose: the chair may have work
 in progress there. The pack hook `worktree-freshness.sh` (SessionStart /
 UserPromptSubmit / PostToolUse(Agent)) warns the chair when that checkout is
 behind and prints the safe command for its state — typically
@@ -429,23 +451,30 @@ session again from a new worktree. Sessions whose checkout predates this hook
 get no warning at all; for those the board's Hygiene lane
 (`nonTicketHarnessWorktrees`) is the only signal.
 
-**Mirror every `permissions.deny` line into the main checkout's
-`.claude/settings.local.json`** (bdboard-cm2q.12). Claude Code reads the shared
-`.claude/settings.json` from the directory the session was *started* in — a
-session started in a worktree gets that branch's copy, and `EnterWorktree` does
-not change it — while `.claude/settings.local.json` is read from the main
-checkout's root even in a worktree session
-(https://code.claude.com/docs/en/settings: "In a worktree, it uses the file at
-the main checkout's root"; observed 2026-09-26: a deny line added to the main
-checkout's `settings.local.json` took effect, without a restart, in a chair
-session running in a worktree). A deny merged to `main` therefore
-does not reach sessions started from an older worktree (observed 2026-09-26: a
-chair session started in a worktree from before cm2q.1 never saw that PR's deny
-lines). Copying the lines into the main checkout's untracked
-`settings.local.json` makes them apply to every session at once, and edits are
-picked up live without a restart. That file is outside git and changing it needs
-the user's approval; a worktree-isolated session cannot write it, so ask a
-session running in the main checkout. Upstream issue:
+**Primary: keep the originating checkout caught up with `origin/main`**
+(the "chair also brings its own session checkout up to date" step just above,
+bdboard-flpp). Claude Code reads the shared `.claude/settings.json` from the
+directory the session was *started* in — a session started in a worktree gets
+that branch's copy, and `EnterWorktree` does not change it — so a deny merged to
+`main` does not reach a session whose originating checkout is older (observed
+2026-09-26: a chair session started in a worktree from before cm2q.1 never saw
+that PR's deny lines). Measured 2026-09-26: updating a chair session's
+originating worktree with `git merge --ff-only origin/main` made that worktree's
+new deny line (`aimix run *`) take effect immediately, with no restart. Prefer
+this whenever the originating checkout can be fast-forwarded (no commits of its
+own, clean tree).
+
+**Fallback: mirror every `permissions.deny` line into the main checkout's
+`.claude/settings.local.json`** (bdboard-cm2q.12), for a session whose
+originating checkout cannot be fast-forwarded (mid-branch work, dirty tree).
+`.claude/settings.local.json` is read from the main checkout's root even in a
+worktree session (https://code.claude.com/docs/en/settings: "In a worktree, it
+uses the file at the main checkout's root"; observed 2026-09-26: a deny line
+added to the main checkout's `settings.local.json` took effect, without a
+restart, in a chair session running in a worktree), so copying the lines there
+makes them apply to every session at once. That file is outside git and
+changing it needs the user's approval; a worktree-isolated session cannot write
+it, so ask a session running in the main checkout. Upstream issue:
 anthropics/claude-code#83953 (project settings are branch-local in worktrees).
 
 Two things to expect here, so they are not mistaken for failures:
@@ -540,9 +569,10 @@ other tools) reads the imported issue before it round-trips back through that sa
   「main + PR」の木を prepare が手元で verify し、同じ CAS でその木が着地することを保証する。Merge queue は user-owned の
   private/public repo では使えない。
 - **force push 禁止** (`non_fast_forward`)、**ブランチ削除禁止** (`deletion`)。
-- **bypass = Repository admin (always)**。オーナーだけが唯一の例外 (CI 復旧) を直接
-  コミットできる。bypass は「規約上の例外を打てる」ためであって、通常の変更を main に
-  直接 push してよい意味ではない。
+- **bypass = Repository admin、mode は pull requests only (2026-09-26 変更)**。
+  admin であっても main への直接 push はできない — bypass が使えるのは PR
+  のマージ時に必須チェック等を無視する場合だけ。CI 復旧もこの bypass 付き
+  PR マージで入れる。
 
 確認・変更は API から:
 
