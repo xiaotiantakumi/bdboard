@@ -151,9 +151,10 @@ describe('commitSuccess', () => {
     expect(store.threadLists['proj-a']).toMatchObject([{ sessionId: 'sess-new', title: 'hello', pinned: false }]);
     expect(store.openThreadIds).toEqual({ 'proj-a': ['sess-new'] });
     expect(store.selectedThreadIds).toEqual({ 'proj-a': 'sess-new' });
-    // bdboard-d7on(Opus レビュー B1/M1): setState と同じ場所で openThreadIdsRef/
-    // selectedThreadIdsRef も同期していることを、state だけでなく ref 自体でも
-    // 確認する(同 tick で ref を読む他ハンドラの安全性はここでしか検証できない)。
+    // bdboard-d7on(Opus レビュー B1/M1)由来の確認。bdboard-33jm 以降 ref の同期は
+    // useLiveMirroredState の責務で、ここでの ref はこのテストのモック setter が
+    // 書いたもの(本番コードの同期は useLiveMirroredState.test.tsx と
+    // render-mirror-ref.race.test.tsx が検証する)。ここでは setter に渡した値の形だけを見る。
     expect(params.openThreadIdsRef.current).toEqual({ 'proj-a': ['sess-new'] });
     expect(params.selectedThreadIdsRef.current).toEqual({ 'proj-a': 'sess-new' });
     expect(ackMock).toHaveBeenCalledWith('proj-a', 'sess-new');

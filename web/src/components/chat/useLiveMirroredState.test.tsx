@@ -31,10 +31,19 @@ describe('useLiveMirroredState (bdboard-33jm)', () => {
     // 反映している。旧パターン(フック本体トップレベルで `ref.current = state`
     // する render-mirror)では、2回目の set() が読む「前の値」が最初の
     // set() 分を含まない stale な値になり得た。
+    // act() の中で読む: act() を抜けた後の値は旧パターンでも ['a','b'] になるため、
+    // 再レンダー前 (value がまだ []) の時点で ref が追いついていることを見ないと
+    // 旧パターンへの逆戻りを検出できない (Fable レビュー指摘1)。
+    let refAfterSecondSet: string[] | undefined;
+    let valueBeforeRerender: string[] | undefined;
     act(() => {
       result.current.set((prev) => [...prev, 'a']);
       result.current.set((prev) => [...prev, 'b']);
+      refAfterSecondSet = result.current.ref.current;
+      valueBeforeRerender = result.current.value;
     });
+    expect(refAfterSecondSet).toEqual(['a', 'b']);
+    expect(valueBeforeRerender).toEqual([]);
     expect(result.current.ref.current).toEqual(['a', 'b']);
     expect(result.current.value).toEqual(['a', 'b']);
   });

@@ -234,8 +234,9 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
    * S4(レビュー指摘): `writePersistedChatThreadState`(localStorage への書き込み)は
    * `setOpenThreadIds` の updater 関数の中では呼ばない — React の StrictMode は
    * updater を2回呼び得るため、副作用がその中にあると二重発火する。ここでは
-   * 既に render スコープにある `openThreads`(chat/useChatThreadLists.ts が
-   * `openThreadIds[selectedProjectId] ?? []` から導出し、呼び出し側が毎レンダー渡す)から次の配列を計算し、
+   * 復元済みのプロジェクトなら `openThreadIdsRef.current[projectId]`(bdboard-d7on 以降。
+   * render スコープの `openThreads` ではなく、useLiveMirroredState で常に最新の ref)、
+   * 未復元なら永続化済みの activeSessionIds から次の配列を計算し、
    * `setOpenThreadIds` には具体値を渡したうえで、副作用は updater の外側で呼ぶ
    * (`handleCloseThread` と同じパターン)。
    *
