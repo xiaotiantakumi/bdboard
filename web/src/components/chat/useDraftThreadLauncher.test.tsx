@@ -5,12 +5,14 @@
 // 組み合わせたフック単体で、2つの更新を1つの act に入れて確かめる。
 import { act, renderHook } from '@testing-library/react';
 import { useRef, useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readPersistedChatThreads } from '../../chatThreadStorage';
 import type { ChatAttachment } from './attachments';
 import { useChatConversationsState } from './useChatConversationsState';
 import { useChatDraftState } from './useChatDraftState';
 import { useConversationKey } from './useConversationKey';
 import { useDraftThreadLauncher } from './useDraftThreadLauncher';
+import { restoreThreadView } from './threadViewRestore';
 
 function makeAttachment(id: string): ChatAttachment {
   return {
@@ -60,6 +62,8 @@ function useLauncherProbe(projectId: string) {
 }
 
 describe('useDraftThreadLauncher', () => {
+  beforeEach(() => localStorage.clear());
+
   it('carries a same-batch pending edit into the new draft on an agent switch (T9: handleAgentChange reads prev)', () => {
     const { result } = renderHook(() => useLauncherProbe('proj-a'));
     const oldKey = result.current.key.currentConversationKey;
@@ -85,6 +89,32 @@ describe('useDraftThreadLauncher', () => {
     // undefined にした persisted から restoreThreadView をやり直して全スレッドを
     // 再展開してしまう。
     expect(result.current.restoredProjectsRef.current.has('proj-a')).toBe(true);
+  });
+
+  it('persists zero open threads (not a deleted entry) on an agent switch (bdboard-rhl4)', () => {
+    const { result } = renderHook(() => useLauncherProbe('proj-a'));
+
+    act(() => {
+      result.current.launcher.handleAgentChange('codex');
+    });
+
+    // The entry must be present with an empty array, not deleted — a deleted
+    // entry means "first visit" to restoreThreadView and reopens everything.
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: [],
+      selectedSessionId: undefined,
+    });
+
+    // And restoring the view from that persisted state must open nothing, even
+    // though the server still has threads for this project.
+    const restored = restoreThreadView(
+      [
+        { sessionId: 's1', agentId: 'claude', title: 't1', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+        { sessionId: 's2', agentId: 'claude', title: 't2', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+      ],
+      readPersistedChatThreads()['proj-a'],
+    );
+    expect(restored.open).toEqual([]);
   });
 
   it('moves attachments, copies the seed record and detaches the session on an agent switch (SFX)', () => {
