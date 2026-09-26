@@ -198,14 +198,14 @@ describe('parseBaselineConfig', () => {
     JSON.stringify({
       defaultLimits: { nonTest: 500, test: 1500 },
       ratchetWarningThreshold: 200,
-      entries: [{ path: 'test/big.ts', limit: 600, reason: '理由' }],
+      entries: [{ path: 'test/big.ts', limit: 600, reason: '理由 (bdboard-test1)' }],
     });
 
   it('parses a valid config', () => {
     const config = parseBaselineConfig(valid());
     expect(config.defaultLimits).toEqual({ nonTest: 500, test: 1500 });
     expect(config.ratchetWarningThreshold).toBe(200);
-    expect(config.entries.get('test/big.ts')).toEqual({ limit: 600, reason: '理由' });
+    expect(config.entries.get('test/big.ts')).toEqual({ limit: 600, reason: '理由 (bdboard-test1)' });
   });
 
   it('throws on broken JSON syntax', () => {
@@ -276,9 +276,15 @@ describe('parseBaselineConfig', () => {
     expect(() => parseBaselineConfig(JSON.stringify(bad))).toThrow(/reason は空にできません/);
   });
 
+  it('throws when reason has no ticket ID', () => {
+    const bad = JSON.parse(valid());
+    bad.entries[0].reason = '理由のみ';
+    expect(() => parseBaselineConfig(JSON.stringify(bad))).toThrow(/チケット ID/);
+  });
+
   it('throws on duplicate paths', () => {
     const bad = JSON.parse(valid());
-    bad.entries.push({ path: 'test/big.ts', limit: 700, reason: '別の理由' });
+    bad.entries.push({ path: 'test/big.ts', limit: 700, reason: '別の理由 (bdboard-test2)' });
     expect(() => parseBaselineConfig(JSON.stringify(bad))).toThrow(/重複しています/);
   });
 
@@ -297,7 +303,7 @@ describe('parseBaselineConfig', () => {
 
 describe('validateEntryShape', () => {
   it('accepts a well-formed entry', () => {
-    expect(validateEntryShape({ path: 'test/a/b.ts', limit: 10, reason: 'x' }, 0)).toEqual([]);
+    expect(validateEntryShape({ path: 'test/a/b.ts', limit: 10, reason: 'x (bdboard-test7)' }, 0)).toEqual([]);
   });
 
   it('rejects a non-object entry', () => {
@@ -307,7 +313,7 @@ describe('validateEntryShape', () => {
   it.each(['docs/foo.ts', 'src/README.md', 'src/fixtures/big.ts'])(
     'rejects out-of-scope path %s',
     (entryPath) => {
-      expect(validateEntryShape({ path: entryPath, limit: 10, reason: 'x' }, 0)).toEqual([
+      expect(validateEntryShape({ path: entryPath, limit: 10, reason: 'x (bdboard-test8)' }, 0)).toEqual([
         `entries[0].path (${entryPath}) は対象範囲外です (対象ディレクトリ/拡張子外、または fixtures/ 配下は baseline に登録できません)`,
       ]);
     },
@@ -319,15 +325,41 @@ describe('validateEntryShape', () => {
   // 対象拡張子なので isTargetPath は true になり、fixtures/ 配下であることだけを理由に
   // 拒否されることを別途確認する。
   it('rejects a fixtures/ path that is otherwise in scope (isFixturePath branch)', () => {
-    expect(validateEntryShape({ path: 'test/fixtures/big.ts', limit: 10, reason: 'x' }, 0)).toEqual([
+    expect(validateEntryShape({ path: 'test/fixtures/big.ts', limit: 10, reason: 'x (bdboard-test9)' }, 0)).toEqual([
       'entries[0].path (test/fixtures/big.ts) は対象範囲外です (対象ディレクトリ/拡張子外、または fixtures/ 配下は baseline に登録できません)',
     ]);
   });
 
   it.each(['src\\big.ts', 'src/../src/big.ts'])('does not scope-check malformed path %s', (entryPath) => {
-    const errors = validateEntryShape({ path: entryPath, limit: 10, reason: 'x' }, 0);
+    const errors = validateEntryShape({ path: entryPath, limit: 10, reason: 'x (bdboard-test10)' }, 0);
     expect(errors).toHaveLength(1);
     expect(errors[0]).not.toContain('対象範囲外');
+  });
+
+  it.each([
+    'bdboard-',
+    'bdboard-harness の hooks を触った',
+    '分割検討・チケット未起票 (bdboard-cm2q.7 は今作業中のチケット)',
+    '未起票 (bdboard-cm2q.7)',
+  ])('rejects reason without a usable tracking ticket: %s', (reason) => {
+    const errors = validateEntryShape({ path: 'test/big.ts', limit: 10, reason }, 0);
+    expect(errors).toHaveLength(1);
+    if (reason.includes('未起票')) {
+      expect(errors[0]).toBe(
+        'entries[0].reason (test/big.ts) に分割 (または削減) を追跡するチケットの ID を書き、『未起票』を消す。今作業中のチケットの ID ではなく、上限を下げる作業のチケットを起票してその ID を書く',
+      );
+    } else {
+      expect(errors[0]).toContain('チケット ID');
+    }
+  });
+
+  it.each([
+    '（bdboard-jygp）を参照',
+    '追跡チケット bdboard-jygp。',
+    'bdboard-cm2q.7 のために分割予定',
+    'bdboard-3tw.138.4 で追跡中',
+  ])('accepts reason with a valid tracking ticket: %s', (reason) => {
+    expect(validateEntryShape({ path: 'test/big.ts', limit: 10, reason }, 0)).toEqual([]);
   });
 });
 
@@ -635,7 +667,7 @@ describe('check-file-size CLI', () => {
   });
 
   it('(b) fails when a baselined file exceeds its own registered limit', () => {
-    writeConfig({ entries: [{ path: 'test/big.ts', limit: 7, reason: 'test fixture' }] });
+    writeConfig({ entries: [{ path: 'test/big.ts', limit: 7, reason: 'test fixture (bdboard-test3)' }] });
     fs.mkdirSync(path.join(work, 'test'), { recursive: true });
     fs.writeFileSync(path.join(work, 'test', 'big.ts'), lines(8));
     sh(work, 'git', 'add', '-A');
@@ -646,7 +678,7 @@ describe('check-file-size CLI', () => {
   });
 
   it('(c) fails when a baselined file shrank back under the default limit', () => {
-    writeConfig({ entries: [{ path: 'test/big.ts', limit: 7, reason: 'test fixture' }] });
+    writeConfig({ entries: [{ path: 'test/big.ts', limit: 7, reason: 'test fixture (bdboard-test3)' }] });
     fs.mkdirSync(path.join(work, 'test'), { recursive: true });
     fs.writeFileSync(path.join(work, 'test', 'big.ts'), lines(4));
     sh(work, 'git', 'add', '-A');
@@ -657,7 +689,7 @@ describe('check-file-size CLI', () => {
   });
 
   it('(c) fails when a baselined file has been deleted / renamed away', () => {
-    writeConfig({ entries: [{ path: 'test/gone.ts', limit: 7, reason: 'stale' }] });
+    writeConfig({ entries: [{ path: 'test/gone.ts', limit: 7, reason: 'stale (bdboard-test4)' }] });
     fs.mkdirSync(path.join(work, 'test'), { recursive: true });
     fs.writeFileSync(path.join(work, 'test', 'other.ts'), lines(1));
     sh(work, 'git', 'add', '-A');
@@ -669,7 +701,7 @@ describe('check-file-size CLI', () => {
 
   it('(d) warns without failing when the baseline has more than the ratchet threshold of slack', () => {
     // 既定上限 5、limit 9 -> 現行 6 行なら差 3 == threshold(3) で警告のみ、exit は 0。
-    writeConfig({ entries: [{ path: 'test/big.ts', limit: 9, reason: 'slack' }] });
+    writeConfig({ entries: [{ path: 'test/big.ts', limit: 9, reason: 'slack (bdboard-test5)' }] });
     fs.mkdirSync(path.join(work, 'test'), { recursive: true });
     fs.writeFileSync(path.join(work, 'test', 'big.ts'), lines(6));
     sh(work, 'git', 'add', '-A');
@@ -703,7 +735,7 @@ describe('check-file-size CLI', () => {
     // bdboard-ihf6: 対象範囲外のパスを baseline に登録すると、走査結果に一度も現れず
     // 永久に (c) missing で fail し続けていた。CLI レベルでも早期の形式エラー (exit 2)
     // になることを固定する。
-    writeConfig({ entries: [{ path: 'docs/foo.ts', limit: 5, reason: 'out of scope' }] });
+    writeConfig({ entries: [{ path: 'docs/foo.ts', limit: 5, reason: 'out of scope (bdboard-test6)' }] });
     const result = runCheck();
     expect(result.status).toBe(EXIT_UNAVAILABLE);
     expect(result.stderr).toContain('対象範囲外');
