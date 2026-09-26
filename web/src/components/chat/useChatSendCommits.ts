@@ -1,6 +1,10 @@
 import { useCallback } from 'react';
 import { acknowledgeChatTurn, type ChatMessageResponseDto } from '../../api';
-import { writePersistedChatThread } from '../../chatThreadStorage';
+import {
+  readPersistedChatThreads,
+  writePersistedChatThread,
+  writePersistedChatThreadState,
+} from '../../chatThreadStorage';
 import { referenceDraftPayloadStoreCarryPlan } from '../conversationKeyspace';
 import type { ChatAttachment } from './attachments';
 import { describeChatSendError } from './chatSendErrors';
@@ -175,7 +179,25 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
           },
         };
       });
-      if (clearSession) writePersistedChatThread(selectedProjectId, undefined);
+      if (clearSession) {
+        // bdboard-jwu8: a send failure (unknown chat session / chat agent mismatch)
+        // does not change the in-memory openThreadIds/selectedThreadIds for this
+        // project — no tab closes, only this one send failed. Deleting the whole
+        // persisted entry here made storage disagree with memory: the next visit
+        // (or a project switch away and back) saw "no entry" and treated it as a
+        // first visit, reopening threads the user had actually closed (same root
+        // cause as bdboard-ij6e / bdboard-rhl4). Keep the persisted open set
+        // (activeSessionIds) untouched. Only clear the persisted selection when it
+        // was pointing at the session that just died — for an established thread,
+        // convKey IS that session id (see useConversationKey.ts).
+        const persisted = readPersistedChatThreads()[selectedProjectId];
+        if (persisted !== undefined) {
+          writePersistedChatThreadState(selectedProjectId, {
+            activeSessionIds: persisted.activeSessionIds,
+            selectedSessionId: persisted.selectedSessionId === convKey ? undefined : persisted.selectedSessionId,
+          });
+        }
+      }
 
       // bdboard-otf(bdboard-dpq レビュー N2 フォローアップ): 送信失敗時に入力欄へ
       // 本文を復元する。送信時のクリア(chat/useChatSubmit.ts の submit、try の前)は失敗しても巻き戻ら

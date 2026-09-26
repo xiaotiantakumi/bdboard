@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import type { SetStateAction } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessageResponseDto, ChatThreadDto } from '../../api';
+import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 
 // bdboard-sso1.83 第13b段: chat/useChatSendCommits.ts の store 側 action
 // (commitSuccess = 旧 applyChatSuccess、commitFailure = 旧 applyChatError、
@@ -196,6 +197,75 @@ describe('commitFailure', () => {
     );
     expect(store.conversations['key-a'].sessionId).toBeUndefined();
     expect(store.conversations['key-a'].agentId).toBeUndefined();
+  });
+
+  it('bdboard-jwu8: keeps the persisted open set on a clearSession failure, clearing only a matching selection', () => {
+    writePersistedChatThreadState('proj-a', {
+      activeSessionIds: ['sess-a', 'sess-b', 'sess-c'],
+      selectedSessionId: 'sess-c',
+    });
+    const { hook, store } = setup();
+    store.conversations = { 'sess-c': { messages: [], sessionId: 'sess-c', agentId: 'claude' } };
+    act(() =>
+      hook.result.current.commitFailure(
+        'sess-c',
+        'hello',
+        [],
+        new ApiError(400, 'bad', { errorMessage: 'unknown chat session' }),
+        1,
+      ),
+    );
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['sess-a', 'sess-b', 'sess-c'],
+      selectedSessionId: undefined,
+    });
+  });
+
+  it('bdboard-jwu8: keeps the persisted selection when it was not the session that just failed', () => {
+    writePersistedChatThreadState('proj-a', {
+      activeSessionIds: ['sess-a', 'sess-b', 'sess-c'],
+      selectedSessionId: 'sess-a',
+    });
+    const { hook, store } = setup();
+    store.conversations = { 'sess-c': { messages: [], sessionId: 'sess-c', agentId: 'claude' } };
+    act(() =>
+      hook.result.current.commitFailure(
+        'sess-c',
+        'hello',
+        [],
+        new ApiError(400, 'bad', { errorMessage: 'unknown chat session' }),
+        1,
+      ),
+    );
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['sess-a', 'sess-b', 'sess-c'],
+      selectedSessionId: 'sess-a',
+    });
+  });
+
+  it('bdboard-jwu8: a re-send after a clearSession failure does not shrink the persisted open set to just the new session', () => {
+    writePersistedChatThreadState('proj-a', {
+      activeSessionIds: ['sess-a', 'sess-b', 'sess-c'],
+      selectedSessionId: 'sess-c',
+    });
+    const { hook, store } = setup();
+    store.conversations = { 'sess-c': { messages: [], sessionId: 'sess-c', agentId: 'claude' } };
+    act(() =>
+      hook.result.current.commitFailure(
+        'sess-c',
+        'hello',
+        [],
+        new ApiError(400, 'bad', { errorMessage: 'unknown chat session' }),
+        1,
+      ),
+    );
+    // Re-send on the same conv key; the server issues a fresh session id.
+    act(() =>
+      hook.result.current.commitSuccess('sess-c', 'hello', { reply: 'AI reply', sessionId: 'sess-c2', agentId: 'claude' }),
+    );
+    const persisted = readPersistedChatThreads()['proj-a'];
+    expect(persisted?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-c2']);
+    expect(persisted?.activeSessionIds).not.toEqual(['sess-c2']);
   });
 
   it('bdboard-otf/SF2: restores the untrimmed text and the attachments into the send key when they are empty', () => {
