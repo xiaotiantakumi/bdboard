@@ -175,7 +175,16 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
           },
         };
       });
-      if (clearSession) writePersistedChatThread(selectedProjectId, undefined);
+      // bdboard-jwu8: clearSession (unknown chat session / chat agent mismatch) でも、
+      // このプロジェクトの永続化 (localStorage) には触らない。以前はここでエントリを丸ごと
+      // 消していたが、失敗したのはこの送信1回だけで、メモリ上の openThreadIds/
+      // selectedThreadIds はどちらも変わらない。消すと保存とメモリが食い違い、次回訪問
+      // (またはプロジェクトを切り替えて戻る) で「エントリ無し = 初回訪問」と判定されて、
+      // 閉じたスレッドまで全部開き直していた (bdboard-ij6e / bdboard-rhl4 と同じ根)。
+      // 選択も書き換えない: unknown chat session ならそのセッションはサーバーの一覧から
+      // 消えており、復元時に restoreThreadView が選択を落とす。agent mismatch なら
+      // セッションは生きていてメモリ上も選択中のままなので、保存側だけ外すとずれる
+      // (PR #821 の Fable レビュー指摘1)。
 
       // bdboard-otf(bdboard-dpq レビュー N2 フォローアップ): 送信失敗時に入力欄へ
       // 本文を復元する。送信時のクリア(chat/useChatSubmit.ts の submit、try の前)は失敗しても巻き戻ら

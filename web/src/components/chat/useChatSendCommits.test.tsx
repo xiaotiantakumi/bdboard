@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import type { SetStateAction } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessageResponseDto, ChatThreadDto } from '../../api';
+import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 
 // bdboard-sso1.83 第13b段: chat/useChatSendCommits.ts の store 側 action
 // (commitSuccess = 旧 applyChatSuccess、commitFailure = 旧 applyChatError、
@@ -196,6 +197,67 @@ describe('commitFailure', () => {
     );
     expect(store.conversations['key-a'].sessionId).toBeUndefined();
     expect(store.conversations['key-a'].agentId).toBeUndefined();
+  });
+
+  it.each(['unknown chat session', 'chat agent mismatch'])(
+    'bdboard-jwu8: leaves the persisted entry untouched on a clearSession failure (%s)',
+    (errorMessage) => {
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-c'],
+        selectedSessionId: 'sess-c',
+      });
+      const { hook, store } = setup();
+      store.conversations = { 'sess-c': { messages: [], sessionId: 'sess-c', agentId: 'claude' } };
+      act(() =>
+        hook.result.current.commitFailure('sess-c', 'hello', [], new ApiError(400, 'bad', { errorMessage }), 1),
+      );
+      // 失敗したのは送信1回だけで、メモリ上の open/選択は変わらないので、保存も変えない。
+      // 選択 sess-c も残す (unknown chat session なら復元時に restoreThreadView が落とす)。
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-c'],
+        selectedSessionId: 'sess-c',
+      });
+    },
+  );
+
+  it('bdboard-jwu8: does not create an entry on a clearSession failure when none was persisted (first visit stays first visit)', () => {
+    const { hook, store } = setup();
+    store.conversations = { 'sess-c': { messages: [], sessionId: 'sess-c', agentId: 'claude' } };
+    act(() =>
+      hook.result.current.commitFailure(
+        'sess-c',
+        'hello',
+        [],
+        new ApiError(400, 'bad', { errorMessage: 'unknown chat session' }),
+        1,
+      ),
+    );
+    expect(readPersistedChatThreads()['proj-a']).toBeUndefined();
+  });
+
+  it('bdboard-jwu8: a re-send after a clearSession failure does not shrink the persisted open set to just the new session', () => {
+    writePersistedChatThreadState('proj-a', {
+      activeSessionIds: ['sess-a', 'sess-b', 'sess-c'],
+      selectedSessionId: 'sess-c',
+    });
+    const { hook, store } = setup();
+    store.conversations = { 'sess-c': { messages: [], sessionId: 'sess-c', agentId: 'claude' } };
+    act(() =>
+      hook.result.current.commitFailure(
+        'sess-c',
+        'hello',
+        [],
+        new ApiError(400, 'bad', { errorMessage: 'unknown chat session' }),
+        1,
+      ),
+    );
+    // Re-send on the same conv key; the server issues a fresh session id.
+    act(() =>
+      hook.result.current.commitSuccess('sess-c', 'hello', { reply: 'AI reply', sessionId: 'sess-c2', agentId: 'claude' }),
+    );
+    // 死んだ sess-c が残るのは意図どおり (activeSessionIds は失敗時に触らない)。
+    // 次回の復元では restoreThreadView がサーバーの一覧に無い id を落とす。
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-c2']);
   });
 
   it('bdboard-otf/SF2: restores the untrimmed text and the attachments into the send key when they are empty', () => {
