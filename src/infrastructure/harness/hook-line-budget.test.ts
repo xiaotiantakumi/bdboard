@@ -1,18 +1,13 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const HOOKS_DIR = fileURLToPath(new URL('../../../harness/packs/bdboard-harness/hooks/', import.meta.url));
 
-// H-7 (bdboard-cm2q.10) でこれらが消えたら README の行数検査を自動的に有効化する。
-const H7_PENDING = ['server-guard.sh', 'worktree-owner-guard.sh', 'lib-main-checkout.sh'].some((name) =>
-  existsSync(join(HOOKS_DIR, name)),
-);
-
-// 3538 = 2026-09-26 の origin/main の実測 (bdboard-cm2q.5)。H-7 (bdboard-cm2q.10) で実測 +10% に
-// 下げる。上げるときは、ここに理由のチケット ID を書き足す。
-const HOOK_LINE_BUDGET = 3538;
+// 602 = 2026-09-26 の実測 (bdboard-cm2q.10、regex hook 廃止後)。663 はその +10% 切り上げ。
+// 上げるときは、ここに理由のチケット ID を書き足す。
+const HOOK_LINE_BUDGET = 663;
 // Raising this budget requires recording the reason as a ticket ID in the same commit/PR.
 const README_LINE_BUDGET = 400;
 
@@ -46,7 +41,7 @@ describe('harness hook line budgets', () => {
     expect(HOOK_LINE_BUDGET).toBeLessThanOrEqual(Math.ceil(total * 1.1));
   });
 
-  it.skipIf(H7_PENDING)('keeps hooks README within 400 lines after H-7 (bdboard-cm2q.10)', () => {
+  it('keeps hooks README within 400 lines (bdboard-cm2q.10)', () => {
     expect(countLines(join(HOOKS_DIR, 'README.md'))).toBeLessThanOrEqual(README_LINE_BUDGET);
   });
 });

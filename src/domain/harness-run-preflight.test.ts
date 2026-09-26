@@ -68,15 +68,15 @@ describe('evaluateRunPreflight', () => {
   it('reports missing hooks before looking at the contract', () => {
     const outcome = evaluateRunPreflight(
       status(
-        { hooksState: 'partial', missingHooks: ['bd-pre-bash-guard.sh'] },
+        { hooksState: 'partial', missingHooks: ['bd-stop-ticket-gate.sh'] },
         { state: 'missing' },
       ),
     );
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.reason).toBe('harness-hooks-missing');
-    expect(outcome.missingHooks).toEqual(['bd-pre-bash-guard.sh']);
-    expect(outcome.detail).toContain('bd-pre-bash-guard.sh');
+    expect(outcome.missingHooks).toEqual(['bd-stop-ticket-gate.sh']);
+    expect(outcome.detail).toContain('bd-stop-ticket-gate.sh');
   });
 
   it('treats hooksState none-declared as satisfied', () => {

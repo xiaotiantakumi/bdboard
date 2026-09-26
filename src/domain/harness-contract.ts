@@ -3,7 +3,7 @@
 // を書き換えないための re-export 入口としてのみ残す。挙動・型は一切変えていない
 // (移動のみ)。
 //
-// 分割前は多くのパース補助関数 (isPlainObject / isSafeSingleLineValue / parseHooks /
+// 分割前は多くのパース補助関数 (isPlainObject / isSafeSingleLineValue /
 // parseModels 等) が同じファイル内の非公開関数だった。分割後はサブモジュール間の
 // cross-module import のために export を付けているものがあるが、ここで `export *` を
 // 使うと元は非公開だった補助関数まで公開エクスポート面に漏れてしまう。よって公開面は
@@ -20,7 +20,6 @@ export {
 } from './harness-contract/types.js';
 export type {
   HarnessPrFlow,
-  HarnessContractHooks,
   HarnessModelComplexity,
   HarnessModelCandidate,
   HarnessModelComplexityKey,

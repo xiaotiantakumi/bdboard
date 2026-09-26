@@ -1,6 +1,6 @@
 // bdboard-ulxa.1: 層3 の着地後検証の本体 — PR worktree で `git checkout --detach <sha>` して
 // 契約の verify を回し、結果を commit status 台帳に書く。main checkout には触らない (linked
-// worktree でなければ拒否する。hook 規則 7 の pull / 再起動 / kill のどれにも当たらない)。
+// worktree でなければ拒否する。常時稼働サーバー保護 (permissions.deny / isolation) の対象に当たらない)。
 // bdboard-ulxa.2: S2 の着地予定ツリーの verify も同じ本体を ledger: false (台帳に書かない) で使う。
 // bdboard-2twf: (1) 未追跡ファイルが verify に混ざるのを防ぐ (2) SIGINT/SIGTERM で子プロセスを
 // 終了し、detach checkout を restoreTo に戻す (PR #711 レビューの見送り分。手順は interrupt.mjs)。

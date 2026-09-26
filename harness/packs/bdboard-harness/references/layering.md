@@ -100,6 +100,7 @@ description に発動トリガーを書き、本文は骨格、詳細は referen
 ## 機械的強制（フック）は最小限
 
 知識・規律は skill（文書）に置くのが正で、フックは「文書では防げない機械的な誤操作」
-だけに使う（例: 注入コピーの編集ブロックは `hooks/pre-edit-guard.sh` の規則1 として
-実装済み — bdboard-pkr6.1）。フックを増やす判断も brushup-protocol.md §4 の3問（再現しうるか・
-機械的に防げるか・既存の訂正で足りないか）を通すこと。
+だけに使う（例: 注入コピーの編集ブロックは `permissions.deny` の
+`Edit(**/.claude/skills/bdboard-harness/**)` として実装済み — bdboard-pkr6.1、
+bdboard-cm2q.10 で hook から deny へ移行）。フックを増やす判断も brushup-protocol.md §4 の3問
+（再現しうるか・機械的に防げるか・既存の訂正で足りないか）を通すこと。

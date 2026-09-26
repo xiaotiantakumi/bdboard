@@ -122,8 +122,9 @@ git 運用(`prFlow`)・メインブランチ(`mainBranch`)」を宣言する。�
 bdboard から読みに行くと層の逆依存になるため / bdboard-p5l.13)。候補文字列を
 `member:model` の狭い文字集合へ閉じることが唯一かつ十分な注入防御で、後段にサニタイズを
 重ねない。UI へ運ぶのは工程名と段数の要約だけで、候補列は DTO にも run プロンプトにも載せない。
-省略可能な `alwaysOnServer` 節 (`port` / `restartScript`) は、常時稼働サーバーの保護 (ハーネス
-パックの hook 規則 7) を有効にする宣言で、パーサーは読まず hook だけが読む (bdboard-hpu8)。
+省略可能な `alwaysOnServer` 節 (`port` / `restartScript`) は、常時稼働サーバーの所在の宣言で、
+パーサーは読まず、パックの `hooks/worktree-freshness.sh` が `restartScript` を追従案内に使い、
+`scripts/always-on-server.sh` の運用文書が参照する (bdboard-hpu8。hook 規則 7 は bdboard-cm2q.10 で廃止)。
 bdboard 自身は `8787` / `scripts/always-on-server.sh` を宣言している。
 同じく省略可能な `merge` 節 (`mode` = `S0` / `S1` / `S2`、`leaseMinutes`、`slotWaitMinutes`、
 `statusContext`、S2 の `hotFiles`) はマージ手順の段階の宣言で、パーサーは読まず `scripts/merge-pr` だけが

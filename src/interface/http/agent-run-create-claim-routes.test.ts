@@ -434,14 +434,14 @@ describe('createAgentRunRoutes harness preflight', () => {
     const { response, worktreeProvisioner } = await postRun(async () =>
       readyHarnessStatus({
         hooksState: 'missing',
-        missingHooks: ['bash .claude/hooks/bd-pre-bash-guard.sh'],
+        missingHooks: ['bash .claude/hooks/bd-stop-ticket-gate.sh'],
       }),
     );
 
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({
       reason: 'harness-hooks-missing',
-      missingHooks: ['bash .claude/hooks/bd-pre-bash-guard.sh'],
+      missingHooks: ['bash .claude/hooks/bd-stop-ticket-gate.sh'],
     });
     expect(worktreeProvisioner.provision).not.toHaveBeenCalled();
   });

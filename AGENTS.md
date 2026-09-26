@@ -139,8 +139,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
 - **止める・作り直しは `scripts/always-on-server.sh` 経由だけ (議長のみ)**: `BDBOARD_SERVER_CALLER=chair
   scripts/always-on-server.sh restart --expect-pid <PID> [--pull]` (`--pull` 無しでは pull しない。
   マージ直後は `deploy` を使う。PID は `status` で確認)。**pkill/killall 等のパターン指定の停止は全
-  エージェントで禁止** (Claude Code では `permissions.deny` でも拒否される) — サブエージェントの
-  main checkout pull/start/listener kill は hook 規則 7 も deny する (bdboard-hpu8)。
+  エージェントで禁止** (Claude Code では `permissions.deny` でも拒否される) — bdboard-worker の
+  main checkout pull/start は `isolation: "worktree"` も塞ぐ (他の子は文書規律のみ。bdboard-cm2q.10)。
 - launchd plist 等の常駐デーモン化はしない (別途ユーザー承認が要る変更)。
 
 ## Git Workflow (multi-session: per-ticket worktree + branch + PR)

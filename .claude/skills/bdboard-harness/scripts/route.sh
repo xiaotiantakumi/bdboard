@@ -23,7 +23,7 @@
 # 除外で候補が全部落ちても通常モードは無出力 exit 0 (「候補なし」と同じ形) のまま。通常モードの出力だけでは
 # 「宣言されていないセル (意見なし)」と「宣言されていたが除外で空になったセル」を
 # 呼び出し側が区別できないので、後者は --excluded で除外中の member を別に問い合わせる
-# (pre-bash-guard.sh 規則6 は候補が空のときだけこれを引き、除外中の member を名指しした
+# (aimix-run.sh は候補が空のときだけこれを引き、除外中の member を名指しした
 # 委譲を deny、それ以外の member は従来どおり fail-open で通す)。
 # exclude entry 自体が壊れている (member/until が文字列でない等) 場合は
 # その entry だけ無視する。member が TS 側 MODEL_EXCLUDE_MEMBER_PATTERN

@@ -6,6 +6,8 @@
 # in_progress のチケットに PR コメントも直近の作業記録も無いまま、未コミット差分や
 # main へ未取り込みのコミットを残して止まると、次に見た人 (や次のセッション) は bd からは
 # 進行中に見えるのに痕跡が何も無い状態になる。
+# 作業記録は直近 4 時間を有効とし、差し戻しはセッションごとに 1 回だけにする。
+# marker: ${TMPDIR:-/tmp}/bdboard-stop-ticket-gate/<session_id> (bdboard-cm2q.10)
 #
 # 契約: stdin に Claude Code の hook 入力 JSON。差し戻しは exit 2 + stderr 3 行以内、
 # 通過は exit 0 で無出力。判定できないものはすべて通過に倒す (fail-open)。
@@ -130,7 +132,8 @@ input_fields() {
           else tojson end;
         . as $d
         | [ (try ($d.cwd) catch null | scalar),
-            (try ($d.stop_hook_active) catch null | scalar) ]
+            (try ($d.stop_hook_active) catch null | scalar),
+            (try ($d.session_id) catch null | scalar) ]
         | join("\u001f")
       ' 2>/dev/null
       ;;
@@ -160,14 +163,17 @@ try:
 except Exception:
     sys.exit(0)
 sys.stdout.write("\x1f".join(scalar(doc, p) for p in sys.argv[1:]))
-' cwd stop_hook_active 2>/dev/null
+' cwd stop_hook_active session_id 2>/dev/null
       ;;
   esac
 }
 
 INPUT_FIELDS="$(input_fields)"
 HOOK_CWD="${INPUT_FIELDS%%"$US_SEPARATOR"*}"
-STOP_HOOK_ACTIVE="${INPUT_FIELDS#*"$US_SEPARATOR"}"
+REMAINING_FIELDS="${INPUT_FIELDS#*"$US_SEPARATOR"}"
+STOP_HOOK_ACTIVE="${REMAINING_FIELDS%%"$US_SEPARATOR"*}"
+SESSION_ID="${REMAINING_FIELDS#*"$US_SEPARATOR"}"
+SESSION_ID="${SESSION_ID//[!A-Za-z0-9_-]/}"
 [ -n "$HOOK_CWD" ] || HOOK_CWD="$PWD"
 
 # 1. 無限ループ防止: この hook 起因で再開されたセッションでは何もしない。
@@ -211,7 +217,7 @@ TICKET_JSON="$(bd -C "$HOOK_CWD" show "$TICKET_ID" --json 2>/dev/null)"
 TICKET_STATUS="$(json_field "$TICKET_JSON" status)"
 [ "$TICKET_STATUS" = 'in_progress' ] || exit 0
 
-# 4. 痕跡 (PR コメント / 直近 15 分のコメント) があれば通過。
+# 4. 痕跡 (PR コメント / 直近 4 時間のコメント) があれば通過。
 COMMENTS_JSON="$(bd -C "$HOOK_CWD" comments "$TICKET_ID" --json 2>/dev/null)"
 PR_COUNT=0
 LATEST_EPOCH=0
@@ -236,7 +242,7 @@ case "$NOW_EPOCH" in
   '' | *[!0-9]*) NOW_EPOCH=0 ;;
 esac
 if [ "$LATEST_EPOCH" -gt 0 ] && [ "$NOW_EPOCH" -gt 0 ] &&
-  [ $((NOW_EPOCH - LATEST_EPOCH)) -le 900 ]; then
+  [ $((NOW_EPOCH - LATEST_EPOCH)) -le 14400 ]; then
   exit 0
 fi
 
@@ -265,8 +271,16 @@ if git -C "$HOOK_CWD" rev-parse --verify --quiet "origin/$MAIN_BRANCH" >/dev/nul
 fi
 
 if [ "$DIRTY_COUNT" -gt 0 ] || [ "$UNMERGED_COUNT" -gt 0 ]; then
+  if [ -n "$SESSION_ID" ]; then
+    MARKER_ROOT="${TMPDIR:-/tmp}"
+    MARKER_ROOT="${MARKER_ROOT%/}/bdboard-stop-ticket-gate"
+    MARKER_FILE="$MARKER_ROOT/$SESSION_ID"
+    [ -e "$MARKER_FILE" ] && exit 0
+    mkdir -p "$MARKER_ROOT" >/dev/null 2>&1 || true
+    : 2>/dev/null >"$MARKER_FILE" || true
+  fi
   printf '%s\n' \
-    "bdboard-harness: チケット $TICKET_ID は in_progress ですが、PR も直近15分のコメントもありません。" \
+    "bdboard-harness: チケット $TICKET_ID は in_progress ですが、PR も直近4時間のコメントもありません。" \
     "終える前に次のどちらかを行ってください: (1) コミットして PR を開き bd comment $TICKET_ID \"PR: <url>\"、(2) 現状と残作業を bd comment $TICKET_ID \"...\" に残す。" \
     "（未コミット差分: $DIRTY_COUNT ファイル / $MAIN_BRANCH 未取り込みのコミット: $UNMERGED_COUNT 件）" >&2
   exit 2

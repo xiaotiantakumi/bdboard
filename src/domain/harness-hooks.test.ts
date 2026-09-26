@@ -11,11 +11,11 @@ import {
 const PACK: HarnessHookPack = {
   name: 'bdboard-harness',
   hooks: [
-    { event: 'PreToolUse', matcher: 'Bash', script: 'hooks/pre-bash-guard.sh', timeout: 10 },
+    { event: 'PostToolUse', matcher: 'Agent', script: 'hooks/worktree-freshness.sh', timeout: 10 },
     {
-      event: 'PreToolUse',
-      matcher: 'Edit|Write|MultiEdit|NotebookEdit',
-      script: 'hooks/pre-edit-guard.sh',
+      event: 'PostToolUse',
+      matcher: 'Task',
+      script: 'hooks/worktree-freshness.sh',
       timeout: 10,
     },
     { event: 'Stop', matcher: '', script: 'hooks/stop-ticket-gate.sh', timeout: 20 },
@@ -24,10 +24,10 @@ const PACK: HarnessHookPack = {
 
 const NO_HOOKS_PACK: HarnessHookPack = { name: 'plain-pack', hooks: [] };
 
-const BASH_COMMAND =
-  `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/pre-bash-guard.sh"`;
-const EDIT_COMMAND =
-  `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/pre-edit-guard.sh"`;
+const AGENT_COMMAND =
+  `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/worktree-freshness.sh"`;
+const TASK_COMMAND =
+  `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/worktree-freshness.sh"`;
 const STOP_COMMAND =
   `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh"`;
 
@@ -62,10 +62,10 @@ function mergedObject(settingsJson: string | null, pack: HarnessHookPack = PACK)
 
 describe('harnessHookCommand', () => {
   it('writes $CLAUDE_PROJECT_DIR instead of an absolute path', () => {
-    expect(harnessHookCommand('bdboard-harness', 'hooks/pre-bash-guard.sh')).toBe(
-      BASH_COMMAND,
+    expect(harnessHookCommand('bdboard-harness', 'hooks/worktree-freshness.sh')).toBe(
+      AGENT_COMMAND,
     );
-    expect(BASH_COMMAND).toContain(harnessHookMarker('bdboard-harness'));
+    expect(AGENT_COMMAND).toContain(harnessHookMarker('bdboard-harness'));
     expect(CLAUDE_PROJECT_DIR_PLACEHOLDER).toBe('$CLAUDE_PROJECT_DIR');
   });
 
@@ -80,14 +80,14 @@ describe('mergeHarnessHooks', () => {
   it('creates all declared entries from an empty settings file', () => {
     const merged = mergedObject(null);
 
-    expect(merged.hooks.PreToolUse).toEqual([
+    expect(merged.hooks.PostToolUse).toEqual([
       {
-        matcher: 'Bash',
-        hooks: [{ type: 'command', command: BASH_COMMAND, timeout: 10 }],
+        matcher: 'Agent',
+        hooks: [{ type: 'command', command: AGENT_COMMAND, timeout: 10 }],
       },
       {
-        matcher: 'Edit|Write|MultiEdit|NotebookEdit',
-        hooks: [{ type: 'command', command: EDIT_COMMAND, timeout: 10 }],
+        matcher: 'Task',
+        hooks: [{ type: 'command', command: TASK_COMMAND, timeout: 10 }],
       },
     ]);
     expect(merged.hooks.Stop).toEqual([
@@ -103,7 +103,7 @@ describe('mergeHarnessHooks', () => {
   it('always writes an explicit timeout', () => {
     const merged = mergedObject(null);
     const timeouts = [
-      ...merged.hooks.PreToolUse.flatMap((group: any) => group.hooks),
+      ...merged.hooks.PostToolUse.flatMap((group: any) => group.hooks),
       ...merged.hooks.Stop.flatMap((group: any) => group.hooks),
     ].map((entry: any) => entry.timeout);
 
@@ -122,7 +122,7 @@ describe('mergeHarnessHooks', () => {
     const result = mergeHarnessHooks(null, PACK);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.registered).toEqual([BASH_COMMAND, EDIT_COMMAND, STOP_COMMAND]);
+    expect(result.registered).toEqual([AGENT_COMMAND, TASK_COMMAND, STOP_COMMAND]);
   });
 
   it('keeps an existing SessionStart hook untouched', () => {
@@ -139,7 +139,7 @@ describe('mergeHarnessHooks', () => {
         matcher: '',
       },
     ]);
-    expect(Object.keys(merged.hooks)).toEqual(['SessionStart', 'PreToolUse', 'Stop']);
+    expect(Object.keys(merged.hooks)).toEqual(['SessionStart', 'PostToolUse', 'Stop']);
   });
 
   it('preserves unrelated top-level keys and their order', () => {
@@ -161,9 +161,9 @@ describe('mergeHarnessHooks', () => {
     const existing = JSON.stringify(
       {
         hooks: {
-          PreToolUse: [
+          PostToolUse: [
             {
-              matcher: 'Bash',
+              matcher: 'Agent',
               hooks: [{ type: 'command', command: 'echo other', note: 'keep me' }],
             },
           ],
@@ -174,13 +174,13 @@ describe('mergeHarnessHooks', () => {
     );
 
     const merged = mergedObject(existing);
-    expect(merged.hooks.PreToolUse).toHaveLength(3);
+    expect(merged.hooks.PostToolUse).toHaveLength(3);
     // 他人の group は順序も内容も未知キーも変えない。
-    expect(merged.hooks.PreToolUse[0]).toEqual({
-      matcher: 'Bash',
+    expect(merged.hooks.PostToolUse[0]).toEqual({
+      matcher: 'Agent',
       hooks: [{ type: 'command', command: 'echo other', note: 'keep me' }],
     });
-    expect(merged.hooks.PreToolUse[1].hooks[0].command).toBe(BASH_COMMAND);
+    expect(merged.hooks.PostToolUse[1].hooks[0].command).toBe(AGENT_COMMAND);
   });
 
   it('is idempotent: re-merging its own output changes nothing', () => {
@@ -228,16 +228,15 @@ describe('mergeHarnessHooks', () => {
       const foreignCommitGuardCommand =
         `bash -c '[ -f "$0" ] || exit 0; exec node "$0"' "$CLAUDE_PROJECT_DIR/scripts/commit-message-guard.mjs"`;
 
-      // 実際に git へコミットされている .claude/settings.json の PreToolUse.Bash の
-      // 形そのもの: 我々の own hook (BASH_COMMAND) と foreign hook が同一 group に
-      // 同居している。
+      // 実際にコミットされていた混在形を、現行 fixture の PostToolUse.Agent で再現する。
+      // 我々の own hook (AGENT_COMMAND) と foreign hook が同一 group に同居している。
       const mixedMatcherSettings = JSON.stringify({
         hooks: {
-          PreToolUse: [
+          PostToolUse: [
             {
-              matcher: 'Bash',
+              matcher: 'Agent',
               hooks: [
-                { type: 'command', command: BASH_COMMAND, timeout: 10 },
+                { type: 'command', command: AGENT_COMMAND, timeout: 10 },
                 { type: 'command', command: foreignCommitGuardCommand, timeout: 10 },
               ],
             },
@@ -264,18 +263,18 @@ describe('mergeHarnessHooks', () => {
       // 分割後の正規形を明示的に固定する: foreign hook は独立 group として残り、
       // 我々の hook は別の独立 group として末尾に追加される。
       const merged = JSON.parse(first.settingsJson);
-      expect(merged.hooks.PreToolUse).toEqual([
+      expect(merged.hooks.PostToolUse).toEqual([
         {
-          matcher: 'Bash',
+          matcher: 'Agent',
           hooks: [{ type: 'command', command: foreignCommitGuardCommand, timeout: 10 }],
         },
         {
-          matcher: 'Bash',
-          hooks: [{ type: 'command', command: BASH_COMMAND, timeout: 10 }],
+          matcher: 'Agent',
+          hooks: [{ type: 'command', command: AGENT_COMMAND, timeout: 10 }],
         },
         {
-          matcher: 'Edit|Write|MultiEdit|NotebookEdit',
-          hooks: [{ type: 'command', command: EDIT_COMMAND, timeout: 10 }],
+          matcher: 'Task',
+          hooks: [{ type: 'command', command: TASK_COMMAND, timeout: 10 }],
         },
       ]);
     },
@@ -295,19 +294,19 @@ describe('mergeHarnessHooks', () => {
 
     const merged = JSON.parse(shrunk.settingsJson);
     expect(merged.hooks.Stop).toBeUndefined();
-    expect(merged.hooks.PreToolUse).toHaveLength(1);
-    expect(merged.hooks.PreToolUse[0].hooks[0].command).toBe(BASH_COMMAND);
+    expect(merged.hooks.PostToolUse).toHaveLength(1);
+    expect(merged.hooks.PostToolUse[0].hooks[0].command).toBe(AGENT_COMMAND);
     expect(merged.hooks.SessionStart).toHaveLength(1);
   });
 
   it('keeps a foreign entry that shares a group with one of ours', () => {
     const existing = JSON.stringify({
       hooks: {
-        PreToolUse: [
+        PostToolUse: [
           {
-            matcher: 'Bash',
+            matcher: 'Agent',
             hooks: [
-              { type: 'command', command: BASH_COMMAND, timeout: 600 },
+              { type: 'command', command: AGENT_COMMAND, timeout: 600 },
               { type: 'command', command: 'echo foreign' },
             ],
           },
@@ -316,11 +315,11 @@ describe('mergeHarnessHooks', () => {
     });
 
     const merged = mergedObject(existing);
-    expect(merged.hooks.PreToolUse[0]).toEqual({
-      matcher: 'Bash',
+    expect(merged.hooks.PostToolUse[0]).toEqual({
+      matcher: 'Agent',
       hooks: [{ type: 'command', command: 'echo foreign' }],
     });
-    expect(merged.hooks.PreToolUse).toHaveLength(3);
+    expect(merged.hooks.PostToolUse).toHaveLength(3);
   });
 
   it('leaves an unrelated event array that was already empty', () => {
@@ -359,7 +358,7 @@ describe('mergeHarnessHooks', () => {
 
   it('fails when a declared event is not an array', () => {
     const result = mergeHarnessHooks(
-      JSON.stringify({ hooks: { PreToolUse: 'nope' } }),
+      JSON.stringify({ hooks: { PostToolUse: 'nope' } }),
       PACK,
     );
     expect(result.ok).toBe(false);
@@ -382,7 +381,7 @@ describe('evaluateHooksState', () => {
   it('reports missing when settings.json does not exist', () => {
     expect(evaluateHooksState(null, PACK)).toEqual({
       state: 'missing',
-      missingHooks: [BASH_COMMAND, EDIT_COMMAND, STOP_COMMAND],
+      missingHooks: [AGENT_COMMAND, TASK_COMMAND, STOP_COMMAND],
     });
   });
 
@@ -418,7 +417,7 @@ describe('evaluateHooksState', () => {
     const settings = JSON.stringify({
       hooks: {
         Stop: [
-          { hooks: [{ type: 'command', command: BASH_COMMAND, timeout: 10 }] },
+          { hooks: [{ type: 'command', command: AGENT_COMMAND, timeout: 10 }] },
           { hooks: [{ type: 'command', command: STOP_COMMAND, timeout: 20 }] },
         ],
       },
@@ -426,16 +425,16 @@ describe('evaluateHooksState', () => {
 
     expect(evaluateHooksState(settings, PACK)).toEqual({
       state: 'partial',
-      missingHooks: [BASH_COMMAND, EDIT_COMMAND],
+      missingHooks: [AGENT_COMMAND, TASK_COMMAND],
     });
   });
 
   it('ignores matcher and timeout drift', () => {
     const settings = JSON.stringify({
       hooks: {
-        PreToolUse: [
-          { matcher: '*', hooks: [{ type: 'command', command: BASH_COMMAND, timeout: 600 }] },
-          { matcher: 'Edit', hooks: [{ type: 'command', command: EDIT_COMMAND }] },
+        PostToolUse: [
+          { matcher: '*', hooks: [{ type: 'command', command: AGENT_COMMAND, timeout: 600 }] },
+          { matcher: 'Edit', hooks: [{ type: 'command', command: TASK_COMMAND }] },
         ],
         Stop: [{ hooks: [{ type: 'command', command: STOP_COMMAND, timeout: 1 }] }],
       },

@@ -181,7 +181,7 @@ TZ=UTC npm run verify   # CI と同じ条件
 
 - リポジトリへの書き込み禁止（編集・作成・削除いずれも）
 - 他 worktree 不可触
-- `git stash` 絶対禁止（他セッションの未コミット作業ごと退避してしまう。同梱フックは `git stash push -u -m` 形を許可するが、レビュアーに stash の必要は無いのでフックより厳しく全面禁止）
+- `git stash` 絶対禁止（他セッションの未コミット作業ごと退避してしまう。`permissions.deny` は `git stash push -u -m` 形を許可するが、レビュアーに stash の必要は無いので deny より厳しく全面禁止）
 - `gh` / `bd` の書き込み系コマンド禁止（PR 作成・マージ、claim・close・comment 等）
 - サーバーの起動・停止禁止 / `preview_start` 禁止
 - サブエージェント起動禁止

@@ -355,7 +355,12 @@ describe('resolveProjectContractState', () => {
 
 describe('getProjectHarnessStatus hooksState', () => {
   const HOOKS: readonly PackHookDeclaration[] = [
-    { event: 'PreToolUse', matcher: 'Bash', script: 'hooks/pre-bash-guard.sh', timeout: 10 },
+    {
+      event: 'PostToolUse',
+      matcher: 'Agent|Task',
+      script: 'hooks/worktree-freshness.sh',
+      timeout: 10,
+    },
     { event: 'Stop', matcher: '', script: 'hooks/stop-ticket-gate.sh', timeout: 20 },
   ];
 

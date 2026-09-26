@@ -1,6 +1,6 @@
 ---
 name: bdboard-server-ops
-description: bdboard の常時稼働ローカルサーバー (メインチェックアウト・BDBOARD_PORT 既定 8787) の起動確認・起動・再起動・停止判断が要るときに読む。ヘルスチェックが 000 だった / リスナーは居るのに応答しない / マージ後にサーバーを作り直す / worktree から preview_start・npm run dev を打ちたくなった / web だけ変わったマージで再起動を省きたくなった / 再起動後の health 確認をループで待つ / cloudflared トンネルが同居している、のいずれかに当たったらこの skill の手順に従う。再起動の唯一の入口 scripts/always-on-server.sh (議長のみ・--expect-pid の CAS・cloudflared 確認・監査ログ) と、サブエージェントの pull/start/kill を止める hook 規則 7 の説明、pkill・killall によるパターンマッチ kill の禁止理由もここ。
+description: bdboard の常時稼働ローカルサーバー (メインチェックアウト・BDBOARD_PORT 既定 8787) の起動確認・起動・再起動・停止判断が要るときに読む。ヘルスチェックが 000 だった / リスナーは居るのに応答しない / マージ後にサーバーを作り直す / worktree から preview_start・npm run dev を打ちたくなった / web だけ変わったマージで再起動を省きたくなった / 再起動後の health 確認をループで待つ / cloudflared トンネルが同居している、のいずれかに当たったらこの skill の手順に従う。再起動の唯一の入口 scripts/always-on-server.sh (議長のみ・BDBOARD_SERVER_CALLER=chair 宣言・--expect-pid の CAS・cloudflared 確認・監査ログ) と、サブエージェントの main checkout での pull/start/Edit を止める isolation:"worktree" と kill を止める permissions.deny の説明、pkill・killall によるパターンマッチ kill の禁止理由もここ。
 ---
 
 # bdboard-server-ops — 常時稼働ローカルサーバーの運用
@@ -27,20 +27,25 @@ BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh restart --expect-pid <PI
 BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh start                        # 000 (停止) のときだけ
 ```
 
-- `BDBOARD_SERVER_CALLER=chair` は身元の証明ではなく**宣言と監査**。hook 規則 7 が
-  サブエージェント (hook 入力に `agent_id` がある) からのこのスクリプト実行・main checkout
-  での `git pull` / `npm run start`・listener PID の `kill` を deny するので、宣言を書き写しても
-  サブエージェントからは通らない。別の hook 規則 8 (同じ `server-guard.sh`。`alwaysOnServer.port`
-  の有無に関係なく常時有効) が、サブエージェントによる main checkout 対象の
-  `git checkout`/`commit`/`reset`/`merge`/`stash` 等と (`pre-edit-guard.sh` 規則 2 で)
-  Edit/Write も deny する — こちらは常時稼働サーバーではなく議長の main checkout 自体を
-  守る規則で、動機・詳細は `hooks/README.md`「8 の main checkout 保護」を参照 (bdboard-kxqb)。
+- `BDBOARD_SERVER_CALLER=chair` は身元の証明ではなく**宣言と監査**。bdboard-worker は
+  `isolation: "worktree"` で隔離されているため、Command working
+  directory / Git redirects のチェックでそもそも main checkout を cwd や対象にできず、
+  このスクリプト実行・main checkout での `git pull` / `npm run start` に到達しない。
+  listener PID の直接 `kill` は `permissions.deny` (`Bash(kill *)` 等) が全エージェントで拒否する。
+  bdboard-worker による main checkout 対象の `git checkout`/`commit`/`reset`/`merge`/
+  `stash` 等と Edit/Write は、同じ `isolation: "worktree"` の Git redirects / File edits
+  チェックが塞ぐ。cursor-implementer / codex-implementer / general-purpose など非隔離の子は
+  これらを機械的には止められず、文書の規律のみ — bdboard-cm2q.10 で旧 hook 規則 7/8 (`server-guard.sh`) から移した
+  (bdboard-kxqb・bdboard-hpu8)。動機・詳細は `hooks/README.md`「deny・隔離・merge-pr との
+  分担」を参照。
 - `--expect-pid` は `status` で見た PID を渡す。実際の listener と一致しなければ exit 3 で
   何もしない (別セッションが直前に再起動した新プロセスを巻き込まない CAS)。
 - cloudflared が動いていれば exit 2 で止まる。ユーザーへ「トンネル URL が失効する」と伝えた
   うえで `--tunnel-ack` を付けて再実行する (下の「cloudflared トンネルの同居確認」)。
 - 実行のたびに `/tmp/bdboard-server-restarts.log` に 1 行 (時刻 / action / caller / 旧→新 PID /
-  HEAD / 結果) が残る。hook 側の deny は `${TMPDIR:-/tmp}/bdboard-server-guard.log`。
+  HEAD / 結果) が残る。`permissions.deny` / `isolation: "worktree"` による拒否には専用の
+  ログファイルが無く、トランスクリプトにしか残らない (bdboard-cm2q.10 で旧 hook 側の
+  `${TMPDIR:-/tmp}/bdboard-server-guard.log` を廃止)。
 - worktree の cwd から呼んでよい。main checkout は git common dir から解決する
   (`cd` しない — 常時稼働サーバーの居場所へ作業を移さない)。
 - **相対パス呼び出し (`scripts/always-on-server.sh ...`) は議長の cwd が古い worktree でも
@@ -363,11 +368,13 @@ worktree-cwd case above, where every attempt reproduces (2/2).
 
 - **Never kill the server** except for that post-merge restart (or an explicit
   user request), and then only through `scripts/always-on-server.sh` from the
-  chair. Hook 規則 7 (`.claude/skills/bdboard-harness/hooks/server-guard.sh`) は
-  listener PID とその親 (npm / node) への直接 `kill`、`$(lsof … 8787 …)` や変数・
-  パイプ経由で port から引いた PID の kill を、呼び出し元を問わず deny する。
-  スクリプトで止められないとき (上の「スクリプトで対処できない場面」参照) も、議長は
-  手で止めない — ユーザーに PID と理由を伝え、ユーザー自身の端末で止めてもらう。
+  chair. `permissions.deny` (`Bash(kill *)` / `Bash(pkill *)` / `Bash(killall *)`)
+  は直接 `kill` を呼び出し元を問わず deny する (bdboard-cm2q.1)。旧 hook 規則 7
+  (`server-guard.sh`、bdboard-cm2q.10 で削除) は `$(lsof … 8787 …)` や変数・パイプ経由で
+  port から引いた PID の kill もリスナーの親 (npm / node) まで含めて追跡していたが、
+  deny はコマンド行の文字列一致だけなのでその変数・パイプ追跡は無い (`hooks/README.md`
+  「守らないもの」参照)。スクリプトで止められないとき (上の「スクリプトで対処できない場面」
+  参照) も、議長は手で止めない — ユーザーに PID と理由を伝え、ユーザー自身の端末で止めてもらう。
 - Kill には **pkill / killall 等のパターンマッチ kill を使わない** —
   worktree のテスト用プロセスを狙った `pkill -f 'tsx.*src/main.ts'` がこの常時稼働
   サーバーにも当たった実例がある。必ず対象の PID を特定して `--expect-pid` に渡すこと

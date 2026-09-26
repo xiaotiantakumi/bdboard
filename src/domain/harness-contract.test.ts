@@ -33,10 +33,6 @@ describe('parseHarnessContract', () => {
       verify: 'npm run verify',
       prFlow: 'pr',
       mainBranch: 'main',
-      hooks: {
-        denyBashPatterns: ['\\bnpm run verify:steps\\b'],
-        denyBashMessages: ['use npm run verify'],
-      },
     });
 
     expect(result).toEqual({
@@ -46,10 +42,6 @@ describe('parseHarnessContract', () => {
         verify: 'npm run verify',
         prFlow: 'pr',
         mainBranch: 'main',
-        hooks: {
-          denyBashPatterns: ['\\bnpm run verify:steps\\b'],
-          denyBashMessages: ['use npm run verify'],
-        },
         models: null,
       },
     });
@@ -148,65 +140,7 @@ describe('parseHarnessContract', () => {
     expect(result.contract.verify).toBe('npm run verify');
   });
 
-  it('leaves hooks null when omitted', () => {
-    const result = parse({ version: 1, verify: 'npm run verify', prFlow: 'pr' });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.contract.hooks).toBeNull();
-  });
-
-  it('allows denyBashMessages to be omitted entirely', () => {
-    // メッセージ側は「全部省略して既定文言に任せる」が正当な使い方なので、
-    // 0 件はパターン数と一致しなくても通す。
-    const result = parse({
-      version: 1,
-      verify: 'npm run verify',
-      prFlow: 'pr',
-      hooks: { denyBashPatterns: ['x', 'y'] },
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.contract.hooks).toEqual({
-      denyBashPatterns: ['x', 'y'],
-      denyBashMessages: [],
-    });
-  });
-
-  it('accepts denyBashMessages that pairs one-to-one with the patterns', () => {
-    const result = parse({
-      version: 1,
-      verify: 'npm run verify',
-      prFlow: 'pr',
-      hooks: {
-        denyBashPatterns: ['x', 'y'],
-        denyBashMessages: ['no x', 'no y'],
-      },
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.contract.hooks?.denyBashMessages).toEqual(['no x', 'no y']);
-  });
-
-  it('rejects denyBashMessages whose length matches neither 0 nor the pattern count', () => {
-    const result = parse({
-      version: 1,
-      verify: 'npm run verify',
-      prFlow: 'pr',
-      hooks: {
-        denyBashPatterns: ['x', 'y'],
-        denyBashMessages: ['only one'],
-      },
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.message).toContain('denyBashMessages');
-  });
-
-  it('rejects a denyBashPattern that is not a usable regular expression', () => {
+  it('ignores a legacy hooks key even when it contains an invalid regular expression', () => {
     const result = parse({
       version: 1,
       verify: 'npm run verify',
@@ -214,52 +148,9 @@ describe('parseHarnessContract', () => {
       hooks: { denyBashPatterns: ['[unclosed'] },
     });
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toBe('schema');
-    expect(result.message).toContain('denyBashPatterns[0]');
-  });
-
-  it("accepts bdboard's own verify:steps guard pattern", () => {
-    // .claude/bdboard-harness.json が実際に積んでいる値。JS の RegExp としても
-    // 通ることをここで固定しておく。
-    const pattern = '\\bnpm run verify:steps\\b';
-    const result = parse({
-      version: 1,
-      verify: 'npm run verify',
-      prFlow: 'pr',
-      hooks: { denyBashPatterns: [pattern] },
-    });
-
     expect(result.ok).toBe(true);
-    expect(new RegExp(pattern).test('npm run verify:steps')).toBe(true);
-    expect(new RegExp(pattern).test('npm run verify')).toBe(false);
-  });
-
-  it('rejects hook arrays that are not string arrays', () => {
-    const result = parse({
-      version: 1,
-      verify: 'npm run verify',
-      prFlow: 'pr',
-      hooks: { denyBashPatterns: [1, 2] },
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.message).toContain('denyBashPatterns');
-  });
-
-  it('rejects a non-object hooks value', () => {
-    const result = parse({
-      version: 1,
-      verify: 'npm run verify',
-      prFlow: 'pr',
-      hooks: 'yes',
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.message).toContain('hooks');
+    if (!result.ok) return;
+    expect(result.contract).not.toHaveProperty('hooks');
   });
 
   // verify / mainBranch は run プロンプトとコピー用シェル行に素で埋まるので、
