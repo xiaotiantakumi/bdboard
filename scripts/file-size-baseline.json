@@ -13,7 +13,7 @@
     {
       "path": "harness/packs/bdboard-harness/scripts/bd-heartbeat.sh",
       "limit": 1000,
-      "reason": "bd heartbeat ループの同梱スクリプト。start/stop/status に加え孤児ループ防止の3重寿命判定を関数27個で実装。分割検討・チケット未起票。"
+      "reason": "bd heartbeat ループの同梱スクリプト。start/stop/status に加え孤児ループ防止の3重寿命判定を関数27個で実装。分割検討・チケット未起票。初出コミットのチケットとして bdboard-jygp を記録。"
     },
     {
       "path": "harness/packs/bdboard-harness/hooks/server-guard.sh",

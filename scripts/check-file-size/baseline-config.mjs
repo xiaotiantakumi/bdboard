@@ -4,6 +4,12 @@ import path from 'node:path';
 
 import { isFixturePath, isTargetPath } from './classify.mjs';
 
+const REASON_TICKET_ID_PATTERN = /bdboard-[a-z0-9.]+/;
+// 一時的な例外。rules 7/8/9 の廃止に伴い削除予定のエントリは対象外。
+const LEGACY_REASON_EXEMPT_PATHS = new Set([
+  'harness/packs/bdboard-harness/hooks/pre-bash-guard.sh',
+]);
+
 function isPlainObject(value) {
   return value != null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -40,6 +46,15 @@ export function validateEntryShape(entry, index) {
   }
   if (typeof reason !== 'string' || reason.trim().length === 0) {
     errors.push(`${where}.reason は空にできません (中身を見て書いた実態の説明が要る)`);
+  }
+  if (
+    typeof reason === 'string' &&
+    reason.trim().length > 0 &&
+    pathIsWellFormed &&
+    !LEGACY_REASON_EXEMPT_PATHS.has(entryPath) &&
+    !REASON_TICKET_ID_PATTERN.test(reason)
+  ) {
+    errors.push(`${where}.reason (${entryPath}) にチケット ID (bdboard-xxxx 形式) を含めてください`);
   }
   return errors;
 }
