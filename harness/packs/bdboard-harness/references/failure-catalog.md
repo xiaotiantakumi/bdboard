@@ -8,7 +8,8 @@
 - 失敗が起きたら、まずここと照合する。既知の再発なら「ルールがあるのに防げなかった」
   = brushup-protocol.md §2 の分類 D（またはルールの置き場所の問題）として扱う。
 
-エントリの書式（1件5行以内。長い分析は本則側へ）:
+エントリの書式（1件5行以内。hook 由来のエントリは効果/害を1行必須とし6行まで許容。長い
+分析は本則側へ）:
 
 ```
 ### <slug> — <一行症状>（<日付>）
@@ -17,9 +18,20 @@
 - 出典: <bd チケットID / bd memory キー / 記録場所>
 ```
 
-日付が特定できない事故は（<日付>）を省略してよい（出典から辿れることを優先する）。新しい
-エントリは任意で「効果: <止めた回数と最終発火日>」「害: <誤検知件数・追加行数>」を足してよい
-（本則: brushup-protocol.md §7 H-4）。上限は**50件**。追加時は既存1件を退役させる（§7）。
+hook 由来のエントリのテンプレ（効果/害は必須。他は上と同じ）:
+
+```
+### <slug> — <一行症状>（<日付>）
+- 原因: <根本原因を一行で>
+- 防止: <再発防止ルールを一行で>（本則: <所在>）
+- 効果・害: <止めた回数と最終発火日 / 誤検知件数・追加行数>
+- 出典: <bd チケットID / bd memory キー / 記録場所>
+```
+
+日付が特定できない事故は（<日付>）を省略してよい（出典から辿れることを優先する）。hook 由来
+以外のエントリでも任意で効果/害を足してよい（本則: brushup-protocol.md §7、bdboard-cm2q.5）。
+上限は**50件**。50件に達したら、1件足すごとに1件外す。外したエントリは消す（履歴は git）。
+スタブは残さない。
 
 ## 排他・worktree
 
@@ -115,7 +127,7 @@
 
 ### pkill-collateral — worktree のテストプロセスを狙った `pkill -f 'tsx.*src/main.ts'` が常時稼働サーバーも巻き添えにした（2026-08-15）
 - 原因: パターンマッチ kill はメインチェックアウトと worktree のプロセスを区別できない
-- 防止: pkill/killall 等のパターンマッチ kill 禁止。PID を特定して kill。委譲ブリーフにも毎回明記（本則: CLAUDE.md「Always-On Local Hosting」）
+- 防止: pkill/killall 等のパターンマッチ kill 禁止。サーバーは always-on-server.sh（議長）、それ以外は議長かユーザーに依頼。委譲ブリーフにも毎回明記（本則: CLAUDE.md「Always-On Local Hosting」）
 - 出典: bd memory `bdboard-2026-08-15-src-main-ts-sigterm`
 
 ### health-check-false-negative — `curl -f` が 401 で失敗し「サーバー停止」と誤認、二重起動を試みた（2026-08-16）
@@ -128,8 +140,9 @@
 - 防止: worktree から preview_start 禁止。起動はメインチェックアウトへ cd してから（本則: bdboard の `.claude/skills/bdboard-server-ops/SKILL.md`「Never call `preview_start` from a worktree session」）
 - 出典: `.claude/skills/bdboard-server-ops/SKILL.md` 該当節（実測記録つき）
 
-### hook-rules-7-8-9-retiring — 規則7/8/9（常時稼働サーバー保護・main checkout 保護・worktree 所有権保護）は退役方針（2026-09-26）
-- 退役: permissions.deny・isolation:worktree・merge-pr 前提条件へ置き換え中（本則: brushup-protocol.md §2 分類 E、bdboard-cm2q）。効果・害を bdboard-cm2q.8/.9 で計測後、bdboard-cm2q.10 で削除
+### hook-rules-7-8-9-retiring — サブエージェントが常時稼働サーバー(8787)を再起動・別担当の worktree へ checkout した事故で追加した規則7/8/9は退役方針（2026-09-26）
+- 退役: 後継は `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh restart --expect-pid <PID>`・`BDBOARD_MERGER=chair`・`isolation: "worktree"`・`permissions.deny`・pre-edit-guard.sh 規則2（本則: brushup-protocol.md §2 分類 E、bdboard-cm2q）
+- 効果・害: bdboard-cm2q.8/.9 で計測後、bdboard-cm2q.10 で削除。サーバーの再起動は議長が行い、最終報告に書く
 - 出典: bdboard-hpu8（規則7）/ bdboard-kxqb（規則8）/ bdboard-gsnn（規則9）
 
 ### stale-chair-checkout — 議長セッションの checkout が main から取り残され、main で入れた hook (規則 7 ほか) が議長と全サブエージェントで 1 か月以上効いていなかった（2026-09-24）
@@ -151,7 +164,7 @@
 
 ### double-background-verify — `run_in_background:true` 内に `&` を書き、harness の completed 通知が echo だけの完了を指した（2026-08-30）
 - 原因: `nohup npm run verify > log 2>&1 &\necho pid $!` を run_in_background:true で実行し、シェルの `&` が harness の追跡単位を『verify』ではなく直後の echo にすり替えた
-- 防止: run_in_background:true のコマンド文字列にバックグラウンド化の末尾 `&`（`2>&1`/`&&` は可）を書かない。長時間コマンドはそのまま渡すか `while kill -0 <pid> 2>/dev/null; do sleep 5; done` で待つ（本則: verification.md）
+- 防止: run_in_background:true のコマンド文字列にバックグラウンド化の末尾 `&`（`2>&1`/`&&` は可）を書かない。長時間コマンドはそのまま渡すか `while ps -p <pid> >/dev/null 2>&1; do sleep 5; done` で待つ（本則: verification.md）
 - 出典: bdboard-j0us（同一セッション内で2回再発、pgrep で detached プロセス生存を確認して発覚）
 
 ### wrong-node-version — シェルスナップショットの nvm 不全で意図しない Node により npm install が lockfile を書き換えた
