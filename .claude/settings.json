@@ -6,8 +6,26 @@
       "Bash(kill *)",
       "Bash(bd dolt push)",
       "Bash(bd dolt pull)",
+      "Bash(bd * dolt push)",
+      "Bash(bd * dolt pull)",
+      "Bash(bd *dolt push*--remote origin)",
+      "Bash(bd *dolt push*--remote origin *)",
+      "Bash(bd *dolt push*--remote=origin)",
+      "Bash(bd *dolt push*--remote=origin *)",
+      "Bash(bd *dolt pull*--remote origin)",
+      "Bash(bd *dolt pull*--remote origin *)",
+      "Bash(bd *dolt pull*--remote=origin)",
+      "Bash(bd *dolt pull*--remote=origin *)",
+      "Bash(bd *dolt push*--yes*)",
+      "Bash(bd *dolt push* -y*)",
+      "Bash(git stash)",
+      "Bash(git stash pop *)",
+      "Bash(git stash save *)",
+      "Bash(aimix run *)",
       "Bash(npm run verify:steps *)",
-      "Bash(bdboard-deny-canary *)"
+      "Bash(bdboard-deny-canary *)",
+      "Edit(**/.claude/skills/bdboard-harness/**)",
+      "Edit(**/.beads/**)"
     ]
   },
   "hooks": {

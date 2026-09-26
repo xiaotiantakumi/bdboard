@@ -2,7 +2,7 @@
   "packs": [
     {
       "name": "bdboard-harness",
-      "version": "0.54.0",
+      "version": "0.55.0",
       "injectedAt": "2026-09-25T07:14:50.223Z",
       "files": [
         ".claude/skills/bdboard-harness/SKILL.md",
@@ -25,6 +25,7 @@
         ".claude/skills/bdboard-harness/references/session-start.md",
         ".claude/skills/bdboard-harness/references/verification.md",
         ".claude/skills/bdboard-harness/references/worktree-pr-flow.md",
+        ".claude/skills/bdboard-harness/scripts/aimix-run.sh",
         ".claude/skills/bdboard-harness/scripts/bd-heartbeat.sh",
         ".claude/skills/bdboard-harness/scripts/route.sh",
         ".claude/skills/bdboard-harness/scripts/worktree-owner.sh"

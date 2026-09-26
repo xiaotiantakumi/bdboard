@@ -45,8 +45,10 @@ merge-pr とマージ後の片付けは、`git worktree list --porcelain` の
 `branch refs/heads/bd/<ticket-id>` で引いた worktree に対して行う。実測 (bdboard-cm2q.5、
 議長が片付け、2026-09-26): この worktree は `locked` になっている — `lsof -a -d cwd +D <path>`
 で使用中でないことを確かめてから `git worktree remove -f -f <path>` で消し、同時に
-`worktree-agent-<id>` ブランチも `git branch -D` で消す。それ以外の文書への反映は H-8
-(bdboard-cm2q.11) に任せる。
+`worktree-agent-<id>` ブランチと、手順3で作ったローカルの `bd/<ticket-id>` ブランチも
+`git branch -D` で消す (worktree が残っている間は `--delete-branch` がローカル側を消せないため、
+worker の `bd/<ticket-id>` はここで消さないと残り続ける。bdboard-cm2q.12)。
+それ以外の文書への反映は H-8 (bdboard-cm2q.11) に任せる。
 
 ## bd チケット title の命名規約
 
@@ -426,6 +428,22 @@ ancestor with `origin/main` cannot catch up: move the work out and start the
 session again from a new worktree. Sessions whose checkout predates this hook
 get no warning at all; for those the board's Hygiene lane
 (`nonTicketHarnessWorktrees`) is the only signal.
+
+**Mirror every `permissions.deny` line into the main checkout's
+`.claude/settings.local.json`** (bdboard-cm2q.12). Claude Code reads the shared
+`.claude/settings.json` from the directory the session was *started* in — a
+session started in a worktree gets that branch's copy, and `EnterWorktree` does
+not change it — while `.claude/settings.local.json` is read from the main
+checkout's root even in a worktree session
+(https://code.claude.com/docs/en/settings). A deny merged to `main` therefore
+does not reach sessions started from an older worktree (observed 2026-09-26: a
+chair session started in a worktree from before cm2q.1 never saw that PR's deny
+lines). Copying the lines into the main checkout's untracked
+`settings.local.json` makes them apply to every session at once, and edits are
+picked up live without a restart. That file is outside git and changing it needs
+the user's approval; a worktree-isolated session cannot write it, so ask a
+session running in the main checkout. Upstream issue:
+anthropics/claude-code#83953 (project settings are branch-local in worktrees).
 
 Two things to expect here, so they are not mistaken for failures:
 

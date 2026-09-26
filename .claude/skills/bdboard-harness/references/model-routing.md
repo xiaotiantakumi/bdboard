@@ -129,31 +129,42 @@ route.sh は選択に必要な構造と候補を検証する読み取り専用�
 
 `*` は既定値であって排他ではない。同じ工程に `*` と個別キーを併記でき、**個別キーが勝つ**。
 
-## pre-bash-guard.sh の aimix 引数解釈
+## aimix-run.sh — 規律6 の照合ラッパー
 
-規律6の hook は `aimix run` の 1 セグメントを 1 回走査し、長オプションの名前解決は aimix 本体の
-argparse (`allow_abbrev=True`) と同じ「完全一致、無ければ一意な前方一致」にする。
-`--flag value` / `--flag=value` の両方と後勝ちを扱う。例えば `--co` は `--complexity` だが、
+aimix は `scripts/aimix-run.sh <aimix run の引数…>` 経由で呼ぶ (bdboard-cm2q.12、パック 0.55.0。
+注入先では `.claude/skills/bdboard-harness/scripts/aimix-run.sh`)。素の `aimix run` は注入先の
+`.claude/settings.json` の `Bash(aimix run *)` deny で止まる。ラッパーはシェルが引用符を外した後の
+argv をそのまま受け取るので、旧 pre-bash-guard.sh 規則 6 のようなコマンド文字列の分割・引用符の
+復元はしない。照合するのは実効 mode が `implement` / `refactor` のときだけで、mode 省略 (aimix の
+既定 `consult`) と `consult` / `review` / `debate` はそのまま実行する。
+
+長オプションの名前解決は aimix 本体の argparse (`allow_abbrev=True`) と同じ「完全一致、無ければ
+一意な前方一致」にする。`--flag value` / `--flag=value` の両方と後勝ちを扱い、値を取るオプション
+(`--task` 等) の値は `--` で始まっていても値として読み飛ばす。例えば `--co` は `--complexity` だが、
 `--memb` (`--member` / `--members`) や `--mod` (`--mode` / `--model`) は曖昧である。aimix 本体は
-曖昧略記を argparse エラーにして実行しない。一方、hook の分割は近似 (空白分割のあと引用符が
-閉じるまで断片をつなぎ直して引用符を外すが、エスケープや `$()` は扱わない) なので、曖昧・未知な
-トークンだけを無視し、後続フラグの走査は続ける。
+曖昧略記を argparse エラーにして実行しないので、ラッパーは曖昧・未知な名前を無視する。
 
 `--complexity` 省略時は aimix の既定 `med` としてセルを引く。空でない `--member` があればそれを
 優先し、無ければ `--members` の comma 区切りで先頭の空でない member を使う。候補があるセルでは、
-member 不明の呼び出しと `--members` 由来の呼び出しを deny する。前者は aimix が `--model` を無視して
+member 不明の呼び出しと `--members` 由来の呼び出しを止める。前者は aimix が `--model` を無視して
 registry 等から自動選択し、後者も `--model` を無視して tier 既定モデルで先頭 member だけを実行する
 ためである。`--member <member> --model <候補>` の形へ直す。
 
 候補が空なら `route.sh --excluded` と照合する。除外で空になったセルでは、member 不明
-(aimix がレジストリの既定から除外中の member を選びうる) と除外中の member を deny し、除外されて
+(aimix がレジストリの既定から除外中の member を選びうる) と除外中の member を止め、除外されて
 いない member は通す。未宣言セルは従来どおり fail-open。`--complexity` の明示値が `low` / `med` /
-`high` 以外の場合も、aimix 自身が argparse エラーで実行しないため hook は素通りする。
+`high` 以外の場合も、aimix 自身が argparse エラーで実行しないためラッパーは素通りする。
 
-走査するのはセグメント内の最初の `aimix run` より後ろだけで、その前置部で引用符が開いたまま
-(`bash -c "aimix run ..."` / `"$(aimix run ...)"`) なら、閉じる引用符の手前までを aimix の引数と
-みなす。引用符の中の `;` `&` `|` 改行でセグメントが途中で割れた (閉じない引用符が残った) ときは、
-割れ目より前に member と `--complexity` が明示されている場合だけ判定し、それ以外は素通りする。
+止めたときは exit 2 で、stderr に理由・候補・`BDBOARD_ROUTE_OVERRIDE="<理由>"` の案内の 3 行を
+出す (aimix は起動しない)。照合できないとき (git リポジトリ外・route.sh が無い・route.sh が
+失敗) は警告 1 行を出して照合せずに実行する (fail-open。振り分けの不備で委譲そのものを止めない)。
+契約は `--cwd` があればそのプロジェクト、無ければカレントのプロジェクトから読む。aimix が PATH に
+無ければ `AIMIX_BIN=<aimix の絶対パス>` を付ける。
+
+deny が止めるのは Claude Code が書く普段の形 (`aimix run …`、`&&` の後ろ、`timeout` 等の
+ラッパー越し) だけで、`aimix` の絶対パス呼び出しや `bash -c "aimix run …"` は止まらない
+(Bash ルールの仕様上の限界。https://code.claude.com/docs/en/permissions の
+"What a Bash rule doesn't match")。境界ではなく、普段の経路をラッパーへ寄せる網として扱う。
 
 ## レートリミット除外 (models.exclude)
 
@@ -189,16 +200,16 @@ member がレートリミットに当たっているときに、`.claude/bdboard
 2026-09-16 09:00 まで通る。期限切れの entry は自動で無視されるが削除はされず、
 ボードの Hygiene に「期限切れの除外が N 件」として残る（掃除は人間が判断する）。
 
-**route.sh / pre-bash-guard.sh (規律6) の両方が同じ除外判定を通る。** 有効な除外の
+**route.sh / aimix-run.sh (規律6) の両方が同じ除外判定を通る。** 有効な除外の
 member は route.sh の出力時点で候補から落ち、規律6のセル所属チェックもその出力を
-見るため、部分的な除外 (セルに候補が1件以上残る場合) は表と hook で結論が一致する。
+見るため、部分的な除外 (セルに候補が1件以上残る場合) は表とラッパーで結論が一致する。
 
-**除外でセルの候補が全部 0 件になった場合は、除外中の member だけを hook が止める。**
+**除外でセルの候補が全部 0 件になった場合は、除外中の member だけをラッパーが止める。**
 route.sh の通常出力はこのとき空 (無出力 exit 0) で、「宣言されていないセル (意見なし)」
 と見分けがつかない。そこで規律6は候補が空のときに `route.sh --excluded <工程> <複雑度>`
 を引く。`--excluded` はセルを引けた (宣言されていて妥当な) ときだけ有効な除外の member
-を返し、セルが無ければ通常モードと同じく無出力になる。hook は `--member` がその一覧に
-あれば deny し、無ければ従来どおり fail-open で通す — 空セルを全面 deny にすると、枠逼迫の
+を返し、セルが無ければ通常モードと同じく無出力になる。ラッパーは `--member` がその一覧に
+あれば止め、無ければ従来どおり fail-open で通す — 空セルを全面停止にすると、枠逼迫の
 退避 (exclude) がそのセルの委譲の全停止になるため。宣言されていないセルは引き続き
 意見なしで、除外中の member でも止めない。
 ボード側はこの状態を「検証コントラクト不正」にはせず、`modelExclusionWarnings` の
