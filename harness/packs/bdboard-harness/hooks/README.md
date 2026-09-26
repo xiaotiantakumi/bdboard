@@ -4,6 +4,14 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 の hook で機械的に止めるスクリプト群 (bdboard-pkr6.1 / docs/HARNESS-EVALUATION.md
 §2.3・§5 P1)。`.claude/settings.json` への登録は注入 API 側が行う (bdboard-pkr6.2)。
 
+## deny と hook の分担
+
+`permissions.deny` (`.claude/settings.json`) は hook がタイムアウト等で素通りしても効く
+最後の守り。理由は出せないので、完全一致/前方一致だけで判定できる操作 (pkill・killall・
+kill・`bd dolt push`/`pull` の裸形・`npm run verify:steps` 直叩き) だけに絞る
+(bdboard-cm2q.1)。hook 規則1〜5 (pre-bash-guard.sh) はそれ以外を担う一次の拒否で、
+何を・なぜ・代わりに何をするかを理由付きで説明して止める。
+
 ## 共通の約束
 
 - **deny は exit 2**、stderr に「何を止めたか / なぜ / 代わりに何をするか」を 3 行以内。
