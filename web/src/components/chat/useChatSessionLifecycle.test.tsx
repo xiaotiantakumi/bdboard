@@ -24,21 +24,43 @@ function lastUpdate<T>(setter: ReturnType<typeof vi.fn>, prev: T): T {
 }
 
 function setup(overrides: Partial<UseChatSessionLifecycleParams> = {}) {
+  // bdboard-33jm: 本番の useLiveMirroredState は setState と ref.current の更新を
+  // 同じ set 関数の中で同期させる(呼び出し元での手書き同期を廃止した)。この probe も
+  // 同じ契約を再現し、setOpenThreadIds/setSelectedThreadIds を呼ぶたびに対応する
+  // ref.current を書き換える(lastUpdate() でも mock.calls をそのまま読める)。
+  const openThreadIdsRef = overrides.openThreadIdsRef ?? { current: {} };
+  const selectedThreadIdsRef = overrides.selectedThreadIdsRef ?? { current: {} };
+  const setOpenThreadIds = vi.fn((next: unknown) => {
+    openThreadIdsRef.current =
+      typeof next === 'function'
+        ? (next as (prev: typeof openThreadIdsRef.current) => typeof openThreadIdsRef.current)(
+            openThreadIdsRef.current,
+          )
+        : (next as typeof openThreadIdsRef.current);
+  });
+  const setSelectedThreadIds = vi.fn((next: unknown) => {
+    selectedThreadIdsRef.current =
+      typeof next === 'function'
+        ? (next as (
+            prev: typeof selectedThreadIdsRef.current,
+          ) => typeof selectedThreadIdsRef.current)(selectedThreadIdsRef.current)
+        : (next as typeof selectedThreadIdsRef.current);
+  });
   const params: UseChatSessionLifecycleParams = {
     selectedProjectId: 'project-a',
-    selectedThreadIdsRef: { current: {} },
+    selectedThreadIdsRef,
     draftNoncesRef: { current: {} },
-    setSelectedThreadIds: vi.fn(),
+    setSelectedThreadIds,
     historyRequestIdRef: { current: 0 },
     setConversations: vi.fn(),
     setHistoryLoadedFor: vi.fn(),
     setLoadingHistoryFor: vi.fn(),
     setThreadModelIds: vi.fn(),
     openThreads: [],
-    openThreadIdsRef: { current: {} },
+    openThreadIdsRef,
     restoredProjectsRef: { current: new Set() },
     setThreadLists: vi.fn(),
-    setOpenThreadIds: vi.fn(),
+    setOpenThreadIds,
     setSelectedAgentId: vi.fn(),
     cancelThreadConfirmDelete: vi.fn(),
     advanceDraftNonceAfterSessionGone: vi.fn(),

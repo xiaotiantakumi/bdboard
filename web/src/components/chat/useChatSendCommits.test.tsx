@@ -41,6 +41,21 @@ function setterFor<K extends keyof Store>(store: Store, key: K) {
   });
 }
 
+// bdboard-33jm: 本番の useLiveMirroredState は setState と ref.current の更新を
+// 同じ set 関数の中で同期させる(呼び出し元での手書き同期を廃止した)。この probe も
+// 同じ契約を再現し、setter を呼ぶたびに ref.current を書き換える。
+function setterForWithRef<K extends keyof Store>(
+  store: Store,
+  key: K,
+  ref: { current: Store[K] },
+) {
+  return vi.fn((next: SetStateAction<Store[K]>) => {
+    const value = typeof next === 'function' ? next(store[key]) : next;
+    store[key] = value;
+    ref.current = value;
+  });
+}
+
 function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
   const store: Store = {
     conversations: {},
@@ -55,13 +70,12 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
   const conversationInputsRef = { current: store.inputs };
   const conversationAttachmentsRef = { current: store.attachments };
   // bdboard-d7on: commitSuccess は openThreadIdsRef.current から次の open 配列を
-  // 計算するようになった(render-mirror の同期漏れ対策)。この probe では
-  // store.openThreadIds を直接は読まない単純な ref で足りる(既存テストはどれも
-  // 事前に開いているスレッドを想定しないため)。
+  // 計算する(render-mirror の同期漏れ対策)。bdboard-33jm で本番側が
+  // useLiveMirroredState に一本化されたため、この probe の setter
+  // (setterForWithRef)も setState と同じ場所で ref.current を更新する。
   const openThreadIdsRef = { current: {} as Record<string, string[]> };
   // bdboard-d7on(Opus レビュー B1/M1 対応): commitSuccess は selectedThreadIdsRef も
-  // 同じ場所で同期するようになった。既存テストはどれも ref の事前値を読まないので
-  // 単純な空 ref で足りる。
+  // 同じ場所で同期する。setterForWithRef が同期するので、初期値は空で足りる。
   const selectedThreadIdsRef = { current: {} as Record<string, string | undefined> };
   const params: UseChatSendCommitsParams = {
     selectedProjectId: 'proj-a',
@@ -71,9 +85,9 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
     setHistoryLoadedFor: setterFor(store, 'historyLoadedFor'),
     setThreadModelIds: setterFor(store, 'threadModelIds'),
     setThreadLists: setterFor(store, 'threadLists'),
-    setOpenThreadIds: setterFor(store, 'openThreadIds'),
+    setOpenThreadIds: setterForWithRef(store, 'openThreadIds', openThreadIdsRef),
     openThreadIdsRef,
-    setSelectedThreadIds: setterFor(store, 'selectedThreadIds'),
+    setSelectedThreadIds: setterForWithRef(store, 'selectedThreadIds', selectedThreadIdsRef),
     selectedThreadIdsRef,
     conversationInputsRef,
     conversationAttachmentsRef,
@@ -137,9 +151,10 @@ describe('commitSuccess', () => {
     expect(store.threadLists['proj-a']).toMatchObject([{ sessionId: 'sess-new', title: 'hello', pinned: false }]);
     expect(store.openThreadIds).toEqual({ 'proj-a': ['sess-new'] });
     expect(store.selectedThreadIds).toEqual({ 'proj-a': 'sess-new' });
-    // bdboard-d7on(Opus レビュー B1/M1): setState と同じ場所で openThreadIdsRef/
-    // selectedThreadIdsRef も同期していることを、state だけでなく ref 自体でも
-    // 確認する(同 tick で ref を読む他ハンドラの安全性はここでしか検証できない)。
+    // bdboard-d7on(Opus レビュー B1/M1)由来の確認。bdboard-33jm 以降 ref の同期は
+    // useLiveMirroredState の責務で、ここでの ref はこのテストのモック setter が
+    // 書いたもの(本番コードの同期は useLiveMirroredState.test.tsx と
+    // render-mirror-ref.race.test.tsx が検証する)。ここでは setter に渡した値の形だけを見る。
     expect(params.openThreadIdsRef.current).toEqual({ 'proj-a': ['sess-new'] });
     expect(params.selectedThreadIdsRef.current).toEqual({ 'proj-a': 'sess-new' });
     expect(ackMock).toHaveBeenCalledWith('proj-a', 'sess-new');

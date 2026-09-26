@@ -1,6 +1,5 @@
 import {
   useRef,
-  useState,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -13,6 +12,7 @@ import {
 import { resolvePersistedSelectionAfterClose, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { buildThreadById, compareThreadsNewestFirst } from './threads';
 import type { UseConversationKeyResult } from './useConversationKey';
+import { useLiveMirroredState } from './useLiveMirroredState';
 
 export interface UseChatThreadListsDrawerActions {
   selectThread: () => void;
@@ -88,8 +88,9 @@ export interface UseChatThreadListsResult {
  * setSelectedThreadIds の直後に selectedThreadIdsRef.current も同期するように
  * なった(render-mirror ラグ対策、詳細はその呼び出し箇所のコメント参照)。
  * これに伴い selectedThreadIdsRef が必須パラメータとして増えている。
- * selectOpenThread/reopenClosedThread は同期を追加していない(理由は各定義
- * 直前のコメント参照)。
+ * (bdboard-33jm 以降、この同期は setSelectedThreadIds 自身が自動でやるため
+ * closeThread 側の明示コードは無くなったが、selectedThreadIdsRef の必須パラメータ
+ * 自体は変わらず残っている — 下記の理由で読み取り側として使い続けるため。)
  *
  * bdboard-ygrg で2つ目の例外: closeThread 内の next/wasSelected の計算を、
  * render スコープの openThreads/currentSessionId ローカルではなく
@@ -110,6 +111,16 @@ export interface UseChatThreadListsResult {
  * 並び替えに使う updatedAt メタデータ自体が古いままになりうる(要素の集合は正しくても順序が
  * 古い)ケースを塞ぎきれていなかったため(詳細は threadListsRef 宣言・closeThread 内の
  * 参照箇所のコメント参照)。
+ *
+ * bdboard-33jm(root): 197q/ygrg/e5cz/dqbz の4件はいずれも同じ根(openThreadIdsRef/
+ * selectedThreadIdsRef/threadListsRef が「フック本体トップレベルでの
+ * render-mirror」または「書き込み側で個別に write site を同期」のどちらかで、
+ * 書き忘れると再発する)から来ていた。openThreadIdsRef/threadListsRef は今は
+ * useLiveMirroredState.ts に一本化し、setOpenThreadIds/setThreadLists を呼ぶだけで
+ * ref.current が同期的に更新される。selectedThreadIdsRef/draftNoncesRef 側の同じ
+ * 一本化は chat/useConversationKey.ts で行った。closeThread がここで ref から
+ * 読む理由(async 継続からの stale closure 対策)自体は変わっていない — 変えたのは
+ * 「ref がどうやって最新に保たれるか」だけ。
  */
 export function useChatThreadLists({
   selectedProjectId,
@@ -120,27 +131,27 @@ export function useChatThreadLists({
   renameDraft,
   drawer,
 }: UseChatThreadListsParams): UseChatThreadListsResult {
-  const [threadLists, setThreadLists] = useState<Record<string, ChatThreadDto[]>>({});
-  const [openThreadIds, setOpenThreadIds] = useState<Record<string, string[]>>({});
-
-  // bdboard-23u: 404/unknown session 自動回復の catch(履歴フェッチ effect から
-  // 呼ばれる chat/useChatSessionLifecycle.ts の handleHistorySessionGone)が、依存配列に openThreadIds を含まないまま
-  // writePersistedChatThreadState 用の最新 activeSessionIds を stale closure
-  // なしで読むための参照。draftNoncesRef 等と同じミラーパターン。
-  const openThreadIdsRef = useRef(openThreadIds);
-  openThreadIdsRef.current = openThreadIds;
-
-  // bdboard-dqbz: closeThread の nextDisplayed ソートが render-time の
-  // threadById(クロージャ)ではなく最新の thread メタデータ(updatedAt)を
-  // 読めるよう、openThreadIdsRef と同じ render-mirror パターンで threadLists を
-  // ミラーする。詳細は closeThread 内の参照箇所のコメント参照。
-  // 注意: この ref は render 中にしか同期しない(書き込み側で明示同期する
-  // openThreadIdsRef/selectedThreadIdsRef と違う)。したがって「最新」とは
-  // 「直近の render 時点」の意味で、1回も render を挟まずに threadLists が
-  // 変わってから同じ tick で closeThread の続きが解決する、という極めて狭い
-  // window では古いままになりうる(実害は軽微な P4 cosmetic バグの範囲内)。
-  const threadListsRef = useRef(threadLists);
-  threadListsRef.current = threadLists;
+  // bdboard-33jm(root): openThreadIdsRef/threadListsRef は以前はどちらも
+  // render-mirror(フック本体のトップレベルで `ref.current = state` するだけで、
+  // 次の再レンダーまでしか追いつかない)だった。openThreadIdsRef はさらに
+  // 書き込み側(chat/useThreadListSync.ts・useDraftThreadLauncher.ts・
+  // useChatSessionLifecycle.ts・useChatSendCommits.ts)が個別に write site で
+  // `openThreadIdsRef.current = {...}` を書く運用も必要で、書き忘れが同じ種類の
+  // バグを7回再発させた(経緯は useLiveMirroredState.ts のコメント参照)。今は
+  // どちらも useLiveMirroredState に一本化し、setOpenThreadIds/setThreadLists を
+  // 呼ぶだけで ref.current が同期的に更新される(呼び出し側の個別の
+  // `xxxRef.current = ...` は不要になり削除済み。dqbz が「P4 cosmetic」として
+  // 残していた threadListsRef の render-only gap もこれで閉じる)。
+  const {
+    value: threadLists,
+    ref: threadListsRef,
+    set: setThreadLists,
+  } = useLiveMirroredState<Record<string, ChatThreadDto[]>>({});
+  const {
+    value: openThreadIds,
+    ref: openThreadIdsRef,
+    set: setOpenThreadIds,
+  } = useLiveMirroredState<Record<string, string[]>>({});
 
   // bdboard-4w2d: UseChatThreadListsResult.restoredProjectsRef 参照。
   // プロジェクト単位の Set なので、useRef の初期値はこのフックの
@@ -171,7 +182,10 @@ export function useChatThreadLists({
   // open/selected state を使えるよう、next と wasSelected は render-mirror
   // refs から読む。選択判定も ref の値だけを使い、render 時の props へフォールバック
   // しない。選択解除後に古い値を復活させ、同じ stale closure バグを選択軸で
-  // 再発させるため。
+  // 再発させるため。bdboard-33jm 以降 openThreadIdsRef/selectedThreadIdsRef は
+  // useLiveMirroredState 経由で常に最新(setOpenThreadIds/setSelectedThreadIds
+  // を呼んだ時点で同期的に更新済み)なので、これらの ref を読む限り
+  // stale になることは無い。
   const closeThread = (sessionId: string) => {
     const liveOpenThreads = openThreadIdsRef.current[selectedProjectId] ?? [];
     const liveSelectedSessionId = selectedThreadIdsRef.current[selectedProjectId];
@@ -199,17 +213,8 @@ export function useChatThreadLists({
       ? nextDisplayed[0]
       : liveSelectedSessionId ?? resolvePersistedSelectionAfterClose(selectedProjectId, next, nextDisplayed[0]);
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
-    openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: next };
     if (wasSelected) {
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextDisplayed[0] }));
-      // bdboard-197q: bdboard-d29q/bdboard-d7on と同じ render-mirror の理由で
-      // selectedThreadIdsRef も同期する。closeThread は deleteThread の async
-      // 継続からも呼ばれるため、他の async resolve (例: applyRecoveredTurn) と
-      // 同 tick で競合し得る。
-      selectedThreadIdsRef.current = {
-        ...selectedThreadIdsRef.current,
-        [selectedProjectId]: nextDisplayed[0],
-      };
     }
     writePersistedChatThreadState(selectedProjectId, {
       activeSessionIds: next,
@@ -218,21 +223,10 @@ export function useChatThreadLists({
     drawer.cancelInteractionsForSession(sessionId);
   };
 
-  // bdboard-197q: ここも setSelectedThreadIds の直後で selectedThreadIdsRef
-  // を同期していない (closeThread と同じ render-mirror の1レンダー遅延が
-  // 理論上ある)。bdboard-197q の調査 (grep + Opus レビューでの追加検証) では
-  // このハンドラは onClick から直接呼ばれる同期関数としてしか呼ばれず、
-  // promise の継続として呼ばれる経路が無いため、意図的に同期を追加していない。
-  // 安全な理由 (React 19 実測、Opus 調査で確認): React 19 は state 更新の
-  // ある同期ハンドラの「最初の setState」の時点でレンダーを microtask として
-  // キューする。ユーザークリックは空の microtask queue から始まるため、
-  // その setState より後にキューされる microtask (他ハンドラの async 継続等)
-  // は、既にキュー済みのレンダー(→ ref 再同期)より後に実行され、常に最新の
-  // ref を読む。ただしこの保護は「このハンドラが最初の setState より前に
-  // 他の microtask を挟まない」という現状のコード形に依存する暗黙の前提で、
-  // 将来ここに await 等を追加すると静かに崩れる。selectedThreadIdsRef を
-  // 読む新しい async 経路を足す変更をする際は、このハンドラも同期対象に
-  // 追加することを検討すること。
+  // bdboard-33jm 以降 setSelectedThreadIds は useLiveMirroredState の set
+  // なので、selectedThreadIdsRef は呼び出し直後から同期済み(bdboard-197q が
+  // 気にしていた「このハンドラが async 継続から呼ばれたら selectedThreadIdsRef
+  // が古いままかもしれない」という懸念は、この一本化によって構造的に無くなった)。
   const selectOpenThread = (sessionId: string) => {
     drawer.selectThread();
     setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
@@ -242,15 +236,12 @@ export function useChatThreadLists({
     });
   };
 
-  // bdboard-197q: selectOpenThread と同じ理由・同じ保護で selectedThreadIdsRef
-  // の同期を意図的に省略している (上のコメント参照)。
-  // 別件: このハンドラの next 計算 ([...openThreads, sessionId]) は
-  // render-time の openThreads state に依存しており、closeThread と同型の
-  // 「async 継続から呼ばれた場合に stale な値を見る」リスクを理論上持つ。
-  // bdboard-ygrg で closeThread 側の同型バグ(next/wasSelected の closure
-  // staleness)を openThreadIdsRef/selectedThreadIdsRef 参照に修正した際、
-  // reopenClosedThread はこの調査で「grep 済み・onClick からの同期呼び出し
-  // のみで async 継続として呼ばれる経路が無い」ため対象外にした
+  // selectOpenThread と同じ理由で selectedThreadIdsRef の同期は自動(上の
+  // コメント参照)。別件: このハンドラの next 計算 ([...openThreads,
+  // sessionId]) は render-time の openThreads state に依存しており、
+  // closeThread と同型の「async 継続から呼ばれた場合に stale な値を見る」
+  // リスクを理論上持つ。bdboard-ygrg の調査時点では「grep 済み・onClick からの
+  // 同期呼び出しのみで async 継続として呼ばれる経路が無い」ため対象外にした
   // (evidence-first、実害が無いものは修正しない方針)。将来 reopenClosedThread
   // を async 経路(例: 何らかの確認 API を待ってから reopen する変更)から
   // 呼ぶようになった場合は、closeThread と同じ ref 参照パターンへの修正を
@@ -258,7 +249,6 @@ export function useChatThreadLists({
   const reopenClosedThread = (sessionId: string) => {
     const next = [...openThreads, sessionId];
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
-    openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: next };
     setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
     writePersistedChatThreadState(selectedProjectId, {
       activeSessionIds: next,

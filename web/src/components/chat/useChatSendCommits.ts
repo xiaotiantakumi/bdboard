@@ -115,9 +115,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
         result.sessionId,
       ];
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpenAfterCommit }));
-      openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: nextOpenAfterCommit };
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: result.sessionId }));
-      selectedThreadIdsRef.current = { ...selectedThreadIdsRef.current, [selectedProjectId]: result.sessionId };
       // ここでは未回収の印を外さない (PR#135 レビュー minor-1)。
       // 通常の成功では印はそもそも立っていない (印を立てるのは abort の catch だけ)
       // ので、外して意味があるのは「見届けられなかったスレッドへ戻り、取り直しが

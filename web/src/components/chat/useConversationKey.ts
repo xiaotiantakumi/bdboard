@@ -3,9 +3,11 @@ import {
   useState,
   type Dispatch,
   type MutableRefObject,
+  type RefObject,
   type SetStateAction,
 } from 'react';
 import { makeDraftKey } from './draftKey';
+import { useLiveMirroredState } from './useLiveMirroredState';
 
 export interface UseConversationKeyResult {
   selectedThreadIds: Record<string, string | undefined>;
@@ -16,7 +18,11 @@ export interface UseConversationKeyResult {
   draftNoncesRef: MutableRefObject<Record<string, number>>;
   currentSessionId: string | undefined;
   currentConversationKey: string;
-  currentConversationKeyRef: MutableRefObject<string>;
+  currentConversationKeyRef: RefObject<string>;
+}
+
+function draftKeyFor(projectId: string, nonces: Record<string, number>): string {
+  return makeDraftKey(projectId, nonces[projectId] ?? 0);
 }
 
 /**
@@ -24,31 +30,49 @@ export interface UseConversationKeyResult {
  * draftNonces と、そこから計算する currentSessionId/currentConversationKey、
  * および各種 stale-closure 回避用の ref ミラー)を move-only で抜き出したもの。
  * effect は持たない(元々どれも useState/派生値の計算だけで、effect はここには
- * 無かった)。読み取り方式(prev で読む/ref で読む/render の値で読む)は一切
- * 変えていない。
+ * 無かった)。
+ *
+ * bdboard-33jm(root): selectedThreadIdsRef/draftNoncesRef は
+ * 以前は「フック本体のトップレベルで `ref.current = state` する」render-mirror
+ * だった(次の再レンダーまでしか追いつかず、書き込み側が個別に write site で
+ * ref を同期する運用が必要だった。同じ種類のバグが7回再発した経緯は
+ * useLiveMirroredState.ts のコメント参照)。今は useLiveMirroredState に
+ * 一本化し、setSelectedThreadIds/setDraftNonces を呼ぶだけで ref.current が
+ * 同期的に更新される(呼び出し側で個別に `xxxRef.current = ...` を書く必要は
+ * 無くなった — 既存の書き込み箇所からその代入行は削除済み)。
+ *
+ * currentConversationKeyRef は他の2つと違い直接 setState されない派生値なので
+ * useLiveMirroredState は使わない。代わりに(常に最新の)selectedThreadIdsRef/
+ * draftNoncesRef から都度計算する getter にした — 代入する書き込み箇所が無いので
+ * 「同期を書き忘れる」余地自体が無い。getter オブジェクト自身は
+ * useState の遅延初期化で1回だけ作る(元の useRef と同じ「生存期間中 identity
+ * 不変」を保つ — useCallback の依存配列にこれまでどおり安全に載せられる)。
+ * selectedProjectId 自体は今回のスコープ外(このチケットが対象とするのは
+ * selectedThreadIdsRef/draftNoncesRef/openThreadIdsRef/threadListsRef の
+ * 同期漏れで、selectedProjectId の参照方式に既知のバグは無い)なので、
+ * 元どおり render 時点の値を都度 ref へ写すだけにしてある。
  */
 export function useConversationKey(selectedProjectId: string): UseConversationKeyResult {
-  const [selectedThreadIds, setSelectedThreadIds] = useState<Record<string, string | undefined>>(
-    {},
-  );
-  const [draftNonces, setDraftNonces] = useState<Record<string, number>>({});
+  const {
+    value: selectedThreadIds,
+    ref: selectedThreadIdsRef,
+    set: setSelectedThreadIds,
+  } = useLiveMirroredState<Record<string, string | undefined>>({});
+  const { value: draftNonces, ref: draftNoncesRef, set: setDraftNonces } = useLiveMirroredState<
+    Record<string, number>
+  >({});
   const currentSessionId = selectedThreadIds[selectedProjectId];
-  const draftKey = (projectId: string) => makeDraftKey(projectId, draftNonces[projectId] ?? 0);
-  const currentConversationKey = currentSessionId ?? draftKey(selectedProjectId);
-  const currentConversationKeyRef = useRef(currentConversationKey);
-  currentConversationKeyRef.current = currentConversationKey;
+  const currentConversationKey = currentSessionId ?? draftKeyFor(selectedProjectId, draftNonces);
 
-  const draftNoncesRef = useRef(draftNonces);
-  draftNoncesRef.current = draftNonces;
+  const selectedProjectIdRef = useRef(selectedProjectId);
+  selectedProjectIdRef.current = selectedProjectId;
 
-  // bdboard-ysu: chat/useThreadListSync.ts の project-sync effect(E7)が、非同期に解決する
-  // fetchChatThreads().then/.catch の中から「今まさにどのスレッドが選択
-  // されているか」を stale closure を経由せず読むための参照。draftNoncesRef /
-  // conversationInputsRef と同じミラーパターン。
-  const selectedThreadIdsRef = useRef(selectedThreadIds);
-  selectedThreadIdsRef.current = selectedThreadIds;
-  // bdboard-d29q 以降、意味のある遷移を書く呼び出し元も write site で ref を同期する。
-  // ここでのミラー代入は初回レンダーと、同期書き込みをしない呼び出し元のフォールバック。
+  const [currentConversationKeyRef] = useState<RefObject<string>>(() => ({
+    get current() {
+      const projectId = selectedProjectIdRef.current;
+      return selectedThreadIdsRef.current[projectId] ?? draftKeyFor(projectId, draftNoncesRef.current);
+    },
+  }));
 
   return {
     selectedThreadIds,
