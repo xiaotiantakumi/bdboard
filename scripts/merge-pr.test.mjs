@@ -1075,6 +1075,8 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       for (let attempt = 0; attempt < 5; attempt++) {
         result = run(['prepare', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog });
         if (result.status !== 75 || !/^merge-pr: git fetch origin main に失敗しました:/m.test(result.stderr)) return result;
+        // 原因はまだ仮説なので、捨てる 75 の出力を残して次の発生時の証拠にする。
+        process.stderr.write(`bdboard-pwae: prepare attempt ${attempt + 1} exited 75 on fetch, retrying:\n${result.stderr}\n`);
       }
       return result;
     };
