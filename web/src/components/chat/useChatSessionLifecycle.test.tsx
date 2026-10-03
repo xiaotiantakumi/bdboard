@@ -415,6 +415,82 @@ describe('useChatSessionLifecycle', () => {
       expect(readPersistedChatThreads()).toEqual({});
     });
 
+    describe('a dead id that is not the selected one (bdboard-v9tz)', () => {
+      it('drops it from the persisted open list and keeps the selection', () => {
+        writePersistedChatThreadState('project-a', { activeSessionIds: ['A', 'B'], selectedSessionId: 'A' });
+        const { result, params } = setup({
+          selectedThreadIdsRef: { current: { 'project-a': 'A' } },
+          openThreadIdsRef: { current: { 'project-a': ['A', 'B'] } },
+        });
+        act(() => result.current.handleHistorySessionGone('B'));
+
+        // メモリ側は今までどおり落ちる。永続化の側が食い違って ['A','B'] のまま残っていた。
+        expect(params.openThreadIdsRef.current['project-a']).toEqual(['A']);
+        expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['A'], selectedSessionId: 'A' });
+        expect(params.selectedThreadIdsRef.current['project-a']).toBe('A');
+        expect(params.setSelectedThreadIds).not.toHaveBeenCalled();
+        expect(params.advanceDraftNonceAfterSessionGone).not.toHaveBeenCalled();
+      });
+
+      it('leaves the other persisted ids untouched, even when the project list is not restored and memory is empty', () => {
+        writePersistedChatThreadState('project-a', { activeSessionIds: ['A', 'B', 'C'], selectedSessionId: 'C' });
+        const { result } = setup({ selectedThreadIdsRef: { current: { 'project-a': 'C' } } });
+        act(() => result.current.handleHistorySessionGone('B'));
+
+        expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['A', 'C'], selectedSessionId: 'C' });
+      });
+
+      it('keeps the persisted selection while a draft is shown (bdboard-e5cz rule)', () => {
+        writePersistedChatThreadState('project-a', { activeSessionIds: ['A', 'B'], selectedSessionId: 'A' });
+        const { result } = setup({
+          selectedThreadIdsRef: { current: {} },
+          openThreadIdsRef: { current: { 'project-a': ['A', 'B'] } },
+        });
+        act(() => result.current.handleHistorySessionGone('B'));
+
+        expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['A'], selectedSessionId: 'A' });
+      });
+
+      it('writes the live selection when the persisted one pointed at the dead id', () => {
+        writePersistedChatThreadState('project-a', { activeSessionIds: ['A', 'B'], selectedSessionId: 'B' });
+        const { result } = setup({
+          selectedThreadIdsRef: { current: { 'project-a': 'A' } },
+          openThreadIdsRef: { current: { 'project-a': ['A', 'B'] } },
+        });
+        act(() => result.current.handleHistorySessionGone('B'));
+
+        expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['A'], selectedSessionId: 'A' });
+      });
+
+      it('does not write when the persisted open list never held the dead id, or when nothing is persisted', () => {
+        writePersistedChatThreadState('project-a', { activeSessionIds: ['A'], selectedSessionId: 'A' });
+        const setItem = vi.spyOn(Storage.prototype, 'setItem');
+        const { result } = setup({
+          selectedThreadIdsRef: { current: { 'project-a': 'A' } },
+          openThreadIdsRef: { current: { 'project-a': ['A', 'B'] } },
+        });
+        act(() => result.current.handleHistorySessionGone('B'));
+        expect(setItem).not.toHaveBeenCalled();
+        expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['A'], selectedSessionId: 'A' });
+
+        localStorage.clear();
+        act(() => result.current.handleHistorySessionGone('B'));
+        expect(setItem).not.toHaveBeenCalled();
+        expect(readPersistedChatThreads()).toEqual({});
+        setItem.mockRestore();
+      });
+
+      it('only touches the current project', () => {
+        writePersistedChatThreadState('project-a', { activeSessionIds: ['A', 'B'], selectedSessionId: 'A' });
+        writePersistedChatThreadState('project-b', { activeSessionIds: ['B', 'X'], selectedSessionId: 'X' });
+        const { result } = setup({ selectedThreadIdsRef: { current: { 'project-a': 'A' } } });
+        act(() => result.current.handleHistorySessionGone('B'));
+
+        expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['A'], selectedSessionId: 'A' });
+        expect(readPersistedChatThreads()['project-b']).toEqual({ activeSessionIds: ['B', 'X'], selectedSessionId: 'X' });
+      });
+    });
+
     it('keeps the callback identity across renders, so E12 does not restart its fetch', () => {
       const { result, rerender, params } = setup();
       const first = result.current.handleHistorySessionGone;
