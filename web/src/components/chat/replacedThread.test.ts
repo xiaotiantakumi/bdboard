@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   clearUnobservedOriginFor,
   createReplacedThreadMarks,
+  discardUnobservedOriginOnSettle,
   markUnobservedSend,
   persistedOpenBaseAfterCommit,
   planReplacedThread,
@@ -141,5 +142,33 @@ describe('unobserved send origins', () => {
     expect(marks.unobservedOrigins).toEqual({ 'proj-b': 'B' });
     clearUnobservedOriginFor(marks, 'proj-a', 'B');
     expect(marks.unobservedOrigins).toEqual({ 'proj-b': 'B' });
+  });
+});
+
+// bdboard-0u16: 中断した送信のターンが回収できる完了を残さず終わった(turn-status が idle / failed を
+// 返した)なら、残っている起点の記録は古い。捨てないと、後の無関係な回収(開いていない既知のセッション)が
+// その起点を「置き換えられた」と判定して無関係なスレッドを閉じてしまう。
+describe('discardUnobservedOriginOnSettle', () => {
+  it.each(['idle', 'failed'] as const)('drops the project record when turn-status is %s, for that project only', (state) => {
+    const marks = createReplacedThreadMarks();
+    markUnobservedSend(marks, 'proj-a', 'B', undefined);
+    markUnobservedSend(marks, 'proj-b', 'D', undefined);
+    discardUnobservedOriginOnSettle(marks, 'proj-a', state);
+    expect(marks.unobservedOrigins).toEqual({ 'proj-b': 'D' });
+  });
+
+  it.each(['processing', 'completed'] as const)('keeps the record while turn-status is %s (the turn may still be recovered)', (state) => {
+    const marks = createReplacedThreadMarks();
+    markUnobservedSend(marks, 'proj-a', 'B', undefined);
+    discardUnobservedOriginOnSettle(marks, 'proj-a', state);
+    expect(marks.unobservedOrigins).toEqual({ 'proj-a': 'B' });
+  });
+
+  it('is a no-op without a record, and leaves the gone marks alone', () => {
+    const marks = createReplacedThreadMarks();
+    marks.goneKeys.add('B');
+    discardUnobservedOriginOnSettle(marks, 'proj-a', 'idle');
+    expect(marks.unobservedOrigins).toEqual({});
+    expect([...marks.goneKeys]).toEqual(['B']);
   });
 });

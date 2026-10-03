@@ -8,7 +8,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto } from '../api';
-import { readPersistedChatThreads } from '../chatThreadStorage';
+import { readPersistedChatThreads, writePersistedChatThreadState } from '../chatThreadStorage';
 import { installFakeHistory } from '../test/fakeHistory';
 import { CHAT_BUSY_HELP } from '../writeAccessMessage';
 
@@ -917,6 +917,125 @@ describe('ChatPanel', () => {
     await waitFor(() => {
       expect(state.staleHistoryGets).toBe(getsBeforeReopen + 1);
     });
+  });
+
+  // bdboard-0u16: w9hv の起点の記録(deliverChatSend が sessionId 無しの中断した再送で憶える)は、そのターンが
+  // 回収できる完了を残さず終わった(サーバー側で失敗 / idle)のに残ってはならない。残ると、後の turn-status 回収が
+  // 「開いていない既知のセッション」(下の closed-session)を返したとき、その起点(stale-session)を
+  // 置き換えられたと判定して、無関係な開いているスレッドを閉じてしまう。
+  // 流れ: 再送(POST 2、sessionId 無し)を別スレッドへの切り替えで abort → turn-status は settled(idle / failed)
+  // → other-session から別の送信(POST 3)を出して abort → 回収が closed-session の完了を返す。
+  it.each([
+    ['idle', { state: 'idle' } satisfies ChatTurnStatusDto],
+    ['failed', { state: 'failed', code: 'agent_error', agentId: 'claude', failedAt: '2026-01-02T00:00:30Z' } satisfies ChatTurnStatusDto],
+  ])('bdboard-0u16: an aborted re-send whose turn ended %s does not close an unrelated open thread when a later turn-status recovery returns a known closed session', async (_label, settled) => {
+    const user = userEvent.setup();
+    const titles: Record<string, string> = {
+      'other-session': 'other thread',
+      'stale-session': 'stale thread',
+      'closed-session': 'closed thread',
+    };
+    const serverThreads: ChatThreadDto[] = Object.entries(titles).map(([sessionId, title]) => ({
+      sessionId,
+      agentId: 'claude',
+      title,
+      pinned: false,
+      updatedAt: '2026-01-02T00:00:00Z',
+    }));
+    const state = { firstAborted: false, secondAborted: false, closedAcked: false, statusPolls: 0 };
+    fetchChatThreadsMock.mockImplementation(() => Promise.resolve(serverThreads));
+    fetchChatTurnStatusMock.mockImplementation(() => {
+      state.statusPolls += 1;
+      if (state.secondAborted && !state.closedAcked) {
+        return Promise.resolve<ChatTurnStatusDto>({
+          state: 'completed',
+          sessionId: 'closed-session',
+          agentId: 'claude',
+          completedAt: '2026-01-02T00:01:00Z',
+        });
+      }
+      return Promise.resolve<ChatTurnStatusDto>(state.firstAborted ? settled : { state: 'idle' });
+    });
+    acknowledgeChatTurnMock.mockImplementation((_projectId, sessionId) => {
+      if (sessionId === 'closed-session') state.closedAcked = true;
+      return Promise.resolve();
+    });
+    let postCount = 0;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        postCount += 1;
+        if (postCount === 1) return Promise.resolve(jsonResponse({ error: 'unknown chat session' }, 400));
+        // POST 2(再送)と POST 3 は返答が来る前に、切り替えによる abort で打ち切られる。
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            if (postCount === 2) state.firstAborted = true;
+            else state.secondAborted = true;
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          });
+        });
+      }
+      const sessionId = /\/api\/chat\/sessions\/([^/]+)\/messages/.exec(url)?.[1];
+      if (sessionId !== undefined) {
+        return Promise.resolve(
+          jsonResponse({
+            sessionId,
+            agentId: 'claude',
+            messages: [{ role: 'user', content: `${sessionId} history`, createdAt: '2026-01-02T00:00:00Z' }],
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+    // closed-session は一覧にあるが、永続化済みの open には入っていない(閉じたスレッド)。
+    writePersistedChatThreadState('proj-a', {
+      activeSessionIds: ['other-session', 'stale-session'],
+      selectedSessionId: 'other-session',
+    });
+    const { container } = renderChatPanel([PROJECT_A]);
+
+    await selectThreadFromDrawer(container, user, 'stale thread');
+    await within(screen.getByRole('log')).findByText('stale-session history');
+    await user.type(screen.getByLabelText('メッセージ'), 'second');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('メッセージ')).toHaveValue('second');
+    });
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(getChatMessagePostCalls(fetchMock)).toHaveLength(2);
+    });
+    expect(parseChatMessageBody(fetchMock, 1)).not.toHaveProperty('sessionId');
+
+    // 再送を別スレッドへの切り替えで abort する。張り直された回収が settled(idle / failed)を見るまで待つ。
+    const pollsBeforeFirstAbort = state.statusPolls;
+    await selectThreadFromDrawer(container, user, 'other thread');
+    await waitFor(() => {
+      expect(state.firstAborted).toBe(true);
+      expect(state.statusPolls).toBeGreaterThan(pollsBeforeFirstAbort);
+    });
+
+    // other-session(sessionId 付き)から別の送信を出して abort する。これで回収が張り直され、今度は
+    // 開いていない既知のセッション closed-session の完了を返す。
+    await user.type(screen.getByLabelText('メッセージ'), 'third');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(getChatMessagePostCalls(fetchMock)).toHaveLength(3);
+    });
+    expect(parseChatMessageBody(fetchMock, 2)).toHaveProperty('sessionId', 'other-session');
+    await selectThreadFromDrawer(container, user, 'stale thread');
+    await waitFor(() => {
+      expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'closed-session');
+    });
+
+    // stale-session は無関係なので、開いたまま・選択したままで、closed-session が足されただけ。
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['other-session', 'stale-session', 'closed-session'],
+      selectedSessionId: 'stale-session',
+    });
+    openThreadDrawer(container);
+    const openSection = drawerSection(container, '開いているスレッド');
+    expect(within(openSection as HTMLElement).getByRole('button', { name: 'stale thread' })).toBeInTheDocument();
+    expect(within(openSection as HTMLElement).getByRole('button', { name: 'closed thread' })).toBeInTheDocument();
   });
 
   it('disables the textarea and submit button while sending', async () => {

@@ -8,6 +8,7 @@ import {
   type ChatThreadDto,
   type ChatTurnStatusDto,
 } from '../../api';
+import { discardUnobservedOriginOnSettle, type ReplacedThreadMarks } from './replacedThread';
 import { TURN_STATUS_POLL_RETRY_BACKOFF_MS } from './turnStatusPolicy';
 import { decideTurnStatusStep } from './turnStatusStep';
 
@@ -46,6 +47,7 @@ export function useTurnStatusRecovery(params: {
   detachedSendsRef: MutableRefObject<Record<string, DetachedTurnSend>>;
   historyRequestIdRef: MutableRefObject<number>;
   threadListRequestIdRef: MutableRefObject<number>;
+  replacedMarksRef: MutableRefObject<ReplacedThreadMarks>;
   setLoadingHistoryFor: (value: string | null) => void;
   clearStreamingReplyForKey: (key: string) => void;
   clearUnresolvedSend: (sessionId: string) => void;
@@ -61,6 +63,7 @@ export function useTurnStatusRecovery(params: {
     detachedSendsRef,
     historyRequestIdRef,
     threadListRequestIdRef,
+    replacedMarksRef,
     setLoadingHistoryFor,
     clearStreamingReplyForKey,
     clearUnresolvedSend,
@@ -102,6 +105,9 @@ export function useTurnStatusRecovery(params: {
         if (cancelled) return;
         consecutiveFailures = 0;
         setBackgroundTurnStatus(status);
+        // bdboard-0u16: idle / failed なら、中断した再送のターンは回収できる完了を残さず終わった。
+        // 起点の記録(chat/replacedThread.ts)を捨てる(でないと後の無関係な回収が別のスレッドを閉じる)。
+        discardUnobservedOriginOnSettle(replacedMarksRef.current, selectedProjectId, status.state);
 
         const detachedEntry = detachedSendsRef.current[selectedProjectId];
         const step = decideTurnStatusStep({
@@ -249,6 +255,7 @@ export function useTurnStatusRecovery(params: {
     detachedSendsRef,
     historyRequestIdRef,
     threadListRequestIdRef,
+    replacedMarksRef,
     setLoadingHistoryFor,
     clearStreamingReplyForKey,
     clearUnresolvedSend,

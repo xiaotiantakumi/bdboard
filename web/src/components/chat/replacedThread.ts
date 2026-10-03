@@ -5,6 +5,7 @@
  * (chat/useChatSessionLifecycle.ts の applyRecoveredTurn)の両方から同じ規則で呼べるよう
  * 純粋関数へ切り出したもの。React にも localStorage にも依存しない。
  */
+import type { ChatTurnStatusDto } from '../../api';
 
 /**
  * 置き換えの判断材料として憶えておく印。state ではなく ref に置く(描画に使わず、書き込みも
@@ -24,8 +25,10 @@ export interface ReplacedThreadMarks {
    * bdboard-w9hv: projectId → 結果を見届けられなかった(abort / 配信停止)、sessionId 無しの
    * 送信の会話キー。sessionId 無しの送信は未解決の印(markUnresolvedSend)を付けられず、
    * turn-status 回収が返すセッションがどのスレッドの送信だったかを辿れないため、ここに憶える。
-   * 回収(applyRecoveredTurn)が引き取る。引き取られないまま同じ会話キーの送信が成功したとき
-   * (commitSuccess)は、clearUnobservedOriginFor が消す。
+   * 回収(applyRecoveredTurn)が引き取る。引き取られないまま終わるときは古い記録になるので消す:
+   * 同じ会話キーの送信が成功したとき(commitSuccess、clearUnobservedOriginFor)、turn-status が
+   * idle / failed を返したとき(discardUnobservedOriginOnSettle。chat/useTurnStatusRecovery.ts)、
+   * 配信停止した送信が fail() で送信失敗に戻るとき(chat/deliverChatSend.ts、clearUnobservedOriginFor)。
    */
   unobservedOrigins: Record<string, string>;
 }
@@ -67,6 +70,23 @@ export function takeUnobservedOrigin(marks: ReplacedThreadMarks, projectId: stri
  */
 export function clearUnobservedOriginFor(marks: ReplacedThreadMarks, projectId: string, key: string): void {
   if (marks.unobservedOrigins[projectId] === key) delete marks.unobservedOrigins[projectId];
+}
+
+/**
+ * bdboard-0u16: turn-status が idle / failed を返した(走っているターンも、回収待ちの完了も無い)なら、
+ * 中断した送信のターンは回収できる完了を残さず終わっている(サーバー側で失敗した・始まらなかった・
+ * 別のクライアントが ACK 済み)。completed は先に配られるので、failed が見えている時点で完了は残っていない。
+ * そのプロジェクトの起点の記録は古いので捨てる。残すと、後の turn-status 回収が開いていない既知の
+ * セッションを返したとき、その起点が「置き換えられた」と判定され、無関係な開いているスレッドが閉じる。
+ * processing(まだ走っている)と completed(回収の takeUnobservedOrigin が引き取る)では捨てない。
+ * gone の印には触れない(送信失敗の記録で、ターンの結末とは別)。
+ */
+export function discardUnobservedOriginOnSettle(
+  marks: ReplacedThreadMarks,
+  projectId: string,
+  turnState: ChatTurnStatusDto['state'],
+): void {
+  if (turnState === 'idle' || turnState === 'failed') delete marks.unobservedOrigins[projectId];
 }
 
 export interface ReplacedThreadPlan {

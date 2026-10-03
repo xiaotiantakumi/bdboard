@@ -122,6 +122,8 @@ export function createChatThreadRoutes(deps: ChatThreadRoutesDeps, turnTracker: 
     // ターンは isBusy の単一ロックで直列化されるので、1つのターンが completed と
     // failed の両方に載ることは無い (別ターンどうしがそれぞれ未回収のまま
     // 両方のキューに残ることはあり得るが、completed 優先で構わない)。
+    // この順序 (completed → failed → idle) は web の discardUnobservedOriginOnSettle が
+    // 前提にしている (failed / idle なら回収待ちの完了は無い。bdboard-0u16)。
     const failed = turnTracker.peekFailed(parsed.data.projectId);
     if (failed !== undefined) {
       return c.json({

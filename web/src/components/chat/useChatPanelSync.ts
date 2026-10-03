@@ -165,6 +165,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     detachedSendsRef: detachedStreamSendRef,
     historyRequestIdRef,
     threadListRequestIdRef,
+    replacedMarksRef: send.replacedMarksRef,
     setLoadingHistoryFor,
     clearStreamingReplyForKey,
     clearUnresolvedSend,

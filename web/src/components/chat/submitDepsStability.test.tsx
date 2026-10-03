@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { useChatConversationsState } from './useChatConversationsState';
 import { useConversationKey } from './useConversationKey';
 import { useChatThreadLists } from './useChatThreadLists';
+import { createReplacedThreadMarks } from './replacedThread';
 import { useChatSendState } from './useChatSendState';
 import { useChatSubmit, type ChatSubmitContext } from './useChatSubmit';
 import { useTurnStatusRecovery } from './useTurnStatusRecovery';
@@ -96,6 +97,7 @@ describe('submit/commit deps reference stability (bdboard-sso1.83 第13b段)', (
         detachedSendsRef: { current: {} },
         historyRequestIdRef: { current: 0 },
         threadListRequestIdRef: { current: 0 },
+        replacedMarksRef: { current: createReplacedThreadMarks() },
         setLoadingHistoryFor: vi.fn(),
         clearStreamingReplyForKey: vi.fn(),
         clearUnresolvedSend: vi.fn(),
