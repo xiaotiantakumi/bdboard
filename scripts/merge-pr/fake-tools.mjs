@@ -1,4 +1,4 @@
-// bdboard-ulxa.1: merge-pr.test.mjs 専用の gh / bd / npm の代役。
+// bdboard-ulxa.1: merge-pr*.test.mjs 共有の gh / bd / npm の代役。
 //
 // `node fake-tools.mjs <gh|bd|npm> ...args` として起動される (BDBOARD_MERGE_GH 等の JSON 配列経由。
 // PATH にもシェバンにも依存しない — scripts/fake-gh.mjs と同じ理由)。状態は

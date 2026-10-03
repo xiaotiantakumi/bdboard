@@ -11,6 +11,7 @@
 import { git, gitOk, run } from './exec.mjs';
 import { classifyS2 } from './classify.mjs';
 import { EXIT, fail, fetchedMain, ticketIdFor } from './context.mjs';
+import { assertExternalRefLinked } from './external-ref.mjs';
 import { getLandedStatus, getPull, requiredChecks } from './github.mjs';
 import { brokenMainSteps, rebaseSteps } from './messages.mjs';
 import { verifyPredicted } from './predicted.mjs';
@@ -45,9 +46,10 @@ export function hasApprovedReview(metadata) {
   return typeof value === 'string' && REVIEW_MODEL.test(value.trim());
 }
 
+/** レビュー記録を確かめ、読んだチケットを返す (release-please の PR はチケットを持たないので null)。 */
 function assertReviewRecorded(ctx, pull, pr) {
   if (isReleasePleasePull(pull)) {
-    return;
+    return null;
   }
   const match = /^bd\/(.+)$/.exec(pull.headRef ?? '');
   if (match === null) {
@@ -81,6 +83,7 @@ function assertReviewRecorded(ctx, pull, pr) {
       `現在の値: ${value ?? 'なし'}`,
     );
   }
+  return ticket;
 }
 
 function assertLocalHead(ctx, pull, pr) {
@@ -155,7 +158,7 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
   }
   const pull = getPull(ctx, pr);
   assertOpenPull(ctx, pull, pr);
-  assertReviewRecorded(ctx, pull, pr);
+  const ticket = assertReviewRecorded(ctx, pull, pr);
   const head = assertLocalHead(ctx, pull, pr);
   const id = ticketIdFor(pull.headRef, pr);
   const predBase = fetchedMain(ctx);
@@ -208,6 +211,10 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
     return EXIT.OK;
   }
   removeState(ctx.cwd, pr);
+  // external-ref のチェックは軽い (読み済みのチケットを見るだけ) 一方、cls === 'F' の着地予定ツリー verify は
+  // 数分かかり verify スロットも消費する。PR 本文が issue を指していないだけで結局 fail する
+  // なら、その重い verify の前に安く弾く (bdboard-4y8q.8 レビュー指摘)。
+  assertExternalRefLinked(pull, ticket, id, pr);
   const state = { pr, id, head, predBase, class: cls, preparedAt: new Date().toISOString() };
   if (cls === 'F') {
     refuseBrokenBase(ctx, pr, predBase);

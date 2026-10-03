@@ -152,7 +152,7 @@ export function setup({ merge = {}, mainDate, branchFiles = {} } = {}) {
     fakeState,
     JSON.stringify({
       pulls: {
-        [PR]: { number: PR, state: 'open', merged: false, merge_commit_sha: null, title: TITLE, draft: false, head: { sha: head, ref: 'bd/demo-1' }, base: { ref: 'main' } },
+        [PR]: { number: PR, state: 'open', merged: false, merge_commit_sha: null, title: TITLE, body: '', draft: false, head: { sha: head, ref: 'bd/demo-1' }, base: { ref: 'main' } },
       },
       statuses: { [base]: [status('success')] },
       bdShow: { 'demo-1': [{ metadata: { 'bdboard.model.review': 'opus-5' } }] },
