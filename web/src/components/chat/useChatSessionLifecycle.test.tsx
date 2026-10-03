@@ -518,6 +518,137 @@ describe('useChatSessionLifecycle', () => {
       });
     });
 
+    describe('adopting before the project list is restored (bdboard-oaak)', () => {
+      // 未復元(restoredProjectsRef 未マーク)の採用は、同期的には永続化済みの
+      // activeSessionIds を基点にするしかない(サーバー一覧はまだ無い)。その中に
+      // サーバーがもう持たない id があると、一覧が届いた後も open に残り、
+      // タイトルの引けない「(無題)」タブになる(採用が restoredProjectsRef を立てるので
+      // E7 の応答は open を復元し直さない)。一覧が届いたら、復元の経路
+      // (restoreThreadView)と同じ規則で、基点にした永続化 id のうち一覧に無いものを落とす。
+      it('drops a persisted id the server no longer lists once the refreshed thread list arrives, and persists the pruned open list', async () => {
+        writePersistedChatThreadState('project-a', {
+          activeSessionIds: ['sess-dead', 'sess-1'],
+          selectedSessionId: 'sess-1',
+        });
+        fetchChatThreadsMock.mockResolvedValue([thread('sess-1', 'live'), thread('sess-new', 'resumed')]);
+        const { result, params } = setup();
+        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+        // 同期の段階では一覧が無いので、永続化 id をそのまま基点にする(従来どおり)。
+        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-dead', 'sess-1', 'sess-new'] });
+
+        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1', 'sess-new'] });
+        expect(params.selectedThreadIdsRef.current).toEqual({ 'project-a': 'sess-new' });
+        expect(readPersistedChatThreads()['project-a']).toEqual({
+          activeSessionIds: ['sess-1', 'sess-new'],
+          selectedSessionId: 'sess-new',
+        });
+      });
+
+      it('keeps the adopted session open even when the refreshed list does not contain it yet', async () => {
+        writePersistedChatThreadState('project-a', {
+          activeSessionIds: ['sess-dead', 'sess-1'],
+          selectedSessionId: 'sess-1',
+        });
+        fetchChatThreadsMock.mockResolvedValue([thread('sess-1', 'live')]);
+        const { result, params } = setup();
+        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+
+        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1', 'sess-new'] });
+        expect(readPersistedChatThreads()['project-a']).toEqual({
+          activeSessionIds: ['sess-1', 'sess-new'],
+          selectedSessionId: 'sess-new',
+        });
+      });
+
+      it('does not drop a session opened after the adoption (it was never part of the persisted base)', async () => {
+        writePersistedChatThreadState('project-a', {
+          activeSessionIds: ['sess-dead', 'sess-1'],
+          selectedSessionId: 'sess-1',
+        });
+        // 一覧の取得が走っている間に、別経路(送信成功など)が sess-fresh を open へ足した。
+        // sess-fresh は採用時の基点(永続化 id)に含まれないので、一覧に載っていなくても落とさない。
+        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
+        fetchChatThreadsMock.mockReturnValue(
+          new Promise<ChatThreadDto[]>((resolve) => {
+            resolveThreads = resolve;
+          }),
+        );
+        const { result, params } = setup();
+        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+        act(() => {
+          params.setOpenThreadIds((prev) => ({
+            ...prev,
+            'project-a': [...(prev['project-a'] ?? []), 'sess-fresh'],
+          }));
+        });
+
+        await act(async () => {
+          resolveThreads([thread('sess-1', 'live'), thread('sess-new', 'resumed')]);
+          await Promise.resolve();
+        });
+        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
+
+        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1', 'sess-new', 'sess-fresh'] });
+      });
+
+      it('moves the selection to the adopted session when the user selected an id that turned out to be dead', async () => {
+        writePersistedChatThreadState('project-a', {
+          activeSessionIds: ['sess-dead', 'sess-1'],
+          selectedSessionId: 'sess-1',
+        });
+        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
+        fetchChatThreadsMock.mockReturnValue(
+          new Promise<ChatThreadDto[]>((resolve) => {
+            resolveThreads = resolve;
+          }),
+        );
+        const { result, params } = setup();
+        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+        act(() => {
+          params.setSelectedThreadIds((prev) => ({ ...prev, 'project-a': 'sess-dead' }));
+        });
+
+        await act(async () => {
+          resolveThreads([thread('sess-1', 'live'), thread('sess-new', 'resumed')]);
+          await Promise.resolve();
+        });
+        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
+
+        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1', 'sess-new'] });
+        expect(params.selectedThreadIdsRef.current).toEqual({ 'project-a': 'sess-new' });
+        expect(readPersistedChatThreads()['project-a']).toEqual({
+          activeSessionIds: ['sess-1', 'sess-new'],
+          selectedSessionId: 'sess-new',
+        });
+      });
+
+      it('does not prune anything when the project was already restored (the open list was filtered at restore time)', async () => {
+        fetchChatThreadsMock.mockResolvedValue([thread('sess-new', 'resumed')]);
+        const { result, params } = setup({
+          restoredProjectsRef: { current: new Set(['project-a']) },
+          openThreadIdsRef: { current: { 'project-a': ['sess-live'] } },
+        });
+        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+
+        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-live', 'sess-new'] });
+      });
+    });
+
     it('falls back to an explanatory note when there are no seed messages', () => {
       const { result, params } = setup();
       act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));

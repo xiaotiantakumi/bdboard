@@ -320,6 +320,61 @@ describe('ChatPanel session lifecycle characterization (bdboard-sso1.83 第15a�
       expect(fetchChatThreadsMock).toHaveBeenLastCalledWith('proj-a');
     });
 
+    it('does not leave an id the server no longer lists as an untitled tab when resuming before the first thread list lands (bdboard-oaak)', async () => {
+      const user = userEvent.setup();
+      // 前回訪問の永続化に、サーバーがもう持たない sess-dead が残っている。
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-dead', 'sess-1'],
+        selectedSessionId: 'sess-1',
+      });
+      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
+      // 初回の一覧(E7)はまだ in-flight のまま — 採用が未復元の経路(永続化 id を基点にする)を通る。
+      // 採用後の取り直し(2回目)だけが先に解決する。
+      let resolveFirstList: (threads: ChatThreadDto[]) => void = () => undefined;
+      fetchChatThreadsMock
+        .mockReturnValueOnce(
+          new Promise<ChatThreadDto[]>((resolve) => {
+            resolveFirstList = resolve;
+          }),
+        )
+        .mockResolvedValue([THREAD_1, { ...THREAD_1, sessionId: 'discovered-1', title: 'resumed title' }]);
+      fetchDiscoveredChatSessionsMock.mockResolvedValue({
+        sessions: [{ sessionId: 'discovered-1', lastActivityAt: '2026-08-16T12:00:00.000Z', alreadyAdopted: false }],
+      });
+      stubFetch((url, init) => {
+        if (url.startsWith('/api/chat/sessions/sess-1/messages')) {
+          return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/projects/proj-a/discovered-sessions/discovered-1/adopt' && init?.method === 'POST') {
+          return adoptResponse('discovered-1', 'resumed other session');
+        }
+        return unexpected(url, init);
+      });
+
+      const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+      await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+      await resumeDiscoveredSession(container, user, 'discovered-1');
+
+      expect(await screen.findByText('resumed other session')).toBeInTheDocument();
+      await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(2));
+      // 取り直した一覧(sess-1 と discovered-1 だけ)が届いたら、sess-dead は open から落ちる。
+      await waitFor(() => {
+        expect(container.querySelector('.chat-thread-switcher-count')).toHaveTextContent('スレッド 2');
+      });
+      expect(readPersistedChatThreads()).toEqual({
+        'proj-a': { activeSessionIds: ['sess-1', 'discovered-1'], selectedSessionId: 'discovered-1' },
+      });
+
+      // 遅れて初回の一覧が届いても(E7 は採用が立てたマーカーを見て open を復元し直さない)、
+      // 落とした id は戻らない。
+      resolveFirstList([THREAD_1]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(container.querySelector('.chat-thread-switcher-count')).toHaveTextContent('スレッド 2');
+      expect(readPersistedChatThreads()).toEqual({
+        'proj-a': { activeSessionIds: ['sess-1', 'discovered-1'], selectedSessionId: 'discovered-1' },
+      });
+    });
+
     it('keeps the resumed conversation and shows no error when the thread-list refresh fails', async () => {
       const user = userEvent.setup();
       fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);

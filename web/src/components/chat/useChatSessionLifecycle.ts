@@ -7,6 +7,7 @@ import {
 } from '../../api';
 import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { toChatMessages, type ChatMessage } from './messages';
+import { pruneDeadOpenThreads } from './pruneDeadOpenThreads';
 import { restoreThreadView } from './threadViewRestore';
 import type { UseChatAgentModelStateResult } from './useChatAgentModelState';
 import type { UseChatConversationsStateResult } from './useChatConversationsState';
@@ -240,6 +241,10 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
    * `setOpenThreadIds` には具体値を渡したうえで、副作用は updater の外側で呼ぶ
    * (`handleCloseThread` と同じパターン)。
    *
+   * bdboard-oaak: 未復元の基点はサーバー一覧で絞れていない永続化 id なので、採用の後の
+   * 一覧 fetch が届いたとき、その基点のうち一覧に無い id を open と永続化から落とす
+   * (chat/pruneDeadOpenThreads.ts。復元の経路 restoreThreadView と同じ規則)。
+   *
    * threadModelIds との関係(レビュー指摘: 意図された挙動): 下で
    * `historyLoadedFor[sessionId] = true` を先回りしてセットし、通常の
    * ChatMessageRepository 由来の履歴読み込み effect(`payload.model` から
@@ -302,9 +307,12 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     // ChatMessageRepository 由来の自動読み込み effect は動かさない。
     setHistoryLoadedFor((prev) => ({ ...prev, [sessionId]: true }));
 
-    const baseOpenThreads = [...(restoredProjectsRef.current.has(projectId)
-      ? (openThreadIdsRef.current[projectId] ?? [])
-      : (readPersistedChatThreads()[projectId]?.activeSessionIds ?? []))];
+    // bdboard-oaak: 未復元(初回の一覧 fetch が in-flight)のときだけ、基点が「サーバー一覧で
+    // まだ絞っていない永続化 id」になる。下の fetch が届いたら、その基点のうち一覧に無い id を落とす。
+    const usedPersistedBase = !restoredProjectsRef.current.has(projectId);
+    const baseOpenThreads = [...(usedPersistedBase
+      ? (readPersistedChatThreads()[projectId]?.activeSessionIds ?? [])
+      : (openThreadIdsRef.current[projectId] ?? []))];
     const nextOpenThreads = baseOpenThreads.includes(sessionId)
       ? baseOpenThreads
       : [...baseOpenThreads, sessionId];
@@ -322,6 +330,19 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     void fetchChatThreads(projectId)
       .then((threads) => {
         setThreadLists((prev) => ({ ...prev, [projectId]: threads }));
+        if (!usedPersistedBase) return;
+        // bdboard-oaak: 採用は restoredProjectsRef を立てるので、この後に届く E7 の応答は open を
+        // 復元し直さない。サーバーがもう持たない永続化 id を残すと「(無題)」タブになるため落とす。
+        pruneDeadOpenThreads({
+          projectId,
+          adoptedSessionId: sessionId,
+          baseOpenThreads,
+          threads,
+          openThreadIdsRef,
+          setOpenThreadIds,
+          selectedThreadIdsRef,
+          setSelectedThreadIds,
+        });
       })
       .catch(() => {
         // 一覧の更新に失敗してもタブ表示が「(無題)」になるだけで再開自体は成立している。
