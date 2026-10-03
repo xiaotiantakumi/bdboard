@@ -13,6 +13,7 @@ import { git, gitOk, run, runShellToLog } from './exec.mjs';
 import { postLandedStatus } from './github.mjs';
 import { installInterruptHandler } from './interrupt.mjs';
 import { audit, readInstalledFor, say, stateDir, writeInstalledFor } from './state.mjs';
+import { SLOT_WAIT_TIMEOUT_EXIT_CODE } from '../verify-slot.mjs';
 import { verifyEnv, watchForAbandon } from './verify-queue.mjs';
 
 const LOCKFILES = [
@@ -85,6 +86,9 @@ function postQuietly(ctx, sha, state, description) {
  * 返り値の result: 'success' | 'failure' | 'error' (error = 検証を実行できなかった。台帳に
  * failure は書かない。pending は verify を始める直前にしか書かないので、準備段階の失敗で
  * 他の merger の LEASE を延ばさない)。ledger: false なら台帳には何も書かない (S2 の着地予定ツリー)。
+ * bdboard-wj9m: verify が verify スロット待ちの打ち切り (scripts/verify-slot.mjs の
+ * SLOT_WAIT_TIMEOUT_EXIT_CODE) で終わったときも 'error' (verify は走っていない。failure を書くと
+ * main は壊れていないのに main-broken と誤記録され、枠の保持 (holdBrokenMain) にまで至る)。
  *
  * bdboard-2twf: 未追跡ファイルがあれば (ignore 済みを除く) verify を始めずに 'error' を返す。
  * verify 実行中に SIGINT/SIGTERM を受けたら、子プロセスを終了して restoreTo に戻ってから
@@ -256,6 +260,17 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
     // から戻る (中断シグナルと同じ理由: 先に作業ツリーを戻さない)。
     await activeChild.abandoned;
     return 'abandoned';
+  }
+  if (code === SLOT_WAIT_TIMEOUT_EXIT_CODE) {
+    // bdboard-wj9m: verify スロットの待ちが打ち切られた (verify.mjs の予約済み終了コード)。verify は
+    // 1 行も走っていないので、main が壊れたという結果ではない。台帳には pending 以外を書かず
+    // (failure はもちろん、landed.mjs が main-broken と読む error も)、検証できなかった (error、再試行可) として返す。
+    say(
+      `verify スロットの待ちがタイムアウトしました (exit ${code})。verify は走っていないので、結果は記録しません (failure も書きません)。`,
+      'スロットが空いてからやり直してください。ログの末尾:',
+      tail(logPath, 10),
+    );
+    return 'error';
   }
   const result = code === 0 ? 'success' : 'failure';
   if (result === 'failure') {

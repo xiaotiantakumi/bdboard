@@ -279,10 +279,22 @@ What this means operationally:
   temporary file whose writer pid (the second one) is dead (a SIGKILL between write and
   rename); one whose writer is alive is left alone (bdboard-l3dh). If
   the set of running holders does not change for 15 min, the waiter exits
-  non-zero naming those pids — investigate them (hung verify?) rather than
-  disabling the slot. (The timeout counts time without progress, not total
-  wait, because a low-priority verify may legitimately wait longer than 15
-  min while the queue keeps moving.)
+  **75** (`EX_TEMPFAIL`, `SLOT_WAIT_TIMEOUT_EXIT_CODE` in
+  `scripts/verify-slot.mjs`) naming those pids — investigate them (hung
+  verify?) rather than disabling the slot. (The timeout counts time without
+  progress, not total wait, because a low-priority verify may legitimately
+  wait longer than 15 min while the queue keeps moving.)
+- **Exit 75 means "no verify ran", not "verify failed" (bdboard-wj9m).** A
+  verify that failed exits non-zero as before (mostly 1); 75 is reserved for
+  the slot wait timing out, so a caller that records verdicts can tell the two
+  apart. `merge-pr`'s landed verify treats 75 as "could not run" (exit 1,
+  retry once the slot is free) and posts nothing but `pending` — before this,
+  the timeout exited 1, was recorded as `failure` on
+  `bdboard/landed-verify`, and a healthy main looked broken (and could be held
+  by `holdBrokenMain`). To keep the value unambiguous, `scripts/verify.mjs`
+  maps a verify *step* that happens to exit 75 (e.g. `depcruise`, which exits
+  with its violation count) to 1. Callers that only test "non-zero"
+  (`scripts/always-on-server.sh --verify`, CI) are unaffected.
 - **Env knobs are for tests and emergencies only**: `BDBOARD_VERIFY_SLOTS`
   (default 2; `0` disables gating), `BDBOARD_VERIFY_SLOT_DIR`,
   `BDBOARD_VERIFY_SLOT_WAIT_MS`. Do not raise or disable them just to run

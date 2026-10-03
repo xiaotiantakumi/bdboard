@@ -54,6 +54,13 @@ export const DEFAULT_SLOT_OPTIONS = Object.freeze({
 
 export class SlotWaitTimeoutError extends Error {}
 
+// bdboard-wj9m: スロット待ちの打ち切りで `npm run verify` (scripts/verify.mjs) が返す終了コード。
+// 「verify が落ちた」(1 ほか) と区別するための予約値で、EX_TEMPFAIL (75、merge-pr の EXIT.RETRY と
+// 同じ慣習) = あとで再試行すればよい一時的な失敗。merge-pr の着地後検証 (landed-verify.mjs) は
+// これを main の破損 (台帳への failure) ではなく「検証を実行できなかった」(error) として扱う。
+// 予約を守るため、verify.mjs は本体ステップが偶然 75 で終わっても 1 に丸めて返す。
+export const SLOT_WAIT_TIMEOUT_EXIT_CODE = 75;
+
 function parseIntegerEnv(value) {
   if (value === undefined || value.trim() === '') {
     return undefined;
