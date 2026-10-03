@@ -108,7 +108,8 @@ function unreadableHolder(io, filePath, pid, now, unreadableSince) {
 }
 
 // 一時ファイルに書いてから rename する (読み手が書きかけを「壊れたファイル」として消さないように)。
-// 一時ファイル名は holder-<pid>.json に一致しないので、新旧どちらの読み手にも無視される。
+// 一時ファイル名は holder-<pid>.json に一致しないので holder としては数えない。書いた pid が死んで
+// いれば readOthers が回収する (bdboard-l3dh)。
 //
 // bdboard-smyp: Windows では、自分の acquiredAt 書き込み (rename) が、たまたま同じ瞬間に相手が
 // この holder file を読んでいる操作 (アンチウイルスのスキャン等、ファイルを一時的に開く何か) と

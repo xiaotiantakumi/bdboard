@@ -171,7 +171,8 @@ describe('readOthers', () => {
     it('reclaims the .tmp of a dead pid, and does not count it as a holder', () => {
       const dir = makeDir();
       const pid = deadPid();
-      const leftover = path.join(dir, `holder-${pid}.json.${pid}.tmp`);
+      // holder 側の pid は生きていても、書いた pid (2 つ目) が死んでいれば回収する。
+      const leftover = path.join(dir, `holder-${livePid}.json.${pid}.tmp`);
       fs.writeFileSync(leftover, JSON.stringify({ v: 2, pid, joinedAt: 1_000 }));
       expect(readOthers(dir, selfPathIn(dir)).others).toEqual([]);
       expect(fs.existsSync(leftover)).toBe(false);
@@ -179,7 +180,8 @@ describe('readOthers', () => {
 
     it('keeps the .tmp of a live pid (a write may be in flight) and files that are not holder temporaries', () => {
       const dir = makeDir();
-      const inFlight = path.join(dir, `holder-${livePid}.json.${livePid}.tmp`);
+      // holder 側の pid が死んでいても、書いた pid (2 つ目) が生きていれば消さない。
+      const inFlight = path.join(dir, `holder-${deadPid()}.json.${livePid}.tmp`);
       const unrelated = path.join(dir, `holder-${deadPid()}.json.bak`); // 一時ファイルの名前ではない
       fs.writeFileSync(inFlight, '{"pid": ');
       fs.writeFileSync(unrelated, '');

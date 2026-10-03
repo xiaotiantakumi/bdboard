@@ -234,9 +234,10 @@ What this means operationally:
   swallowed a failed write and simply retry on the next poll, and still do
   once their own retry budget is exhausted (bdboard-smyp; unverified on real
   CI as of writing, added defensively to match the read side). When the
-  rename finally fails, the write deletes its own temporary file
-  (`holder-<pid>.json.<pid>.tmp`) before propagating, and a waiter reclaims a
-  temporary file whose writer pid is dead (a SIGKILL between write and
+  rename gives up (a non-transient errno, or the retry budget is exhausted),
+  the write deletes its own temporary file (`holder-<pid>.json.<pid>.tmp`)
+  before propagating, and any verify that reads the slot directory reclaims a
+  temporary file whose writer pid (the second one) is dead (a SIGKILL between write and
   rename); one whose writer is alive is left alone (bdboard-l3dh). If
   the set of running holders does not change for 15 min, the waiter exits
   non-zero naming those pids — investigate them (hung verify?) rather than
