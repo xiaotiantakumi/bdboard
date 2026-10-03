@@ -8,6 +8,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto } from '../api';
+import { readPersistedChatThreads } from '../chatThreadStorage';
 import { installFakeHistory } from '../test/fakeHistory';
 import { CHAT_BUSY_HELP } from '../writeAccessMessage';
 
@@ -697,6 +698,102 @@ describe('ChatPanel', () => {
       message: 'third',
     });
     expect(thirdBody).not.toHaveProperty('sessionId');
+  });
+
+  // bdboard-drfb: 「送信が clearSession 系の 400 で失敗 → 再送が新しいセッション C で成功」の流れ。
+  // first(ドラフトから確定した stale-session) → second(400) → third(再送、sessionId 無しで C)。
+  function mockResendAfterClearSession(errorMessage: string, state: { historyGets: number }) {
+    let postCount = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        postCount += 1;
+        if (postCount === 1) {
+          return jsonResponse({ reply: 'ok', sessionId: 'stale-session', agentId: 'claude' });
+        }
+        if (postCount === 2) {
+          return jsonResponse({ error: errorMessage }, 400);
+        }
+        return jsonResponse({ reply: 'fresh start', sessionId: 'new-session', agentId: 'claude' });
+      }
+      if (url.includes('/api/chat/sessions/stale-session/messages')) {
+        state.historyGets += 1;
+        return jsonResponse({
+          sessionId: 'stale-session',
+          agentId: 'claude',
+          messages: [{ role: 'user', content: 'first', createdAt: '2026-01-02T00:00:00Z' }],
+        });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+  }
+
+  async function sendFirstSecondThird(user: ReturnType<typeof userEvent.setup>, errorText: string) {
+    await user.type(screen.getByLabelText('メッセージ'), 'first');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('ok');
+    await user.type(screen.getByLabelText('メッセージ'), 'second');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    expect(await screen.findByText(errorText)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText('メッセージ')).toHaveValue('second');
+    });
+    await user.clear(screen.getByLabelText('メッセージ'));
+    await user.type(screen.getByLabelText('メッセージ'), 'third');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('fresh start');
+  }
+
+  function drawerSection(container: HTMLElement, title: string): HTMLElement | null {
+    const drawer = getThreadDrawer(container);
+    const heading = within(drawer).queryByText(title);
+    const section = heading?.closest('.chat-thread-drawer-section');
+    return section instanceof HTMLElement ? section : null;
+  }
+
+  it('bdboard-drfb: after an unknown-chat-session re-send succeeds, the dead thread is gone from the persisted entry and from both drawer sections', async () => {
+    const user = userEvent.setup();
+    mockResendAfterClearSession('unknown chat session', { historyGets: 0 });
+
+    const { container } = renderChatPanel([PROJECT_A]);
+    await sendFirstSecondThird(user, '会話の続きが失われました。もう一度送信してください。');
+
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['new-session'],
+      selectedSessionId: 'new-session',
+    });
+    openThreadDrawer(container);
+    const drawer = getThreadDrawer(container);
+    // 死んだスレッド(タイトル first)は開いている側にも閉じた側にも出ない。
+    expect(within(drawer).queryByText('first')).not.toBeInTheDocument();
+    expect(drawerSection(container, '閉じたスレッド')).toBeNull();
+  });
+
+  it('bdboard-drfb: after a chat-agent-mismatch re-send succeeds, the live thread moves to the closed list and reopening it loads its history once', async () => {
+    const user = userEvent.setup();
+    const state = { historyGets: 0 };
+    mockResendAfterClearSession('chat agent mismatch', state);
+
+    const { container } = renderChatPanel([PROJECT_A]);
+    await sendFirstSecondThird(user, 'エージェントが切り替わったため、会話をやり直します。もう一度送信してください。');
+
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['new-session'],
+      selectedSessionId: 'new-session',
+    });
+    openThreadDrawer(container);
+    const closedSection = drawerSection(container, '閉じたスレッド');
+    expect(closedSection).not.toBeNull();
+    expect(within(closedSection as HTMLElement).getByRole('button', { name: 'first' })).toBeInTheDocument();
+    const openSection = drawerSection(container, '開いているスレッド');
+    expect(within(openSection as HTMLElement).queryByText('first')).not.toBeInTheDocument();
+    expect(state.historyGets).toBe(0);
+
+    await selectThreadFromDrawer(container, user, 'first');
+    await waitFor(() => {
+      expect(state.historyGets).toBe(1);
+    });
+    expect(await within(screen.getByRole('log')).findByText('first')).toBeInTheDocument();
+    expect(state.historyGets).toBe(1);
   });
 
   it('disables the textarea and submit button while sending', async () => {

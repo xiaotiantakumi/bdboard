@@ -12,22 +12,22 @@ import { describeChatSendError } from './chatSendErrors';
 // 本体(applyChatError)から呼ばれる際の分岐順・文言・clearSession の組み合わせを
 // 一箇所で固定する。
 describe('describeChatSendError', () => {
-  it.each<[string, unknown, { text: string; clearSession: boolean }]>([
+  it.each<[string, unknown, { text: string; clearSession: boolean; sessionGone: boolean }]>([
     [
       'writeAccessErrorMessage が先に判定する(429 レート制限)',
       new ApiError(429, 'too many requests'),
-      { text: RATE_LIMITED_HELP, clearSession: false },
+      { text: RATE_LIMITED_HELP, clearSession: false, sessionGone: false },
     ],
     [
       '403(writeAccessErrorMessage の既知パターンに一致しない)',
       new ApiError(403, 'forbidden', { errorMessage: 'something else' }),
-      { text: 'チャットを利用する権限がありません。', clearSession: false },
+      { text: 'チャットを利用する権限がありません。', clearSession: false, sessionGone: false },
     ],
     [
       // bdboard-yzn: writeAccessMessage.ts の CHAT_BUSY_HELP と文言を共有する。
       '409(同一プロジェクトの別メッセージ処理中)',
       new ApiError(409, 'busy'),
-      { text: CHAT_BUSY_HELP, clearSession: false },
+      { text: CHAT_BUSY_HELP, clearSession: false, sessionGone: false },
     ],
     [
       '400 unknown chat session(セッションをクリアして再送を促す)',
@@ -35,6 +35,8 @@ describe('describeChatSendError', () => {
       {
         text: '会話の続きが失われました。もう一度送信してください。',
         clearSession: true,
+        // bdboard-drfb: サーバーに無いセッション。agent mismatch (下) は生きているので false。
+        sessionGone: true,
       },
     ],
     [
@@ -43,6 +45,7 @@ describe('describeChatSendError', () => {
       {
         text: 'エージェントが切り替わったため、会話をやり直します。もう一度送信してください。',
         clearSession: true,
+        sessionGone: false,
       },
     ],
     [
@@ -53,12 +56,13 @@ describe('describeChatSendError', () => {
       {
         text: 'このエージェントは画像入力に対応していません。画像対応エージェントへ切り替えるか、画像を削除してください。',
         clearSession: false,
+        sessionGone: false,
       },
     ],
     [
       '404(プロジェクトが見つからない)',
       new ApiError(404, 'not found'),
-      { text: 'プロジェクトが見つかりません。', clearSession: false },
+      { text: 'プロジェクトが見つかりません。', clearSession: false, sessionGone: false },
     ],
     [
       // bdboard-l1t.5
@@ -67,6 +71,7 @@ describe('describeChatSendError', () => {
       {
         text: 'このプロジェクト(ワークスペース)を cursor-agent に信頼させる必要があります。bdboard の外で一度 cursor-agent を対話実行し、ワークスペース信頼プロンプトに答えてから、もう一度送信してください。',
         clearSession: false,
+        sessionGone: false,
       },
     ],
     [
@@ -76,22 +81,23 @@ describe('describeChatSendError', () => {
       {
         text: 'エージェントの headless モードがツール呼び出しを自動拒否したため、応答を得られませんでした。bdboard の外で agy 側の設定 (~/.gemini/antigravity-cli/settings.json) の permissions.allow に bd コマンドの許可ルール(例: "command(bd)")を追加してから、もう一度送信してください。',
         clearSession: false,
+        sessionGone: false,
       },
     ],
     [
       'chatAgentErrorMessage がマップできるケース(503 chat agent unavailable)',
       new ApiError(503, 'unavailable', { errorMessage: 'chat agent unavailable' }),
-      { text: CHAT_AGENT_AUTH_FAILURE_HELP, clearSession: false },
+      { text: CHAT_AGENT_AUTH_FAILURE_HELP, clearSession: false, sessionGone: false },
     ],
     [
       'chatAgentErrorMessage がマップできず errorMessage へフォールバック',
       new ApiError(500, 'internal', { errorMessage: 'boom' }),
-      { text: 'boom', clearSession: false },
+      { text: 'boom', clearSession: false, sessionGone: false },
     ],
     [
       'errorMessage も無いときは error.message へフォールバック',
       new ApiError(500, 'raw message'),
-      { text: 'raw message', clearSession: false },
+      { text: 'raw message', clearSession: false, sessionGone: false },
     ],
   ])('%s', (_label, error, expected) => {
     expect(describeChatSendError(error)).toEqual(expected);
@@ -101,6 +107,7 @@ describe('describeChatSendError', () => {
     expect(describeChatSendError(new Error('network down'))).toEqual({
       text: 'network down',
       clearSession: false,
+      sessionGone: false,
     });
   });
 
@@ -108,6 +115,7 @@ describe('describeChatSendError', () => {
     expect(describeChatSendError('not an error')).toEqual({
       text: '送信に失敗しました',
       clearSession: false,
+      sessionGone: false,
     });
   });
 });

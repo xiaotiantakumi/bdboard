@@ -249,6 +249,110 @@ describe('commitSuccess', () => {
     });
   });
 
+  describe('bdboard-drfb: a thread replaced by a new session leaves the open set, the persisted entry and the history flag', () => {
+    const THREAD_A = { sessionId: 'sess-a', agentId: 'claude', title: 'thread a', pinned: false, updatedAt: '2026-01-01T00:00:00Z' };
+    const THREAD_B = { sessionId: 'sess-b', agentId: 'claude', title: 'thread b', pinned: false, updatedAt: '2026-01-02T00:00:00Z' };
+    const RESULT_C = { reply: 'AI reply', sessionId: 'sess-c', agentId: 'claude' };
+
+    function setupWithOpenAB() {
+      const hook = setup();
+      hook.params.restoredProjectsRef.current.add('proj-a');
+      hook.params.openThreadIdsRef.current = { 'proj-a': ['sess-a', 'sess-b'] };
+      hook.store.openThreadIds = { 'proj-a': ['sess-a', 'sess-b'] };
+      hook.store.selectedThreadIds = { 'proj-a': 'sess-b' };
+      hook.store.threadLists = { 'proj-a': [THREAD_A, THREAD_B] };
+      hook.store.historyLoadedFor = { 'sess-a': true, 'sess-b': true };
+      hook.store.conversations = {
+        'sess-b': { messages: [{ role: 'user', text: 'old', at: 1 }], sessionId: 'sess-b', agentId: 'claude' },
+      };
+      return hook;
+    }
+
+    it('live open [A,B] + commitSuccess(B -> C): open [A,C], persisted [A,C] selecting C, no historyLoadedFor[B]', () => {
+      const { hook, store } = setupWithOpenAB();
+      act(() => hook.result.current.commitSuccess('sess-b', 'hello', RESULT_C));
+      expect(store.openThreadIds['proj-a']).toEqual(['sess-a', 'sess-c']);
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-c'],
+        selectedSessionId: 'sess-c',
+      });
+      expect(store.selectedThreadIds['proj-a']).toBe('sess-c');
+      expect(store.historyLoadedFor).toEqual({ 'sess-a': true, 'sess-c': true });
+      expect(Object.keys(store.conversations)).toEqual(['sess-c']);
+    });
+
+    it('unknown chat session: the dead thread is also dropped from the thread list', () => {
+      const { hook, store } = setupWithOpenAB();
+      act(() =>
+        hook.result.current.commitFailure('sess-b', 'hello', [], new ApiError(400, 'bad', { errorMessage: 'unknown chat session' }), 1),
+      );
+      act(() => hook.result.current.commitSuccess('sess-b', 'hello', RESULT_C));
+      expect(store.threadLists['proj-a']?.map((thread) => thread.sessionId)).toEqual(['sess-a', 'sess-c']);
+    });
+
+    it('chat agent mismatch: the live thread stays in the thread list (closed) so it can be reopened', () => {
+      const { hook, store } = setupWithOpenAB();
+      act(() =>
+        hook.result.current.commitFailure('sess-b', 'hello', [], new ApiError(400, 'bad', { errorMessage: 'chat agent mismatch' }), 1),
+      );
+      act(() => hook.result.current.commitSuccess('sess-b', 'hello', RESULT_C));
+      expect(store.openThreadIds['proj-a']).toEqual(['sess-a', 'sess-c']);
+      expect(store.threadLists['proj-a']?.map((thread) => thread.sessionId)).toEqual(['sess-a', 'sess-b', 'sess-c']);
+      expect(store.historyLoadedFor['sess-b']).toBeUndefined();
+    });
+
+    it('without a preceding clearSession failure the replaced thread stays in the thread list', () => {
+      const { hook, store } = setupWithOpenAB();
+      act(() => hook.result.current.commitSuccess('sess-b', 'hello', RESULT_C));
+      expect(store.threadLists['proj-a']?.map((thread) => thread.sessionId)).toEqual(['sess-a', 'sess-b', 'sess-c']);
+    });
+
+    it('the unknown-chat-session mark is consumed by the next commitSuccess and does not leak into a later one', () => {
+      const { hook, store } = setupWithOpenAB();
+      act(() =>
+        hook.result.current.commitFailure('sess-b', 'hello', [], new ApiError(400, 'bad', { errorMessage: 'unknown chat session' }), 1),
+      );
+      // 同じ会話キーのまま (sessionId も変わらず) 成功した場合は置き換えではない。印は消費される。
+      act(() =>
+        hook.result.current.commitSuccess('sess-b', 'hello', { reply: 'AI reply', sessionId: 'sess-b', agentId: 'claude' }),
+      );
+      expect(store.threadLists['proj-a']?.map((thread) => thread.sessionId)).toEqual(['sess-a', 'sess-b']);
+      // 後の置き換え(失敗の印なし)では一覧から落とさない。
+      act(() => hook.result.current.commitSuccess('sess-b', 'again', RESULT_C));
+      expect(store.threadLists['proj-a']?.map((thread) => thread.sessionId)).toEqual(['sess-a', 'sess-b', 'sess-c']);
+    });
+
+    it('a non-clearSession failure does not mark the thread as gone', () => {
+      const { hook, store } = setupWithOpenAB();
+      act(() => hook.result.current.commitFailure('sess-b', 'hello', [], new ApiError(409, 'busy'), 1));
+      act(() => hook.result.current.commitSuccess('sess-b', 'hello', RESULT_C));
+      expect(store.threadLists['proj-a']?.map((thread) => thread.sessionId)).toEqual(['sess-a', 'sess-b', 'sess-c']);
+    });
+
+    it('the first send from a draft key (not an open thread) is unchanged: nothing is dropped, only the new session is added', () => {
+      const { hook, store } = setupWithOpenAB();
+      act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT_C));
+      expect(store.openThreadIds['proj-a']).toEqual(['sess-a', 'sess-b', 'sess-c']);
+      expect(store.historyLoadedFor).toEqual({ 'sess-a': true, 'sess-b': true, 'sess-c': true });
+      expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-c']);
+    });
+
+    it('not yet restored: the persisted-entry-based write drops the replaced thread too', () => {
+      // 未復元では永続化済みエントリが基点 (bdboard-4w2d)。メモリの open に convKey がある
+      // (この画面で先に確定したスレッド) なら、永続化側の convKey も外す。
+      writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-a', 'sess-b'], selectedSessionId: 'sess-b' });
+      const { hook, params, store } = setup();
+      params.openThreadIdsRef.current = { 'proj-a': ['sess-b'] };
+      store.openThreadIds = { 'proj-a': ['sess-b'] };
+      act(() => hook.result.current.commitSuccess('sess-b', 'hello', RESULT_C));
+      expect(store.openThreadIds['proj-a']).toEqual(['sess-c']);
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-c'],
+        selectedSessionId: 'sess-c',
+      });
+    });
+  });
+
   it('records the sent model only when the model select is shown with a model', () => {
     const shown = setup({ showModelSelect: true, effectiveModelId: 'sonnet' });
     act(() => shown.hook.result.current.commitSuccess('sess-new', 'hi', RESULT));
@@ -343,8 +447,10 @@ describe('commitFailure', () => {
     act(() =>
       hook.result.current.commitSuccess('sess-c', 'hello', { reply: 'AI reply', sessionId: 'sess-c2', agentId: 'claude' }),
     );
-    // 死んだ sess-c が残るのは意図どおり (activeSessionIds は失敗時に触らない)。
-    // 次回の復元では restoreThreadView がサーバーの一覧に無い id を落とす。
+    // 失敗時に activeSessionIds は触らない (jwu8)。この store ではメモリの open が空
+    // (openThreadIdsRef に sess-c が無い) ので置き換えとは扱われず、永続化済みの sess-c が残る。
+    // 開いているスレッドの置き換え (sess-c がメモリの open にある) で外れることは、
+    // 下の bdboard-drfb のテストが固定する。
     expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-c2']);
   });
 
