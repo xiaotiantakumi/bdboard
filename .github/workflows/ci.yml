@@ -226,11 +226,13 @@ jobs:
   #   - pull_request: base.sha..head.sha = その PR が足すコミットだけ (bdboard-qhsb)。
   #     マージ前に止めるための関門で、main 上の既存コミットは巻き込まない。
   #   - push (main): v<last-release>..HEAD = リリース以降の main の全コミット。
-  # PR 分岐をすり抜け、main への push で初めて見えるのは、squash の最終メッセージが
-  # ブランチ上のどのコミットとも違うとき。複数コミットの PR は PR タイトルが件名になり、
-  # マージ画面で手で編集することもできる。以前は PR を経ない CI 復旧コミットもここで拾う
-  # 想定だったが、2026-09-26 に ruleset の bypass が pull requests only になり、その例外は
-  # 無くなった (bdboard-cm2q.14)。タグを切る前の main push で拾う。なお release-please の release PR には
+  # PR 分岐をすり抜け、main への push で初めて見えるものが2種ある:
+  #   - squash の最終メッセージがブランチ上のどのコミットとも違うとき。複数コミットの
+  #     PR は PR タイトルが件名になり、マージ画面で手で編集することもできる。
+  #   - Actions 自体が動かず、PR の ci を通さないまま ruleset の bypass でマージした
+  #     CI 復旧 PR (docs/GIT-WORKFLOW.md「Direct-to-main の禁止」)。PR を経ない直接
+  #     コミットは 2026-09-26 に bypass が pull requests only になって無くなった。
+  # どちらもタグを切る前の main push で拾う。なお release-please の release PR には
   # pull_request トリガーの ci が走らない (GITHUB_TOKEN 仕様、release-please.yml 先頭参照)。
   # 中身は CHANGELOG 対象外の release コミットだけなので、検査の穴にはならない。
   # push 分岐は毎回範囲全体を見るので、concurrency で前 run がキャンセルされても、
