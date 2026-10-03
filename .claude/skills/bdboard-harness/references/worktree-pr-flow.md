@@ -494,7 +494,11 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # 結果にかかわら�
   出さないため（stdout はマージ行 1 行だけになる）。状態とログは git common dir の `bdboard-merge/`。
 - 終了コード `2` は前提不成立（レビュー記録なし・チケット未検出等）、`7` は議長以外の gate / finish / verify。
   `75` は「並び直し」（CAS 負け・main が動いた・ls-remote 失敗・枠が空かない・CI pending・
-  GitHub API に届かない）。prepare からやり直す。4 / 6 は main が壊れている（下記）。1 は実行
+  GitHub API に届かない）。prepare からやり直す。`8` は `refs/remotes/origin/main.lock` が残っている
+  （stale lock）— fetch は何度やっても落ちるので**再試行しない**。表示された lock のパスについて、
+  他の git が動いていないことを確かめてから（`ps -axo pid,etime,command | grep '[g]it '`）人が消す
+  （merge-pr は自動では消さない。本当に他の git が握っているかもしれない）。消したら prepare からやり直す。
+  lock が既に無くなっていたなら並行する git との一瞬の競合で、75 のまま。4 / 6 は main が壊れている（下記）。1 は実行
   できなかった（bd が使えない・作業ツリーが dirty・npm ci 失敗など。表示に従って直す。着地後検証を
   実行できなかったときは直してから `npm run merge-pr -- verify <sha>`）。
 - 着地後検証の間は pending を LEASE の 1/3 ごとに更新し続ける（verify スロット待ちで長引いても

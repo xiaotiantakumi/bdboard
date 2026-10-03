@@ -323,6 +323,20 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   bypass. Refused → do not retry, run `finish` (it returns the slot), then the human gate
   (ticket-flow). `--match-head-commit` makes GitHub reject the merge (409) if someone pushed to
   the branch after `prepare`; that also ends in `finish` + `prepare`.
+- **Exit code `8`: a stale `refs/remotes/origin/main.lock` is not a 75** (bdboard-1syo). If the
+  `git fetch origin main` that opens every phase fails with a ref-lock error (`cannot lock ref` /
+  `Unable to create '….lock': File exists` — a fetch only takes the lock when it has a ref to
+  update, so this starts once `origin/main` moves) and the named lock file still exists, retrying
+  cannot help, so it is a human-looking failure: the message prints the lock path and tells you to
+  confirm that no other `git` is running (`ps -axo pid,etime,command | grep '[g]it '`) before
+  `rm -f`-ing it, then to start over from `prepare`. merge-pr **never deletes the lock itself** — a
+  live fetch or push may be holding it. If the lock is already gone when merge-pr looks, it was a
+  brief race with another git and the failure stays 75. `finish` (which carries on from the local
+  `origin/main` so it can still return the slot) only prints the same advice. Mid-run refetches
+  (`refetchMain`, used while waiting) do the same: print once per lock, never abort — the CAS
+  against `git ls-remote` is what guards the merge, and aborting inside `finish` would skip the
+  landed verify. Typical sources: a Bash-tool timeout killing merge-pr's own fetch, a Ctrl-C on a
+  manual `git fetch`, a SIGTERM between creating a lock and registering it for cleanup (bdboard-rlvz).
 - **Layer 3 ledger** = GitHub commit status `bdboard/landed-verify` on each main SHA
   (`gh api repos/xiaotiantakumi/bdboard/commits/<sha>/status`). `finish` checks out the landed tree
   in the PR worktree (`git checkout --detach <sha>`; `npm ci` first if a lockfile differs from what

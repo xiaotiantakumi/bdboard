@@ -2,6 +2,7 @@
 import { git, run } from './exec.mjs';
 import { loadMainConfig, loadWorktreeConfig } from './config.mjs';
 import { say } from './state.mjs';
+import { refLockFailure, refLockLines } from './ref-lock.mjs';
 
 export const REMOTE = 'origin';
 
@@ -15,6 +16,7 @@ export const EXIT = Object.freeze({
   NOT_MERGED: 5, // finish: PR はマージされていない。枠は返した
   LANDED_FAILED: 6, // finish: マージ後の着地後検証が failure (§3.6 へ)
   NOT_MERGER: 7, // gate / finish: 議長以外はマージ手順を進めない
+  REF_LOCKED: 8, // origin/main の ref が lock されている (stale lock の疑い)。人が確認する。待っても直らないので再試行しない
   RETRY: 75, // EX_TEMPFAIL: CAS 負け / main が動いた / 枠が空かない / CI pending。prepare から並び直す
 });
 
@@ -52,11 +54,18 @@ export function openContext({ allowOffline = false } = {}) {
   }
   const mainBranch = local.config.mainBranch;
   const fetched = run('git', ['fetch', '--quiet', REMOTE, mainBranch], { cwd });
-  if (fetched.status !== 0 && !allowOffline) {
-    fail(EXIT.RETRY, `git fetch ${REMOTE} ${mainBranch} に失敗しました: ${fetched.stderr.trim()}`);
-  }
   if (fetched.status !== 0) {
-    say(`注意: git fetch ${REMOTE} ${mainBranch} に失敗しました (${fetched.stderr.trim()})。手元の ${REMOTE}/${mainBranch} で続けます。`);
+    // bdboard-1syo: ref の stale lock は待っても直らないので、75 (待って再試行) にせず人が見る終了コード 8 にする。
+    // 判定は fetch の stderr と lock ファイルの現存で行う (並行する git との一瞬の競合は従来どおり 75)。
+    const locked = refLockFailure(fetched.stderr, cwd);
+    const lockAdvice = locked === null ? [] : refLockLines(`git fetch ${REMOTE} ${mainBranch}`, fetched.stderr, locked.lockPath);
+    if (!allowOffline && locked !== null) {
+      fail(EXIT.REF_LOCKED, ...lockAdvice);
+    }
+    if (!allowOffline) {
+      fail(EXIT.RETRY, `git fetch ${REMOTE} ${mainBranch} に失敗しました: ${fetched.stderr.trim()}`);
+    }
+    say(`注意: git fetch ${REMOTE} ${mainBranch} に失敗しました (${fetched.stderr.trim()})。手元の ${REMOTE}/${mainBranch} で続けます。`, ...lockAdvice);
   }
   const loaded = loadMainConfig(cwd, REMOTE, mainBranch);
   if (!loaded.ok) {
@@ -80,9 +89,24 @@ export function fetchedMain(ctx) {
   return git(['rev-parse', `${ctx.mainRef}^{commit}`], { cwd: ctx.cwd });
 }
 
-/** fetch し直した origin/main の SHA (待ちループの中で main の動きを見る)。 */
+// refetchMain が案内を出した lock のパス (待ちループの中で同じ案内を繰り返さない)。
+const reportedRefLocks = new Set();
+
+/**
+ * fetch し直した origin/main の SHA (待ちループの中で main の動きを見る)。
+ *
+ * 失敗は従来どおり落とさず、手元の origin/main を返す。bdboard-1syo: openContext と同じ判定で ref の stale lock
+ * と分かったときだけ、同じ案内を lock のパスごとに 1 回出す。落とさない理由: finish は枠を返して着地後検証を
+ * 回すことが最優先で、gate / predicted の「main が動いたか」は ls-remote の CAS (liveMain) が最終防衛線だから。
+ * lock が残ったままなら、次の phase の openContext が exit 8 で止める。
+ */
 export function refetchMain(ctx) {
-  run('git', ['fetch', '--quiet', REMOTE, ctx.config.mainBranch], { cwd: ctx.cwd });
+  const fetched = run('git', ['fetch', '--quiet', REMOTE, ctx.config.mainBranch], { cwd: ctx.cwd });
+  const locked = fetched.status === 0 ? null : refLockFailure(fetched.stderr, ctx.cwd);
+  if (locked !== null && !reportedRefLocks.has(locked.lockPath ?? 'unknown')) {
+    reportedRefLocks.add(locked.lockPath ?? 'unknown');
+    say(...refLockLines(`git fetch ${REMOTE} ${ctx.config.mainBranch}`, fetched.stderr, locked.lockPath));
+  }
   return fetchedMain(ctx);
 }
 
