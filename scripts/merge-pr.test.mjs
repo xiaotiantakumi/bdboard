@@ -25,6 +25,7 @@ import {
   parseGitHubSlug,
   parseMergeConfig,
   readMergeTree,
+  VERIFYING_PID_MAX_AGE_MS,
 } from './merge-pr.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./merge-pr.mjs', import.meta.url));
@@ -1522,5 +1523,111 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(prepared.status).toBe(0);
     expect(prepared.stderr).not.toContain('未追跡ファイル');
     expect(readState()).toMatchObject({ class: 'F' });
+  });
+
+  // bdboard-2hj4: finish が状態ファイルに書く verifyingPid は、finish の中断・クラッシュで残る。その PID が
+  // 後で別プロセスに再利用された (EPERM でも alive 扱い) 場合に、永久に RETRY (75) になってはいけない。
+  describe('finish: a leftover verifyingPid record (bdboard-2hj4)', () => {
+    const ago = (ms) => new Date(Date.now() - ms).toISOString();
+
+    /** gate まで進めて PR をマージ済みにし、状態ファイルに verifyingPid (= 生きているこのテストの pid) を書く。 */
+    function gatedAndMergedWithVerifying(extra) {
+      setup();
+      expect(run(['prepare', String(PR)]).status).toBe(0);
+      expect(run(['gate', String(PR)]).status).toBe(0);
+      const landed = simulateMerge();
+      const state = JSON.parse(readFileSync(stateFile(), 'utf8'));
+      writeFileSync(stateFile(), `${JSON.stringify({ ...state, verifyingPid: process.pid, ...extra }, null, 2)}\n`);
+      return landed;
+    }
+
+    it('a live pid with a day-old verifyingAt is a stale record: ignored with a notice, and the landed verify runs', () => {
+      const landed = gatedAndMergedWithVerifying({ verifyingAt: ago(24 * 60 * 60_000) });
+      const finished = run(['finish', String(PR)]);
+      expect(finished.stderr).toContain(`verifyingPid ${process.pid}`);
+      expect(finished.stderr).toContain('古い記録');
+      expect(finished.status).toBe(0);
+      expect(verified()).toEqual([landed]);
+      expect(existsSync(stateFile())).toBe(false);
+    });
+
+    it('a live pid with a verifyingAt of right now still means a verify is running: 75, nothing touched', () => {
+      gatedAndMergedWithVerifying({ verifyingAt: ago(0) });
+      const finished = run(['finish', String(PR)]);
+      expect(finished.status).toBe(75);
+      expect(finished.stderr).toContain('二重に走らせません');
+      expect(finished.stderr).not.toContain('古い記録');
+      expect(verified()).toEqual([]);
+      expect(posted()).toEqual([]);
+      expect(readFake().slot.holder).toBe(`demo-1 / PR#${PR}`); // 二重に動かないので枠もまだ返さない
+      expect(JSON.parse(readFileSync(stateFile(), 'utf8'))).toMatchObject({ verifyingPid: process.pid });
+    });
+
+    it('the cut-off is VERIFYING_PID_MAX_AGE_MS: just inside it is still running, just outside it is stale', () => {
+      gatedAndMergedWithVerifying({ verifyingAt: ago(VERIFYING_PID_MAX_AGE_MS - 60_000) });
+      expect(run(['finish', String(PR)]).status).toBe(75);
+      const landed = gatedAndMergedWithVerifying({ verifyingAt: ago(VERIFYING_PID_MAX_AGE_MS + 60_000) });
+      expect(run(['finish', String(PR)]).status).toBe(0);
+      expect(verified()).toEqual([landed]);
+    });
+
+    it('a record from before verifyingAt existed (or an unreadable verifyingAt) is judged by the pid alone, as before', () => {
+      gatedAndMergedWithVerifying({});
+      const legacy = run(['finish', String(PR)]);
+      expect(legacy.status).toBe(75);
+      expect(legacy.stderr).toContain('二重に走らせません');
+      gatedAndMergedWithVerifying({ verifyingAt: 'not-a-date' });
+      expect(run(['finish', String(PR)]).status).toBe(75);
+      expect(verified()).toEqual([]);
+    });
+
+    it('finish stamps verifyingAt next to its own verifyingPid before it starts the landed verify', async () => {
+      setup();
+      expect(run(['prepare', String(PR)]).status).toBe(0);
+      expect(run(['gate', String(PR)]).status).toBe(0);
+      simulateMerge();
+      const pidFile = path.join(tmp, 'verify.pid');
+      const startedAt = Date.now();
+      const child = spawn(process.execPath, [SCRIPT, 'finish', String(PR)], {
+        cwd: work,
+        env: { ...env, FAKE_VERIFY_SLEEP_MS: '60000', FAKE_VERIFY_PID_FILE: pidFile, BDBOARD_MERGE_KILL_GRACE_MS: '200' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let verifyPid;
+      try {
+        // verify が走り出している = 状態ファイルは書き終わっている (書き込み途中を読まないよう pid が正の整数になるまで待つ)。
+        await waitUntil(() => {
+          if (!existsSync(pidFile)) {
+            return false;
+          }
+          const parsed = Number(readFileSync(pidFile, 'utf8').trim());
+          if (!Number.isInteger(parsed) || parsed <= 0) {
+            return false;
+          }
+          verifyPid = parsed;
+          return true;
+        });
+        const state = JSON.parse(readFileSync(stateFile(), 'utf8'));
+        expect(state.verifyingPid).toBe(child.pid);
+        expect(Date.parse(state.verifyingAt)).toBeGreaterThanOrEqual(startedAt);
+        expect(Date.parse(state.verifyingAt)).toBeLessThanOrEqual(Date.now());
+        child.kill('SIGINT');
+        await new Promise((resolve) => {
+          child.once('exit', resolve);
+        });
+        await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 });
+      } finally {
+        if (!child.killed) {
+          child.kill('SIGKILL');
+        }
+        if (verifyPid !== undefined && pidAlive(verifyPid)) {
+          try {
+            process.kill(verifyPid, 'SIGKILL');
+          } catch {
+            // 確認と kill の間に終了していれば無視する。
+          }
+        }
+      }
+    });
   });
 });
