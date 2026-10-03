@@ -93,25 +93,35 @@ JSON 自体のフォーマット版が別途必要なら `draftSchemaVersion` �
 
 ## 2. 保存場所(項目 b)
 
-**この節はチケット bdboard-727y(添付画像の保存先バグ)の結論待ち。** 727y は本ドキュメント
-執筆時点でまだマージされていない。決めるのは「どこに置くか」ではなく「727y が実装する基点
-解決関数をそのまま使う」という方針だけ:
+bdboard-727y(添付画像の保存先バグ)は PR #782 で 2026-09-25 にマージ済み。下書きは 727y が
+入れた基点解決関数をそのまま使う。727y の結論:
 
-- 既定パスは `<727y が決める共有状態ディレクトリの基点>/issue-drafts/<id>/`。
-  添付画像が `<基点>/attachments/<projectKey>/<issueId>/` になるのと同じ基点関数を呼ぶ
-  (関数名・シグネチャは 727y の実装に合わせる。bdboard-4y8q.1 は 727y に `DEPENDS ON` 済み)。
+- 基点は `resolveDataDirBase(repoRoot)`(`src/infrastructure/fs/resolve-data-dir-base.ts`)が
+  返す。`<repoRoot>/.git` が存在すれば(ディレクトリ = 通常の clone、ファイル = linked worktree の
+  どちらでも)git の作業ツリーとみなして `<repoRoot>/data`、存在しなければ npm/npx で
+  インストールされた環境とみなして `~/.bdboard`(キャッシュ DB `~/.bdboard/cache.db` と同じ
+  決め方)。祖先ディレクトリは辿らない。
+- 添付画像はその下の `attachments/<projectKey>/<issueId>/`。`resolveAttachmentsDir(repoRoot, env)`
+  が、`BDBOARD_ATTACHMENTS_DIR` が空でなければそれを `path.resolve` して優先し、無ければ
+  `resolveDataDirBase(repoRoot)` の下の `attachments` を返す。
+
+下書きはこれに揃える:
+
+- 既定パスは `<基点>/issue-drafts/<id>/`。git の作業ツリーでは `<repoRoot>/data/issue-drafts/<id>/`、
+  npm/npx 環境では `~/.bdboard/issue-drafts/<id>/`(どちらも添付画像の `attachments` の隣)。
 - 環境変数での上書きは `BDBOARD_ISSUE_DRAFTS_DIR`(`BDBOARD_ATTACHMENTS_DIR` と対称の名前)。
-  `resolveAttachmentsDir` と同じ形の純粋関数 `resolveIssueDraftsDir(base, env)` にする。
-- キャッシュ DB(`~/.bdboard/cache.db`)には置かない(エピック決定どおり)。
-- git clone 環境の `data/` 配下に既存の `data/attachments` があるのと同様、
-  `data/issue-drafts` も `.gitignore` 対象にする(727y の結論が `<repoRoot>/data/...` のままなら)。
-- ディレクトリ作成時のパーミッションは `data/attachments` と同じ扱いに揃える(所有者のみ
-  読み書き可、`0700`/`0600` 相当。下書きには4節で述べる `errorTextRaw`(手元限定・非公開の
-  生ログ)が入るため、`data/attachments` より緩くしない)。
-
-727y が「npm インストール環境ではホームの下に置く」という結論になった場合、issue-drafts も
-無条件にそれへ追従する。本ドキュメントは 727y の具体的な結論を先取りしない
-(そちらのチケットのスコープ)。
+  `resolveAttachmentsDir` と同じ形の純粋関数 `resolveIssueDraftsDir(repoRoot, env)` にし、
+  基点は `resolveDataDirBase` を呼ぶ(自前で `.git` を見ない)。空文字を未設定とみなす点、
+  上書き値を `path.resolve` する点も同じにする。
+- キャッシュ DB(`~/.bdboard/cache.db`)の中には置かない(エピック決定どおり)。npm/npx 環境では
+  DB と同じ `~/.bdboard` の下になるが、DB とは別のディレクトリ・ファイルである。
+- `.gitignore` が除外しているのは今 `/data/attachments/` だけで、`/data/` 全体ではない。
+  bdboard-4y8q.1 で `/data/issue-drafts/` の行を足す。README の環境変数の表にも
+  `BDBOARD_ISSUE_DRAFTS_DIR` の行を足す(`BDBOARD_ATTACHMENTS_DIR` の行と同じ書き方)。
+- パーミッション: 添付画像の保存(`fs-attachment-storage.ts`)は `mkdir`/`writeFile` に mode を
+  渡しておらず、umask 任せ(通常は `0755`/`0644`)である。下書きには4節で述べる `errorTextRaw`
+  (手元限定・非公開の生ログ)や元チケットの本文が入るので、添付画像には揃えず、ディレクトリは
+  `0700`、ファイルは `0600` を明示して作る(所有者のみ読み書き可)。
 
 ## 3. 受け口の API とローカル直アクセス限定(項目 c)
 
@@ -119,8 +129,8 @@ JSON 自体のフォーマット版が別途必要なら `draftSchemaVersion` �
 
 | 経路 | メソッド/パス | 呼び出し元 | 必要な認可 |
 |---|---|---|---|
-| 受け取り | `POST /api/issue-reports/drafts` | 各プロジェクトの `scripts/report-issue.sh`(4y8q.12)、bdboard 自身のエラー捕捉(4y8q.6) | **ローカル直アクセスのみ**(トンネル不可) |
-| 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss` | 不具合報告タブの UI | 通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル) |
+| 受け取り | `POST /api/issue-reports/drafts` | 各プロジェクトに注入される報告スクリプト(注入先では `.claude/skills/bdboard-harness/scripts/report-issue.sh`、パック正本は `harness/packs/bdboard-harness/scripts/report-issue.sh`。4y8q.12)、bdboard 自身のエラー捕捉(4y8q.6) | **ローカル直アクセスのみ**(トンネル不可) |
+| 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss` | 不具合報告タブの UI | PATCH は通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル)。GET は `createWriteGuardMiddleware` の対象外(メソッドで素通しする)なので、ほかの読み取り API と同じく、トンネルではトンネルの認証(Basic 認証)を通れば読める(パスワードの強度は問わない) |
 | 投稿 | `POST /api/issue-reports/drafts/:id/publish` | 不具合報告タブの投稿ボタン | **ローカル直アクセスのみ** |
 
 エピック決定 4「投稿はローカル直アクセスからだけ。トンネル経由では、見る・直す・見送るまで」
@@ -134,21 +144,34 @@ JSON 自体のフォーマット版が別途必要なら `draftSchemaVersion` �
 `createPrivilegedApiGuardMiddleware(deps)` は、渡す `deps` からトンネル関連のコールバック
 (`isTunnelWriteAllowed`/`hasTunnelSession` 等)を丸ごと省略すると `evaluateWriteAccess` 内部で
 トンネル分岐そのものが評価されず、`isLocalBasicAuthRequest(c)` 一発の判定にフェイルクローズ
-する(CSRF チェックは維持したまま)。さらに `createWriteGuardMiddleware` と違い
-**全 HTTP メソッドに適用される**ので、受け取り(POST)・投稿(POST)はもちろん、後述の
-GET 系エンドポイントを同じ強さで塞ぎたい場合にも使い回せる。つまり:
+する(CSRF チェックは維持したまま。`write-guard.ts` 132〜136行)。さらに
+`createWriteGuardMiddleware` と違い**全 HTTP メソッドに適用される**ので、受け取り(POST)・
+投稿(POST)はもちろん、GET 系のエンドポイントを同じ強さで塞ぎたくなった場合にも使い回せる。
+つまり:
 
 ```ts
 const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル deps を渡さない
 ```
 
-の1行を受け取り・投稿の2ルートへ前置するだけでよい。新しいミドルウェア関数を書き起こさない
-(既存踏襲の precedent は `PUT /api/settings/agent-runs`(bdboard-54be.1)、
-`POST/DELETE /api/tunnel/*` がすでにこの「`deps` を渡さない」形を使っている。
-`GET /api/chat/availability` は当初このセクションで precedent として挙げていたが、実体は
-チャット機能のレート制限スキップ判定であり局所アクセス限定ゲートではない
-(`chat-agent-routes.ts:79`)。より正確な precedent は `chat-routes.ts:176〜184` 行の
-「discovered sessions」ガードで、これもローカル直アクセスを別扱いする同種の判定である)。
+の1行を受け取り・投稿の2ルートへ前置するだけでよい。新しいミドルウェア関数を書き起こさない。
+
+既存のローカル直アクセス限定のルートは、どれもこの形ではなく `isLocalBasicAuthRequest` を
+直接呼ぶ手書きの判定である。`createPrivilegedApiGuardMiddleware` を `deps` 無しで使うのは
+本設計が初めてになる:
+
+- `PUT /api/settings/agent-runs`(bdboard-54be.1): `createWriteGuardMiddleware(deps.writeAccess)`
+  (トンネル deps あり)の内側で、ハンドラの先頭に `isLocalBasicAuthRequest` の判定を置く
+  (`agent-run-settings-routes.ts`)。
+- `/api/tunnel` と `/api/tunnel/*`(GET と POST。DELETE は無い): `tunnel-routes.ts` の手書きの
+  `localOnlyGuard`。このガード自身は CSRF を見ない。POST が CSRF の検査を通るのは、先に
+  mount される `inner`(`routes.ts`)の `app.use('*', createWriteGuardMiddleware(...))` が、
+  後から `app.route('/', …)` で載せた兄弟のサブアプリのルートにも掛かるため(Hono の挙動。
+  `mount-routes.ts` の mount 順に依存する)。上の1行はガード自身が CSRF も見るので、mount 順に
+  依存しない。
+- `/api/chat/projects/:projectId/discovered-sessions` とその下: `chat-routes.ts` 176〜183行の
+  `discoverySessionsLocalOnlyGuard`。CSRF は前段の `chatGuard` が見る。
+- なお `chat-agent-routes.ts:79` の `isLocalBasicAuthRequest` はレート制限を飛ばす判定で、
+  ローカル限定のゲートではない。
 
 ### 閲覧・編集(PATCH)側のフィールド範囲
 
@@ -171,8 +194,9 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 ### なりすましの余地(判定の限界)
 
 `isLocalBasicAuthRequest` は「TCP 送信元がループバック」かつ「Cloudflare トンネル転送ヘッダ
-(`cf-connecting-ip`/`cf-ray`/`cf-visitor`)が無い」かつ「Host ヘッダが listen ポートと一致」の
-3条件で判定する(`local-request.ts`。決定根拠は `docs/DECISIONS-LOG.md` [.137])。既知の限界:
+(`cf-connecting-ip`/`cf-ray`/`cf-visitor`)が無い」かつ「Host ヘッダがループバックの名前
+(`localhost`/`127.0.0.1`/`[::1]`)で、ポートが listen ポートと一致」の3条件で判定する
+(`local-request.ts`。決定根拠は `docs/DECISIONS-LOG.md` [.137])。既知の限界:
 
 - **前提は cloudflared の HTTP モードだけ。** この3条件は「cloudflared がループバックへ
   127.0.0.1 から接続し、かつ Cloudflare 転送ヘッダを必ず付ける」という cloudflared 固有の
@@ -362,9 +386,10 @@ markdown→HTML 変換して画像を自動読み込みすると、**人間が�
 ### 実例での確認(4y8q.2 の受け入れ基準)
 
 PicRill-fbs の本文(作業フォルダ名・ポート番号・プロジェクト名入りのエラー文)を材料に、
-`buildPublicIssueBody` を通した結果に固有名詞が残らないことをテストで確認する。実例の文面
-そのものはテストに書き込まない(CLAUDE.md の example-user 規約と同じ理由 — 値そのものを
-リポジトリに残さない)。
+`buildPublicIssueBody` を通した結果に固有名詞が残らないことをテストで確認する。実例の文面そのものは
+テストに書き込まない(公開リポジトリに注入先の固有名詞を残さないため)。テストに置く値は
+CLAUDE.md の example-user 規約どおり明らかに偽の形にする(こちらは GitGuardian の検出器が
+値ではなく形で発火するのを避けるための規約で、理由が別である)。
 
 ## 6. 投稿(項目 f、bdboard-4y8q.4)
 
@@ -377,12 +402,12 @@ PicRill-fbs の本文(作業フォルダ名・ポート番号・プロジェク�
 エピック決定「確認なしの自動投稿は作らない」を構造的に満たすため、**実際に GitHub へ issue を
 作る操作は `gh issue create --web`/`gh issue comment --web` に委ね、投稿ボタンの押下は
 「ブラウザを開くところまで」に留める。** `--web` はローカルの既定ブラウザで GitHub の
-「New issue」フォームを開くだけで、実際の作成(GitHub 側の "Submit new issue" ボタン)は
-その後ユーザーが実物のブラウザ上で行う。bdboard サーバープロセスや、それを叩く何らかの
-ローカルプロセスが単独で issue を作り切ることが構造的にできなくなる(この設計はトンネル越しに
-動く可能性のあるチャットエージェント等からのエスカレーション経路も同時に塞ぐ — 道具を
-持つエージェントがこの API を叩けても、ブラウザでの人間の最終クリックまでは issue が
-実在しない)。
+「New issue」フォーム(コメントなら issue のコメント欄)を開くだけで、実際の作成
+(GitHub 側の "Submit new issue" ボタン)はその後ユーザーが実物のブラウザ上で行う。
+bdboard サーバープロセスや、それを叩く何らかのローカルプロセスが単独で issue を作り切る
+ことが構造的にできなくなる(この設計はトンネル越しに動く可能性のあるチャットエージェント等
+からのエスカレーション経路も同時に塞ぐ — 道具を持つエージェントがこの API を叩けても、
+ブラウザでの人間の最終クリックまでは issue が実在しない)。
 
 手順:
 
@@ -391,21 +416,31 @@ PicRill-fbs の本文(作業フォルダ名・ポート番号・プロジェク�
    起動されないようにする目的で維持する。
 2. `gh --version`/`gh auth status` を確認(`gh` 自体が無い、または未ログインなら 424 相当で
    案内を返す。check-gh-issues.mjs の `failureReason` と同じ「落ちずに理由を返す」流儀)。
-   `--web` は GitHub 側のブラウザセッション(cookie)で認証されるため `gh auth status` は
-   厳密には投稿自体の必須条件ではないが、後述の類似 issue 検索(読み取り専用 API)には
-   引き続き `gh` の認証が要る。
+   `--web` でも gh はコマンドを動かす前に自分のログインを要求するので、`gh auth status` は
+   投稿の前提条件である(gh 2.86.0 で、未ログインの `gh issue create --web` が
+   `gh auth login` の案内を出して止まることを確認)。後述の類似 issue 検索(読み取り専用 API)
+   にも `gh` の認証が要る。なお実際に issue やコメントを作るのは、ブラウザで GitHub に
+   ログインしているアカウントであり、gh にログインしているアカウントとは別でありうる。
 3. 似た issue の検索(投稿前に必ず1回、読み取り専用 API なのでこの手順は従来どおり):
    `gh issue list --repo xiaotiantakumi/bdboard --search "<title の主要語 or catalogSlug>"
-   --state all --json number,title,state --limit 10`。この検索は7節(評価エージェントへ渡す
+   --state all --json number,title,state --limit 10`。この検索は8節(評価エージェントへ渡す
    類似チケット探し)と共通の `findSimilarIssuesAndTickets(query)` ヘルパーに集約し、
    4y8q.4 と 4y8q.10 の両方から呼ぶ(別々に実装しない)。
 4. ユーザーが「新規」か「既存 issue にコメント」かを選ぶ(画面側)。コメント本文も5節の
    `buildPublicIssueBody` 相当の置き換えを通す。
-5. 本文は一時ファイル経由で `gh` に渡す(`gh issue create --repo xiaotiantakumi/bdboard
-   --title "<title>" --body-file <tmp> --web` / `gh issue comment <N> --repo
-   xiaotiantakumi/bdboard --body-file <tmp> --web`)。コマンド置換で直接埋め込まない —
-   添付画像 API の教訓(question-template.md、ARG_MAX とシェルインジェクション)をそのまま
-   踏襲する。`execFile` 系(シェルを経由しない実行)を使う点も同様。
+5. 新規 issue の本文は一時ファイル経由で `gh` に渡す(`gh issue create --repo
+   xiaotiantakumi/bdboard --title "<title>" --body-file <tmp> --web`)。gh は題名と本文を
+   `issues/new?title=…&body=…` のクエリに入れてブラウザを開く(gh 2.86.0 で確認)。
+   コマンド置換で直接埋め込まない — 添付画像 API の教訓(question-template.md の macOS
+   `ARG_MAX`)を踏襲する。実行は `CommandRunner`(シェルを経由しない `spawn` に引数の配列を
+   渡す)経由なので、題名や本文によるシェルインジェクションも起きない。
+   **既存 issue へのコメントは本文をあらかじめ入れられない**: `gh issue comment` は `--web` と
+   `--body`/`--body-file`/`--editor` を一緒に指定できない(gh 2.86.0 で
+   `specify only one of --body, --body-file, --editor, or --web` で拒否されることを確認)。
+   `gh issue comment <N> --repo xiaotiantakumi/bdboard --web` は
+   `issues/<N>#issuecomment-new` を開くだけなので、コメントのときは置き換え済みの本文を
+   画面のコピー用テキストエリアに出し、ユーザーがブラウザの欄へ貼る(手順6の長文のときと
+   同じ欄を使う)。
 6. **本文が長い場合の扱い(URL 長の制約)**: `--web` は本文をブラウザへ渡す際に URL の
    クエリパラメータとして組み立てるため、GitHub 側・ブラウザ側の URL 長制限にかかりうる
    (数千文字程度が実務上の目安。正確な閾値は実装時に確認する)。本文が閾値を超える場合は、
@@ -419,16 +454,19 @@ PicRill-fbs の本文(作業フォルダ名・ポート番号・プロジェク�
    サーバーは `gh issue view <N> --repo xiaotiantakumi/bdboard --json number,url,state`
    で実在確認したうえで `status='posted'`、`issueNumber`/`issueUrl` を保存する。空欄のまま
    閉じることもでき、その場合は下書きを `pending` のまま残す(取りこぼしても二重投稿には
-   ならない — 3節の似た issue 検索が次回の重複防止を担う)。
+   ならない — 手順3の似た issue 検索が次回の重複防止を担う)。
 8. URL 確認(手順7)が完了した直後、`sourceTicketRef` があれば(4y8q.7 由来)、
    元プロジェクトの bd チケットへ `bd comment <ref> "issue: <url>"` → `bd close <ref>` を
    実行する。
 9. gh 呼び出しはすべて `--repo xiaotiantakumi/bdboard` を明示し(実行時の `cwd` の git
    remote に依存しない)、非対話実行であることを保証するため環境変数
-   `GH_PROMPT_DISABLED=1` を付ける。新しいポート `IssuePublisherPort`
-   (`createGhCliIssuePublisher`)経由にし、`infrastructure/gh/` に置く(`child_process` は
-   `infrastructure/process`/`infrastructure/runners` からしか import できないルールに
-   合わせ、既存の `createGhCliPrStatusReader` と同じ置き場にする)。
+   `GH_PROMPT_DISABLED=1` を付ける(`CommandRunner` の `env` は子プロセスの環境変数を
+   丸ごと置き換えるので、継いだ環境に足した形で渡す。`HOME` 等が消えると gh が自分の
+   認証情報を見つけられない)。新しいポート `IssuePublisherPort`
+   (`createGhCliIssuePublisher`)経由にし、`infrastructure/gh/` に置く。`child_process` は
+   `infrastructure/process`/`infrastructure/runners` からしか import できない
+   (`.dependency-cruiser.cjs`)ので、既存の `createGhCliPrStatusReader` と同じく
+   `child_process` を直接 import せず、`CommandRunner` を引数で受け取る形にする。
 
 テストでは `gh` 呼び出しを偽物(fake `CommandRunner`)に置き換え、本物のブラウザや issue は
 一切起動・作成しない(4y8q.4 の受け入れ基準どおり)。
@@ -440,7 +478,8 @@ PicRill-fbs の本文(作業フォルダ名・ポート番号・プロジェク�
 存在するか**で判定する(`isMaintainerEnvironment(repoRoot) = fs.existsSync(path.join(repoRoot,
 '.beads'))`)。npm でインストールした環境ではこれが存在せず、投稿だけで終わる。
 
-投稿(6節)が成功した直後、メンテナ環境なら追加で:
+投稿が確定した直後(6節手順7 で issue の URL を確かめ `status='posted'` にした直後。
+`--web` を起動した時点ではまだ issue が無いので、その時点では作らない)、メンテナ環境なら追加で:
 
 ```
 bd create --type=<下表参照> --priority=2 \
@@ -554,7 +593,7 @@ interface EvaluationResult {
 
 | ⭐ | 表示 | 取り込み時の bd 優先度(自動上限) |
 |---|---|---|
-| ★★★★★ | 優先的に対応すべき | **P2**(P1 への昇格は人間の明示操作でのみ。5節と同じ理由 — エージェントの出力を無条件に最上位優先度へは直結させない) |
+| ★★★★★ | 優先的に対応すべき | **P2**(P1 への昇格は人間の明示操作でのみ。下の「prompt injection で判定を覆されたときに何ができてしまうか」の理由 — エージェントの出力を無条件に最上位優先度へは直結させない) |
 | ★★★★☆ | 対応推奨 | P2 |
 | ★★★☆☆ | 余裕があれば | P3 |
 | ★★☆☆☆ | 様子見 | P4 |
@@ -569,11 +608,15 @@ issue 本文を繰り返し編集するだけでは道具ゼロエージェン�
 「再判定」ボタンだけ出す。それでも取り込みたい場合は人が自分の言葉でチケットを書く
 (外部本文をそのまま bd へ写す経路は用意しない)。
 
-**取り込み後の bd チケットには `external-untrusted` ラベルを付け、`bd ready` の既定表示と
-Runner の自動着手対象から外す**(`bd ready --exclude-label external-untrusted` を harness 側の
-既定コマンドに追加する。1節冒頭 Quick Reference の `--exclude-label gt:slot` と同様の運用)。
-人間がチケット本文を読み、必要なら自分の言葉で書き直してこのラベルを外すまでは、
-実装エージェントに自動的には渡らない(下の段落の理由)。
+**取り込み後の bd チケットには `external-untrusted` ラベルを付け、自律セッションが着手候補を
+取る `bd ready` の既定の呼び方から外す。** ハーネスの SKILL.md 規律1 手順5・session-start.md
+手順5 と AGENTS.md の Quick Reference にある `bd ready --exclude-label gt:slot` を
+`--exclude-label gt:slot,external-untrusted` に広げる(`--exclude-label` は「どれかのラベルを
+持つものを除く」複数指定のフラグ。AGENTS.md の該当行は `bd init`/`bd setup` が再生成する
+管理ブロックの中にあるので、`.claude/rules/bd-init-agents-md.md` の確認手順も守る)。
+Runner(`POST /api/runs`)は人が対象チケットを指定して起動するもので、`bd ready` から自動で
+拾う経路は元々無い。人間がチケット本文を読み、必要なら自分の言葉で書き直してこのラベルを
+外すまでは、実装エージェントに自動的には渡らない(下の段落の理由)。
 
 ### prompt injection で判定を覆されたときに何ができてしまうか(Opus レビュー観点への回答)
 
@@ -582,13 +625,15 @@ Runner の自動着手対象から外す**(`bd ready --exclude-label external-un
 自身はファイル・コマンド・ネットワークに触れないので、判定を欺いても両エージェントの実行時に
 任意コード実行やデータ持ち出しが起きることはない。**ただし「被害の天井は bd チケット1件」
 という言い方は不正確だった**: 取り込みボタンを押すと作られる bd チケットは、`bd ready` に
-そのまま乗り、実装エージェント(Runner 経由、フルツール)がそのチケット本文を読んで作業を
-始めうる。`bd ready` はチケット本文を「信頼できない入力」として扱わない(ARCHITECTURE.md
-の Runner 安全保証はチケット**発行**元ではなく実行環境側の最小化であり、チケット本文の
-内容そのものは元々「ユーザーが書いたもの」という前提に立っている)。欺かれた★5評価が
-そのまま P1 に直結すれば、攻撃者が仕込んだ文面が作業キューの先頭に来てしまう。
+そのまま乗る。ハーネスに従う自律セッションは `bd ready` の候補から着手し(SKILL.md 規律1)、
+セッション自身の道具一式でそのチケット本文を読んで作業を始めうる。ハーネスの規律には
+チケット本文を信頼できない入力として扱う定めが無い。Runner の側は、ARCHITECTURE.md
+「チケット本文は信頼できない入力」のとおり、実行プロンプト(`build-run-prompt.ts`)で
+`bd show` の出力に書かれた指示には従わないよう明示し、道具も3層で最小化している。ただし
+これはプロンプトでの指示であって構造的な保証ではない。欺かれた★5評価がそのまま P1 に
+直結すれば、攻撃者が仕込んだ文面が作業キューの先頭に来てしまう。
 これが実際の懸念であり、対策は上の2つ: (1) 自動優先度を P2 で頭打ちにし P1 は人間の
-明示操作のみ、(2) `external-untrusted` ラベルで `bd ready`/Runner の自動対象から外し、
+明示操作のみ、(2) `external-untrusted` ラベルで `bd ready` の既定の候補から外し、
 人間のレビュー(または書き直し)を挟むまで実装エージェントに渡らないようにする。この2つを
 併せた実際の被害の天井は「人間がレビューする前提のキューに、誤解を招く1件が紛れ込む」まで
 であり、「実装エージェントが攻撃者の指示どおりに動く」経路には直結しない。
@@ -608,6 +653,8 @@ Runner の自動着手対象から外す**(`bd ready --exclude-label external-un
 | 安全判定・⭐評価(不具合報告) | サーバー内部呼び出しのみ。公開 HTTP エンドポイントとして直接叩ける経路は無く、必ず「一覧取得時の初回判定」または「人間が押す再判定ボタン」を経由する(外部の GitHub 編集は、次に人間がこの画面を操作したときの入力内容を変えるだけで、エージェント呼び出しそのものを直接トリガーしない) | 道具ゼロ(`--tools ''` + `--strict-mcp-config` + `--setting-sources ''`。MCP 無し) |
 
 - 「経路が増えることはユーザーが了承済み(2026-09-25)」の注記を添える。
+- 同じ ARCHITECTURE.md のポートの表で、`AgentRunner` の行が「`POST /api/runs` の1経路のみ」と
+  書いている。新しい経路(判定エージェント)の行を足すときに、この行も食い違わないよう直す。
 
 ## 9. ハーネス側の変更(項目 i、bdboard-4y8q.12)
 
@@ -619,11 +666,25 @@ Runner の自動着手対象から外す**(`bd ready --exclude-label external-un
   1秒で諦めて失敗を返し、エージェントはその中身を作業の最終報告に残す(スクリプトが
   失敗を返す設計なので、hook 側で無理にリトライしない)。
   「暫定運用として project-harness にもエントリを置いてよい」の文言はそのまま残す。
-- **brushup-protocol.md**: layering.md への参照(「汎用の教訓は harness-upstream チケットで
-  運ぶ」)はそのまま残るが、参照先(layering.md)の中身が上記のとおり変わる。
-  brushup-protocol.md 自身の「§1 直せないなら起票して現作業へ戻る」(このプロジェクト内
-  failure-catalog 用の `bd create --type=task ... harness` )は無関係(公開 issue の話では
-  なく、リポジトリ内メモの話)なので変更しない。
+- **brushup-protocol.md**: 汎用の教訓の運び先を「`harness-upstream` チケット」と名指しして
+  いる3箇所(「規律5 の手順(全文)」の手順4、「役割分担」節の「正本はこの repo の skill」の
+  段落、§3 前段の「汎用の教訓は harness-upstream チケットで運ぶ」)は、layering.md を
+  書き換えると食い違うので、報告スクリプト(layering.md のアップストリーム経路)を指す文に
+  書き換える。同じ「規律5 の手順(全文)」の手順3「直せないなら起票して現作業へ戻る」
+  (自プロジェクト内の `bd create --type=task ... harness`。§1 末尾にも同じ趣旨の一文がある)は
+  公開 issue の話ではないので変更しない。
+- **SKILL.md と pack.json**: SKILL.md「機械ガード(hooks)」節の「hook/deny に止められたら
+  …不具合は `harness-upstream` へ」(種類 B の入口そのもの)と、pack.json の `description` の
+  「harness-upstream 還流」も、同じ置き換えの対象に含める。
+- **hook からの送信の前提は main で変わった**: 0.56.0(bdboard-cm2q.10、PR #816)で、
+  コマンド文字列を正規表現で読む hook 4本(pre-bash-guard / pre-edit-guard / server-guard /
+  worktree-owner-guard)は廃止され、`permissions.deny`・`isolation: worktree`・merge-pr の
+  前提条件に置き換わった。配布する hook は stop-ticket-gate.sh と worktree-freshness.sh の
+  2本だけで、jq も python3 も無いと全検査を飛ばして通す(fail-open)のは stop-ticket-gate.sh
+  である。hook 本体の合計行数には予算がある(`src/infrastructure/harness/hook-line-budget.test.ts`。
+  上限 663 行、2026-10-04 時点で 602 行)。bdboard-4y8q.12 の「判断できずに通したときに hook
+  から送る」は、この2本のどれから何を送るかを決め直し、行数は brushup-protocol.md §4 の
+  4問目(代わりに外すもの)と §7 の予算に従う。
 - **古い版のハーネスが残る間の共存**: 旧版(bdboard 以外の5プロジェクト)は当面
   `bd create ... harness-upstream` のままになる。bdboard-4y8q.7 がこれを定期的に走査して
   下書きへ取り込む(bdboard-4y8q.1 に依存)。新版に更新したプロジェクトから順に
@@ -638,7 +699,7 @@ Runner の自動着手対象から外す**(`bd ready --exclude-label external-un
 
 | # | 論点 | 選択肢 | 推奨 |
 |---|---|---|---|
-| 1 | issue-drafts の既定保存パス | 727y の結論待ち | 727y の基点解決関数をそのまま issue-drafts にも使う(2節) |
+| 1 | issue-drafts の既定保存パス | (解決済み)727y が PR #782 で基点解決関数 `resolveDataDirBase` を入れた | `<基点>/issue-drafts/`(2節) |
 | 2 | 道具ゼロ判定(`--tools ''` + `--strict-mcp-config` + `--setting-sources ''`)が実際に道具ゼロを達成しているか | (a) 組み合わせを信じて実装 / (b) 実装時に実測して確定 | (b)。ARCHITECTURE.md の既存注記と同じ理由(8節) |
 | 3 | 安全判定・⭐評価に使うモデル | 高精度重視(opus 等) / 低コスト重視(sonnet 等) | 安全判定は誤判定のコストが高いので高精度側、⭐評価は軽量タスクなので低コスト側。具体名は実装時にユーザーと相談 |
 | 4 | 新規下書きの1時間20件の数え方 | 暦時間バケツ(実装簡単・境界で緩む) / 真のスライディングウィンドウ(厳密・実装重い) | 暦時間バケツ(4節)。小さな決め事なので実装時に変更してよい |
@@ -652,7 +713,7 @@ Runner の自動着手対象から外す**(`bd ready --exclude-label external-un
 
 | 順 | チケット | 内容 | 前提 |
 |---|---|---|---|
-| 1 | bdboard-727y | 添付画像の保存先バグ修正 | なし(先行させる) |
+| 1 | bdboard-727y | 添付画像の保存先バグ修正(完了: PR #782、2026-09-25 マージ) | なし |
 | 2 | bdboard-4y8q.1 | 下書きの保存・受け取り API、指紋、上限 | 727y、本ドキュメント |
 | 2' | bdboard-4y8q.2 | 公開本文の組み立てと置き換え(domain 純粋関数) | 本ドキュメント(1と並行可) |
 | 3 | bdboard-4y8q.3 | 「不具合報告」タブの画面 | 4y8q.1、4y8q.2 |
@@ -670,3 +731,8 @@ Runner の自動着手対象から外す**(`bd ready --exclude-label external-un
 本ドキュメントは議長の指示により Sonnet が直接執筆した(bdboard-4y8q.11 の受け入れ基準は
 `model: fable`/`opus` を指定しているが、担当割り当てが優先する)。
 `bd update bdboard-4y8q.11 --set-metadata bdboard.model.design=sonnet-5` を記録する。
+
+2026-10-04 に Opus 5.5 がレビューし、main(origin/main 43fb3a15)と照合して事実の誤りと
+古くなった記述を直した(2節を 727y の実装に合わせた、3節の先例、6節の gh `--web` の挙動、
+8節のチケット本文の扱い、9節の置き換え対象と hook の前提)。設計判断は変えていない。
+記録は `bdboard.model.review=opus-5`。
