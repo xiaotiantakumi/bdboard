@@ -24,9 +24,10 @@ import {
 // bdboard-kuui: computeHarnessKpi を accumulator (add / finish) 方式に作り替えたことで
 // KPI の出力が変わっていないことを確かめる。比較相手は、作り替え前の 4 回走査版
 // (pending-decision.ts / reclaim.ts / share.ts / aggregate.ts のループ本体) の写し。
-// 写しは意図して「そのまま」にしてある: 本体側をあとで直したときに、この写しも一緒に
-// 直して「テストが通る」ようにしてしまうと、比較の意味が無くなる。この参照実装と
-// 食い違ったら、まず本体側の変更が意図した挙動変更かを疑うこと。
+// 写しは origin/main のロジックをそのまま (コメントだけ省いて) コピーしたもの。本体側を
+// あとで直したときに、この写しも一緒に直して「テストが通る」ようにしてしまうと、
+// 比較の意味が無くなる。この参照実装と食い違ったら、まず本体側の変更が意図した
+// 挙動変更かを疑うこと。
 // 述語 (isPendingDecisionTicket / hasHarnessLabel / mentionsDuplicate)・期間判定・
 // 分位点・生存判定は今回触っていない共通部品なので、本体のものをそのまま使う。
 
@@ -542,18 +543,30 @@ describe('createHarnessKpiAccumulator vs the pre-kuui four-pass computeHarnessKp
     expect(accumulator.finish()).toEqual(first);
   });
 
-  it('does not depend on how the tickets are split across add() batches', () => {
+  it('keeps two accumulators independent when their add() batches are interleaved', () => {
     const input = generatedFixture(20260930);
     const { tickets, ...rest } = input;
-    const accumulator = createHarnessKpiAccumulator(rest);
-    // 3 つのバッチに割って、間に別の作業を挟んだつもりで finish は最後に 1 回だけ
+    const first = createHarnessKpiAccumulator(rest);
+    const second = createHarnessKpiAccumulator(rest);
+    // 同じ入力を 2 つの集計器へ、バッチごとに交互に流す。状態を共有していれば
+    // (モジュールレベルの変数・共有配列など) どちらかの結果が食い違う。
     const third = Math.floor(tickets.length / 3);
-    for (const batch of [tickets.slice(0, third), tickets.slice(third, 2 * third), tickets.slice(2 * third)]) {
+    const batches = [
+      tickets.slice(0, third),
+      tickets.slice(third, 2 * third),
+      tickets.slice(2 * third),
+    ];
+    for (const batch of batches) {
       for (const ticket of batch) {
-        accumulator.add(ticket);
+        first.add(ticket);
+      }
+      for (const ticket of batch) {
+        second.add(ticket);
       }
     }
-    expect(accumulator.finish()).toEqual(referenceComputeHarnessKpi(input));
+    const expected = referenceComputeHarnessKpi(input);
+    expect(first.finish()).toEqual(expected);
+    expect(second.finish()).toEqual(expected);
   });
 
   it('is unaffected by the caller mutating reclaimRuns / leftoverCandidates after creation', () => {

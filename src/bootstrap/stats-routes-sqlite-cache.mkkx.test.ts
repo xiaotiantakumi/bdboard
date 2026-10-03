@@ -198,8 +198,10 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
   );
 
   // bdboard-kuui: /api/harness-kpi's aggregation (computeHarnessKpi, 4 synchronous passes over
-  // every ticket: 170-220ms of blocked event loop at 200,000 tickets) is now fed through
-  // forEachChunked, one yield per AGGREGATION_YIELD_CHUNK_SIZE tickets.
+  // every ticket) is now fed through forEachChunked, one yield per AGGREGATION_YIELD_CHUNK_SIZE
+  // tickets. At 200,000 tickets / 200 projects the old synchronous aggregation's max event-loop
+  // gap was ~53-93 ms on a quiet machine (load ~3) and ~190-350 ms under load ~10 (the ticket
+  // reported 281-656 ms).
   //
   // Deliberately NOT a wall-clock or ratio assertion. The health-vs-slowest-stats ratio guard
   // above is documented as unreliable for a single route (bdboard-4x55: reverting /api/cfd

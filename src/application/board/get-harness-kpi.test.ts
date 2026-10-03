@@ -407,8 +407,10 @@ describe('getHarnessKpi', () => {
   });
 
   // bdboard-kuui: 以前の getHarnessKpi は全チケットを 1 本の配列に積んで同期の
-  // computeHarnessKpi (4 回走査) に渡しており、200,000 件で 170〜220ms 以上イベント
-  // ループを塞いでいた。いまは集計器の add を forEachChunked で回す。
+  // computeHarnessKpi (4 回走査) に渡しており、200,000 件 / 200 プロジェクトで最大
+  // イベントループ間隔が静かなマシン (load 約 3) で 53〜93ms、負荷下 (load 約 10) で
+  // 190〜350ms (チケット記載は 281〜656ms) にもなっていた。いまは集計器の add を
+  // forEachChunked で回す。
   //
   // 「塞ぐ時間」は壁時計で測らず、**マクロタスクの 1 ターンの間に集計器へ渡ったチケットの
   // 数**で測る (マシンの速さや負荷に左右されない決定的な量)。ticker が setImmediate で
@@ -463,6 +465,8 @@ describe('getHarnessKpi', () => {
       const cache = createFakeBoardCache();
       const touchedThisTurn = new Set<string>();
       seedManySmallProjects(cache, (id) => touchedThisTurn.add(id));
+      // シード中に createdAt を読まれた分は数えない (計測は getHarnessKpi の開始から)。
+      touchedThisTurn.clear();
 
       let maxTicketsPerTurn = 0;
       let turns = 0;
