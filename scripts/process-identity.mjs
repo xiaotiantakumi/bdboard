@@ -108,7 +108,8 @@ export function processStartTime(pid, deps) {
  * 記録した開始時刻 recorded と、pid の今の開始時刻を比べる。
  *   'same'      — 同じプロセス (START_TIME_TOLERANCE_MS 以内)
  *   'different' — 別のプロセス = PID が再利用されている
- *   'unknown'   — 判定できない (記録が無い・旧形式 / 今の開始時刻を取れない)
+ *   'unknown'   — 判定できない (記録が無い・旧形式 / 今の開始時刻を取れない / 片方だけ日時として読めて
+ *                 形式が食い違う)
  * 'unknown' を 'different' に倒さないこと: 判定できないだけで「別のプロセス」とみなすと、本当に
  * 走っている finish / verify の裏で 2 本目が並走する。
  */
@@ -124,6 +125,9 @@ export function compareStartTime(pid, recorded, deps) {
   const currentMs = Date.parse(current);
   if (Number.isFinite(recordedMs) && Number.isFinite(currentMs)) {
     return Math.abs(currentMs - recordedMs) <= START_TIME_TOLERANCE_MS ? 'same' : 'different';
+  }
+  if (Number.isFinite(recordedMs) !== Number.isFinite(currentMs)) {
+    return 'unknown'; // 片方は日時・片方は読めない生の文字列: 同じプロセスかを決める材料にならない
   }
   return current === recorded ? 'same' : 'different';
 }

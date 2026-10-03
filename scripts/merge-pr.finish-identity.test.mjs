@@ -116,9 +116,11 @@ describe.skipIf(process.platform === 'win32' || !hasPs)('merge-pr finish: proces
       });
       let pgid;
       try {
+        // verifyPgid を書いてから ps で取った verifyPgidStart を足す 2 回目の書き込みまで待つ。
         await waitUntil(() => {
-          pgid = tryReadStateFile()?.verifyPgid;
-          return Number.isInteger(pgid) && existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '';
+          const state = tryReadStateFile();
+          pgid = state?.verifyPgid;
+          return Number.isInteger(pgid) && typeof state.verifyPgidStart === 'string' && existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '';
         });
         const stamped = readStateFile();
         expect(stamped.verifyingPid).toBe(child.pid);

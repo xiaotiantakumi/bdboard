@@ -153,4 +153,10 @@ describe('compareStartTime', () => {
     expect(compareStartTime(5, 'odd format', odd)).toBe('same');
     expect(compareStartTime(5, 'another format', odd)).toBe('different');
   });
+
+  it('is unknown, not different, when only one side reads as a date (the formats disagree)', () => {
+    const odd = { platform: 'linux', spawnSync: fakePs({ status: 0, stdout: 'odd format\n' }) };
+    expect(compareStartTime(5, '2026-10-04T12:00:00.000Z', odd)).toBe('unknown');
+    expect(compareStartTime(5, 'odd format', at('2026-10-04T12:00:00Z'))).toBe('unknown');
+  });
 });

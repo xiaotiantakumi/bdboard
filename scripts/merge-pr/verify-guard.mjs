@@ -107,12 +107,11 @@ export function recordVerifyGroup(ctx, pr, child) {
     return;
   }
   try {
-    writeState(ctx.cwd, pr, {
-      ...current,
-      verifyPgid: child.pid,
-      verifyPgidAt: new Date().toISOString(),
-      verifyPgidStart: processStartTime(child.pid),
-    });
+    // グループ id を先に書き、開始時刻は ps の後で足す。ps (重い負荷では数秒) の間に finish が SIGKILL
+    // されても孤児のグループを記録し損ねない (開始時刻の無い記録は、リーダー無し・経過時間で判定される)。
+    const stamped = { ...current, verifyPgid: child.pid, verifyPgidAt: new Date().toISOString(), verifyPgidStart: null };
+    writeState(ctx.cwd, pr, stamped);
+    writeState(ctx.cwd, pr, { ...stamped, verifyPgidStart: processStartTime(child.pid) });
   } catch {
     // 記録できなくても検証は続ける (孤児の検出が効かなくなるだけ)。
   }
