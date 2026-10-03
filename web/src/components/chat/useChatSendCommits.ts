@@ -14,7 +14,7 @@ import type { UseConversationKeyResult } from './useConversationKey';
 
 export interface UseChatSendCommitsParams
   extends Pick<UseChatConversationsStateResult, 'setConversations' | 'setHistoryLoadedFor' | 'setThreadModelIds'>,
-    Pick<UseChatThreadListsResult, 'setThreadLists' | 'setOpenThreadIds' | 'openThreadIdsRef'>,
+    Pick<UseChatThreadListsResult, 'setThreadLists' | 'setOpenThreadIds' | 'openThreadIdsRef' | 'restoredProjectsRef'>,
     Pick<UseConversationKeyResult, 'setSelectedThreadIds' | 'selectedThreadIdsRef'>,
     Pick<
       UseChatDraftStateResult,
@@ -58,6 +58,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
     setThreadLists,
     setOpenThreadIds,
     openThreadIdsRef,
+    restoredProjectsRef,
     setSelectedThreadIds,
     selectedThreadIdsRef,
     conversationInputsRef,
@@ -94,10 +95,28 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       // (履歴 effect は messages がある会話では early-return して
       // historyLoadedFor を立てないため)。
       setHistoryLoadedFor((prev) => ({ ...prev, [result.sessionId]: true }));
-      writePersistedChatThread(selectedProjectId, {
-        sessionId: result.sessionId,
-        agentId: result.agentId,
-      });
+      // メモリの次の open は live ref から計算する(bdboard-d7on)。updater の外で ref を
+      // 読み、setOpenThreadIds より前に確定させておく(下の永続化と同じ値を使うため)。
+      const liveOpen = openThreadIdsRef.current[selectedProjectId];
+      const nextOpenAfterCommit = [
+        ...(liveOpen ?? []).filter((id) => id !== result.sessionId),
+        result.sessionId,
+      ];
+      // bdboard-7feq: このプロジェクトの open が復元済み(restoredProjectsRef がマーク済み)で
+      // live の open が分かるなら、永続化の open もメモリの次状態(nextOpenAfterCommit)と
+      // 同じにする。永続化済みエントリを基点にすると、初回訪問(エントリ無し)でメモリが
+      // [A,B,C] のとき永続化が [D] に潰れ、リロードで A/B/C が黙って閉じられた。未復元
+      // (初回一覧の読込中)は従来どおり永続化済みエントリを基点にする(bdboard-4w2d)。
+      // 書き込みは setState の updater の外(StrictMode が updater を2回呼んでも二重に
+      // 書かない)。open が 0 件でも nextOpenAfterCommit は少なくとも新セッションを含む
+      // ので、bdboard-rhl4 の「0 件なら [] を書く」とは干渉しない。
+      writePersistedChatThread(
+        selectedProjectId,
+        { sessionId: result.sessionId, agentId: result.agentId },
+        restoredProjectsRef.current.has(selectedProjectId) && liveOpen !== undefined
+          ? nextOpenAfterCommit
+          : undefined,
+      );
       if (showModelSelect && effectiveModelId !== '') {
         // 送信で実際に使われたモデルは常に確定値として勝つべきなので、ここだけは
         // 無条件で上書きする(履歴解決側の「未設定キーにだけ書く」ガードとは非対称)。
@@ -110,10 +129,6 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
           { sessionId: result.sessionId, agentId: result.agentId, title: summarizeTitle(sentText), pinned: false, updatedAt: new Date().toISOString() },
         ],
       }));
-      const nextOpenAfterCommit = [
-        ...(openThreadIdsRef.current[selectedProjectId] ?? []).filter((id) => id !== result.sessionId),
-        result.sessionId,
-      ];
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpenAfterCommit }));
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: result.sessionId }));
       // ここでは未回収の印を外さない (PR#135 レビュー minor-1)。
@@ -136,6 +151,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       setThreadLists,
       setOpenThreadIds,
       openThreadIdsRef,
+      restoredProjectsRef,
       setSelectedThreadIds,
       selectedThreadIdsRef,
     ],

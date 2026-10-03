@@ -109,6 +109,18 @@ describe.skipIf(!oldNode)('verify.mjs node guard on a real old Node', () => {
     expectGuardShortfall(result, version, range);
   });
 
+  // bdboard-qoxg: always-on-server.sh の停止前 node 版ゲートが呼ぶ node-version-check.mjs は、
+  // ゲートが止めるべき古い node 自身で走る。SyntaxError ではなく版不足の案内を出して exit 3 になること。
+  it('node-version-check.mjs (always-on-server.sh gate) reports the shortfall on the old Node itself', () => {
+    const version = assertOldNodeIsTooOld();
+    const result = runOldNode([path.join(scriptsDir, 'node-version-check.mjs'), repoRoot]);
+    const output = `${result.stderr}${result.stdout}`;
+    expect(result.status).toBe(3);
+    expect(output).toContain(`Node.js ${range} が必要ですが`);
+    expect(output).toContain(`v${version}`);
+    expect(output).not.toMatch(/SyntaxError/);
+  });
+
   // 対照実験: ガードの import graph にパースできない構文が入ったら、上の判定が実際に落ちることを示す。
   // プローブはどの Node でもパースできない構文にする (特定の版だけ通らない新構文だと、
   // CI の旧 Node を上げたときにこの対照だけが壊れる)。

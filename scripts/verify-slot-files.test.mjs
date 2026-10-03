@@ -34,6 +34,9 @@ const setMtime = (filePath, mtimeMs) => fs.utimesSync(filePath, mtimeMs / 1000, 
 
 const errnoError = (code) => Object.assign(new Error(`${code}: injected`), { code });
 
+// writeHolderAtomically が残しうる一時ファイル (holder-<pid>.json.<pid>.tmp) の一覧。
+const tmpFilesIn = (dir) => fs.readdirSync(dir).filter((name) => name.endsWith('.tmp'));
+
 // failures.read / failures.stat: ファイル名 → 注入する errno。
 const failingIo = (failures) => ({
   ...fs,
@@ -159,6 +162,34 @@ describe('readOthers', () => {
     readOthers(dir, selfPathIn(dir), { io, now: later, unreadableSince }); // 消えた
     expect(unreadableSince.size).toBe(0);
   });
+
+  // bdboard-l3dh: writeHolderAtomically の一時ファイル (holder-<pid>.json.<pid>.tmp) は HOLDER_NAME に
+  // 一致しないので holder としては数えない。書いた pid が死んでいれば (SIGKILL された verify 等)
+  // 誰も消さないので、死んだ holder と同じ判定で回収する。生きている pid の一時ファイルは書き込み
+  // 途中 (rename 前) かもしれないので消さない。
+  describe('leftover temporary files of writeHolderAtomically', () => {
+    it('reclaims the .tmp of a dead pid, and does not count it as a holder', () => {
+      const dir = makeDir();
+      const pid = deadPid();
+      // holder 側の pid は生きていても、書いた pid (2 つ目) が死んでいれば回収する。
+      const leftover = path.join(dir, `holder-${livePid}.json.${pid}.tmp`);
+      fs.writeFileSync(leftover, JSON.stringify({ v: 2, pid, joinedAt: 1_000 }));
+      expect(readOthers(dir, selfPathIn(dir)).others).toEqual([]);
+      expect(fs.existsSync(leftover)).toBe(false);
+    });
+
+    it('keeps the .tmp of a live pid (a write may be in flight) and files that are not holder temporaries', () => {
+      const dir = makeDir();
+      // holder 側の pid が死んでいても、書いた pid (2 つ目) が生きていれば消さない。
+      const inFlight = path.join(dir, `holder-${deadPid()}.json.${livePid}.tmp`);
+      const unrelated = path.join(dir, `holder-${deadPid()}.json.bak`); // 一時ファイルの名前ではない
+      fs.writeFileSync(inFlight, '{"pid": ');
+      fs.writeFileSync(unrelated, '');
+      expect(readOthers(dir, selfPathIn(dir)).others).toEqual([]);
+      expect(fs.existsSync(inFlight)).toBe(true);
+      expect(fs.existsSync(unrelated)).toBe(true);
+    });
+  });
 });
 
 describe('writeHolderAtomically', () => {
@@ -193,6 +224,7 @@ describe('writeHolderAtomically', () => {
 
       expect(JSON.parse(fs.readFileSync(filePath, 'utf8'))).toEqual(holder);
       expect(waits).toEqual([10, 20]); // 2 回だけ待って 3 回目の rename で回復した
+      expect(tmpFilesIn(dir)).toEqual([]); // rename で一時ファイルは消えている
     },
   );
 
@@ -222,6 +254,8 @@ describe('writeHolderAtomically', () => {
     expect(renameCalls).toBe(7); // 最初の1回 + 再試行6回
     expect(waits).toEqual([10, 20, 40, 80, 160, 320]); // 合計 630ms、1 秒未満
     expect(fs.existsSync(filePath)).toBe(false); // rename できていないので holder file は書き替わっていない
+    // bdboard-l3dh: throw する前に一時ファイルを消す (残すと誰も掃除しない — HOLDER_NAME に一致しない)。
+    expect(tmpFilesIn(dir)).toEqual([]);
   });
 
   it.each(['ENOENT', 'EIO'])('does not retry an errno outside the transient set (%s)', async (code) => {
@@ -240,5 +274,6 @@ describe('writeHolderAtomically', () => {
     ).rejects.toMatchObject({ code });
 
     expect(waits).toEqual([]); // 一度も待たずに即座に失敗する
+    expect(tmpFilesIn(dir)).toEqual([]); // bdboard-l3dh: 即 throw する経路でも一時ファイルは残らない
   });
 });

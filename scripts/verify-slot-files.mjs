@@ -10,6 +10,8 @@ import { HOLDER_FORMAT } from './verify-slot-queue.mjs';
 const CORRUPT_GRACE_MS = 5_000;
 
 const HOLDER_NAME = /^holder-(\d+)\.json$/;
+// writeHolderAtomically の一時ファイル (holder-<pid>.json.<書いた pid>.tmp)。HOLDER_NAME には一致しない。
+const HOLDER_TEMPORARY_NAME = /^holder-\d+\.json\.(\d+)\.tmp$/;
 const GONE = 'gone';
 const UNREADABLE = 'unreadable';
 const CORRUPT = 'corrupt';
@@ -106,7 +108,8 @@ function unreadableHolder(io, filePath, pid, now, unreadableSince) {
 }
 
 // 一時ファイルに書いてから rename する (読み手が書きかけを「壊れたファイル」として消さないように)。
-// 一時ファイル名は holder-<pid>.json に一致しないので、新旧どちらの読み手にも無視される。
+// 一時ファイル名は holder-<pid>.json に一致しないので holder としては数えない。書いた pid が死んで
+// いれば readOthers が回収する (bdboard-l3dh)。
 //
 // bdboard-smyp: Windows では、自分の acquiredAt 書き込み (rename) が、たまたま同じ瞬間に相手が
 // この holder file を読んでいる操作 (アンチウイルスのスキャン等、ファイルを一時的に開く何か) と
@@ -127,7 +130,11 @@ export async function writeHolderAtomically(filePath, holder, options = {}) {
     } catch (error) {
       const code = error && error.code;
       if (!RENAME_RETRY_ERRNOS.has(code) || attempt >= RENAME_RETRY_DELAYS_MS.length) {
-        throw error; // 対象外の errno、または再試行の上限に達した — 今までどおり呼び出し元に投げる
+        // 対象外の errno、または再試行の上限に達した — 今までどおり呼び出し元に投げる。
+        // 一時ファイルは HOLDER_NAME に一致せず、onExit (selfPath だけを消す) も拾わないので、
+        // 投げる前にここで消す (bdboard-l3dh)。
+        unlinkQuietly(temporary);
+        throw error;
       }
       await wait(RENAME_RETRY_DELAYS_MS[attempt]);
     }
@@ -135,7 +142,8 @@ export async function writeHolderAtomically(filePath, holder, options = {}) {
 }
 
 /**
- * 自分以外の holder を読む。死んだ pid と、書きかけでないと言える壊れたファイルは回収する。
+ * 自分以外の holder を読む。死んだ pid と、書きかけでないと言える壊れたファイルは回収する
+ * (書いた pid が死んでいる一時ファイルも)。
  * 読み取り自体が失敗した相手は、pid (ファイル名から) が生きていれば「走っている」として数える
  * (unreadableHolder)。options.io はテストの失敗注入用 (既定は node:fs)。options.unreadableSince は
  * 呼び出し元が周をまたいで持つ Map (stat も失敗した相手の年齢を数えるため)。
@@ -155,6 +163,12 @@ export function readOthers(dir, selfPath, options = {}) {
   for (const name of names) {
     const match = HOLDER_NAME.exec(name);
     if (match === null) {
+      // bdboard-l3dh: 書いた pid が死んでいる一時ファイル (書き込み中に SIGKILL された verify 等) は
+      // 誰も消さないので、死んだ holder と同じ判定で回収する。生きていれば書き込み途中かもしれないので触らない。
+      const temporaryMatch = HOLDER_TEMPORARY_NAME.exec(name);
+      if (temporaryMatch !== null && !isProcessAlive(Number(temporaryMatch[1]))) {
+        unlinkQuietly(path.join(dir, name));
+      }
       continue;
     }
     const filePath = path.join(dir, name);
