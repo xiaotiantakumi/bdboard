@@ -82,12 +82,46 @@ GitHub issue（別端末・別アカウントから起票されることもあ�
    `bd update <id> --external-ref gh-<番号>`（既存チケットへ後付け）で、少なくとも1件の
    bd チケットから GitHub issue を紐付ける（上の check スクリプトが認識する形式は
    `gh-<番号>` または `https://github.com/<owner>/<repo>/issues/<番号>`）。
-2. **進捗コメント**: 起票（bd チケット化した時点）・着手・PR 作成・マージ・close の節目ごとに、
-   紐付けた GitHub issue 側にもコメントで進捗を書く。対応が完了したら issue を閉じる。
-3. **判断が残る場合**: 対応方針の判断がまだ残っている（要確認・要議論）なら issue を閉じず、
-   その旨をコメントに書いて次のセッションに引き継ぐ。
+2. **進捗コメント**: 起票（bd チケット化した時点）・着手の節目では、紐付けた GitHub issue
+   側にもコメントで進捗を書いてよい。ただし **close は手でしない** — external-ref が
+   `gh-<N>` 形式のチケットは、対応 PR の本文に closing keyword を書けば squash
+   マージで issue が自動的に閉じる（下記「PR 本文で external-ref の issue を閉じる」節。
+   `npm run merge-pr -- prepare` が機械的に強制する）。
+3. **判断が残る場合**: 対応方針の判断がまだ残っている（要確認・要議論）なら、その旨を
+   issue にコメントして次のセッションに引き継ぐ（自動close の対象外にしたいときは、その旨も
+   書く）。
 4. **公開リポジトリの注意**: このリポジトリは public なので、issue コメントに内部パス・
    端末固有の設定・非公開の運用履歴やシークレットを書かない。
+
+### PR 本文で external-ref の issue を閉じる
+
+チケットの external-ref (`gh-<N>`) が持つ GitHub issue #N は、対応 PR の本文に GitHub の
+closing keyword (`Closes` / `Fixes` / `Resolves`。大小文字は無視) か `Refs` を `#N` 付きで
+書けば、squash マージで自動的に閉じる (`Refs` は閉じずにリンクだけ残す)。手でコメントして
+手で閉じる運用 (#432 や #437 で行っていたもの) はもうしない — PR はもともと公開なので、新しく
+公開される情報は増えない。
+
+**1 つの issue に複数チケットがある場合** (例: gh-432 に bdboard-jzla と bdboard-4sku の 2 件):
+最後にマージする PR だけ `Closes #N` (issue を閉じる) を書き、それ以外の PR は `Refs #N`
+(閉じずに参照だけ) を書く。どちらを書くかは担当の判断 — 「最後の PR かどうか」を機械的に
+決める情報が bd 側に無いため、スクリプトは判定しない。
+
+**機械的な強制 (bdboard-4y8q.8)**: `npm run merge-pr -- prepare <N>` が、対象チケットの
+external-ref が `gh-<N>` 形式のときだけ、PR 本文 (コードブロックを除く) に `Closes #N` /
+`Fixes #N` / `Resolves #N` / `Refs #N` のいずれか (大小文字無視。`Fixed #N` 等 GitHub が閉じる
+活用形も可) があるかを確かめる。無ければ既存の前提条件エラーと同じ exit code (2) で止め、
+どのキーワードを書けばよいかをメッセージに示す。本文を直すだけでよい (head は変わらないので
+push も CI のやり直しも要らない) — 直したら prepare をやり直す。external-ref がそもそも無い
+チケット、または `gh-<N>` 形式でない external-ref (例: URL 形式) は対象外 (何もしない)。
+走るのは `merge.mode` が S1 / S2 の prepare だけ。rebase が要る (exit 3) PR と必須チェックが
+green でない PR では、それを直して prepare し直したときに初めて走る。S2 クラス F の着地予定ツリー
+verify よりは前に走る (本文だけの不備で verify スロットを使わない)。S0 の prepare (分類表示だけ)
+と `--dry-run` では走らない。チケットは prepare のレビュー記録の確認
+(`bdboard.model.review`) が読んだものを使う (bd は 1 回だけ読む)。bd が読めない (bd 未接続・
+タイムアウト等) ときは、このチェックに来る前にレビュー記録の確認が止める (fail-open はしない)。
+実装: `scripts/merge-pr/external-ref.mjs`
+と `scripts/merge-pr/prepare.mjs`。詳細な手順は
+harness/packs/bdboard-harness/references/worktree-pr-flow.md「PR 作成」節。
 
 ## Direct-to-main の禁止 (例外なし)
 
@@ -261,7 +295,9 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
 (`-s` keeps npm's `> bdboard@… merge-pr` banner off stdout, so stdout is exactly the one
 `gh pr merge …` line; everything else goes to stderr.)
 
-- **Exit codes**: `2` precondition failed (no review record / ticket not found in bd); `7` caller is not the chair.
+- **Exit codes**: `2` precondition failed (no review record / ticket not found in bd / the PR body
+  does not reference the ticket's `gh-<N>` external-ref issue — see "PR 本文で external-ref の issue
+  を閉じる" above); `7` caller is not the chair.
   `3` main moved (class R) → `git rebase origin/main` (or `git merge origin/main`)
   → push → wait for CI → `prepare` again. `75` start over from `prepare` (CAS lost, main moved
   while waiting, `ls-remote` failed, slot not free within `merge.slotWaitMinutes`, CI pending or

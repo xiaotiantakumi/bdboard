@@ -152,6 +152,17 @@ bd comment <id> "PR: <url>"
 PR を開いた時点では **close しない**（SKILL.md 規律4）。CI が緑になるのを待つ
 （待ち時間に他チケットを進めてよい）。
 
+**`Closes: <id>` (bd チケット) と `Closes #N` (GitHub issue) は別物**。上のテンプレートの
+`Closes: <id>` は bd チケット ID を指す社内の記法で、GitHub の closing keyword ではない
+(コロン付き、`#` を使わない)。チケットの external-ref が `gh-<N>` のとき、対応する GitHub
+issue を自動で閉じるには、PR 本文に別途 GitHub の closing keyword — `Closes #N` / `Fixes #N`
+/ `Resolves #N` (大小文字無視) — を書く。閉じずに参照だけしたいとき (同じ issue の他チケットが
+後で閉じる場合) は `Refs #N` を書く。1 つの issue に複数チケットがあるときは、最後にマージする
+PR だけ `Closes #N`、それ以外は `Refs #N`。`npm run merge-pr -- prepare <N>` が、external-ref
+が `gh-<N>` のチケットについてこれを機械的に確かめる (無ければ前提条件エラーで止める。bd が
+読めないときは fail-open で警告のみ)。bdboard 固有の事故・exit code は
+docs/GIT-WORKFLOW.md「PR 本文で external-ref の issue を閉じる」節。
+
 **`gh pr checks <N> --watch` はネットワーク由来で exit 1 を返すことがある（CI失敗と誤読
 しない）**: CI 自体は緑でも、`gh pr checks --watch` は GraphQL 呼び出しの読み込みタイムアウト
 で異常終了し、その時点の一覧には一部チェックが pending のまま残ることがある（実測

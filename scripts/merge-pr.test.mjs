@@ -16,10 +16,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_HOT_FILES,
+  bodyReferencesIssue,
   decideS2Class,
   evaluateLandedStatus,
   globToRegExp,
   hotCollisions,
+  issueNumberFromExternalRef,
   hasApprovedReview,
   isReleasePleasePull,
   mergeCommand,
@@ -63,6 +65,38 @@ import {
 } from './merge-pr.test-support.mjs';
 
 describe('merge-pr pure helpers', () => {
+  it('bodyReferencesIssue: matches Closes/Fixes/Resolves/Refs #N case-insensitively but not inside code spans or a different number', () => {
+    expect(bodyReferencesIssue('Closes: bdboard-4y8q.8\n\nCloses #432', 432)).toBe(true);
+    expect(bodyReferencesIssue('closes #432', 432)).toBe(true);
+    expect(bodyReferencesIssue('CLOSES #432', 432)).toBe(true); // 大小文字無視 (小文字の正準形だけでなく)
+    expect(bodyReferencesIssue('Fixes #432', 432)).toBe(true);
+    expect(bodyReferencesIssue('Resolves #432', 432)).toBe(true);
+    expect(bodyReferencesIssue('Refs #432', 432)).toBe(true);
+    // GitHub が実際に閉じる活用形はすべて受理する (bdboard-4y8q.8 レビュー指摘:
+    // "Fixed #432" 等の正しい書き方をこのゲートだけが誤ってブロックしないように)。
+    expect(bodyReferencesIssue('Close #432', 432)).toBe(true);
+    expect(bodyReferencesIssue('Closed #432', 432)).toBe(true);
+    expect(bodyReferencesIssue('Fix #432', 432)).toBe(true);
+    expect(bodyReferencesIssue('Fixed #432', 432)).toBe(true);
+    expect(bodyReferencesIssue('Resolve #432', 432)).toBe(true);
+    expect(bodyReferencesIssue('Resolved #432', 432)).toBe(true);
+    expect(bodyReferencesIssue('Closes #999', 432)).toBe(false);
+    expect(bodyReferencesIssue('Closes #4321', 432)).toBe(false); // 番号の完全一致 (部分一致で誤検知しない)
+    expect(bodyReferencesIssue('no mention here', 432)).toBe(false);
+    expect(bodyReferencesIssue('Encloses #432', 432)).toBe(false); // 語境界 (\b) で "closes" の部分一致を弾く
+    expect(bodyReferencesIssue('```\nCloses #432\n```', 432)).toBe(false); // コードフェンス内は無視
+    expect(bodyReferencesIssue('see `Closes #432` inline', 432)).toBe(false); // インラインコードも無視
+  });
+
+  it('issueNumberFromExternalRef: only the gh-<N> short form (case-insensitive); URL form and non-matches are null', () => {
+    expect(issueNumberFromExternalRef('gh-432')).toBe(432);
+    expect(issueNumberFromExternalRef('GH-432')).toBe(432);
+    expect(issueNumberFromExternalRef('https://github.com/xiaotiantakumi/bdboard/issues/432')).toBeNull();
+    expect(issueNumberFromExternalRef(null)).toBeNull();
+    expect(issueNumberFromExternalRef(undefined)).toBeNull();
+    expect(issueNumberFromExternalRef('gh-abc')).toBeNull();
+  });
+
   const lease = 8 * 60_000;
   const now = Date.parse('2026-09-24T12:00:00Z');
 
@@ -390,6 +424,106 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     writeFake({ checks: { [PR]: 1 } });
     expect(run(['prepare', String(PR)]).status).toBe(2);
     expect(existsSync(stateFile())).toBe(false);
+  });
+
+  function setPullBody(body) {
+    const fake = readFake();
+    fake.pulls[String(PR)] = { ...fake.pulls[String(PR)], body };
+    writeFileSync(fakeState, JSON.stringify(fake));
+  }
+
+  it('prepare: a ticket with no external-ref is not gated at all (a null external_ref short-circuits the gate)', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(existsSync(stateFile())).toBe(true);
+    expect(calls('bd', 'show').length).toBe(1);
+  });
+
+  it('prepare: gh-<N> external-ref with "Closes #N" in the PR body succeeds', () => {
+    setup();
+    writeFake({ bdShow: { 'demo-1': [{ external_ref: 'gh-432', metadata: { 'bdboard.model.review': 'opus-5' } }] } });
+    setPullBody('Closes: demo-1\n\nCloses #432\n\nsummary');
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(0);
+    expect(existsSync(stateFile())).toBe(true);
+    expect(calls('bd', 'show').length).toBe(1);
+  });
+
+  it('prepare: gh-<N> external-ref with "Refs #N" (not the last PR for the issue) also succeeds', () => {
+    setup();
+    writeFake({ bdShow: { 'demo-1': [{ external_ref: 'gh-432', metadata: { 'bdboard.model.review': 'opus-5' } }] } });
+    setPullBody('Closes: demo-1\n\nRefs #432\n\nsummary');
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(0);
+    expect(existsSync(stateFile())).toBe(true);
+    expect(calls('bd', 'show').length).toBe(1);
+  });
+
+  it('prepare: gh-<N> external-ref with neither Closes/Fixes/Resolves/Refs #N in the body is blocked (exit 2, same code as other preconditions)', () => {
+    setup();
+    writeFake({ bdShow: { 'demo-1': [{ external_ref: 'gh-432', metadata: { 'bdboard.model.review': 'opus-5' } }] } });
+    setPullBody('Closes: demo-1\n\nsummary with no issue reference');
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(2);
+    expect(prepared.stderr).toContain('#432 への言及が PR #7 の本文にありません');
+    expect(prepared.stderr).toContain('Closes #432');
+    expect(prepared.stderr).toContain('Refs #432');
+    expect(existsSync(stateFile())).toBe(false);
+  });
+
+  it('prepare: the closing keyword is matched case-insensitively ("CLOSES #N", not just the canonical lowercase form)', () => {
+    setup();
+    writeFake({ bdShow: { 'demo-1': [{ external_ref: 'gh-432', metadata: { 'bdboard.model.review': 'opus-5' } }] } });
+    setPullBody('CLOSES #432');
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+  });
+
+  it('prepare: GitHub-valid inflected closing keywords ("Fixed #N", "Closed #N") are accepted, not just the present-tense forms', () => {
+    setup();
+    writeFake({ bdShow: { 'demo-1': [{ external_ref: 'gh-432', metadata: { 'bdboard.model.review': 'opus-5' } }] } });
+    setPullBody('Fixed #432');
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+  });
+
+  it('prepare: a Closes for a different issue number does not satisfy the gate (blocks)', () => {
+    setup();
+    writeFake({ bdShow: { 'demo-1': [{ external_ref: 'gh-432', metadata: { 'bdboard.model.review': 'opus-5' } }] } });
+    setPullBody('Closes #999'); // 別 issue — 432 には言及していない
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(2);
+    expect(prepared.stderr).toContain('#432 への言及が PR #7 の本文にありません');
+  });
+
+  it('prepare: "Closes #N" inside a fenced code block does not count (avoids a false positive on sample code)', () => {
+    setup();
+    writeFake({ bdShow: { 'demo-1': [{ external_ref: 'gh-432', metadata: { 'bdboard.model.review': 'opus-5' } }] } });
+    setPullBody('```\nCloses #432\n```');
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(2);
+    expect(prepared.stderr).toContain('#432 への言及が PR #7 の本文にありません');
+    expect(existsSync(stateFile())).toBe(false);
+  });
+
+  it('S2 prepare: a missing issue reference blocks class F before the predicted verify (no verify run, no state)', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    writeFake({ bdShow: { 'demo-1': [{ external_ref: 'gh-432', metadata: { 'bdboard.model.review': 'opus-5' } }] } });
+    setPullBody('Closes: demo-1');
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(2);
+    expect(prepared.stderr).toContain('クラス=F');
+    expect(prepared.stderr).toContain('#432 への言及が PR #7 の本文にありません');
+    expect(verified()).toEqual([]); // 着地予定ツリーの verify (数分・verify スロット) を走らせる前に止まる
+    expect(existsSync(stateFile())).toBe(false);
+    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
+  });
+
+  it('prepare: the external-ref check reuses the review check\'s single bd read (no second bd show)', () => {
+    setup();
+    writeFake({ bdShow: { 'demo-1': [{ external_ref: 'gh-432', metadata: { 'bdboard.model.review': 'opus-5' } }] } });
+    setPullBody('Closes #432');
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(calls('bd', 'show')).toHaveLength(1);
   });
 
   it('happy path: slot is held only from gate to finish, and the landed tree is verified and recorded', () => {

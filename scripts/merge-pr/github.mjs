@@ -27,6 +27,8 @@ export function getPull(ctx, pr) {
     merged: raw.merged === true,
     mergeCommitSha: typeof raw.merge_commit_sha === 'string' ? raw.merge_commit_sha : null,
     title: typeof raw.title === 'string' ? raw.title : '',
+    // external-ref の issue を Closes/Fixes/Resolves/Refs しているかの判定に使う (bdboard-4y8q.8)。
+    body: typeof raw.body === 'string' ? raw.body : '',
     headSha: raw.head?.sha ?? null,
     headRef: raw.head?.ref ?? null,
     baseRef: raw.base?.ref ?? null,
