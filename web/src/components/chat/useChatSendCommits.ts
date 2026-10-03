@@ -1,6 +1,6 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { acknowledgeChatTurn, type ChatMessageResponseDto } from '../../api';
-import { writePersistedChatThread } from '../../chatThreadStorage';
+import { readPersistedChatThreads, writePersistedChatThread } from '../../chatThreadStorage';
 import { referenceDraftPayloadStoreCarryPlan } from '../conversationKeyspace';
 import type { ChatAttachment } from './attachments';
 import { describeChatSendError } from './chatSendErrors';
@@ -67,12 +67,30 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
     updateConversationAttachments,
   } = params;
 
+  // bdboard-drfb: 「サーバーにもうそのセッションが無い」(400 unknown chat session) で送信に失敗した
+  // 会話キー。commitFailure が入れ、次の commitSuccess が delete しながら読む。再送が新しい
+  // セッションへ移るとき、死んだスレッドをスレッド一覧からも落とすかの判定に使う
+  // (chat agent mismatch のスレッドはサーバーで生きているので入れない)。state ではなく ref:
+  // 描画に使わず、書き込みも読み取りもイベント(送信の確定・失敗)の中だけ。
+  const goneSessionKeysRef = useRef<Set<string>>(new Set());
+
   const commitSuccess = useCallback(
     (convKey: string, sentText: string, result: ChatMessageResponseDto) => {
       // bdboard-ru4d: 会話キーの再割り当て(ドラフトキー → 確定 sessionId)だが、
       // ドラフト積載物は引き継がない(選択は APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY)。
       // 移すのは conversations(返信を追記した計算済みの値)のみ。
       referenceDraftPayloadStoreCarryPlan(APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY);
+      // メモリの次の open は live ref から計算する(bdboard-d7on)。updater の外で ref を
+      // 読み、setOpenThreadIds より前に確定させておく(下の永続化と同じ値を使うため)。
+      const liveOpen = openThreadIdsRef.current[selectedProjectId];
+      // bdboard-drfb: 再送が別のセッションへ移った(clearSession 後の再送が新しい sessionId を
+      // 受け取った)とき、送信元の会話キー convKey が開いている実スレッドなら、そのスレッドは
+      // この送信で置き換えられた。ドラフトキーは open に入らないので、ドラフトからの初回送信
+      // では当たらない。
+      const replacedThread = convKey !== result.sessionId && (liveOpen ?? []).includes(convKey);
+      // 失敗時に印が付いていたら(unknown chat session)ここで消費する。同じ sessionId での
+      // 成功でも消す(印を残さない)。置き換えが無い(ドラフトキー等)ときも消すだけ。
+      const sessionGone = goneSessionKeysRef.current.delete(convKey);
       setConversations((prev) => {
         const next = {
           ...prev,
@@ -94,12 +112,21 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       // isHistoryPending が true のまま送信ボタンがロックされ続けてしまう
       // (履歴 effect は messages がある会話では early-return して
       // historyLoadedFor を立てないため)。
-      setHistoryLoadedFor((prev) => ({ ...prev, [result.sessionId]: true }));
-      // メモリの次の open は live ref から計算する(bdboard-d7on)。updater の外で ref を
-      // 読み、setOpenThreadIds より前に確定させておく(下の永続化と同じ値を使うため)。
-      const liveOpen = openThreadIdsRef.current[selectedProjectId];
+      setHistoryLoadedFor((prev) => {
+        const next: Record<string, true> = { ...prev, [result.sessionId]: true };
+        // bdboard-drfb: 置き換えられた実スレッドのロード済み印を外す。conversations[convKey] は
+        // sessionId が変われば常に消す(上)が、こちらは convKey が open のとき(置き換え)だけ外す。
+        // 差が出るのは open でない convKey だが、ドラフトには印が無く、送信中にスレッドを閉じると
+        // 送信が abort されて commitSuccess まで来ないので、今のところ到達しない。
+        // 印を残すと、そのスレッドを開き直しても履歴 effect が early return して
+        // 履歴 GET が走らず、conversations が空のまま死んだ/古い sessionId で再送してしまう。
+        // 外せば、再オープン時に死んでいれば 404 → handleHistorySessionGone で落ち、
+        // 生きていれば(agent mismatch)履歴が戻る。
+        if (replacedThread) delete next[convKey];
+        return next;
+      });
       const nextOpenAfterCommit = [
-        ...(liveOpen ?? []).filter((id) => id !== result.sessionId),
+        ...(liveOpen ?? []).filter((id) => id !== result.sessionId && !(replacedThread && id === convKey)),
         result.sessionId,
       ];
       // bdboard-7feq: このプロジェクトの open が復元済み(restoredProjectsRef がマーク済み)で
@@ -110,22 +137,41 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       // 書き込みは setState の updater の外(StrictMode が updater を2回呼んでも二重に
       // 書かない)。open が 0 件でも nextOpenAfterCommit は少なくとも新セッションを含む
       // ので、bdboard-rhl4 の「0 件なら [] を書く」とは干渉しない。
+      // bdboard-drfb: 置き換えられたスレッド convKey は永続化の open にも残さない。復元済みなら
+      // nextOpenAfterCommit(convKey を除いてある)がそのまま基点になる。未復元の分岐は永続化済み
+      // エントリが基点なので、置き換えが起きたときだけ、そのエントリから convKey(と、末尾へ
+      // 足し直す新セッション)を除いた open を基点として渡す。未復元の分岐は初回訪問に加えて、
+      // プロジェクトを訪れ直すたびに一覧の読込が終わるまで通る(useThreadListSync が訪問の頭で
+      // 復元の印を外す)。置き換えが起きるのは clearSession 失敗と再送の成功の両方がその読込中に
+      // 終わったときだけなので実際には稀だが、残すと再読み込みまで死んだ id が永続化に居座る。
+      const persistedOpenBase =
+        restoredProjectsRef.current.has(selectedProjectId) && liveOpen !== undefined
+          ? nextOpenAfterCommit
+          : replacedThread
+            ? (readPersistedChatThreads()[selectedProjectId]?.activeSessionIds ?? []).filter(
+                (id) => id !== convKey && id !== result.sessionId,
+              )
+            : undefined;
       writePersistedChatThread(
         selectedProjectId,
         { sessionId: result.sessionId, agentId: result.agentId },
-        restoredProjectsRef.current.has(selectedProjectId) && liveOpen !== undefined
-          ? nextOpenAfterCommit
-          : undefined,
+        persistedOpenBase,
       );
       if (showModelSelect && effectiveModelId !== '') {
         // 送信で実際に使われたモデルは常に確定値として勝つべきなので、ここだけは
         // 無条件で上書きする(履歴解決側の「未設定キーにだけ書く」ガードとは非対称)。
         setThreadModelIds((prev) => ({ ...prev, [result.sessionId]: effectiveModelId }));
       }
+      // bdboard-drfb: unknown chat session 由来で置き換わったスレッドは、サーバーに無いので
+      // 一覧(閉じたスレッド)からも落とす。chat agent mismatch のスレッドは生きているので
+      // 残し、ドロワーの「閉じたスレッド」から再オープンできるようにする。
+      const goneSessionId = sessionGone && convKey !== result.sessionId ? convKey : undefined;
       setThreadLists((prev) => ({
         ...prev,
         [selectedProjectId]: [
-          ...(prev[selectedProjectId] ?? []).filter((thread) => thread.sessionId !== result.sessionId),
+          ...(prev[selectedProjectId] ?? []).filter(
+            (thread) => thread.sessionId !== result.sessionId && thread.sessionId !== goneSessionId,
+          ),
           { sessionId: result.sessionId, agentId: result.agentId, title: summarizeTitle(sentText), pinned: false, updatedAt: new Date().toISOString() },
         ],
       }));
@@ -168,7 +214,10 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       // bdboard-sso1.83 第4段: エラー種別 → 文言/clearSession の判定は
       // chat/chatSendErrors.ts の describeChatSendError へ移した。分岐の順番・
       // 条件・文言は変えていない。
-      const { text: errorText, clearSession } = describeChatSendError(error);
+      const { text: errorText, clearSession, sessionGone } = describeChatSendError(error);
+      // bdboard-drfb: 再送が成功して別セッションへ移ったとき(commitSuccess)に、死んだスレッドを
+      // 一覧からも落とす判断材料。agent mismatch (sessionGone=false) は印を付けない。
+      if (sessionGone) goneSessionKeysRef.current.add(convKey);
 
       setConversations((prev) => {
         const current = prev[convKey] ?? { messages: [] };
