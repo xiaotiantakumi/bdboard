@@ -6,6 +6,7 @@ import {
   type SessionTailMessageDto,
 } from '../../api';
 import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
+import { dropGoneFromPersistedOpen } from './dropGoneFromPersistedOpen';
 import { toChatMessages, type ChatMessage } from './messages';
 import { pruneDeadOpenThreads } from './pruneDeadOpenThreads';
 import { restoreThreadView } from './threadViewRestore';
@@ -176,9 +177,7 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
 
   const handleHistorySessionGone = useCallback(
     (sessionId: string) => {
-      const nextOpenAfterGone = (openThreadIdsRef.current[selectedProjectId] ?? []).filter(
-        (id) => id !== sessionId,
-      );
+      const nextOpenAfterGone = (openThreadIdsRef.current[selectedProjectId] ?? []).filter((id) => id !== sessionId);
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpenAfterGone }));
       // bdboard-23u: handleDeleteThread(threadOps.deleteThread、bdboard-sso1.83
       // 第10段で useChatThreadLists.ts へ移設済み)の prune と対称にする —
@@ -189,6 +188,11 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
           (thread) => thread.sessionId !== sessionId,
         ),
       }));
+      // bdboard-v9tz: 選択中だった場合は下の if 内で選択クリアと一緒に永続化を書く。選択中ではない id が
+      // 消えたときは else で、メモリの open と同じく永続化の activeSessionIds からも落とす
+      // (chat/dropGoneFromPersistedOpen.ts)。どちらも書き込みは setState の updater の外。
+      // 基点が if はメモリの open、else は永続化なのは意図どおり: else は一覧が未復元(メモリの open が空)
+      // でも他の id を巻き込まないため。選択中の if 側に来るときは実質いつも復元済み。
       const wasSelected = selectedThreadIdsRef.current[selectedProjectId] === sessionId;
       if (wasSelected) {
         setSelectedThreadIds((prev) =>
@@ -205,7 +209,7 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
         // bdboard-23u: ドラフト nonce の前進(startNewDraftThread を意図的に使わない
         // 理由も含む)は chat/useDraftThreadLauncher.ts に置いた(第14b段)。
         advanceDraftNonceAfterSessionGone(selectedProjectId);
-      }
+      } else dropGoneFromPersistedOpen(selectedProjectId, sessionId, selectedThreadIdsRef.current[selectedProjectId]);
     },
     [
       selectedProjectId,

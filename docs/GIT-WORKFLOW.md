@@ -301,6 +301,9 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   `npm run verify`'s tsc/vitest workers), so the interrupt handler itself polls the process group
   until it is actually empty and resends `SIGKILL` while anything in it is still alive, instead of
   trusting the direct child's exit as a proxy for the whole tree being gone.
+- **A second `finish` while one is running exits 75** (`verifyingPid` in the state file is alive). The
+  record is stamped with `verifyingAt`; once it is older than 2 hours (`VERIFYING_PID_MAX_AGE_MS`) the
+  PID is treated as reused/stale (bdboard-2hj4), ignored with a notice, and `finish` goes on.
 - **Never release someone else's slot.** If it stays held past `merge.slotWaitMinutes` (10),
   `gate` exits 75 and the agent reports the holder to the chair. A holder equal to
   `<id> / PR#<N>` (this PR's own interrupted gate) is taken over.
