@@ -21,6 +21,7 @@
 // (process.exit) 自体をハングさせないためのもの。
 // win32 は元々プロセスグループの概念もシグナルも無く、killProcessTree が taskkill /T /F で
 // ツリーごと一括処理する (process-tree.mjs) ので、従来どおり直接の子の 'close' を待つ。
+import { isProcessGroupAlive } from '../process-identity.mjs';
 import { killProcessTree } from '../process-tree.mjs';
 import { say } from './state.mjs';
 
@@ -47,16 +48,6 @@ function killPollMs() {
 // ハングさせず先に進める。
 function killTotalTimeoutMs() {
   return killGraceMs() + 10_000;
-}
-
-/** POSIX: プロセスグループ (pid をリーダーとする) にまだ何か居るか。ESRCH だけを「空」とみなす。 */
-function groupAlive(pid) {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code !== 'ESRCH';
-  }
 }
 
 /**
@@ -97,7 +88,8 @@ function terminatePosix(child, done) {
     if (settled) {
       return;
     }
-    if (!groupAlive(pid)) {
+    // プロセスグループの生存確認は scripts/process-identity.mjs (bdboard-ky9l。finish の孤児検出と共用)。
+    if (!isProcessGroupAlive(pid)) {
       settle();
       return;
     }

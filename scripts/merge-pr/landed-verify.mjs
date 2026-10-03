@@ -116,7 +116,7 @@ function postQuietly(ctx, sha, state, description) {
  * ブランチを戻すおそれがあった)。中断時の後始末は interrupt.mjs の onCleanup/settle が
  * プロセスグループが実際に空になったことを確認してから一元的に行い、最後に process.exit する。
  */
-export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, retryHint, priority = 'landed', queueSince, abandonWhen } = {}) {
+export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, retryHint, priority = 'landed', queueSince, abandonWhen, onSpawn } = {}) {
   const root = ctx.cwd;
   const label = ledger ? '着地後検証' : '着地予定ツリーの verify';
   if (!isLinkedWorktree(root)) {
@@ -184,7 +184,7 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, re
         installedAny = true;
       };
       const queue = { priority, queueSince, abandonWhen };
-      result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild, queue });
+      result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild, queue, onSpawn });
     }
   } finally {
     // activeChild.interrupted の間は installAndVerify がここへ戻ってこない (待つだけで
@@ -201,7 +201,7 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, re
   return { result, logPath };
 }
 
-async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild, queue }) {
+async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild, queue, onSpawn }) {
   const installedFor = readInstalledFor(root) ?? originalHead;
   for (const lock of LOCKFILES) {
     if (lockfileChanged(root, installedFor, sha, lock.file)) {
@@ -233,6 +233,10 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
       onHeartbeat: () => postQuietly(ctx, sha, 'pending', running),
       onSpawn: (child) => {
         activeChild.current = child;
+        // bdboard-ky9l: finish が verify のプロセスグループ (= child.pid) を状態ファイルへ残すための口。
+        if (onSpawn) {
+          onSpawn(child);
+        }
       },
     });
   } finally {
