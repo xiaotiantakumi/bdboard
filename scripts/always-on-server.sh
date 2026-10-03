@@ -28,9 +28,13 @@
 #              src/・web/・docs/help-content.json か依存が変わっていれば restart
 #              (テストファイル・__fixtures__・test-support 系は判定から除外)、そうでなければ
 #              health だけ
+#     start / restart / deploy はいずれも、npm install・build・旧 listener の停止より前
+#     (pull する action は pull の直後、それ以外はロック取得直後) に、PATH 上の node が
+#     main checkout の package.json の engines.node を満たすか確かめ、満たさなければ
+#     exit 2 で止める (bdboard-qoxg)。
 #
 # 終了コード: 0 成功 / 1 使い方 / 2 前提不成立 (トンネル稼働・ロック中・health 不通・
-#             build 失敗) / 3 --expect-pid 不一致 / 4 BDBOARD_SERVER_CALLER 未宣言
+#             build 失敗・node 版不足) / 3 --expect-pid 不一致 / 4 BDBOARD_SERVER_CALLER 未宣言
 set -u
 
 usage() {
@@ -49,13 +53,16 @@ always-on-server.sh — 常時稼働サーバー (main checkout の npm run star
            src/・web/・docs/help-content.json か依存が変わっていれば restart
            (テストファイル・__fixtures__・test-support 系は判定から除外)、そうでなければ
            health 確認だけ
+  start / restart / deploy は install・build・旧 listener の停止より前 (pull の直後) に、
+  PATH 上の node が main checkout の package.json の engines.node を満たすか確かめ、
+  満たさなければ exit 2 (サーバーは無傷)。node の切り替えはせず、使うべき node を表示する
 
   --expect-pid  いま listen している PID がこれと一致するときだけ進む (CAS)。status で確認する
   --verify      kill の前に main checkout で契約の検証コマンド (npm run verify) を通す。赤なら触らない
   --tunnel-ack  cloudflared 稼働中でも続行する (trycloudflare URL が失効する旨をユーザーに伝えた後)
   --dry-run     何もせず手順を表示する
 
-終了コード: 0 成功 / 1 使い方 / 2 前提不成立 (トンネル稼働・ロック中・health 不通・build 失敗)
+終了コード: 0 成功 / 1 使い方 / 2 前提不成立 (トンネル稼働・ロック中・health 不通・build 失敗・node 版不足)
             3 --expect-pid 不一致 / 4 BDBOARD_SERVER_CALLER 未宣言
 USAGE
 }
@@ -245,6 +252,7 @@ if [ -n "$DRY_RUN" ]; then
   if [ -n "$DO_PULL" ] || [ "$ACTION" = 'deploy' ]; then
     printf '[dry-run] git -C %s pull --ff-only\n' "$MAIN"
   fi
+  printf '[dry-run] node 版チェック (engines.node) → 満たさなければ exit 2 (サーバーを止める前)\n'
   printf '[dry-run] build:web mode=%s\n' "$BUILD_MODE"
   [ -z "$DO_VERIFY" ] || printf '[dry-run] cd %s && npm run verify\n' "$MAIN"
   if [ "$ACTION" != 'start' ]; then
@@ -275,6 +283,44 @@ if [ -n "$DO_PULL" ] || [ "$ACTION" = 'deploy' ]; then
   git -C "$MAIN" pull --ff-only || { audit "$CURRENT_PIDS" '' 'pull-failed'; die 2 'git pull --ff-only に失敗しました (main checkout に未コミットの変更や分岐がないか確認)。'; }
 fi
 NEW_HEAD="$(git -C "$MAIN" rev-parse HEAD 2>/dev/null)"
+
+# --- node 版ゲート (bdboard-qoxg)。npm install / build:web / 旧 listener の停止 / 起動の前に、
+# PATH 上の node が main checkout の package.json の engines.node を満たすか確かめる。
+# 2026-09-26 に nvm 既定の v14.15.0 で deploy が走り、build:web は `||=` の SyntaxError を
+# 出しながら exit 0 を返し、スクリプトは旧 listener を止めてから起動に失敗した (約 10 分停止)。
+# build の終了コードは当てにならないので、版は止める前に直接見る。pull の後に見るのは、
+# pull が engines.node を上げる場合があるため。node の切り替えはしない (使うべき node を
+# 表示するだけ)。チェッカーは $SCRIPT_DIR 側 (古い node でもパースできる書き方)、読む
+# package.json は $MAIN 側。チェッカー自体が走らないときも fail-closed (サーバーは無傷)。
+node_version_gate() {
+  checker="$SCRIPT_DIR/node-version-check.mjs"
+  untouched='サーバーは触っていません (旧プロセスのまま)。'
+  if [ ! -f "$checker" ]; then
+    audit "$CURRENT_PIDS" '' 'node-version'
+    die 2 "node-version-check.mjs が見つかりません: $checker" "$untouched"
+  fi
+  if ! command -v node >/dev/null 2>&1; then
+    audit "$CURRENT_PIDS" '' 'node-version'
+    die 2 'node が PATH にありません。engines.node を満たす node の bin を PATH の先頭に置いてください。' "$untouched"
+  fi
+  node_out="$(node "$checker" "$MAIN" 2>&1)"
+  node_rc=$?
+  [ "$node_rc" -ne 0 ] || return 0
+  audit "$CURRENT_PIDS" '' 'node-version'
+  if [ "$node_rc" -eq 3 ]; then
+    [ -z "$node_out" ] || printf '%s\n' "$node_out" >&2
+    node_hint='node を直して同じコマンドを再実行してください。'
+    if [ -n "$DO_PULL" ] || [ "$ACTION" = 'deploy' ]; then
+      node_hint='pull は完了しています (HEAD は更新済み)。node を直して同じコマンドを再実行してください。'
+    fi
+    die 2 "$node_hint" "$untouched"
+  fi
+  die 2 \
+    "node の版チェックを実行できませんでした (node $(node --version 2>&1), $(command -v node), exit $node_rc)。node が古すぎる可能性があります。" \
+    "PATH の先頭に $MAIN/package.json の engines.node を満たす node の bin を置いてから再実行してください (nvm があれば .nvmrc の系列)。" \
+    "$untouched"
+}
+node_version_gate
 
 changed() {
   [ "$OLD_HEAD" != "$NEW_HEAD" ] || return 1
