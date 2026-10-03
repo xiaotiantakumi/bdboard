@@ -15,14 +15,17 @@ export interface ReplacedThreadMarks {
    * bdboard-drfb: 「サーバーにもうそのセッションが無い」(400 unknown chat session)で送信に
    * 失敗した会話キー。commitFailure が入れ、次の commitSuccess が delete しながら読む。再送が
    * 新しいセッションへ移るとき、死んだスレッドをスレッド一覧からも落とす判定に使う
-   * (chat agent mismatch のスレッドはサーバーで生きているので入れない)。
+   * (chat agent mismatch のスレッドはサーバーで生きているので入れない)。turn-status 回収
+   * (applyRecoveredTurn)が takeUnobservedOrigin で送信元を引き取るときも、その会話キーの印を
+   * 消す(回収はサーバーの一覧でスレッド一覧を置き換えるので、印で絞る必要が無い)。
    */
   goneKeys: Set<string>;
   /**
    * bdboard-w9hv: projectId → 結果を見届けられなかった(abort / 配信停止)、sessionId 無しの
    * 送信の会話キー。sessionId 無しの送信は未解決の印(markUnresolvedSend)を付けられず、
    * turn-status 回収が返すセッションがどのスレッドの送信だったかを辿れないため、ここに憶える。
-   * 回収(applyRecoveredTurn)が引き取る。
+   * 回収(applyRecoveredTurn)が引き取る。引き取られないまま同じ会話キーの送信が成功したとき
+   * (commitSuccess)は、clearUnobservedOriginFor が消す。
    */
   unobservedOrigins: Record<string, string>;
 }
@@ -56,12 +59,26 @@ export function takeUnobservedOrigin(marks: ReplacedThreadMarks, projectId: stri
   return origin;
 }
 
+/**
+ * 送信が成功して(commitSuccess)会話キー key が確定したとき、そのプロジェクトの記録が key のものなら
+ * 消す。成功した時点で、その送信元は commitSuccess 自身が open・永続化・会話ストアから処理済みで、
+ * 記録を残すと、後の無関係な turn-status 回収が別のスレッドを置き換えとして閉じてしまう。
+ * 別の会話キーの記録は(別の送信のものなので)消さない。
+ */
+export function clearUnobservedOriginFor(marks: ReplacedThreadMarks, projectId: string, key: string): void {
+  if (marks.unobservedOrigins[projectId] === key) delete marks.unobservedOrigins[projectId];
+}
+
 export interface ReplacedThreadPlan {
   /** 置き換えられた開いている実スレッドの会話キー。置き換えが無ければ undefined。 */
   replacedKey: string | undefined;
   /** replacedKey を除き、newSessionId を末尾に置いた次の open。 */
   nextOpen: string[];
-  /** 置き換えが unknown chat session 由来で、スレッド一覧からも落とすべき会話キー。 */
+  /**
+   * 置き換えが unknown chat session 由来で、スレッド一覧からも落とすべき会話キー。open に居ない
+   * キー(ドラフトキー等)でも、sessionGone で別セッションへ移ったなら入る(replacedKey が
+   * undefined でも goneSessionId は立つ。従来の挙動)。
+   */
   goneSessionId: string | undefined;
 }
 

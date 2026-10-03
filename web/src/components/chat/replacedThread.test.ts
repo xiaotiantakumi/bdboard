@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  clearUnobservedOriginFor,
   createReplacedThreadMarks,
   markUnobservedSend,
   persistedOpenBaseAfterCommit,
@@ -128,5 +129,17 @@ describe('unobserved send origins', () => {
     expect(takeUnobservedOrigin(marks, 'proj-a')).toBe('B');
     expect(takeUnobservedOrigin(marks, 'proj-a')).toBeUndefined();
     expect([...marks.goneKeys]).toEqual(['other']);
+  });
+
+  it('clears the record only when it belongs to the committed send key, in that project only', () => {
+    const marks = createReplacedThreadMarks();
+    markUnobservedSend(marks, 'proj-a', 'B', undefined);
+    markUnobservedSend(marks, 'proj-b', 'B', undefined);
+    clearUnobservedOriginFor(marks, 'proj-a', 'other');
+    expect(marks.unobservedOrigins).toEqual({ 'proj-a': 'B', 'proj-b': 'B' });
+    clearUnobservedOriginFor(marks, 'proj-a', 'B');
+    expect(marks.unobservedOrigins).toEqual({ 'proj-b': 'B' });
+    clearUnobservedOriginFor(marks, 'proj-a', 'B');
+    expect(marks.unobservedOrigins).toEqual({ 'proj-b': 'B' });
   });
 });

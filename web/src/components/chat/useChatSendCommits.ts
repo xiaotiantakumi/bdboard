@@ -6,7 +6,9 @@ import type { ChatAttachment } from './attachments';
 import { describeChatSendError } from './chatSendErrors';
 import { APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY } from './draftCarryPlans';
 import { toAssistantMessage, type ChatMessage } from './messages';
-import { persistedOpenBaseAfterCommit, planReplacedThread, withHistoryLoaded, type ReplacedThreadMarks } from './replacedThread';
+import {
+  clearUnobservedOriginFor, persistedOpenBaseAfterCommit, planReplacedThread, withHistoryLoaded, type ReplacedThreadMarks,
+} from './replacedThread';
 import { summarizeTitle } from './threads';
 import type { UseChatConversationsStateResult } from './useChatConversationsState';
 import type { UseChatDraftStateResult } from './useChatDraftState';
@@ -92,6 +94,9 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
         open: liveOpen,
         sessionGone: replacedMarksRef.current.goneKeys.delete(convKey),
       });
+      // bdboard-w9hv: この送信が成功した以上、同じ会話キーの「結果を見届けられなかった」記録は不要。
+      // 残すと、後の無関係な turn-status 回収が別のスレッドを置き換えとして閉じる。
+      clearUnobservedOriginFor(replacedMarksRef.current, selectedProjectId, convKey);
       setConversations((prev) => {
         const next = {
           ...prev,

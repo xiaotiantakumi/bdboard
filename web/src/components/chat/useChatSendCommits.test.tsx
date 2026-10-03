@@ -339,6 +339,18 @@ describe('commitSuccess', () => {
       expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-c']);
     });
 
+    it('bdboard-w9hv: a successful commit clears the unobserved-origin record of the same key, and keeps another key\'s', () => {
+      const { hook, params } = setupWithOpenAB();
+      const marks = params.replacedMarksRef.current;
+      marks.unobservedOrigins['proj-a'] = 'sess-b';
+      // 別の会話キーの送信が成功しても、sess-b の記録(別の送信のもの)は消さない。
+      act(() => hook.result.current.commitSuccess('sess-a', 'other', { reply: 'AI reply', sessionId: 'sess-a', agentId: 'claude' }));
+      expect(marks.unobservedOrigins).toEqual({ 'proj-a': 'sess-b' });
+      // 同じ会話キーの送信が成功したら、記録は意味を失うので消す。
+      act(() => hook.result.current.commitSuccess('sess-b', 'hello', RESULT_C));
+      expect(marks.unobservedOrigins).toEqual({});
+    });
+
     it('not yet restored: the persisted-entry-based write drops the replaced thread too', () => {
       // 未復元では永続化済みエントリが基点 (bdboard-4w2d)。メモリの open に convKey がある
       // (この画面で先に確定したスレッド) なら、永続化側の convKey も外す。

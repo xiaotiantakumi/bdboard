@@ -47,8 +47,11 @@ export interface UseChatSessionLifecycleParams
  * - handleResumeDiscoveredSession: ドロワーの「CLIセッションを再開」から呼ぶ。
  * effect は持たない(useCallback 2つと、元どおり毎レンダー作り直す関数1つ)。
  * 本体・依存配列・読み取り方式(ref で読む/prev で読む/render の値で読む)は
- * 元のまま。handleHistorySessionGone の依存配列に selectedThreadIdsRef が無い
- * (exhaustive-deps の警告1件)のも元のまま持ってきた(ref は安定なので実害は無い)。
+ * 元のまま。ただし applyRecoveredTurn の open・選択の決定(置き換えられたスレッドを外す
+ * 判断を含む)は chat/recoveredTurnPlan.ts の planRecoveredTurn へ移した(bdboard-w9hv。
+ * 復元・ドラフト抑止の規則は変えていない)。handleHistorySessionGone の依存配列に
+ * selectedThreadIdsRef が無い(exhaustive-deps の警告1件)のは元のまま持ってきた
+ * (ref は安定なので実害は無い)。
  */
 export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
   const { selectedProjectId, selectedThreadIdsRef, setSelectedThreadIds } = params;
@@ -114,9 +117,11 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       // 結果なら、置き換えられた送信元のスレッドを open・選択・永続化から外す(commitSuccess と同じ
       // 規則。chat/recoveredTurnPlan.ts → chat/replacedThread.ts)。スレッド一覧は下でサーバーの
       // 一覧に置き換わるので、gone の判定は要らない。
+      // 引き取りは ref の書き換え(記録を消す)なので、引数のオブジェクトの中に隠さず先に読む。
+      const origin = takeUnobservedOrigin(replacedMarksRef.current, selectedProjectId);
       const { nextOpen, nextSelected, persistedSelected, replacedKey } = planRecoveredTurn({
         threads, sessionId: payload.sessionId, alreadyRestored, knownOpen, explicitDraftSelected: isExplicitDraftStillSelected,
-        origin: takeUnobservedOrigin(replacedMarksRef.current, selectedProjectId),
+        origin,
         persisted: readPersistedChatThreads()[selectedProjectId],
         knownSelected: selectedThreadIdsRef.current[selectedProjectId],
       });
