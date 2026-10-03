@@ -20,6 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const REAL_SCRIPT = fileURLToPath(new URL('./always-on-server.sh', import.meta.url));
 const REAL_DEPLOY_CHANGED = fileURLToPath(new URL('./deploy-changed.sh', import.meta.url));
+const REAL_GATES = fileURLToPath(new URL('./always-on-server-gates.sh', import.meta.url));
 const SCRIPT_BASENAME = ['always', 'on', 'server'].join('-') + '.sh';
 
 // main 側は「いま main checkout に入っている現在の版」を表す固有マーカースクリプトに
@@ -98,6 +99,7 @@ describe.skipIf(process.platform === 'win32')('always-on-server.sh self-exec gua
         copyFileSync(REAL_SCRIPT, path.join(mainRepo, 'scripts', SCRIPT_BASENAME));
         chmodSync(path.join(mainRepo, 'scripts', SCRIPT_BASENAME), 0o755);
         copyFileSync(REAL_DEPLOY_CHANGED, path.join(mainRepo, 'scripts', 'deploy-changed.sh'));
+        copyFileSync(REAL_GATES, path.join(mainRepo, 'scripts', 'always-on-server-gates.sh'));
       } else {
         writeFileSync(path.join(mainRepo, 'scripts', SCRIPT_BASENAME), MAIN_MARKER_SCRIPT, { mode: 0o755 });
       }
@@ -114,6 +116,7 @@ describe.skipIf(process.platform === 'win32')('always-on-server.sh self-exec gua
     copyFileSync(REAL_SCRIPT, path.join(worktreeRepo, 'scripts', SCRIPT_BASENAME));
     chmodSync(path.join(worktreeRepo, 'scripts', SCRIPT_BASENAME), 0o755);
     copyFileSync(REAL_DEPLOY_CHANGED, path.join(worktreeRepo, 'scripts', 'deploy-changed.sh'));
+    copyFileSync(REAL_GATES, path.join(worktreeRepo, 'scripts', 'always-on-server-gates.sh'));
 
     return { mainRepo, worktreeRepo, staleScript: path.join(worktreeRepo, 'scripts', SCRIPT_BASENAME) };
   }

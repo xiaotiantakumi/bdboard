@@ -207,7 +207,9 @@ worktree-cwd case above, where every attempt reproduces (2/2).
     `scripts/deploy-changed.sh`'s `DEPLOY_RESTART_PATHSPEC` /
     `deploy_relevant_changed` finds a non-test-only diff under `src/`,
     `web/`, `docs/help-content.json`, `package.json`, `package-lock.json`,
-    or `.env` between the old and new `HEAD` (test files, `__fixtures__/`,
+    or `.env` between the last successfully deployed `HEAD` (the
+    `deployed HEAD` line of `status`; the pre-pull `HEAD` when none is
+    recorded — bdboard-oga4) and the new `HEAD` (test files, `__fixtures__/`,
     and `*test-support*` paths are excluded — bdboard-cdoj; `.env` is
     gitignored so in practice it never appears in this diff — a local
     `.env`-only edit still needs a manual `restart`). Before bdboard-kpim,
@@ -289,29 +291,54 @@ worktree-cwd case above, where every attempt reproduces (2/2).
     `PATH="<bin>:$PATH"` で前置して同じコマンドを再実行する。非対話シェルは nvm の既定 (古い v14 等)
     のままのことがある (2026-09-26 に `||=` の SyntaxError で build:web が exit 0 のまま失敗し、旧
     listener を止めた後で起動に失敗して約 10 分停止した)。
-  - pull で `package.json` が変わったときは pull の後にもう一度確かめる。**ここで止まったときは
-    pull 済みなので、`deploy` を同じコマンドで再実行しても「変更なし」で何もしない。** 表示どおり
-    main checkout で `npm install` と `npm --prefix web install` をしてから
-    `restart --expect-pid <PID> --build` で入れ直す。
+  - pull で `package.json` が変わったときは pull の後にもう一度確かめる。ここで止まったときは
+    pull 済みだが、**node を直して同じコマンドを再実行すれば入れ直せる** (bdboard-oga4。下の「止まった
+    deploy は同じコマンドで再実行」)。以前は再実行が「変更なし」で何もせず、main checkout で手で
+    `npm install` して `restart --build` する手順だった。
   - チェッカー自体が走らない (node が古すぎて構文エラー、チェッカーが壊れた等) ときも exit 2
     (fail-closed) で、チェッカーの出力の末尾を表示する。このときは使うべき bin は表示されないので、
     `.nvmrc` の系列の node を自分で PATH の先頭に置く。
-  - build 成果物が古い (bdboard-5st4): `build:web` を走らせたとき (`--build`、deploy が web/・
-    `package.json`・`docs/help-content.json` の変更で自動 build するとき、`web/dist/index.html` が
-    無いとき) は、build の後・停止の前に `web/dist/index.html` が**今回の build で更新されたか**
-    (mtime が build 開始以降か) を確かめる。古いまま・無い・空なら exit 2 で、理由と両方の時刻を
-    表示して止まる (audit は `result=build-artifact-stale`)。`build:web` の終了コードは当てにならず
-    (2026-09-26 は古い node で vite が構文エラーを握りつぶして exit 0)、`web/dist/build-meta.json` の
-    sha が HEAD と一致しても index.html が古いままのことがある (write-build-meta が vite build の後に
-    走るため) ので、見るのは index.html 自体。**止まったときは pull や install が済んでいることがあり、
-    `deploy` の再実行は「変更なし」で何もしない** — 原因 (多くは PATH 上の node。`node --version` と
-    build の出力を見る) を直してから `restart --expect-pid <PID> --build` で入れ直す。mtime を読む
-    チェッカー (`scripts/build-artifact-check.mjs`) が走らないときも exit 2 (fail-closed,
+  - build 成果物が古い (bdboard-5st4): `build:web` を走らせたとき (`--build`、deploy または
+    `restart` / `start --pull` が web/・`package.json`・`docs/help-content.json` の変更で自動 build
+    するとき、`web/dist/index.html` が無いとき) は、build の後・停止の前に `web/dist/index.html` が
+    **今回の build で更新されたか** (mtime が build 開始以降か) を確かめる。古いまま・無い・空なら
+    exit 2 で、理由と両方の時刻を表示して止まる (audit は `result=build-artifact-stale`)。
+    `build:web` の終了コードは当てにならず (2026-09-26 は古い node で vite が構文エラーを握りつぶして
+    exit 0)、`web/dist/build-meta.json` の sha が HEAD と一致しても index.html が古いままのことがある
+    (write-build-meta が vite build の後に走るため) ので、見るのは index.html 自体。止まったときは
+    pull や install が済んでいることがあるが、原因 (多くは PATH 上の node。`node --version` と build の
+    出力を見る) を直してから**同じコマンドを再実行すれば入れ直せる** (下の「止まった deploy は同じ
+    コマンドで再実行」。`restart --build` に替える必要はない)。mtime を読むチェッカー
+    (`scripts/build-artifact-check.mjs`) が走らないときも exit 2 (fail-closed,
     `result=build-artifact-check-failed`)。`--no-build` のときや build しなかったときはこの確認も無い。
   - 同じ原因の根本側 (bdboard-5st4): `npm run build:web` 自体も、先頭の
     `scripts/require-engines-node.mjs` が `engines.node` を満たさない node を非 0 で止める
     (vite の bin が `import()` の失敗を握りつぶすのは node 15 未満)。always-on-server.sh を介さない
     手元の `npm run build:web` でも「成功に見える」ことはなくなった。
+  - **止まった deploy は同じコマンドで再実行** (bdboard-oga4): 上のどの停止 (`install` / `build:web`
+    の失敗・成果物が古い・node 版・`--verify` の赤) でも、`pull` が済んだ後なら main の HEAD は新しく、
+    以前は同じ `deploy` を打ち直すと OLD_HEAD == NEW_HEAD で「変更なし」(`server-side unchanged`) と
+    判定され、マージしたコードが反映されないまま exit 0 の成功になった。いまは `deploy` と `--pull`
+    付きの `restart` / `start` が install / build / 再起動の要否を「**最後にデプロイに成功した sha**」から
+    の差分で決めるので、原因を直して**同じコマンドをそのまま再実行**すれば入れ直せる。
+    - 記録: 既定 `/tmp/bdboard-server-restarts.log.deployed-head` (`BDBOARD_SERVER_DEPLOYED_FILE` で
+      変更可。中身は `<sha><TAB><main checkout のパス>`)。`status` の `deployed HEAD` 行で読める。
+      `web/dist/build-meta.json` の sha は「最後に build を試みた sha」で成功の印にならない
+      (2026-09-26) ので使わない。
+    - 更新するのは、build を飛ばさない `deploy` / `--pull` が成功した (再起動して health が通った、または
+      「再起動不要」で終わった) ときだけ。停止前に止まった実行や停止後の失敗では更新しない。
+      `--no-build` は更新しない (飛ばした build を次の `deploy` が拾う)。
+    - 記録が無い・読めない・別 checkout のもの・リポジトリに無い sha のときは、従来どおり pull 前の HEAD が
+      起点。ただし pull が HEAD を動かしたら、その pull 前の HEAD を記録してから先へ進む (その後の
+      install / build で止まっても、再実行が同じ起点を使えるように)。
+    - 記録した sha が HEAD と同じで、サーバーも動いている `deploy` は何もしない
+      (`== nothing to deploy: HEAD <sha> is already deployed; keeping PID <PID>`、exit 0)。
+    - 記録は `/tmp` にあり、OS の掃除で消えうる。`status` が `deployed HEAD : (記録なし…)` のときに
+      止まった deploy は、再実行が「変更なし」になる従来の穴が残るので、`restart --expect-pid <PID> --build`
+      (必要なら先に main checkout で `npm install`) で入れ直す。記録が無く pull も何もしなかった `deploy` は
+      HEAD を記録せず、この復旧手順を表示する。記録を書けなかったときは stderr に `warning:` が出る。
+    - `--pull` の無い `restart` / `start` は記録を読みも書きもしない。手で HEAD を巻き戻した後は、
+      次の `deploy` の前に `status` の `deployed HEAD` が実際に動いている版と合っているかを確かめる。
 - **停止後の失敗** — `port-still-bound`・health 不通・pid 不変。この場合**旧プロセスは
   既に止まっている**。新しいプロセスが起動中の可能性もある。手でもう一度 `start` しない
   — まず `status` を見直し、`/tmp/bdboard-server.log` を読む。起動中らしければ待ち、それ
