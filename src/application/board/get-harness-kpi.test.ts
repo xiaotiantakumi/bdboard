@@ -3,12 +3,14 @@ import { compareStrings } from '../../domain/compare.js';
 import type { ReclaimRunRecord } from '../../domain/harness-kpi.js';
 import type { Project } from '../../domain/project.js';
 import { makeTicket } from '../../domain/test-support.js';
+import type { Ticket } from '../../domain/ticket.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import {
   createEmptyCfdCacheMethods,
   createEmptyInteractionsCacheMethods,
   createEmptySessionLinksCacheMethods,
 } from '../ports/board-cache-fakes.js';
+import { AGGREGATION_YIELD_CHUNK_SIZE } from './aggregation-yield.js';
 import { getHarnessKpi } from './get-harness-kpi.js';
 
 const UTC = 'UTC';
@@ -402,5 +404,98 @@ describe('getHarnessKpi', () => {
     });
     expect(listProjects).not.toHaveBeenCalled();
     expect(filtered.kpi.harnessLabeled).toEqual({ matchedCount: 1, totalCount: 1, rate: 1 });
+  });
+
+  // bdboard-kuui: 以前の getHarnessKpi は全チケットを 1 本の配列に積んで同期の
+  // computeHarnessKpi (4 回走査) に渡しており、200,000 件 / 200 プロジェクトで最大
+  // イベントループ間隔が静かなマシン (load 約 3) で 53〜93ms、負荷下 (load 約 10) で
+  // 190〜350ms (チケット記載は 281〜656ms) にもなっていた。いまは集計器の add を
+  // forEachChunked で回す。
+  //
+  // 「塞ぐ時間」は壁時計で測らず、**マクロタスクの 1 ターンの間に集計器へ渡ったチケットの
+  // 数**で測る (マシンの速さや負荷に左右されない決定的な量)。ticker が setImmediate で
+  // 毎ターン走り、前回のターンからの間に createdAt を読まれたチケットの個数 (相異なる id)
+  // を数える。集計が yield するたびに別のターンが挟まるので、この最大値は 1 チャンク
+  // (AGGREGATION_YIELD_CHUNK_SIZE) を超えない。同期版に戻すと全件が 1 ターンに入る。
+  describe('event-loop chunking (bdboard-kuui)', () => {
+    /** createdAt を読まれたら onTouch(id) を呼ぶチケット (集計器がそのチケットに触れた印)。 */
+    function observed(ticket: Ticket, onTouch: (id: string) => void): Ticket {
+      const createdAt = ticket.createdAt;
+      return Object.defineProperty({ ...ticket }, 'createdAt', {
+        enumerable: true,
+        get(): Date {
+          onTouch(ticket.id);
+          return createdAt;
+        },
+      });
+    }
+
+    // 1 プロジェクトを 1 チャンク未満にして、gate がプロジェクトごとにリセットされる
+    // 実装 (= 小さなプロジェクトが大量にあると 1 回も yield しない) も落とす。
+    const PROJECT_COUNT = 40;
+    const TICKETS_PER_PROJECT = AGGREGATION_YIELD_CHUNK_SIZE - 1;
+    const TOTAL = PROJECT_COUNT * TICKETS_PER_PROJECT;
+
+    function seedManySmallProjects(
+      cache: ReturnType<typeof createFakeBoardCache>,
+      onTouch: (id: string) => void,
+    ): void {
+      for (let p = 0; p < PROJECT_COUNT; p += 1) {
+        const proj = project(`/p${p}`, `/projects/p${p}`);
+        cache.putProject({
+          project: proj,
+          tickets: Array.from({ length: TICKETS_PER_PROJECT }, (_, index) =>
+            observed(
+              makeTicket({
+                id: `bdboard-p${p}-${index}`,
+                projectId: proj.id,
+                labels: ['human'],
+                createdAt: utcInstant(2026, 8, 12),
+              }),
+              onTouch,
+            ),
+          ),
+          fingerprint: `fp-${p}`,
+          fetchedAt: now,
+        });
+      }
+    }
+
+    it('hands at most one yield chunk of tickets to the aggregation per event-loop turn, across small projects', async () => {
+      const cache = createFakeBoardCache();
+      const touchedThisTurn = new Set<string>();
+      seedManySmallProjects(cache, (id) => touchedThisTurn.add(id));
+      // シード中に createdAt を読まれた分は数えない (計測は getHarnessKpi の開始から)。
+      touchedThisTurn.clear();
+
+      let maxTicketsPerTurn = 0;
+      let turns = 0;
+      let running = true;
+      const flushTurn = (): void => {
+        maxTicketsPerTurn = Math.max(maxTicketsPerTurn, touchedThisTurn.size);
+        touchedThisTurn.clear();
+      };
+      const tick = (): void => {
+        turns += 1;
+        flushTurn();
+        if (running) {
+          setImmediate(tick);
+        }
+      };
+      setImmediate(tick);
+
+      const { kpi } = await getHarnessKpi(cache, now, { weeks: 2, timeZone: UTC });
+      running = false;
+      flushTurn();
+
+      const summary = `maxTicketsPerTurn=${maxTicketsPerTurn} turns=${turns} total=${TOTAL}`;
+      // 同期版 (yield 無し) だと全 TOTAL 件が 1 ターンに入る。
+      expect(maxTicketsPerTurn, summary).toBeGreaterThan(0);
+      expect(maxTicketsPerTurn, summary).toBeLessThanOrEqual(AGGREGATION_YIELD_CHUNK_SIZE);
+      expect(turns, summary).toBeGreaterThanOrEqual(Math.floor(TOTAL / AGGREGATION_YIELD_CHUNK_SIZE) - 1);
+      // どのチケットも落ちずに数えられている (チャンク境界をまたいでも)。
+      expect(kpi.pendingDecisionDwell.openCount).toBe(TOTAL);
+      expect(kpi.harnessLabeled.totalCount).toBe(TOTAL);
+    });
   });
 });

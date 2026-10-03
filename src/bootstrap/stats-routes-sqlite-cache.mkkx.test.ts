@@ -1,8 +1,43 @@
 import { describe, expect, it } from 'vitest';
+import { AGGREGATION_YIELD_CHUNK_SIZE } from '../application/board/aggregation-yield.js';
+import { readProjectEntries } from '../application/board/read-cached-projects.js';
+import type { BoardCache } from '../application/ports/board-cache.js';
 import { createApiRoutes } from '../interface/http/routes.js';
 import { makeTicket } from '../domain/test-support.js';
 import { createSqliteBoardCache } from '../infrastructure/cache/sqlite-board-cache.js';
 import { NOW, project, createDeps } from '../interface/http/routes-test-support.js';
+
+// Seeds `cache` with `totalTickets` tickets spread evenly over `projectCount` projects (the
+// last project takes the remainder, mirroring real boards where project sizes vary).
+function seedLargeCache(cache: BoardCache, projectCount: number, totalTickets: number): void {
+  const closedAt = new Date('2026-06-01T10:00:00.000Z');
+  const baseCount = Math.floor(totalTickets / projectCount);
+  let ticketsSoFar = 0;
+  for (let projectIndex = 0; projectIndex < projectCount; projectIndex += 1) {
+    const proj = project(`big-${projectIndex}`, `/projects/big-${projectIndex}`);
+    // Spread the remainder so the total is exactly totalTickets.
+    const count = projectIndex === projectCount - 1 ? totalTickets - ticketsSoFar : baseCount;
+    ticketsSoFar += count;
+    const tickets = Array.from({ length: count }, (_, index) =>
+      makeTicket({
+        id: `bdboard-big-${projectIndex}-${index}`,
+        projectId: proj.id,
+        createdAt: closedAt,
+        closedAt: index % 2 === 0 ? closedAt : undefined,
+        models:
+          index % 3 === 0
+            ? [{ stage: 'implement', model: 'model-a' }]
+            : undefined,
+      }),
+    );
+    cache.putProject({
+      project: proj,
+      tickets,
+      fingerprint: `fp-big-${projectIndex}`,
+      fetchedAt: NOW,
+    });
+  }
+}
 
 // bdboard-mkkx: bdboard-ve1y's stats-routes.test.ts has a test proving the
 // *aggregation loops* (getThroughputStats/getModelStats) yield to the event
@@ -84,37 +119,7 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
     'does not block /api/health while reading a large real-SQLite project cache',
     async () => {
       const cache = createSqliteBoardCache(':memory:');
-      const closedAt = new Date('2026-06-01T10:00:00.000Z');
-      const PROJECT_COUNT = 200;
-      const TOTAL_TICKETS = 200_000;
-      const baseCount = Math.floor(TOTAL_TICKETS / PROJECT_COUNT);
-      let ticketsSoFar = 0;
-      for (let projectIndex = 0; projectIndex < PROJECT_COUNT; projectIndex += 1) {
-        const proj = project(`big-${projectIndex}`, `/projects/big-${projectIndex}`);
-        // Spread the remainder across the first few projects so the total is
-        // exactly TOTAL_TICKETS, mirroring real boards where project sizes vary.
-        const count =
-          projectIndex === PROJECT_COUNT - 1 ? TOTAL_TICKETS - ticketsSoFar : baseCount;
-        ticketsSoFar += count;
-        const tickets = Array.from({ length: count }, (_, index) =>
-          makeTicket({
-            id: `bdboard-big-${projectIndex}-${index}`,
-            projectId: proj.id,
-            createdAt: closedAt,
-            closedAt: index % 2 === 0 ? closedAt : undefined,
-            models:
-              index % 3 === 0
-                ? [{ stage: 'implement', model: 'model-a' }]
-                : undefined,
-          }),
-        );
-        cache.putProject({
-          project: proj,
-          tickets,
-          fingerprint: `fp-big-${projectIndex}`,
-          fetchedAt: NOW,
-        });
-      }
+      seedLargeCache(cache, 200, 200_000);
 
       const app = createApiRoutes(createDeps({ cache }));
 
@@ -188,6 +193,81 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
       expect(health.elapsedMs, timingSummary).toBeLessThan(slowestStatsMs * 0.5); // regression guard, relative not absolute
 
       cache.close();
+    },
+    30_000,
+  );
+
+  // bdboard-kuui: /api/harness-kpi's aggregation (computeHarnessKpi, 4 synchronous passes over
+  // every ticket) is now fed through forEachChunked, one yield per AGGREGATION_YIELD_CHUNK_SIZE
+  // tickets. At 200,000 tickets / 200 projects the old synchronous aggregation's max event-loop
+  // gap was ~53-93 ms on a quiet machine (load ~3) and ~190-350 ms under load ~10 (the ticket
+  // reported 281-656 ms).
+  //
+  // Deliberately NOT a wall-clock or ratio assertion. The health-vs-slowest-stats ratio guard
+  // above is documented as unreliable for a single route (bdboard-4x55: reverting /api/cfd
+  // alone only reaches ~0.5-0.6, right at the 0.5 threshold), and bdboard-uy10 showed that
+  // absolute-ms margins don't survive real CI/multi-session contention. This test counts
+  // something that doesn't depend on machine speed or load at all: how many macrotask turns
+  // the event loop got *while the aggregation ran*.
+  //
+  // - A ticker re-queues itself with setImmediate, so it runs exactly once per event-loop
+  //   iteration. Each yield in forEachChunked is one setImmediate, i.e. one iteration, so the
+  //   ticker's count after the read finished is >= (yields - slack), whatever the CPU does.
+  // - The count starts only once listProjectsChunked() has returned. Reading the SQLite cache
+  //   already yields once per project (that is bdboard-mkkx's fix), so counting from the start
+  //   would let the read phase's turns mask a regressed aggregation.
+  // - With the pre-kuui synchronous computeHarnessKpi the aggregation is one uninterrupted
+  //   block: the count stays 0 (measured: see the PR that introduced this test).
+  // - slack = 2: the turn in which the read finished may or may not have run the ticker before
+  //   the read's last resolve (queue order), and the last turn's ticker may run after the
+  //   response resolved and the count was read. These are bookkeeping edges, not timing.
+  it(
+    'gives the event loop one turn per yield chunk while /api/harness-kpi aggregates a large real-SQLite cache',
+    async () => {
+      const PROJECT_COUNT = 50;
+      const TOTAL_TICKETS = 50_000;
+      const base = createSqliteBoardCache(':memory:');
+      seedLargeCache(base, PROJECT_COUNT, TOTAL_TICKETS);
+
+      if (base.listProjectsChunked === undefined) {
+        throw new Error('the SQLite cache must provide listProjectsChunked()');
+      }
+      let readFinished = false;
+      const cache: BoardCache = {
+        ...base,
+        // The same read path getHarnessKpi takes (listProjectsChunked when the cache has it),
+        // with a marker for "the read phase is over, only the aggregation is left".
+        listProjectsChunked: async () => {
+          const entries = await readProjectEntries(base);
+          readFinished = true;
+          return entries;
+        },
+      };
+      const app = createApiRoutes(createDeps({ cache }));
+
+      let turnsDuringAggregation = 0;
+      let running = true;
+      const tick = (): void => {
+        if (readFinished) {
+          turnsDuringAggregation += 1;
+        }
+        if (running) {
+          setImmediate(tick);
+        }
+      };
+      setImmediate(tick);
+
+      const response = await app.request('/api/harness-kpi?weeks=26');
+      const turnsAtResponse = turnsDuringAggregation;
+      running = false;
+
+      const expectedYields = Math.floor(TOTAL_TICKETS / AGGREGATION_YIELD_CHUNK_SIZE);
+      const summary = `turnsDuringAggregation=${turnsAtResponse} expectedYields=${expectedYields} chunk=${AGGREGATION_YIELD_CHUNK_SIZE}`;
+      expect(response.status).toBe(200);
+      expect(readFinished).toBe(true);
+      expect(turnsAtResponse, summary).toBeGreaterThanOrEqual(expectedYields - 2);
+
+      base.close();
     },
     30_000,
   );
