@@ -75,7 +75,7 @@ export function formatStaleLines(result) {
     );
   }
   lines.push(
-    '原因の例: 古い node では vite が構文エラーを握りつぶして exit 0 を返す (2026-09-26, bdboard-qoxg)。node --version と、上の build の出力を確認してください。',
+    '原因の例: build スクリプト・vite の outDir や設定の変更で index.html の出力先が変わった、または古い node で vite が構文エラーを握りつぶして exit 0 を返した (2026-09-26, bdboard-qoxg)。上の build の出力と node --version を確認してください。',
   );
   return lines.map((line) => `${LINE_PREFIX}${line}`);
 }

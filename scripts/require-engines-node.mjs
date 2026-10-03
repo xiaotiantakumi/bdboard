@@ -29,7 +29,7 @@ export function formatNodeShortfall({ current, required, nvmrc }) {
       : `.nvmrc (= ${nvmrc}) は自動では適用されません。その系列で ${required} を満たす node の bin を PATH の先頭に置いてから再実行してください。`;
   return [
     `Node.js ${required} が必要ですが、実行中の Node.js は ${currentLabel} です (package.json の engines.node)。`,
-    '古い node では vite が構文エラーを握りつぶして exit 0 を返し、何も build されないまま成功に見えるため、tsc / vite を起動せずに止めます。',
+    'engines.node を満たさない node では tsc / vite を起動せずに止めます (Node 15 未満では vite が構文エラーを握りつぶして exit 0 を返し、何も build されないまま成功に見える)。',
     hint,
   ].map((line) => `${LINE_PREFIX}${line}`);
 }
