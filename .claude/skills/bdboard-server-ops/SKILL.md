@@ -33,8 +33,9 @@ BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh start                   
   `npm run start` には到達しない。ただし**このスクリプトの実行は isolation では止まらない**:
   スクリプト自身が git common dir から main checkout を解決し、worktree から呼ばれても main 側の
   自分を exec する (bdboard-9nah) が、isolation のチェックは書かれたコマンド文字列しか見ない。
-  子がこれを打たないのは、bdboard-worker.md「やらないこと」の文書規律と、chair を偽って宣言
-  しないと通らないことだけ (bdboard-25n3)。
+  子による実行を止めているのは、bdboard-worker.md「やらないこと」の文書規律と、副作用のある
+  action (start/restart/deploy) に chair の宣言が要る (偽れば通る) ことだけ (bdboard-25n3。
+  推論で実地未確認なので、止まる前提にしない)。
   listener PID の直接 `kill` は `permissions.deny` (`Bash(kill *)` 等) が全エージェントで拒否する。
   bdboard-worker による main checkout 対象の `git checkout`/`commit`/`reset`/`merge`/
   `stash` 等と Edit/Write は、同じ `isolation: "worktree"` の Git redirects / File edits
@@ -61,7 +62,9 @@ BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh start                   
 - `--dry-run` は何もせず手順を表示する。手順の詳細は `scripts/always-on-server.sh --help`。
 
 サブエージェントとして作業していて再起動が必要になったら、**最終報告に「議長で再起動が必要
-(PR #N)」と書いて終える**。自分で pull・kill・start を試みない (hook に止められる)。
+(PR #N)」と書いて終える**。自分で pull・kill・start も、このスクリプトも試みない (機械的に
+止まるのは `permissions.deny` の kill 系と、bdboard-worker の main checkout への直接操作に対する
+isolation だけ。スクリプト経由は文書規律のみ — 上の `BDBOARD_SERVER_CALLER=chair` の項を参照)。
 
 ### スクリプトで対処できない場面
 
