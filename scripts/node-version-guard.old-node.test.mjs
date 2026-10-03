@@ -123,6 +123,18 @@ describe.skipIf(!oldNode)('verify.mjs node guard on a real old Node', () => {
     expect(output).not.toMatch(/SyntaxError/);
   });
 
+  // bdboard-5st4: web の build の先頭で走る require-engines-node.mjs も、止めるべき古い node 自身で
+  // パースできて、SyntaxError ではなく版不足の案内を出して exit 1 になること。
+  it('require-engines-node.mjs (first step of build:web) reports the shortfall on the old Node itself', () => {
+    const version = assertOldNodeIsTooOld();
+    const result = runOldNode([path.join(scriptsDir, 'require-engines-node.mjs'), repoRoot]);
+    const output = `${result.stderr}${result.stdout}`;
+    expect(result.status).toBe(1);
+    expect(output).toContain(`Node.js ${range} が必要ですが`);
+    expect(output).toContain(`v${version}`);
+    expect(output).not.toMatch(/SyntaxError/);
+  });
+
   // 対照実験: ガードの import graph にパースできない構文が入ったら、上の判定が実際に落ちることを示す。
   // プローブはどの Node でもパースできない構文にする (特定の版だけ通らない新構文だと、
   // CI の旧 Node を上げたときにこの対照だけが壊れる)。

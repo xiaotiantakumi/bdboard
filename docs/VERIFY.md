@@ -33,6 +33,15 @@ CI の ubuntu `verify` job (`.github/workflows/ci.yml`、`setup-node` の `node-
 skip ではなく失敗する)。環境変数がないローカル実行ではこのテストは skip される (ローカル再現は下の
 「旧 node テストをローカルで再現する」)。
 
+`npm run build:web` (= `web` の `build`) も、先頭の `scripts/require-engines-node.mjs` が同じ
+`engines.node` を見て、満たさなければ tsc / vite の前に exit 1 する (bdboard-5st4)。vite の bin
+(`vite/bin/vite.js`) は `import('../dist/node/cli.js')` を await も catch もせずに返すため、node 15
+未満では cli.js の構文エラー (`||=` など) が unhandled rejection の警告になるだけで vite build が
+exit 0 になり、続く `write-build-meta` だけが走って build 全体が成功に見えた (2026-09-26)。vite 側は
+直せないので build の先頭で止める。常時稼働サーバーの `always-on-server.sh` は同じ事故を build の後の
+成果物検査 (`web/dist/index.html` が今回の build で更新されたか) でも止める
+(`.claude/skills/bdboard-server-ops/SKILL.md` の「停止前の失敗」)。
+
 `engines.node` の下限は、ルート・`web` の直接依存が宣言する `engines.node` のうち、22.x 系で最も高い
 要求に揃える (bdboard-ugt1、現状はサーバー側テストの vitest が使うルートの Vite 7)。
 `scripts/engines-coverage.test.mjs` がコミット済みの lockfile から直接依存の engines を読み、下限を
