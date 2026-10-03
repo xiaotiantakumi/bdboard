@@ -32,9 +32,12 @@
 #     (ロック取得直後) に、PATH 上の node が main checkout の package.json の engines.node を
 #     満たすか確かめ、満たさなければ exit 2 で止める。pull で package.json が変わったときは
 #     pull の後にもう一度確かめる (bdboard-qoxg)。
+#     build:web を走らせたときは、その後・旧 listener の停止の前に web/dist/index.html が今回の
+#     build で更新されたか (mtime が build 開始以降か) を確かめ、古いまま・無いなら exit 2 で止める。
+#     build:web が exit 0 を返しても成果物が古いままのことがあるため (bdboard-5st4)。
 #
 # 終了コード: 0 成功 / 1 使い方 / 2 前提不成立 (トンネル稼働・ロック中・health 不通・
-#             build 失敗・node 版不足) / 3 --expect-pid 不一致 / 4 BDBOARD_SERVER_CALLER 未宣言
+#             build 失敗・build 成果物が古い・node 版不足) / 3 --expect-pid 不一致 / 4 BDBOARD_SERVER_CALLER 未宣言
 set -u
 
 usage() {
@@ -57,14 +60,16 @@ always-on-server.sh — 常時稼働サーバー (main checkout の npm run star
   node が main checkout の package.json の engines.node を満たすか確かめ、満たさなければ
   exit 2 (サーバーは無傷)。pull で package.json が変わったときは pull の後にもう一度確かめる。
   node の切り替えはせず、使うべき node と入れ直しの手順を表示する
+  build:web を走らせたときは、その後・停止の前に web/dist/index.html が今回の build で更新された
+  か (mtime が build 開始以降か) も確かめ、古いまま・無いなら exit 2 (サーバーは無傷)
 
   --expect-pid  いま listen している PID がこれと一致するときだけ進む (CAS)。status で確認する
   --verify      kill の前に main checkout で契約の検証コマンド (npm run verify) を通す。赤なら触らない
   --tunnel-ack  cloudflared 稼働中でも続行する (trycloudflare URL が失効する旨をユーザーに伝えた後)
   --dry-run     何もせず手順を表示する
 
-終了コード: 0 成功 / 1 使い方 / 2 前提不成立 (トンネル稼働・ロック中・health 不通・build 失敗・node 版不足)
-            3 --expect-pid 不一致 / 4 BDBOARD_SERVER_CALLER 未宣言
+終了コード: 0 成功 / 1 使い方 / 2 前提不成立 (トンネル稼働・ロック中・health 不通・build 失敗・
+            build 成果物が古い・node 版不足) / 3 --expect-pid 不一致 / 4 BDBOARD_SERVER_CALLER 未宣言
 USAGE
 }
 
@@ -255,6 +260,8 @@ if [ -n "$DRY_RUN" ]; then
     printf '[dry-run] git -C %s pull --ff-only → package.json が変わっていれば node 版チェックをもう一度\n' "$MAIN"
   fi
   printf '[dry-run] build:web mode=%s\n' "$BUILD_MODE"
+  [ "$BUILD_MODE" = 'never' ] ||
+    printf '[dry-run] build:web の後、web/dist/index.html が今回の build で更新されたか確認 → 古い・無いなら exit 2 (停止前)\n'
   [ -z "$DO_VERIFY" ] || printf '[dry-run] cd %s && npm run verify\n' "$MAIN"
   if [ "$ACTION" != 'start' ]; then
     printf '[dry-run] kill %s (TERM → 最大 10 秒待って KILL) → port %s の解放を待つ\n' "${CURRENT_PIDS:-<pid>}" "$PORT"
@@ -326,6 +333,29 @@ node_version_gate() {
     "${retry[@]}" "$untouched"
 }
 
+# --- build 成果物ゲート (bdboard-5st4)。build:web の終了コードも build-meta.json の sha も当てにならない
+# (2026-09-26: 古い node で vite が構文エラーを握りつぶして exit 0、build-meta.json だけ HEAD の sha になり
+# index.html は古いまま)。build の直前に作った stamp (ロックディレクトリ内) より後に web/dist/index.html が
+# 更新されたかを見る。mtime の比較は stat ではなく node (build-artifact-check.mjs。BSD/GNU の stat 書式差を
+# 避ける。node の版は上のゲートで確認済み)。止まったときは pull や install が済んでいることがあり、deploy の
+# 再実行は「変更なし」で何もしないので、入れ直しは restart --build を案内する。チェッカーが走らないときも fail-closed。
+build_artifact_gate() {
+  artifact_out="$(cd "$MAIN" && node "$SCRIPT_DIR/build-artifact-check.mjs" "$MAIN/web/dist/index.html" "$BUILD_STAMP" 2>&1)"
+  artifact_rc=$?
+  [ "$artifact_rc" -ne 0 ] || return 0
+  if [ "$artifact_rc" -eq 3 ]; then
+    audit "$CURRENT_PIDS" '' 'build-artifact-stale'
+    artifact_msg='npm run build:web は成功を返しましたが、web/dist/index.html が今回の build で作られていません。'
+  else
+    audit "$CURRENT_PIDS" '' 'build-artifact-check-failed'
+    artifact_msg="build 成果物のチェックを実行できませんでした (exit $artifact_rc)。"
+  fi
+  [ -z "$artifact_out" ] || printf '%s\n' "$artifact_out" | tail -n 5 >&2
+  die 2 "$artifact_msg" \
+    "pull や install は済んでいることがあります。原因を直したら deploy の再実行ではなく restart --expect-pid ${CURRENT_PIDS:-<PID>} --build で入れ直してください (サーバーが止まっていれば start --build)。" \
+    'サーバーは触っていません (旧プロセスのまま)。'
+}
+
 changed() {
   [ "$OLD_HEAD" != "$NEW_HEAD" ] || return 1
   [ -n "$(git -C "$MAIN" diff --name-only "$OLD_HEAD" "$NEW_HEAD" -- "$@" 2>/dev/null)" ]
@@ -371,7 +401,10 @@ case "$BUILD_MODE" in
 esac
 if [ -n "$NEED_BUILD" ]; then
   printf '== npm run build:web\n'
+  BUILD_STAMP="$LOCK_DIR/build-started"
+  : >"$BUILD_STAMP"
   (cd "$MAIN" && npm run build:web) || { audit "$CURRENT_PIDS" '' 'build-failed'; die 2 'npm run build:web に失敗しました。サーバーは触っていません。'; }
+  build_artifact_gate
 fi
 
 if [ -n "$DO_VERIFY" ]; then

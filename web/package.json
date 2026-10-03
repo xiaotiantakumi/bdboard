@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json && vite build && node ../scripts/write-build-meta.mjs",
+    "build": "node ../scripts/require-engines-node.mjs && tsc --noEmit && tsc --noEmit -p tsconfig.node.json && vite build && node ../scripts/write-build-meta.mjs",
     "preview": "vite preview",
     "test": "vitest run"
   },

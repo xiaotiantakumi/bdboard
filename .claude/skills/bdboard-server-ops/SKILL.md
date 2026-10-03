@@ -280,7 +280,8 @@ worktree-cwd case above, where every attempt reproduces (2/2).
 
 `2` (前提不成立) は2種類ある:
 - **停止前の失敗** — トンネル稼働・ロック中・`pull` 失敗・`install` 失敗・`build:web`
-  失敗・`--verify` の赤・**node 版不足**。この場合サーバーは無傷 (旧プロセスがまだ動いている)。
+  失敗・**build 成果物が古い**・`--verify` の赤・**node 版不足**。この場合サーバーは無傷
+  (旧プロセスがまだ動いている)。
   - node 版不足 (bdboard-qoxg): `start` / `restart` / `deploy` は、pull・install・build・停止の前
     (ロック取得直後) に、PATH 上の `node` が main checkout の `package.json` の `engines.node` を
     満たすか確かめる。満たさなければ exit 2 で、要件・現在の node・使うべき nvm の node の bin
@@ -295,6 +296,22 @@ worktree-cwd case above, where every attempt reproduces (2/2).
   - チェッカー自体が走らない (node が古すぎて構文エラー、チェッカーが壊れた等) ときも exit 2
     (fail-closed) で、チェッカーの出力の末尾を表示する。このときは使うべき bin は表示されないので、
     `.nvmrc` の系列の node を自分で PATH の先頭に置く。
+  - build 成果物が古い (bdboard-5st4): `build:web` を走らせたとき (`--build`、deploy が web/・
+    `package.json`・`docs/help-content.json` の変更で自動 build するとき、`web/dist/index.html` が
+    無いとき) は、build の後・停止の前に `web/dist/index.html` が**今回の build で更新されたか**
+    (mtime が build 開始以降か) を確かめる。古いまま・無い・空なら exit 2 で、理由と両方の時刻を
+    表示して止まる (audit は `result=build-artifact-stale`)。`build:web` の終了コードは当てにならず
+    (2026-09-26 は古い node で vite が構文エラーを握りつぶして exit 0)、`web/dist/build-meta.json` の
+    sha が HEAD と一致しても index.html が古いままのことがある (write-build-meta が vite build の後に
+    走るため) ので、見るのは index.html 自体。**止まったときは pull や install が済んでいることがあり、
+    `deploy` の再実行は「変更なし」で何もしない** — 原因 (多くは PATH 上の node。`node --version` と
+    build の出力を見る) を直してから `restart --expect-pid <PID> --build` で入れ直す。mtime を読む
+    チェッカー (`scripts/build-artifact-check.mjs`) が走らないときも exit 2 (fail-closed,
+    `result=build-artifact-check-failed`)。`--no-build` のときや build しなかったときはこの確認も無い。
+  - 同じ原因の根本側 (bdboard-5st4): `npm run build:web` 自体も、先頭の
+    `scripts/require-engines-node.mjs` が `engines.node` を満たさない node を非 0 で止める
+    (vite の bin が `import()` の失敗を握りつぶすのは node 15 未満)。always-on-server.sh を介さない
+    手元の `npm run build:web` でも「成功に見える」ことはなくなった。
 - **停止後の失敗** — `port-still-bound`・health 不通・pid 不変。この場合**旧プロセスは
   既に止まっている**。新しいプロセスが起動中の可能性もある。手でもう一度 `start` しない
   — まず `status` を見直し、`/tmp/bdboard-server.log` を読む。起動中らしければ待ち、それ

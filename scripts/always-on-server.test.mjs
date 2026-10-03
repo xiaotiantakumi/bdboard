@@ -6,7 +6,7 @@
 // Windows は skip (bash / lsof / nohup 前提)。
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -446,5 +446,255 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     expect(result.stderr).toContain('サーバーは触っていません');
     expect(result.stdout).not.toContain('== starting');
     expect(listenerPid()).toBeNull();
+  }, 60_000);
+});
+
+// bdboard-5st4: 停止前の build 成果物ゲート。2026-09-26 の事故 (bdboard-qoxg) では、build:web が
+// 古い node で exit 0 を返したのに web/dist/index.html は古いまま残り、build-meta.json だけが HEAD の sha に
+// 更新されていた (write-build-meta が vite build の後に走るため)。終了コードも build-meta.json の sha も
+// 当てにならないので、build の後・旧 listener の停止の前に index.html 自体が今回の build で更新されたかを見る。
+// 偽の build:web (FAKE_BUILD_MODE で成果物の作り方を切り替える) と偽サーバーで、restart --build と
+// deploy が旧 listener を止める前に exit 2 で止まること、更新された build は従来どおり進むことを確かめる。
+// Windows は上の describe と同じく skip (bash / lsof / nohup 前提)。mtime の比較ロジック自体は
+// node で書いた build-artifact-check.mjs にあり、そちらの単体テストは Windows でも走る。
+const FAKE_BUILD = `
+const fs = require('node:fs');
+const path = require('node:path');
+const mode = process.env.FAKE_BUILD_MODE || 'fresh';
+const dist = path.join(process.cwd(), 'web', 'dist');
+if (mode === 'fail') { console.error('fake build:web failed'); process.exit(1); }
+fs.mkdirSync(dist, { recursive: true });
+if (mode === 'fresh') fs.writeFileSync(path.join(dist, 'index.html'), '<html>fresh</html>');
+if (mode === 'wipe') fs.rmSync(path.join(dist, 'index.html'), { force: true });
+// 'stale' = 事故の形: build-meta.json だけ新しくなり、exit 0 のまま index.html は古いまま。
+fs.writeFileSync(path.join(dist, 'build-meta.json'), JSON.stringify({ sha: 'head', builtAt: new Date().toISOString() }));
+`;
+
+describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-server.sh build artifact gate', () => {
+  let tmpRoot;
+  let repo;
+  let other;
+  let port;
+  let env;
+
+  function run(args, extraEnv = {}) {
+    const result = spawnSync('bash', [SCRIPT, ...args], {
+      cwd: repo,
+      env: { ...env, ...extraEnv },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+  }
+
+  function chair(args, mode = 'fresh') {
+    return run(args, { BDBOARD_SERVER_CALLER: 'chair', FAKE_BUILD_MODE: mode });
+  }
+
+  function listenerPid() {
+    const match = /listener PID\s*:\s*([0-9]+)/.exec(run(['status', '--port', String(port)]).stdout);
+    return match === null ? null : Number(match[1]);
+  }
+
+  function git(cwd, ...args) {
+    const result = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
+    }
+    return result.stdout.trim();
+  }
+
+  function commitAll(cwd, message) {
+    git(cwd, 'add', '.');
+    git(
+      cwd,
+      '-c',
+      'user.name=bdboard-test',
+      '-c',
+      'user.email=bdboard-test@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-q',
+      '-m',
+      message,
+    );
+  }
+
+  const indexHtml = () => path.join(repo, 'web', 'dist', 'index.html');
+
+  // 前の build が作った index.html を 1 時間前のものにする (今回の build より確実に古い)。
+  function seedOldIndexHtml() {
+    const old = new Date(Date.now() - 3_600_000);
+    mkdirSync(path.dirname(indexHtml()), { recursive: true });
+    writeFileSync(indexHtml(), '<html>old</html>');
+    utimesSync(indexHtml(), old, old);
+  }
+
+  function restartBuild(pid, mode) {
+    return chair(['restart', '--port', String(port), '--expect-pid', String(pid), '--build', '--tunnel-ack'], mode);
+  }
+
+  function expectUntouched(result, pid, logBefore) {
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('サーバーは触っていません');
+    expect(result.stdout).not.toContain('== stopping');
+    expect(result.stdout).not.toContain('== starting');
+    expect(listenerPid()).toBe(pid);
+    expect(run(['status', '--port', String(port)]).stdout).toContain('HTTP 200');
+    expect(readFileSync(env.BDBOARD_SERVER_LOG, 'utf8')).toBe(logBefore);
+  }
+
+  beforeAll(async () => {
+    tmpRoot = mkdtempSync(path.join(tmpdir(), 'bdboard-always-on-build-gate-'));
+    repo = path.join(tmpRoot, 'repo');
+    other = path.join(tmpRoot, 'other');
+    const origin = path.join(tmpRoot, 'origin.git');
+    port = await findFreePort();
+    env = {
+      PATH: process.env.PATH ?? '/usr/bin:/bin',
+      HOME: path.join(tmpRoot, 'home'),
+      BDBOARD_SERVER_LOG: path.join(tmpRoot, 'server.log'),
+      BDBOARD_SERVER_AUDIT_LOG: path.join(tmpRoot, 'restarts.log'),
+      BDBOARD_SERVER_LOCK_DIR: path.join(tmpRoot, 'restart.lock.d'),
+    };
+    mkdirSync(env.HOME, { recursive: true });
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(path.join(repo, 'server.js'), FAKE_SERVER);
+    writeFileSync(path.join(repo, 'build-web.js'), FAKE_BUILD);
+    writeFileSync(path.join(repo, '.gitignore'), 'web/dist/\n'); // 成果物は追跡しない (pull と衝突させない)
+    writeFileSync(
+      path.join(repo, 'package.json'),
+      JSON.stringify({
+        name: 'fake-bdboard',
+        private: true,
+        engines: { node: '>=1.0.0' },
+        scripts: { start: 'node server.js', 'build:web': 'node build-web.js' },
+      }),
+    );
+    seedOldIndexHtml();
+    git(repo, 'init', '-q');
+    git(repo, 'checkout', '-q', '-b', 'main');
+    commitAll(repo, 'fake server');
+    git(tmpRoot, 'init', '-q', '--bare', origin);
+    git(origin, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+    git(repo, 'remote', 'add', 'origin', origin);
+    git(repo, 'push', '-q', '-u', 'origin', 'main');
+    git(tmpRoot, 'clone', '-q', origin, other);
+  });
+
+  afterAll(() => {
+    const pid = listenerPid();
+    if (pid !== null) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // already gone
+      }
+    }
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('--dry-run announces the artifact check after build:web, and omits it with --no-build', () => {
+    const started = chair(['start', '--port', String(port), '--tunnel-ack']);
+    expect(started.status, started.stderr).toBe(0);
+    const pid = listenerPid();
+    expect(pid).not.toBeNull();
+
+    const dry = chair(['restart', '--port', String(port), '--expect-pid', String(pid), '--build', '--dry-run', '--tunnel-ack']);
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain('[dry-run] build:web mode=always');
+    expect(dry.stdout).toContain('[dry-run] build:web の後');
+    expect(dry.stdout).toContain('web/dist/index.html');
+    expect(dry.stdout).toContain('exit 2');
+
+    const noBuild = chair(['restart', '--port', String(port), '--expect-pid', String(pid), '--no-build', '--dry-run', '--tunnel-ack']);
+    expect(noBuild.status).toBe(0);
+    expect(noBuild.stdout).toContain('[dry-run] build:web mode=never');
+    expect(noBuild.stdout).not.toContain('[dry-run] build:web の後');
+    expect(listenerPid()).toBe(pid);
+  }, 60_000);
+
+  it('restart --build stops before the listener when build:web exits 0 but leaves index.html stale (the 2026-09-26 shape)', () => {
+    const pid = listenerPid();
+    const logBefore = readFileSync(env.BDBOARD_SERVER_LOG, 'utf8');
+    seedOldIndexHtml();
+
+    const result = restartBuild(pid, 'stale');
+
+    expect(result.stdout).toContain('== npm run build:web');
+    expectUntouched(result, pid, logBefore);
+    expect(result.stderr).toContain('index.html');
+    expect(result.stderr).toContain('今回の build');
+    expect(result.stderr).toContain(`restart --expect-pid ${pid} --build`);
+    expect(readFileSync(indexHtml(), 'utf8')).toBe('<html>old</html>');
+    expect(readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8')).toContain('result=build-artifact-stale');
+  }, 60_000);
+
+  it('restart --build stops before the listener when build:web exits 0 but removed index.html', () => {
+    const pid = listenerPid();
+    const logBefore = readFileSync(env.BDBOARD_SERVER_LOG, 'utf8');
+    seedOldIndexHtml();
+
+    const result = restartBuild(pid, 'wipe');
+
+    expectUntouched(result, pid, logBefore);
+    expect(result.stderr).toContain('index.html');
+    expect(result.stderr).toContain('ありません');
+    expect(readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8')).toContain('result=build-artifact-stale');
+  }, 60_000);
+
+  it('a build:web that exits non-zero is still reported as build-failed', () => {
+    const pid = listenerPid();
+    const logBefore = readFileSync(env.BDBOARD_SERVER_LOG, 'utf8');
+    seedOldIndexHtml();
+
+    const result = restartBuild(pid, 'fail');
+
+    expectUntouched(result, pid, logBefore);
+    expect(result.stderr).toContain('npm run build:web に失敗しました');
+    expect(readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8')).toContain('result=build-failed');
+  }, 60_000);
+
+  it('deploy stops before the listener when the build it triggered left index.html stale; restart --build then recovers', () => {
+    const pid = listenerPid();
+    const logBefore = readFileSync(env.BDBOARD_SERVER_LOG, 'utf8');
+    seedOldIndexHtml();
+    mkdirSync(path.join(other, 'web', 'src'), { recursive: true });
+    writeFileSync(path.join(other, 'web', 'src', 'App.tsx'), '// web change\n');
+    commitAll(other, 'web change');
+    git(other, 'push', '-q', 'origin', 'main');
+    const originHead = git(other, 'rev-parse', 'HEAD');
+
+    const result = chair(['deploy', '--port', String(port), '--expect-pid', String(pid), '--tunnel-ack'], 'stale');
+
+    expect(result.stdout).toContain('== npm run build:web');
+    expectUntouched(result, pid, logBefore);
+    expect(result.stderr).toContain('index.html');
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(originHead); // pull は済んでいる
+    const audit = readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8');
+    expect(audit).toMatch(/\tdeploy\tcaller=chair\t[^\n]*result=build-artifact-stale/);
+
+    // 案内どおり restart --build で入れ直せる (build が今度は index.html を作る)。
+    const recovered = restartBuild(pid, 'fresh');
+    expect(recovered.status, recovered.stderr).toBe(0);
+    expect(recovered.stdout).toContain(`== OK: PID ${pid} ->`);
+    expect(readFileSync(indexHtml(), 'utf8')).toBe('<html>fresh</html>');
+    expect(listenerPid()).not.toBe(pid);
+  }, 90_000);
+
+  it('proceeds as before when build:web refreshes index.html', () => {
+    const pid = listenerPid();
+    seedOldIndexHtml();
+
+    const result = restartBuild(pid, 'fresh');
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('== npm run build:web');
+    expect(result.stdout).toContain('== stopping');
+    expect(result.stdout).toContain(`== OK: PID ${pid} ->`);
+    expect(readFileSync(indexHtml(), 'utf8')).toBe('<html>fresh</html>');
+    expect(listenerPid()).not.toBe(pid);
+    expect(readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8')).toContain('result=ok');
   }, 60_000);
 });
