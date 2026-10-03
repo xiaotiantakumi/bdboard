@@ -6,12 +6,13 @@
 // (状態 JSON を読み書きする代役) で動かす。検証コマンドは偽の `node verify.cjs` で、
 // どの SHA を検証したかをログに残す。Windows は統合部分を skip (bash 前提ではないが、
 // 運用するのは macOS のエージェントだけで、always-on-server.test.mjs と同じ扱い)。
-import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+//
+// bdboard-4dqo: 1500 行の max-lines に余裕を作るため分割した。一時リポジトリの harness は
+// merge-pr.test-harness.mjs、finish 系のテストは merge-pr.finish.test.mjs (describe 名は同じ)。
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_HOT_FILES,
@@ -25,75 +26,41 @@ import {
   parseGitHubSlug,
   parseMergeConfig,
   readMergeTree,
-  VERIFYING_PID_MAX_AGE_MS,
 } from './merge-pr.mjs';
-
-const SCRIPT = fileURLToPath(new URL('./merge-pr.mjs', import.meta.url));
-const FAKE = fileURLToPath(new URL('./merge-pr/fake-tools.mjs', import.meta.url));
-const REPO_ROOT = path.dirname(path.dirname(SCRIPT));
-const CONTEXT = 'bdboard/landed-verify';
-const PR = 7;
-const TITLE = 'feat(demo-1): add the thing';
-
-const VERIFY_JS = `
-const fs = require('node:fs');
-const { execSync } = require('node:child_process');
-const head = execSync('git rev-parse HEAD').toString().trim();
-fs.appendFileSync(process.env.FAKE_VERIFY_LOG, head + '\\n');
-// SIGINT/SIGTERM のテスト用: 自分の (実際に検証を実行している) pid を書いておく。中断後に
-// この pid が本当に死んでいるかで「子プロセスが孤児にならない」ことを確かめる。
-if (process.env.FAKE_VERIFY_PID_FILE) fs.writeFileSync(process.env.FAKE_VERIFY_PID_FILE, String(process.pid));
-// bdboard-ulxa.6: merge-pr が verify スロットに渡す優先度と並んだ時刻を記録する。
-if (process.env.FAKE_VERIFY_ENV_LOG) fs.appendFileSync(process.env.FAKE_VERIFY_ENV_LOG, (process.env.BDBOARD_VERIFY_PRIORITY || '-') + ' ' + (process.env.BDBOARD_VERIFY_QUEUE_SINCE || '-') + '\\n');
-// bdboard-e8o1: 孫プロセスの kill 確認用。設定されていれば、この検証プロセス自身の子として
-// (detached せずに) 別の node プロセスを spawn する。同じプロセスグループに入るので、グループ
-// 宛ての SIGTERM/SIGKILL は届くが、この孫は SIGTERM を無視する (見送り分 1 のポーリング確認:
-// 直接の子 (このプロセス自身) は SIGTERM で即座に死ぬので、孫が SIGTERM を無視しないと
-// 「直接の子の 'close' を見て後始末完了とみなす」旧実装でもたまたま道連れで死んでしまい、
-// 新しいポーリング (SIGTERM で死ななければ猶予後に SIGKILL を送り直す) を検証できない)。
-const grandchildPidFile = process.env.FAKE_VERIFY_GRANDCHILD_PID_FILE;
-if (grandchildPidFile) {
-  const { spawn } = require('node:child_process');
-  const grandchildScript = "process.on('SIGTERM', () => {}); const fs=require('node:fs'); fs.writeFileSync(process.env.GRANDCHILD_PID_FILE, String(process.pid)); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);";
-  const grandchild = spawn(process.execPath, ['-e', grandchildScript], {
-    stdio: 'ignore',
-    env: { ...process.env, GRANDCHILD_PID_FILE: grandchildPidFile },
-  });
-  grandchild.unref();
-}
-// 意味的衝突の代役: 列挙したファイルが全部そろった木でだけ落ちる (片方だけなら緑)。
-const conflict = process.env.FAKE_VERIFY_CONFLICT;
-if (conflict && conflict.split(',').every((file) => fs.existsSync(file))) process.exit(3);
-// verify の最中に main が動いたことの代役。
-if (process.env.FAKE_VERIFY_MOVE_MAIN) execSync('git push -q origin ' + process.env.FAKE_VERIFY_MOVE_MAIN + ':refs/heads/main');
-const sleepMs = Number(process.env.FAKE_VERIFY_SLEEP_MS || 0);
-if (sleepMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs);
-process.exit(Number(process.env.FAKE_VERIFY_EXIT || 0));
-`;
-
-// bdboard-2twf: SIGINT テスト用の小さなヘルパー。pidAlive は finish.mjs の同名関数と同じ判定
-// (EPERM = 居るが触れない = alive、ESRCH = もう居ない)。
-function pidAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === 'EPERM';
-  }
-}
-
-async function waitUntil(predicate, { timeoutMs = 10_000, intervalMs = 20 } = {}) {
-  const start = Date.now();
-  while (!predicate()) {
-    if (Date.now() - start > timeoutMs) {
-      throw new Error('waitUntil: timed out');
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-}
+import {
+  advanceMain,
+  auditText,
+  base,
+  calls,
+  commitAll,
+  CONTEXT,
+  env,
+  fakeState,
+  git,
+  head,
+  landSquash,
+  mainCheckout,
+  peerCommit,
+  pidAlive,
+  posted,
+  PR,
+  readFake,
+  readState,
+  REPO_ROOT,
+  registerTempRepoHooks,
+  run,
+  SCRIPT,
+  setup,
+  simulateMerge,
+  stateFile,
+  status,
+  TITLE,
+  tmp,
+  verified,
+  waitUntil,
+  work,
+  writeFake,
+} from './merge-pr.test-harness.mjs';
 
 describe('merge-pr pure helpers', () => {
   const lease = 8 * 60_000;
@@ -260,145 +227,7 @@ describe('hasApprovedReview spelling variants', () => {
 
 // 1 テストで node / git を十数回起こす。verify の並列実行中でも既定 5 秒で落ちないよう余裕を取る。
 describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp repo + fake gh/bd/npm', { timeout: 30_000 }, () => {
-  let tmp;
-  let mainCheckout;
-  let work;
-  let fakeState;
-  let env;
-  let base;
-  let head;
-
-  function git(cwd, args, extraEnv = {}) {
-    const result = spawnSync('git', args, { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8' });
-    if (result.status !== 0) {
-      throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
-    }
-    return result.stdout.trim();
-  }
-
-  const readFake = () => JSON.parse(readFileSync(fakeState, 'utf8'));
-  const writeFake = (patch) => writeFileSync(fakeState, JSON.stringify({ ...readFake(), ...patch }, null, 2));
-  const calls = (tool, sub) => readFake().calls.filter((call) => call[0] === tool && (sub === undefined || call.includes(sub)));
-  const posted = () => readFake().posted ?? [];
-  const verified = () => (existsSync(env.FAKE_VERIFY_LOG) ? readFileSync(env.FAKE_VERIFY_LOG, 'utf8').trim().split('\n') : []);
-  const auditText = () => (existsSync(env.BDBOARD_MERGE_AUDIT_LOG) ? readFileSync(env.BDBOARD_MERGE_AUDIT_LOG, 'utf8') : '');
-  // 状態は git common dir (= main checkout の .git) に置かれ、全 worktree から見える。
-  const stateFile = () => path.join(mainCheckout, '.git', 'bdboard-merge', `pr-${PR}.json`);
-  const status = (state, updatedAt = new Date().toISOString()) => ({ state, context: CONTEXT, description: state, updated_at: updatedAt });
-
-  function run(args, extraEnv = {}, cwd = work) {
-    const result = spawnSync(process.execPath, [SCRIPT, ...args], {
-      cwd,
-      env: { ...env, ...extraEnv },
-      encoding: 'utf8',
-      timeout: 60_000,
-    });
-    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
-  }
-
-  function commitAll(cwd, message, extraEnv = {}) {
-    git(cwd, ['add', '-A']);
-    git(cwd, ['commit', '-q', '-m', message], extraEnv);
-    return git(cwd, ['rev-parse', 'HEAD']);
-  }
-
-  /**
-   * origin (bare)・main checkout 役の mainCheckout・そこから git worktree add した PR worktree の
-   * work を作る。main の先頭 (= PRED_BASE) は mainDate の時刻。work は bd/demo-1
-   * (feature.txt を足した 1 コミット) を checkout した状態で返す。
-   */
-  function setup({ merge = {}, mainDate, branchFiles = {} } = {}) {
-    if (tmp) {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-    tmp = mkdtempSync(path.join(tmpdir(), 'bdboard-merge-pr-'));
-    const origin = path.join(tmp, 'origin.git');
-    mainCheckout = path.join(tmp, 'main');
-    work = path.join(tmp, 'work');
-    fakeState = path.join(tmp, 'fake-state.json');
-    mkdirSync(path.join(tmp, 'home'));
-    const tool = (name) => JSON.stringify([process.execPath, FAKE, name]);
-    env = {
-      PATH: process.env.PATH ?? '/usr/bin:/bin',
-      HOME: path.join(tmp, 'home'),
-      GIT_CONFIG_NOSYSTEM: '1',
-      GIT_AUTHOR_NAME: 'bdboard-test',
-      GIT_AUTHOR_EMAIL: 'bdboard-test@example.invalid',
-      GIT_COMMITTER_NAME: 'bdboard-test',
-      GIT_COMMITTER_EMAIL: 'bdboard-test@example.invalid',
-      BDBOARD_MERGE_GH: tool('gh'),
-      BDBOARD_MERGE_BD: tool('bd'),
-      BDBOARD_MERGE_NPM: tool('npm'),
-      BDBOARD_MERGE_FAKE_STATE: fakeState,
-      BDBOARD_MERGE_AUDIT_LOG: path.join(tmp, 'audit.log'),
-      BDBOARD_MERGE_POLL_MS: '50',
-      BDBOARD_MERGER: 'chair',
-      FAKE_VERIFY_LOG: path.join(tmp, 'verified.log'),
-    };
-    git(tmp, ['init', '-q', '--bare', '-b', 'main', origin]);
-    git(tmp, ['init', '-q', '-b', 'main', mainCheckout]);
-    const contract = {
-      version: 1,
-      verify: 'node verify.cjs',
-      prFlow: 'pr',
-      merge: { mode: 'S1', leaseMinutes: 1, slotWaitMinutes: 1, statusContext: CONTEXT, repo: 'example/demo', ...merge },
-    };
-    mkdirSync(path.join(mainCheckout, '.claude'));
-    writeFileSync(path.join(mainCheckout, '.claude', 'bdboard-harness.json'), `${JSON.stringify(contract, null, 2)}\n`);
-    writeFileSync(path.join(mainCheckout, 'verify.cjs'), VERIFY_JS);
-    writeFileSync(path.join(mainCheckout, 'README.md'), 'demo\n');
-    base = commitAll(mainCheckout, 'chore: init', mainDate ? { GIT_COMMITTER_DATE: mainDate } : {});
-    git(mainCheckout, ['remote', 'add', 'origin', origin]);
-    git(mainCheckout, ['push', '-q', 'origin', 'main']);
-    git(mainCheckout, ['worktree', 'add', '-q', '-b', 'bd/demo-1', work, 'main']);
-    writeFileSync(path.join(work, 'feature.txt'), 'feature\n');
-    for (const [file, content] of Object.entries(branchFiles)) {
-      const dest = path.join(work, file);
-      mkdirSync(path.dirname(dest), { recursive: true });
-      writeFileSync(dest, content);
-    }
-    head = commitAll(work, TITLE);
-    git(work, ['push', '-q', 'origin', 'bd/demo-1']);
-    writeFileSync(
-      fakeState,
-      JSON.stringify({
-        pulls: {
-          [PR]: { number: PR, state: 'open', merged: false, merge_commit_sha: null, title: TITLE, draft: false, head: { sha: head, ref: 'bd/demo-1' }, base: { ref: 'main' } },
-        },
-        statuses: { [base]: [status('success')] },
-        bdShow: { 'demo-1': [{ metadata: { 'bdboard.model.review': 'opus-5' } }] },
-        slot: { holder: null },
-        calls: [],
-      }),
-    );
-  }
-
-  /** gh pr merge の代わりに squash マージを origin に着地させ、PR をマージ済みにする。 */
-  function simulateMerge() {
-    const tree = git(work, ['rev-parse', 'HEAD^{tree}']);
-    const landed = git(work, ['commit-tree', tree, '-p', base, '-m', `${TITLE} (#${PR})`]);
-    git(work, ['push', '-q', 'origin', `${landed}:refs/heads/main`]);
-    const fake = readFake();
-    fake.pulls[PR] = { ...fake.pulls[PR], state: 'closed', merged: true, merge_commit_sha: landed };
-    writeFileSync(fakeState, JSON.stringify(fake));
-    return landed;
-  }
-
-  /** main を base から 1 コミット進めた commit を作る (push はしない)。 */
-  function peerCommit() {
-    return git(work, ['commit-tree', `${base}^{tree}`, '-p', base, '-m', 'feat(peer): landed meanwhile']);
-  }
-
-  afterEach(() => {
-    if (tmp) {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-    tmp = undefined;
-  });
-
-  beforeEach(() => {
-    tmp = undefined;
-  });
+  registerTempRepoHooks();
 
   it('rejects usage errors before touching git', () => {
     setup();
@@ -706,47 +535,6 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(calls('bd', 'acquire')).toEqual([]);
   });
 
-  it('finish: an unmerged PR (merge refused / 409) just returns the slot', () => {
-    setup();
-    expect(run(['prepare', String(PR)]).status).toBe(0);
-    expect(run(['gate', String(PR)]).status).toBe(0);
-    const finished = run(['finish', String(PR)]);
-    expect(finished.status).toBe(5);
-    expect(finished.stderr).toContain('マージされていません');
-    expect(readFake().slot.holder).toBeNull();
-    expect(posted()).toEqual([]);
-    expect(existsSync(stateFile())).toBe(false);
-  });
-
-  it('finish: a failing landed-verify records failure and holds the slot for the repair (§3.6)', () => {
-    setup();
-    expect(run(['prepare', String(PR)]).status).toBe(0);
-    expect(run(['gate', String(PR)]).status).toBe(0);
-    const landed = simulateMerge();
-    const finished = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' });
-    expect(finished.status).toBe(6);
-    expect(finished.stderr).toContain('revert');
-    expect(posted().map(({ sha, state }) => [sha, state])).toEqual([
-      [landed, 'pending'],
-      [landed, 'failure'],
-    ]);
-    expect(readFake().slot.holder).toBe(`demo-1 / main-broken ${landed.slice(0, 12)}`);
-    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
-  });
-
-  it('finish: refuses to start while the working tree is dirty and leaves the ledger pending-free', () => {
-    setup();
-    expect(run(['prepare', String(PR)]).status).toBe(0);
-    expect(run(['gate', String(PR)]).status).toBe(0);
-    simulateMerge();
-    writeFileSync(path.join(work, 'feature.txt'), 'uncommitted\n');
-    const finished = run(['finish', String(PR)]);
-    expect(finished.status).toBe(1);
-    expect(finished.stderr).toContain('npm run merge-pr -- verify');
-    expect(readFake().slot.holder).toBeNull();
-    expect(posted()).toEqual([]);
-  });
-
   it('npm ci runs only when the lockfile differs from what the worktree last installed', () => {
     setup({ mainDate: '2026-01-01T00:00:00Z', branchFiles: { 'package-lock.json': '{"lockfileVersion":3}\n' } });
     writeFake({ statuses: {} });
@@ -758,28 +546,6 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     // finish: 入っているのは main の依存、着地した木はブランチの lockfile → もう一度 npm ci
     expect(run(['finish', String(PR)]).status).toBe(0);
     expect(calls('npm')).toEqual([['npm', 'ci'], ['npm', 'ci']]);
-  });
-
-  it('finish / verify refuse to detach the main checkout; only a linked PR worktree runs the landed verify', () => {
-    setup();
-    expect(run(['prepare', String(PR)]).status).toBe(0);
-    expect(run(['gate', String(PR)]).status).toBe(0);
-    const landed = simulateMerge();
-    const finished = run(['finish', String(PR)], {}, mainCheckout);
-    expect(finished.status).toBe(1);
-    expect(finished.stderr).toContain('PR の worktree');
-    expect(readFake().slot.holder).toBeNull(); // 枠は検証より先に返している
-    expect(posted()).toEqual([]);
-    expect(verified()).toEqual([]);
-    expect(git(mainCheckout, ['symbolic-ref', '--short', 'HEAD'])).toBe('main');
-    expect(run(['verify', landed], {}, mainCheckout).status).toBe(1);
-    expect(posted()).toEqual([]);
-    // PR の worktree からなら手で検証して台帳に書ける。
-    expect(run(['verify', landed]).status).toBe(0);
-    expect(posted().map(({ sha, state }) => [sha, state])).toEqual([
-      [landed, 'pending'],
-      [landed, 'success'],
-    ]);
   });
 
   it('gate --repair: the fix PR for a broken main takes over the main-broken slot and returns it only after success', () => {
@@ -824,21 +590,6 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' }).status).toBe(6);
     expect(readFake().slot.holder).toBe(holder);
     expect(calls('bd', 'release')).toEqual([]);
-  });
-
-  it('finish keeps the pending status fresh while verify runs, so other gates wait instead of self-healing', () => {
-    setup();
-    expect(run(['prepare', String(PR)]).status).toBe(0);
-    expect(run(['gate', String(PR)]).status).toBe(0);
-    const landed = simulateMerge();
-    const finished = run(['finish', String(PR)], { BDBOARD_MERGE_HEARTBEAT_MS: '100', FAKE_VERIFY_SLEEP_MS: '1500' });
-    expect(finished.status).toBe(0);
-    const states = posted()
-      .filter(({ sha }) => sha === landed)
-      .map(({ state }) => state);
-    expect(states[0]).toBe('pending');
-    expect(states.at(-1)).toBe('success');
-    expect(states.filter((state) => state === 'pending').length).toBeGreaterThanOrEqual(3);
   });
 
   it('gate: a broken bd fails fast instead of waiting out slotWaitMinutes', () => {
@@ -886,31 +637,6 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
   });
 
   // ---- bdboard-ulxa.2: S2 (着地予定ツリーを手元で verify して rebase を省く) ----
-
-  /** main checkout 役から origin/main を 1 コミット進める (files: パス → 内容)。 */
-  function advanceMain(files) {
-    for (const [file, content] of Object.entries(files)) {
-      mkdirSync(path.dirname(path.join(mainCheckout, file)), { recursive: true });
-      writeFileSync(path.join(mainCheckout, file), content);
-    }
-    const sha = commitAll(mainCheckout, 'feat(peer): landed meanwhile');
-    git(mainCheckout, ['push', '-q', 'origin', 'main']);
-    return sha;
-  }
-
-  /** GitHub の squash の代役: 今の remote main に head を 3-way マージした木 (または tree) を 1 親で着地させる。 */
-  function landSquash(tree) {
-    const parent = git(work, ['ls-remote', 'origin', 'refs/heads/main']).split('\t')[0];
-    const landedTree = tree ?? git(work, ['merge-tree', '--write-tree', parent, head]);
-    const landed = git(work, ['commit-tree', landedTree, '-p', parent, '-m', `${TITLE} (#${PR})`]);
-    git(work, ['push', '-q', 'origin', `${landed}:refs/heads/main`]);
-    const fake = readFake();
-    fake.pulls[PR] = { ...fake.pulls[PR], state: 'closed', merged: true, merge_commit_sha: landed };
-    writeFileSync(fakeState, JSON.stringify(fake));
-    return landed;
-  }
-
-  const readState = () => JSON.parse(readFileSync(stateFile(), 'utf8'));
 
   it('S2 prepare: main not moved is class N exactly as in S1 (no predicted verify)', () => {
     setup({ merge: { mode: 'S2' } });
@@ -1100,24 +826,6 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(verified()).toEqual([]);
   });
 
-  it('S2 finish: a landed tree that differs from the predicted one is reported; the landed verify still decides', () => {
-    setup({ merge: { mode: 'S2' } });
-    const moved = advanceMain({ 'peer.txt': 'peer\n' });
-    expect(run(['prepare', String(PR)]).status).toBe(0);
-    writeFake({ statuses: { [moved]: [status('success')] } });
-    expect(run(['gate', String(PR)]).status).toBe(0);
-    const landed = landSquash(git(work, ['rev-parse', `${head}^{tree}`]));
-    const finished = run(['finish', String(PR)]);
-    expect(finished.status).toBe(0);
-    expect(finished.stderr).toContain('着地予定ツリー');
-    expect(finished.stderr).toContain('違います');
-    expect(auditText()).toMatch(/\tpredicted-tree\tpr=7\tid=demo-1\tmatch=false/);
-    expect(posted().map(({ sha, state }) => [sha, state])).toEqual([
-      [landed, 'pending'],
-      [landed, 'success'],
-    ]);
-  });
-
   it('gate: a class-F record is sent back to prepare under S1 (rolled back) or when the predicted verify is not recorded', () => {
     setup();
     expect(run(['prepare', String(PR)]).status).toBe(0);
@@ -1210,255 +918,6 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(prepared.stderr).toContain('git checkout bd/demo-1');
   });
 
-  it('finish: refuses while the worktree has an untracked, non-ignored file (gitignored ones do not block)', () => {
-    setup({ branchFiles: { '.gitignore': 'ignored.log\n' } });
-    expect(run(['prepare', String(PR)]).status).toBe(0);
-    expect(run(['gate', String(PR)]).status).toBe(0);
-    const landed = simulateMerge();
-    writeFileSync(path.join(work, 'ignored.log'), 'noise\n');
-    writeFileSync(path.join(work, 'stray.ts'), 'export const x = 1;\n');
-    const finished = run(['finish', String(PR)]);
-    expect(finished.status).toBe(1);
-    expect(finished.stderr).toContain('未追跡ファイル');
-    expect(finished.stderr).toContain('stray.ts');
-    expect(finished.stderr).not.toContain('ignored.log');
-    expect(readFake().slot.holder).toBeNull(); // 枠は検証より先に返している
-    expect(posted()).toEqual([]);
-    expect(verified()).toEqual([]);
-    expect(existsSync(stateFile())).toBe(true); // 記録は残る (finish をやり直せる)
-
-    rmSync(path.join(work, 'stray.ts'));
-    const retried = run(['finish', String(PR)]);
-    expect(retried.status).toBe(0);
-    expect(verified()).toEqual([landed]);
-    expect(existsSync(stateFile())).toBe(false);
-  });
-
-  it('finish: SIGINT during the landed verify kills the verify process and restores the branch instead of leaving an orphan / detached HEAD', async () => {
-    setup();
-    expect(run(['prepare', String(PR)]).status).toBe(0);
-    expect(run(['gate', String(PR)]).status).toBe(0);
-    simulateMerge();
-    const pidFile = path.join(tmp, 'verify.pid');
-    const startedAt = Date.now();
-    const child = spawn(process.execPath, [SCRIPT, 'finish', String(PR)], {
-      cwd: work,
-      env: { ...env, FAKE_VERIFY_SLEEP_MS: '60000', FAKE_VERIFY_PID_FILE: pidFile, BDBOARD_MERGE_KILL_GRACE_MS: '200' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    let verifyPid;
-    try {
-      // fake verify がまだ書き込み中の pid ファイルを読まないよう、パース結果が正の整数に
-      // なるまで待つ (存在するだけでは不十分 — 書き込み途中の空/部分文字列を拾いうる)。
-      await waitUntil(() => {
-        if (!existsSync(pidFile)) {
-          return false;
-        }
-        const parsed = Number(readFileSync(pidFile, 'utf8').trim());
-        if (!Number.isInteger(parsed) || parsed <= 0) {
-          return false;
-        }
-        verifyPid = parsed;
-        return true;
-      });
-      expect(pidAlive(verifyPid)).toBe(true);
-      // bdboard-2hj4: 走っている finish は自分の pid の横に verifyingAt を刻み、その間に起動した
-      // 2 本目の finish は二重に verify せず 75 で止まる。
-      const stamped = JSON.parse(readFileSync(stateFile(), 'utf8'));
-      expect(stamped.verifyingPid).toBe(child.pid);
-      expect(Date.parse(stamped.verifyingAt)).toBeGreaterThanOrEqual(startedAt);
-      expect(Date.parse(stamped.verifyingAt)).toBeLessThanOrEqual(Date.now());
-      expect(run(['finish', String(PR)]).status).toBe(75);
-
-      child.kill('SIGINT');
-      const [code, signal] = await new Promise((resolve) => {
-        child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]));
-      });
-      expect(signal).toBeNull(); // 自分で process.exit したので signal 経由の終了ではない
-      expect(code).toBe(130); // SIGINT
-
-      // 自然な sleep 終了 (60 秒) よりずっと短い窓で死んでいることを確かめる (kill が効いていない
-      // 場合に「たまたま自然終了と重なって green になる」誤検出を避ける)。
-      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 }); // 孤児にならず、確かに終わっている
-    } finally {
-      // アサーションが途中で失敗しても、子プロセスと (60 秒 sleep 中かもしれない) fake verify の
-      // 孫プロセスを確実に後始末する。正常系ではどちらも既に死んでいるので kill は no-op になる。
-      if (!child.killed) {
-        child.kill('SIGKILL');
-      }
-      if (verifyPid !== undefined && pidAlive(verifyPid)) {
-        try {
-          process.kill(verifyPid, 'SIGKILL');
-        } catch {
-          // 確認と kill の間に終了していれば無視する。
-        }
-      }
-    }
-    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1'); // detach のまま残らない
-    expect(posted().map((entry) => entry.state)).not.toContain('failure'); // 中断を failure と記録しない
-    expect(stderr).toContain('SIGINT');
-    expect(stderr).toContain('bd/demo-1');
-    // bdboard-e8o1 (見送り分 3): 次にやり直すコマンドのヒントと、監査ログのイベント。
-    expect(stderr).toContain(`そのまま次を実行してやり直せます: BDBOARD_MERGER=chair npm run merge-pr -- finish ${PR}`);
-    expect(auditText()).toMatch(/\tlanded-verify-interrupted\tsha=[0-9a-f]{40}\tby=demo-1\tledger=true\tsignal=SIGINT/);
-    // opus レビューで見つかった退行の固定化: 中断されたのに installAndVerify が呼び出し元へ
-    // 制御を戻し、finish() の「検証を実行できなかった」エラーパスまで進んでしまわないこと。
-    expect(stderr).not.toContain('着地後検証を実行できませんでした');
-
-    // 状態・枠・台帳は壊れていないので、そのまま finish をやり直せる。
-    const retried = run(['finish', String(PR)]);
-    expect(retried.status).toBe(0);
-    expect(existsSync(stateFile())).toBe(false);
-  });
-
-  it('finish: SIGTERM during the landed verify kills the verify process and restores the branch (same guarantee as SIGINT, different signal)', async () => {
-    setup();
-    expect(run(['prepare', String(PR)]).status).toBe(0);
-    expect(run(['gate', String(PR)]).status).toBe(0);
-    simulateMerge();
-    const pidFile = path.join(tmp, 'verify-term.pid');
-    const child = spawn(process.execPath, [SCRIPT, 'finish', String(PR)], {
-      cwd: work,
-      env: { ...env, FAKE_VERIFY_SLEEP_MS: '60000', FAKE_VERIFY_PID_FILE: pidFile, BDBOARD_MERGE_KILL_GRACE_MS: '200' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    let verifyPid;
-    try {
-      await waitUntil(() => {
-        if (!existsSync(pidFile)) {
-          return false;
-        }
-        const parsed = Number(readFileSync(pidFile, 'utf8').trim());
-        if (!Number.isInteger(parsed) || parsed <= 0) {
-          return false;
-        }
-        verifyPid = parsed;
-        return true;
-      });
-      expect(pidAlive(verifyPid)).toBe(true);
-
-      child.kill('SIGTERM');
-      const [code, signal] = await new Promise((resolve) => {
-        child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]));
-      });
-      expect(signal).toBeNull();
-      expect(code).toBe(143); // SIGTERM
-
-      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 });
-    } finally {
-      if (!child.killed) {
-        child.kill('SIGKILL');
-      }
-      if (verifyPid !== undefined && pidAlive(verifyPid)) {
-        try {
-          process.kill(verifyPid, 'SIGKILL');
-        } catch {
-          // 確認と kill の間に終了していれば無視する。
-        }
-      }
-    }
-    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
-    expect(posted().map((entry) => entry.state)).not.toContain('failure');
-    expect(stderr).toContain('SIGTERM');
-    expect(auditText()).toMatch(/\tlanded-verify-interrupted\tsha=[0-9a-f]{40}\tby=demo-1\tledger=true\tsignal=SIGTERM/);
-    expect(stderr).not.toContain('着地後検証を実行できませんでした');
-
-    const retried = run(['finish', String(PR)]);
-    expect(retried.status).toBe(0);
-  });
-
-  it('finish: SIGINT also kills a grandchild the verify process spawns, not just the direct npm/shell child (pgid polling, 見送り分 1)', async () => {
-    setup();
-    expect(run(['prepare', String(PR)]).status).toBe(0);
-    expect(run(['gate', String(PR)]).status).toBe(0);
-    simulateMerge();
-    const pidFile = path.join(tmp, 'verify-gc.pid');
-    const grandchildPidFile = path.join(tmp, 'verify-gc-grandchild.pid');
-    const child = spawn(process.execPath, [SCRIPT, 'finish', String(PR)], {
-      cwd: work,
-      env: {
-        ...env,
-        FAKE_VERIFY_SLEEP_MS: '60000',
-        FAKE_VERIFY_PID_FILE: pidFile,
-        FAKE_VERIFY_GRANDCHILD_PID_FILE: grandchildPidFile,
-        BDBOARD_MERGE_KILL_GRACE_MS: '200',
-        BDBOARD_MERGE_KILL_POLL_MS: '50',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    let verifyPid;
-    let grandchildPid;
-    try {
-      await waitUntil(() => {
-        if (!existsSync(pidFile) || !existsSync(grandchildPidFile)) {
-          return false;
-        }
-        const v = Number(readFileSync(pidFile, 'utf8').trim());
-        const g = Number(readFileSync(grandchildPidFile, 'utf8').trim());
-        if (!Number.isInteger(v) || v <= 0 || !Number.isInteger(g) || g <= 0) {
-          return false;
-        }
-        verifyPid = v;
-        grandchildPid = g;
-        return true;
-      });
-      expect(pidAlive(verifyPid)).toBe(true);
-      expect(pidAlive(grandchildPid)).toBe(true);
-      expect(verifyPid).not.toBe(grandchildPid);
-
-      child.kill('SIGINT');
-      // 孫は SIGTERM を無視するので、後始末 (SIGKILL への昇格 → プロセスグループが実際に
-      // 空になるまでのポーリング → restoreBranch) には少なくとも killGraceMs (200ms) かかる。
-      // SIGINT 直後 (t=0) ではどちらの実装でもまだ何も起きていないので区別できない — 100ms
-      // 待ってから確認する: これは旧実装 (return 'error' で finally の restoreBranch が
-      // 同期区間ですぐ走る。孫の SIGKILL 猶予 200ms よりずっと早く完了する) なら既にブランチが
-      // 戻ってしまっているはずの時点で、新実装 (孫がまだ生きているので後始末が完了していない)
-      // なら detach したままのはずの時点 — opus レビューで見つかった退行の固定化。
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(pidAlive(grandchildPid)).toBe(true);
-      // symbolic-ref は detached HEAD だと非ゼロ終了で失敗する (git() ヘルパーが throw する) ので
-      // rev-parse --abbrev-ref を使う (detached なら文字列 'HEAD' を返す。throw しない)。
-      expect(git(work, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('HEAD');
-
-      const [code, signal] = await new Promise((resolve) => {
-        child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]));
-      });
-      expect(signal).toBeNull();
-      expect(code).toBe(130);
-
-      // グループ全体が本当に空になるまでポーリングで待つ (孫が生き残っていないか)。
-      await waitUntil(() => !pidAlive(verifyPid) && !pidAlive(grandchildPid), { timeoutMs: 5_000 });
-    } finally {
-      if (!child.killed) {
-        child.kill('SIGKILL');
-      }
-      for (const pid of [verifyPid, grandchildPid]) {
-        if (pid !== undefined && pidAlive(pid)) {
-          try {
-            process.kill(pid, 'SIGKILL');
-          } catch {
-            // 確認と kill の間に終了していれば無視する。
-          }
-        }
-      }
-    }
-    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
-    expect(posted().map((entry) => entry.state)).not.toContain('failure');
-    expect(stderr).not.toContain('着地後検証を実行できませんでした');
-  });
-
   it('S2 prepare (class F): SIGINT during the predicted-tree verify kills the process and restores the branch, leaving no state behind for a clean retry', async () => {
     setup({ merge: { mode: 'S2' } });
     advanceMain({ 'peer.txt': 'peer\n' }); // 衝突なし・hot file なしで main を進める → クラス F
@@ -1531,65 +990,5 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(prepared.status).toBe(0);
     expect(prepared.stderr).not.toContain('未追跡ファイル');
     expect(readState()).toMatchObject({ class: 'F' });
-  });
-
-  // bdboard-2hj4: finish が状態ファイルに書く verifyingPid は、finish の中断・クラッシュで残る。その PID が
-  // 後で別プロセスに再利用された (EPERM でも alive 扱い) 場合に、永久に RETRY (75) になってはいけない。
-  describe('finish: a leftover verifyingPid record (bdboard-2hj4)', () => {
-    const ago = (ms) => new Date(Date.now() - ms).toISOString();
-
-    /** gate まで進めて PR をマージ済みにし、状態ファイルに verifyingPid (= 生きているこのテストの pid) を書く。 */
-    function gatedAndMergedWithVerifying(extra) {
-      setup();
-      expect(run(['prepare', String(PR)]).status).toBe(0);
-      expect(run(['gate', String(PR)]).status).toBe(0);
-      const landed = simulateMerge();
-      const state = JSON.parse(readFileSync(stateFile(), 'utf8'));
-      writeFileSync(stateFile(), `${JSON.stringify({ ...state, verifyingPid: process.pid, ...extra }, null, 2)}\n`);
-      return landed;
-    }
-
-    it('a live pid with a day-old verifyingAt is a stale record: ignored with a notice, and the landed verify runs', () => {
-      const landed = gatedAndMergedWithVerifying({ verifyingAt: ago(24 * 60 * 60_000) });
-      const finished = run(['finish', String(PR)]);
-      expect(finished.stderr).toContain(`verifyingPid ${process.pid}`);
-      expect(finished.stderr).toContain('古い記録');
-      expect(finished.status).toBe(0);
-      expect(verified()).toEqual([landed]);
-      expect(existsSync(stateFile())).toBe(false);
-    });
-
-    it('a live pid with a verifyingAt of right now still means a verify is running: 75, nothing touched', () => {
-      gatedAndMergedWithVerifying({ verifyingAt: ago(0) });
-      const finished = run(['finish', String(PR)]);
-      expect(finished.status).toBe(75);
-      expect(finished.stderr).toContain('二重に走らせません');
-      expect(finished.stderr).toMatch(/あと (119|120) 分で古い記録として扱います/);
-      expect(finished.stderr).toContain(`ps -p ${process.pid} -o lstart=,command=`);
-      expect(finished.stderr).not.toContain('古い記録とみなして無視');
-      expect(verified()).toEqual([]);
-      expect(posted()).toEqual([]);
-      expect(readFake().slot.holder).toBe(`demo-1 / PR#${PR}`); // 二重に動かないので枠もまだ返さない
-      expect(JSON.parse(readFileSync(stateFile(), 'utf8'))).toMatchObject({ verifyingPid: process.pid });
-    });
-
-    it('the cut-off is VERIFYING_PID_MAX_AGE_MS: just inside it is still running, just outside it is stale', () => {
-      gatedAndMergedWithVerifying({ verifyingAt: ago(VERIFYING_PID_MAX_AGE_MS - 60_000) });
-      expect(run(['finish', String(PR)]).status).toBe(75);
-      const landed = gatedAndMergedWithVerifying({ verifyingAt: ago(VERIFYING_PID_MAX_AGE_MS + 60_000) });
-      expect(run(['finish', String(PR)]).status).toBe(0);
-      expect(verified()).toEqual([landed]);
-    });
-
-    it('a record from before verifyingAt existed (or an unreadable verifyingAt) is judged by the pid alone, as before', () => {
-      gatedAndMergedWithVerifying({});
-      const legacy = run(['finish', String(PR)]);
-      expect(legacy.status).toBe(75);
-      expect(legacy.stderr).toContain('二重に走らせません');
-      expect(legacy.stderr).toContain('旧形式');
-      gatedAndMergedWithVerifying({ verifyingAt: 'not-a-date' });
-      expect(run(['finish', String(PR)]).status).toBe(75);
-      expect(verified()).toEqual([]);
-    });
   });
 });
