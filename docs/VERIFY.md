@@ -26,18 +26,47 @@ Node が `package.json` の `engines.node` を満たさないと、verify は子
 `scripts/node-version-guard.mjs`)。`.nvmrc` は自動では適用されない (非対話シェルは nvm を読み込まない
 ことがある) ので、PATH の先頭に engines を満たす v22 の bin を置く (または
 `. "${NVM_DIR:-$HOME/.nvm}/nvm.sh" && nvm use`) してから回す。ガード自体は v14.13.1 以上でパースできる。
-CI の ubuntu `verify` job は `BDBOARD_OLD_NODE` で実 Node 14.15.0 を
-`scripts/node-version-guard.old-node.test.mjs` に渡すため、ガードの import graph に Node 14.15.0 が
-パースできない構文や、ガードより前に評価される新しい API が紛れれば CI は赤くなる (同 job は
-`BDBOARD_OLD_NODE_REQUIRED=1` も立てるので、旧 Node の設定が抜けると skip ではなく失敗する)。
-環境変数がないローカル実行ではこのテストは skip される。再現するには
-`BDBOARD_OLD_NODE=$HOME/.nvm/versions/node/v14.15.0/bin/node npm run test:server -- scripts/node-version-guard.old-node.test.mjs` を使う。
+CI の ubuntu `verify` job (`.github/workflows/ci.yml`、`setup-node` の `node-version: 14.15.0`、linux x64)
+は `BDBOARD_OLD_NODE` で実 Node 14.15.0 を `scripts/node-version-guard.old-node.test.mjs` に渡すため、
+ガードの import graph に Node 14.15.0 がパースできない構文や、ガードより前に評価される新しい API が
+紛れれば CI は赤くなる (同 job は `BDBOARD_OLD_NODE_REQUIRED=1` も立てるので、旧 Node の設定が抜けると
+skip ではなく失敗する)。環境変数がないローカル実行ではこのテストは skip される (ローカル再現は下の
+「旧 node テストをローカルで再現する」)。
 
 `engines.node` の下限は、ルート・`web` の直接依存が宣言する `engines.node` のうち、22.x 系で最も高い
 要求に揃える (bdboard-ugt1、現状はサーバー側テストの vitest が使うルートの Vite 7)。
 `scripts/engines-coverage.test.mjs` がコミット済みの lockfile から直接依存の engines を読み、下限を
 受け付けない依存があれば落ちる。推移依存は対象外 — rollup の optional なプラットフォーム別バイナリの
 ように特定 OS/CPU でしか入らず engines が厳しいものがあり、それに合わせると利用者を不要に締め出すため。
+
+### 旧 node テストをローカルで再現する (bdboard-exh7)
+
+nvm に入っている `v14.15.0` は **x86_64 バイナリ**で、arm64 の Mac (Apple Silicon) では Rosetta 2 が
+無いと `Bad CPU type in executable` で起動すらできない (nodejs.org は Node 14 / 15 の darwin-arm64
+ビルドを配っておらず、arm64 ネイティブの最古は v16.0.0)。そのためローカルでは **arm64 ネイティブの
+旧版**を `BDBOARD_OLD_NODE` に渡す。使える版は `file ~/.nvm/versions/node/<版>/bin/node` が `arm64` と
+答えるもの (無ければ `nvm install 16`):
+
+```bash
+BDBOARD_OLD_NODE=$HOME/.nvm/versions/node/v16.17.0/bin/node npm run test:server -- scripts/node-version-guard.old-node.test.mjs
+```
+
+テストが要るのは「`engines.node` (>=22.13.0) を満たさない実 node」であることなので v16 でも成立する
+(arm64 の v16.17.0 / v16.20.2 / v18.15.0 で 5 passed | 1 skipped を実測。skip は
+`BDBOARD_OLD_NODE_REQUIRED=1` のときだけ動く CI 配線の確認)。ただし v16 でローカルから確かめられるのは
+次の範囲に限られ、**Node 14 固有の失敗は CI だけが確かめる**:
+
+| | v16 (arm64 ローカル) | CI (実 v14.15.0) |
+|---|---|---|
+| 版不足のとき `verify.mjs` / `node-version-check.mjs` が SyntaxError ではなく版不足の案内で止まる (exit 1 / exit 3) | 確かめられる | 確かめられる |
+| ガードの import graph に v16 でもパースできない構文 (import attributes 等) や v16 に無い API (`structuredClone` 等) が紛れていない | 確かめられる | 確かめられる |
+| ガードの import graph に v15 以降でパースできる構文 (`||=` / `??=`) や、v16 に既にある API (`Array.prototype.at` / `Object.hasOwn`) が紛れていない | **確かめられない** (v16 は通してしまう。ガードに `||=` を足しても v16 は版不足の案内を出す、を実測) | 確かめられる |
+
+つまりローカルが緑でも、`||=` のような v14 だけが落とす書き方が混じれば CI の旧 Node job は赤くなる。
+ガードや `node-version-check.mjs` を触る PR では、このローカル確認に加えて **CI の `verify` job の結果を
+必ず見る**。v14 を手元で動かしたい場合は、Rosetta 2 が入っている Apple Silicon なら x86_64 の nvm
+`v14.15.0` をそのまま `BDBOARD_OLD_NODE` に渡せるはずだが、これは未検証 (この機には Rosetta が無く、
+`arch -x86_64` でも `Bad CPU type in executable` になることだけ実測した)。
 
 ## tsc プロジェクトの表
 
