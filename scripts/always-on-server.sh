@@ -15,6 +15,7 @@
 #   - mkdir ロックで同時実行を排他する
 #   - どの cwd (worktree 含む) から呼んでも git common dir から main checkout を解決する
 #   - 監査ログ ${BDBOARD_SERVER_AUDIT_LOG:-/tmp/bdboard-server-restarts.log} に 1 行残す
+#   - 最後にデプロイに成功した sha を ${BDBOARD_SERVER_DEPLOYED_FILE:-<監査ログ>.deployed-head} に残す
 #
 # 使い方:
 #   scripts/always-on-server.sh status [--port N]
@@ -217,8 +218,13 @@ read_deployed_sha() {
   git -C "$MAIN" rev-parse --verify --quiet "$saved_sha^{commit}" 2>/dev/null || true
 }
 
+# 一時ファイル + mv で置き換える (書きかけで空のファイルを残さない)。書けなければ黙らずに警告する:
+# 記録が無いと、止まった deploy の再実行が「変更なし」になる元の穴に戻るため。
 write_deployed_sha() {
-  printf '%s\t%s\n' "$1" "$MAIN" >"$DEPLOYED_FILE" 2>/dev/null || true
+  local tmp="$DEPLOYED_FILE.$$"
+  { printf '%s\t%s\n' "$1" "$MAIN" >"$tmp" && mv -f "$tmp" "$DEPLOYED_FILE"; } 2>/dev/null && return 0
+  rm -f "$tmp"
+  printf 'warning: デプロイの記録 %s を書けませんでした。止まった deploy の再実行が「変更なし」になったら restart --expect-pid <PID> --build で入れ直してください。\n' "$DEPLOYED_FILE" >&2
 }
 
 print_status() {
@@ -415,7 +421,12 @@ if [ "$ACTION" = 'deploy' ] && [ -n "$CURRENT_PIDS" ]; then
         "$CURRENT_PIDS" "$(health_code)"
     fi
     audit "$CURRENT_PIDS" "$CURRENT_PIDS" 'no-restart-needed'
-    record_deployed
+    # 記録も pull も無い実行は HEAD で動いている証拠にならない (止まった deploy を偽って記録しない)。
+    if [ "$BASE_SOURCE" = 'head' ] && [ "$OLD_HEAD" = "$NEW_HEAD" ]; then
+      printf '   (デプロイの記録がありません。前回の deploy が pull の後に止まっていたなら restart --expect-pid %s --build で入れ直してください)\n' "$CURRENT_PIDS"
+    else
+      record_deployed
+    fi
     exit 0
   fi
 fi

@@ -5,6 +5,7 @@
 # always-on-server.sh の 500 行上限を守るための切り出し)。
 # 単体では実行しない。呼び出し側が SCRIPT_DIR / MAIN / BASE_HEAD / NEW_HEAD / CURRENT_PIDS /
 # BUILD_STAMP を持ち、audit / die を定義済みであることを前提にする (SC2154 はそのため)。
+# 逆向きに、ここで定義する RETRY_NOTE は always-on-server.sh の install / build 失敗の案内も使う。
 
 # 停止前に止まった実行の案内 (bdboard-oga4)。deploy と --pull は install / build / 再起動の要否を
 # 「最後にデプロイに成功した sha」からの差分で決めるので、pull や install が済んでいても、原因を直して

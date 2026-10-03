@@ -335,7 +335,10 @@ worktree-cwd case above, where every attempt reproduces (2/2).
       (`== nothing to deploy: HEAD <sha> is already deployed; keeping PID <PID>`、exit 0)。
     - 記録は `/tmp` にあり、OS の掃除で消えうる。`status` が `deployed HEAD : (記録なし…)` のときに
       止まった deploy は、再実行が「変更なし」になる従来の穴が残るので、`restart --expect-pid <PID> --build`
-      (必要なら先に main checkout で `npm install`) で入れ直す。
+      (必要なら先に main checkout で `npm install`) で入れ直す。記録が無く pull も何もしなかった `deploy` は
+      HEAD を記録せず、この復旧手順を表示する。記録を書けなかったときは stderr に `warning:` が出る。
+    - `--pull` の無い `restart` / `start` は記録を読みも書きもしない。手で HEAD を巻き戻した後は、
+      次の `deploy` の前に `status` の `deployed HEAD` が実際に動いている版と合っているかを確かめる。
 - **停止後の失敗** — `port-still-bound`・health 不通・pid 不変。この場合**旧プロセスは
   既に止まっている**。新しいプロセスが起動中の可能性もある。手でもう一度 `start` しない
   — まず `status` を見直し、`/tmp/bdboard-server.log` を読む。起動中らしければ待ち、それ

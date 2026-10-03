@@ -6,7 +6,7 @@
 // Windows は skip (bash / lsof / nohup 前提)。
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -974,11 +974,17 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     const head = git(repo, 'rev-parse', 'HEAD');
     const logBefore = readFileSync(env.BDBOARD_SERVER_LOG, 'utf8');
 
-    writeFileSync(deployedFile(), `${'0'.repeat(40)}\t${repo}\n`);
+    // スクリプトの MAIN は `pwd -P` なので、macOS の /var → /private/var も解決した path で書く
+    // (書かないとパスの不一致で弾かれ、未知の sha の分岐を通らない)。
+    const unknownRecord = `${'0'.repeat(40)}\t${realpathSync(repo)}\n`;
+    writeFileSync(deployedFile(), unknownRecord);
     const unknown = deploy(pid, 'fresh');
     expect(unknown.status, unknown.stderr).toBe(0);
     expect(unknown.stdout).toContain('server-side unchanged');
     expect(unknown.stdout).not.toContain('== npm run build:web');
+    // 記録が無く pull も何もしなかった実行は、HEAD を「デプロイ済み」として記録せず、復旧手順を案内する。
+    expect(unknown.stdout).toContain(`restart --expect-pid ${pid} --build`);
+    expect(readFileSync(deployedFile(), 'utf8')).toBe(unknownRecord);
 
     // 実在する sha でも、別の checkout が書いたものは起点にしない (起点にしていれば HEAD と同じなので
     // "nothing to deploy" になるはず)。
