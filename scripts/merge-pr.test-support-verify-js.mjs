@@ -4,7 +4,7 @@
 // FAKE_VERIFY_* 環境変数で終了コード・待ち時間・中断・意味的衝突などを演出する。
 export const VERIFY_JS = `
 const fs = require('node:fs');
-const { execSync } = require('node:child_process');
+const { execFileSync, execSync } = require('node:child_process');
 const head = execSync('git rev-parse HEAD').toString().trim();
 fs.appendFileSync(process.env.FAKE_VERIFY_LOG, head + '\\n');
 // SIGINT/SIGTERM のテスト用: 自分の (実際に検証を実行している) pid を書いておく。中断後に
@@ -32,11 +32,12 @@ if (grandchildPidFile) {
 const conflict = process.env.FAKE_VERIFY_CONFLICT;
 if (conflict && conflict.split(',').every((file) => fs.existsSync(file))) process.exit(3);
 // verify の最中に main が動いたことの代役。remote 名ではなく URL へ push する: 名前宛ての push は
-// remote を動かした後で refs/remotes/origin/main を lock して更新するので、main が動いたのを見た
-// abandon がその間にこのプロセスグループを SIGKILL すると lock が残り、以後の fetch が全部落ちる (bdboard-rlvz)。
+// remote を動かした後で refs/remotes/origin/main を lock して更新する。main が動いたのを見た abandon の
+// SIGTERM が、git が lock ファイルを作ってから後始末の対象に登録するまでの隙間に当たると lock が残り、
+// 以後の fetch が全部落ちる (bdboard-rlvz。負荷で隙間が広がる。SIGKILL は要らない — このテストの猶予は既定の 8 秒)。
 if (process.env.FAKE_VERIFY_MOVE_MAIN) {
-  const originUrl = execSync('git remote get-url origin').toString().trim();
-  execSync('git push -q ' + JSON.stringify(originUrl) + ' ' + process.env.FAKE_VERIFY_MOVE_MAIN + ':refs/heads/main');
+  const originUrl = execFileSync('git', ['remote', 'get-url', 'origin']).toString().trim();
+  execFileSync('git', ['push', '-q', originUrl, process.env.FAKE_VERIFY_MOVE_MAIN + ':refs/heads/main']);
 }
 const sleepMs = Number(process.env.FAKE_VERIFY_SLEEP_MS || 0);
 if (sleepMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs);
