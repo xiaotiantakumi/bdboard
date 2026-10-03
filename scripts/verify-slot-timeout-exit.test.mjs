@@ -84,7 +84,10 @@ describe('SLOT_WAIT_TIMEOUT_EXIT_CODE', () => {
   });
 });
 
-describe.skipIf(process.platform === 'win32')('verify.mjs exit codes (real process, copied scripts + fake npm)', () => {
+// node を同期で起こす (打ち切りのテストはスロットの poll 2 秒 + 起動で、負荷の無い状態でも 2 秒強)。
+// verify の並列実行中でも既定 5 秒で落ちないよう、node-version-guard.test.mjs の実プロセステストと
+// 同じく余裕を取る。spawnSync 自体の上限 (20 秒) より長くしておく。
+describe.skipIf(process.platform === 'win32')('verify.mjs exit codes (real process, copied scripts + fake npm)', { timeout: 30_000 }, () => {
   it('exits 75 without starting any verify step when the slot wait times out', () => {
     const slotDir = makeTempDir('verify-exit-slots-');
     // 枠 (1 つだけ) を握ったまま生きている別プロセス。走っている holder の顔ぶれが変わらないので待ちが打ち切られる。

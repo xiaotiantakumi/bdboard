@@ -293,8 +293,13 @@ What this means operationally:
   `bdboard/landed-verify`, and a healthy main looked broken (and could be held
   by `holdBrokenMain`). To keep the value unambiguous, `scripts/verify.mjs`
   maps a verify *step* that happens to exit 75 (e.g. `depcruise`, which exits
-  with its violation count) to 1. Callers that only test "non-zero"
-  (`scripts/always-on-server.sh --verify`, CI) are unaffected.
+  with its violation count) to 1. Callers that only test "non-zero" still
+  stop on it: CI fails the job, and `scripts/always-on-server.sh --verify`
+  leaves the server alone (exit 2) and prints the exit code, saying 75 is
+  the slot timeout rather than a red verify. `merge-pr` reads 75 from
+  whatever command the contract's `verify` is, so a contract that replaces
+  `npm run verify` must not exit 75 for a failed check (it would be reported
+  as "could not run", not recorded as `failure`).
 - **Env knobs are for tests and emergencies only**: `BDBOARD_VERIFY_SLOTS`
   (default 2; `0` disables gating), `BDBOARD_VERIFY_SLOT_DIR`,
   `BDBOARD_VERIFY_SLOT_WAIT_MS`. Do not raise or disable them just to run
