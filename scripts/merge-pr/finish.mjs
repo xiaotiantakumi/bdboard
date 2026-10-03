@@ -21,12 +21,15 @@ import { forgetQueueSince } from './verify-queue.mjs';
 // 中断・クラッシュしても残るので、書いた PID が後で別プロセスに再利用される (pidAlive は EPERM も
 // alive 扱い) と、記録が永久に「二重に走らせません」(RETRY 75) になる。そこで verifyingAt (書いた時刻)
 // からこの時間を超えた記録は、PID が生きていても古い記録として無視する。
-// 値は、finish が正規に走っていられる時間より十分長く取る: verify スロットの待ちは列が進んでいる限り
-// 15 分で打ち切られ (waitTimeoutMs)、ハングした holder も 30 分で枠のカウントから外れ (staleTtlMs、
-// どちらも verify-slot.mjs の DEFAULT_SLOT_OPTIONS)、着地後検証は最優先で並ぶ (仮想到着時刻の頭打ちは
-// MAX_SENIORITY_MS 10 分、verify-slot-queue.mjs)。verify 本体は数分〜数十分。これらを足しても 2 時間には
-// 届かない。並んだ時刻の記録を捨てる SENIORITY_RESET_MS (verify-queue.mjs) と同じ 2 時間にそろえた。
-// 短すぎると、本当に走っている finish をもう一本起動して二重に verify してしまう (長すぎる害は待つだけ)。
+// 値は、finish が正規に走っていられる時間より十分長く取る。verify スロットの待ちには上限が無い
+// (waitTimeoutMs 15 分が効くのは走っている holder の顔ぶれが 15 分変わらないときだけで、列が進んで
+// いる間は待ち続ける。verify-slot.mjs)。ほかに lockfile が変わったときの npm ci と、ネットワーク
+// 呼び出しのタイムアウト (各 120 秒、exec.mjs) も足される。実測では landed-verify のログ 133 件で
+// スロット待ちが最大 685 秒、vitest の合計が最大約 524 秒、finish から着地後検証の完了までは通常
+// 4〜5 分なので、2 時間は十分に長い。並んだ時刻の記録を捨てる SENIORITY_RESET_MS (verify-queue.mjs)
+// と同じ値にそろえた。短すぎると、本当に走っている finish と同じ worktree で 2 本目の verify が並走し、
+// 1 本目の restoreBranch (landed-verify.mjs) が 2 本目の途中で木を差し替えて誤った結果を台帳に書く
+// (長すぎる害は待つだけ)。
 export const VERIFYING_PID_MAX_AGE_MS = 2 * 60 * 60_000;
 
 function pidAlive(pid) {
@@ -103,10 +106,20 @@ export async function finish(ctx, pr) {
   if (initial === null || !initial.gateAt) {
     fail(EXIT.PRECONDITION, `PR #${pr} を gate した記録がありません (枠を取っていない)。`);
   }
-  if (initial.verifyingPid && pidAlive(initial.verifyingPid)) {
+  // 自分と同じ PID の記録は、死んだ finish の PID がたまたま自分に再利用されたもの (bdboard-2hj4)。
+  if (initial.verifyingPid && initial.verifyingPid !== process.pid && pidAlive(initial.verifyingPid)) {
     const ageMs = verifyingAgeMs(initial);
     if (ageMs === null || ageMs <= VERIFYING_PID_MAX_AGE_MS) {
-      fail(EXIT.RETRY, `PR #${pr} の着地後検証は PID ${initial.verifyingPid} で実行中です。二重に走らせません。`);
+      const expiry =
+        ageMs === null
+          ? '記録に時刻が無い (旧形式) ので、PID が終わるまで古い記録とはみなしません。'
+          : `記録は ${initial.verifyingAt} で、あと ${Math.ceil((VERIFYING_PID_MAX_AGE_MS - ageMs) / 60_000)} 分で古い記録として扱います。`;
+      fail(
+        EXIT.RETRY,
+        `PR #${pr} の着地後検証は PID ${initial.verifyingPid} で実行中です。二重に走らせません。`,
+        `  ${expiry}`,
+        `  PID が本当に finish か確かめる: ps -p ${initial.verifyingPid} -o lstart=,command=`,
+      );
     }
     say(
       `PR #${pr} の verifyingPid ${initial.verifyingPid} は ${initial.verifyingAt} (${Math.round(ageMs / 60_000)} 分前) の記録で、上限 ${Math.round(VERIFYING_PID_MAX_AGE_MS / 60_000)} 分を超えています。`,

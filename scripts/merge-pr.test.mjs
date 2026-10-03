@@ -1240,6 +1240,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(run(['gate', String(PR)]).status).toBe(0);
     simulateMerge();
     const pidFile = path.join(tmp, 'verify.pid');
+    const startedAt = Date.now();
     const child = spawn(process.execPath, [SCRIPT, 'finish', String(PR)], {
       cwd: work,
       env: { ...env, FAKE_VERIFY_SLEEP_MS: '60000', FAKE_VERIFY_PID_FILE: pidFile, BDBOARD_MERGE_KILL_GRACE_MS: '200' },
@@ -1265,6 +1266,13 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
         return true;
       });
       expect(pidAlive(verifyPid)).toBe(true);
+      // bdboard-2hj4: 走っている finish は自分の pid の横に verifyingAt を刻み、その間に起動した
+      // 2 本目の finish は二重に verify せず 75 で止まる。
+      const stamped = JSON.parse(readFileSync(stateFile(), 'utf8'));
+      expect(stamped.verifyingPid).toBe(child.pid);
+      expect(Date.parse(stamped.verifyingAt)).toBeGreaterThanOrEqual(startedAt);
+      expect(Date.parse(stamped.verifyingAt)).toBeLessThanOrEqual(Date.now());
+      expect(run(['finish', String(PR)]).status).toBe(75);
 
       child.kill('SIGINT');
       const [code, signal] = await new Promise((resolve) => {
@@ -1556,7 +1564,9 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       const finished = run(['finish', String(PR)]);
       expect(finished.status).toBe(75);
       expect(finished.stderr).toContain('二重に走らせません');
-      expect(finished.stderr).not.toContain('古い記録');
+      expect(finished.stderr).toMatch(/あと (119|120) 分で古い記録として扱います/);
+      expect(finished.stderr).toContain(`ps -p ${process.pid} -o lstart=,command=`);
+      expect(finished.stderr).not.toContain('古い記録とみなして無視');
       expect(verified()).toEqual([]);
       expect(posted()).toEqual([]);
       expect(readFake().slot.holder).toBe(`demo-1 / PR#${PR}`); // 二重に動かないので枠もまだ返さない
@@ -1576,58 +1586,10 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       const legacy = run(['finish', String(PR)]);
       expect(legacy.status).toBe(75);
       expect(legacy.stderr).toContain('二重に走らせません');
+      expect(legacy.stderr).toContain('旧形式');
       gatedAndMergedWithVerifying({ verifyingAt: 'not-a-date' });
       expect(run(['finish', String(PR)]).status).toBe(75);
       expect(verified()).toEqual([]);
-    });
-
-    it('finish stamps verifyingAt next to its own verifyingPid before it starts the landed verify', async () => {
-      setup();
-      expect(run(['prepare', String(PR)]).status).toBe(0);
-      expect(run(['gate', String(PR)]).status).toBe(0);
-      simulateMerge();
-      const pidFile = path.join(tmp, 'verify.pid');
-      const startedAt = Date.now();
-      const child = spawn(process.execPath, [SCRIPT, 'finish', String(PR)], {
-        cwd: work,
-        env: { ...env, FAKE_VERIFY_SLEEP_MS: '60000', FAKE_VERIFY_PID_FILE: pidFile, BDBOARD_MERGE_KILL_GRACE_MS: '200' },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let verifyPid;
-      try {
-        // verify が走り出している = 状態ファイルは書き終わっている (書き込み途中を読まないよう pid が正の整数になるまで待つ)。
-        await waitUntil(() => {
-          if (!existsSync(pidFile)) {
-            return false;
-          }
-          const parsed = Number(readFileSync(pidFile, 'utf8').trim());
-          if (!Number.isInteger(parsed) || parsed <= 0) {
-            return false;
-          }
-          verifyPid = parsed;
-          return true;
-        });
-        const state = JSON.parse(readFileSync(stateFile(), 'utf8'));
-        expect(state.verifyingPid).toBe(child.pid);
-        expect(Date.parse(state.verifyingAt)).toBeGreaterThanOrEqual(startedAt);
-        expect(Date.parse(state.verifyingAt)).toBeLessThanOrEqual(Date.now());
-        child.kill('SIGINT');
-        await new Promise((resolve) => {
-          child.once('exit', resolve);
-        });
-        await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 });
-      } finally {
-        if (!child.killed) {
-          child.kill('SIGKILL');
-        }
-        if (verifyPid !== undefined && pidAlive(verifyPid)) {
-          try {
-            process.kill(verifyPid, 'SIGKILL');
-          } catch {
-            // 確認と kill の間に終了していれば無視する。
-          }
-        }
-      }
     });
   });
 });
