@@ -29,8 +29,12 @@ BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh start                   
 
 - `BDBOARD_SERVER_CALLER=chair` は身元の証明ではなく**宣言と監査**。bdboard-worker は
   `isolation: "worktree"` で隔離されているため、Command working
-  directory / Git redirects のチェックでそもそも main checkout を cwd や対象にできず、
-  このスクリプト実行・main checkout での `git pull` / `npm run start` に到達しない。
+  directory / Git redirects のチェックで、main checkout を cwd や対象にした `git pull` /
+  `npm run start` には到達しない。ただし**このスクリプトの実行は isolation では止まらない**:
+  スクリプト自身が git common dir から main checkout を解決し、worktree から呼ばれても main 側の
+  自分を exec する (bdboard-9nah) が、isolation のチェックは書かれたコマンド文字列しか見ない。
+  子がこれを打たないのは、bdboard-worker.md「やらないこと」の文書規律と、chair を偽って宣言
+  しないと通らないことだけ (bdboard-25n3)。
   listener PID の直接 `kill` は `permissions.deny` (`Bash(kill *)` 等) が全エージェントで拒否する。
   bdboard-worker による main checkout 対象の `git checkout`/`commit`/`reset`/`merge`/
   `stash` 等と Edit/Write は、同じ `isolation: "worktree"` の Git redirects / File edits
