@@ -3,6 +3,7 @@ import type { ChatThreadDto } from './api';
 import {
   readPersistedChatThreads,
   resolvePersistedSelectionAfterClose,
+  writePersistedChatThread,
   writePersistedChatThreadState,
 } from './chatThreadStorage';
 import { restoreThreadView } from './components/chat/threadViewRestore';
@@ -82,4 +83,53 @@ describe('writePersistedChatThreadState with an explicitly empty active set (bdb
       expect(restoreThreadView(threads, persisted)).toEqual({ open: [], selected: undefined });
     },
   );
+});
+
+describe('writePersistedChatThread (bdboard-7feq)', () => {
+  beforeEach(() => localStorage.clear());
+
+  const threadD = { sessionId: 'sd', agentId: 'claude' };
+
+  it('without liveOpen, appends to the persisted entry and moves the thread to the end (legacy sum)', () => {
+    writePersistedChatThreadState('project-a', { activeSessionIds: ['s1', 'sd', 's2'], selectedSessionId: 's1' });
+    writePersistedChatThread('project-a', threadD);
+    expect(readPersistedChatThreads()['project-a']).toEqual({
+      activeSessionIds: ['s1', 's2', 'sd'],
+      selectedSessionId: 'sd',
+    });
+  });
+
+  it('without liveOpen and no entry, persists just the thread', () => {
+    writePersistedChatThread('project-a', threadD);
+    expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['sd'], selectedSessionId: 'sd' });
+  });
+
+  it('with liveOpen, uses it as the base instead of the persisted entry, keeping its order', () => {
+    writePersistedChatThreadState('project-a', { activeSessionIds: ['s9'], selectedSessionId: 's9' });
+    writePersistedChatThread('project-a', { sessionId: 's2', agentId: 'claude' }, ['s1', 's2', 's3']);
+    expect(readPersistedChatThreads()['project-a']).toEqual({
+      activeSessionIds: ['s1', 's2', 's3'],
+      selectedSessionId: 's2',
+    });
+  });
+
+  it('with liveOpen that lacks the thread, appends it at the end', () => {
+    writePersistedChatThread('project-a', threadD, ['s1', 's2']);
+    expect(readPersistedChatThreads()['project-a']).toEqual({
+      activeSessionIds: ['s1', 's2', 'sd'],
+      selectedSessionId: 'sd',
+    });
+  });
+
+  it('with an empty liveOpen, persists just the thread', () => {
+    writePersistedChatThreadState('project-a', { activeSessionIds: ['s1'], selectedSessionId: 's1' });
+    writePersistedChatThread('project-a', threadD, []);
+    expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['sd'], selectedSessionId: 'sd' });
+  });
+
+  it('does not mutate the liveOpen array it is given', () => {
+    const liveOpen = ['s1', 's2'];
+    writePersistedChatThread('project-a', threadD, liveOpen);
+    expect(liveOpen).toEqual(['s1', 's2']);
+  });
 });

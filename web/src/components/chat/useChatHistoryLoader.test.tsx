@@ -2,6 +2,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSessionMessagesDto } from '../../api';
 import { ApiError } from '../../api';
+import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { useChatHistoryLoader } from './useChatHistoryLoader';
 import type { ChatConversationEntry } from './useChatConversationsState';
 
@@ -36,6 +37,9 @@ function baseParams(overrides: Partial<Parameters<typeof useChatHistoryLoader>[0
     setThreadModelIds: vi.fn(),
     historyRequestIdRef: { current: 0 },
     conversationsRef: { current: {} as Record<string, ChatConversationEntry> },
+    // bdboard-7feq: 既定は「未復元・open 不明」。復元済みの挙動を見るテストが上書きする。
+    openThreadIdsRef: { current: {} as Record<string, string[]> },
+    restoredProjectsRef: { current: new Set<string>() },
     setSelectedAgentId: vi.fn(),
     unresolvedSends: {},
     clearUnresolvedSend: vi.fn(),
@@ -47,6 +51,7 @@ function baseParams(overrides: Partial<Parameters<typeof useChatHistoryLoader>[0
 describe('useChatHistoryLoader: history fetch effect', () => {
   beforeEach(() => {
     fetchChatSessionMessagesMock.mockReset();
+    localStorage.clear();
   });
 
   it('loads history and applies the restored agent/model on success', async () => {
@@ -69,6 +74,122 @@ describe('useChatHistoryLoader: history fetch effect', () => {
     await waitFor(() =>
       expect(setHistoryLoadedFor).toHaveBeenCalledWith(expect.any(Function)),
     );
+  });
+
+  describe('bdboard-7feq: persisted open follows the live open once the project is restored', () => {
+    it('first visit (no persisted entry): a successful load persists all live open threads, not just the loaded one', async () => {
+      // E7 は初回訪問(エントリ無し)で全スレッドをメモリ上で開くが、永続化には何も書かない。
+      // 選択スレッド sess-a の履歴ロード成功で永続化を {[sess-a]} に潰すと、リロードで
+      // sess-b/sess-c が黙って閉じられる。
+      fetchChatSessionMessagesMock.mockResolvedValue(payload({ sessionId: 'sess-a' }));
+      const setHistoryLoadedFor = vi.fn();
+      renderHook(() =>
+        useChatHistoryLoader(
+          baseParams({
+            currentConversationKey: 'sess-a',
+            currentSessionId: 'sess-a',
+            openThreadIdsRef: { current: { 'project-a': ['sess-a', 'sess-b', 'sess-c'] } },
+            restoredProjectsRef: { current: new Set(['project-a']) },
+            setHistoryLoadedFor,
+          }),
+        ),
+      );
+      await waitFor(() => expect(setHistoryLoadedFor).toHaveBeenCalled());
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-c'],
+        selectedSessionId: 'sess-a',
+      });
+    });
+
+    it('keeps the live order instead of moving the loaded thread to the end', async () => {
+      fetchChatSessionMessagesMock.mockResolvedValue(payload({ sessionId: 'sess-b' }));
+      const setHistoryLoadedFor = vi.fn();
+      renderHook(() =>
+        useChatHistoryLoader(
+          baseParams({
+            currentConversationKey: 'sess-b',
+            currentSessionId: 'sess-b',
+            openThreadIdsRef: { current: { 'project-a': ['sess-a', 'sess-b', 'sess-c'] } },
+            restoredProjectsRef: { current: new Set(['project-a']) },
+            setHistoryLoadedFor,
+          }),
+        ),
+      );
+      await waitFor(() => expect(setHistoryLoadedFor).toHaveBeenCalled());
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-c'],
+        selectedSessionId: 'sess-b',
+      });
+    });
+
+    it('reads the live open at response time, not at effect start', async () => {
+      let resolveFetch: (value: ChatSessionMessagesDto) => void = () => {};
+      fetchChatSessionMessagesMock.mockImplementationOnce(
+        () => new Promise<ChatSessionMessagesDto>((resolve) => { resolveFetch = resolve; }),
+      );
+      const openThreadIdsRef = { current: { 'project-a': ['sess-a'] } as Record<string, string[]> };
+      const setHistoryLoadedFor = vi.fn();
+      renderHook(() =>
+        useChatHistoryLoader(
+          baseParams({
+            currentConversationKey: 'sess-a',
+            currentSessionId: 'sess-a',
+            openThreadIdsRef,
+            restoredProjectsRef: { current: new Set(['project-a']) },
+            setHistoryLoadedFor,
+          }),
+        ),
+      );
+      await waitFor(() => expect(fetchChatSessionMessagesMock).toHaveBeenCalledTimes(1));
+      // fetch の in-flight 中に open が増える(別経路の書き込み)。
+      openThreadIdsRef.current = { 'project-a': ['sess-a', 'sess-b'] };
+      resolveFetch(payload({ sessionId: 'sess-a' }));
+      await waitFor(() => expect(setHistoryLoadedFor).toHaveBeenCalled());
+      expect(readPersistedChatThreads()['project-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b']);
+    });
+
+    it('still includes the loaded session when it is not in the live open', async () => {
+      fetchChatSessionMessagesMock.mockResolvedValue(payload({ sessionId: 'sess-z' }));
+      const setHistoryLoadedFor = vi.fn();
+      renderHook(() =>
+        useChatHistoryLoader(
+          baseParams({
+            currentConversationKey: 'sess-z',
+            currentSessionId: 'sess-z',
+            openThreadIdsRef: { current: { 'project-a': ['sess-a', 'sess-b'] } },
+            restoredProjectsRef: { current: new Set(['project-a']) },
+            setHistoryLoadedFor,
+          }),
+        ),
+      );
+      await waitFor(() => expect(setHistoryLoadedFor).toHaveBeenCalled());
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-z'],
+        selectedSessionId: 'sess-z',
+      });
+    });
+
+    it('keeps the persisted-entry-based sum while the project is not yet restored (marker unset)', async () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-x', 'sess-a'], selectedSessionId: 'sess-x' });
+      fetchChatSessionMessagesMock.mockResolvedValue(payload({ sessionId: 'sess-a' }));
+      const setHistoryLoadedFor = vi.fn();
+      renderHook(() =>
+        useChatHistoryLoader(
+          baseParams({
+            currentConversationKey: 'sess-a',
+            currentSessionId: 'sess-a',
+            openThreadIdsRef: { current: { 'project-a': ['sess-a', 'sess-b', 'sess-c'] } },
+            setHistoryLoadedFor,
+          }),
+        ),
+      );
+      await waitFor(() => expect(setHistoryLoadedFor).toHaveBeenCalled());
+      // 従来どおり: 永続化済みエントリを基点に、読み込んだスレッドを末尾へ。
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-x', 'sess-a'],
+        selectedSessionId: 'sess-a',
+      });
+    });
   });
 
   it('calls onSessionGone for a 404 (dead session) but not for other errors', async () => {

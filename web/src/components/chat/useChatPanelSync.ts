@@ -219,6 +219,8 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     setThreadModelIds,
     historyRequestIdRef,
     conversationsRef,
+    openThreadIdsRef,
+    restoredProjectsRef,
     setSelectedAgentId,
     unresolvedSends,
     clearUnresolvedSend,
