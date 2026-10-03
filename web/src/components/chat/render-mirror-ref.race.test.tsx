@@ -164,6 +164,7 @@ function useThreadListsProbe(projectId: string) {
     setThreadLists: threadLists.setThreadLists,
     setOpenThreadIds: threadLists.setOpenThreadIds,
     openThreadIdsRef: threadLists.openThreadIdsRef,
+    restoredProjectsRef: threadLists.restoredProjectsRef,
     setSelectedThreadIds: key.setSelectedThreadIds,
     selectedThreadIdsRef: key.selectedThreadIdsRef,
     conversationInputsRef,
