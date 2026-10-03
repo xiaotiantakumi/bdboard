@@ -109,7 +109,10 @@ export function main(argv, env) {
     return EXIT_OK;
   }
   const nvmrc = readNvmrc(repoRoot);
-  const nvmDir = env.NVM_DIR ? env.NVM_DIR : path.join(os.homedir(), '.nvm');
+  // always-on-server.sh の ${NVM_DIR:-$HOME/.nvm} と同じ順。HOME を先に見る (Windows の os.homedir() は
+  // USERPROFILE を読むので、HOME だけを差し替えたテストと食い違う)。
+  const home = env.HOME ? env.HOME : os.homedir();
+  const nvmDir = env.NVM_DIR ? env.NVM_DIR : path.join(home, '.nvm');
   const lines = formatShortfallLines({
     current,
     nodePath: process.execPath,

@@ -354,6 +354,39 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     expect(audit).toContain('result=node-version');
   }, 60_000);
 
+  it('deploy stops before pulling when the shell node is already too old, so the same command can be retried', () => {
+    // 一番よくある原因 (シェル既定の node が古いだけ、pull は engines.node を変えない)。pull の前に
+    // 止まるので main checkout は動かず、node を直して同じ deploy を打ち直せば入れ直しまで進む。
+    // pull の後に止めていた版では、2 回目は OLD_HEAD == NEW_HEAD で「変更なし」になり何もしなかった
+    // (PR #825 のレビュー)。作業ツリーの package.json は前のテストで TOO_OLD のまま。
+    const pid = listenerPid();
+    const headBefore = git(repo, 'rev-parse', 'HEAD');
+    mkdirSync(path.join(other, 'src'), { recursive: true });
+    writeFileSync(path.join(other, 'src', 'marker.txt'), 'server-side change\n');
+    commitAll(other, 'server-side change that does not touch package.json');
+    git(other, 'push', '-q', 'origin', 'main');
+    const originHead = git(other, 'rev-parse', 'HEAD');
+
+    const refused = chair(['deploy', '--port', String(port), '--expect-pid', String(pid), '--tunnel-ack']);
+
+    expect(refused.status).toBe(2);
+    expect(refused.stderr).toContain(TOO_OLD);
+    expect(refused.stderr).toContain('同じコマンドを再実行');
+    expect(refused.stderr).not.toContain('pull は完了しています');
+    expect(refused.stdout).not.toContain('pull --ff-only');
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(headBefore);
+    expect(listenerPid()).toBe(pid);
+
+    git(repo, 'checkout', '--', 'package.json'); // node を直した (要件を満たす) ことに相当
+    const retried = chair(['deploy', '--port', String(port), '--expect-pid', String(pid), '--tunnel-ack']);
+
+    expect(retried.status, retried.stderr).toBe(0); // stderr には git pull の fetch 表示が出る
+    expect(retried.stdout).toContain('== OK: PID');
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(originHead);
+    expect(listenerPid()).not.toBeNull();
+    expect(listenerPid()).not.toBe(pid);
+  }, 90_000);
+
   it('deploy judges the engines.node it just pulled, and leaves the listener running', () => {
     const pid = listenerPid();
     git(repo, 'checkout', '--', 'package.json'); // 作業ツリーは >=1.0.0 (満たす) に戻す
@@ -367,6 +400,9 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     expect(result.status).toBe(2);
     expect(result.stderr).toContain(TOO_OLD);
     expect(result.stderr).toContain('pull は完了しています');
+    // 同じ deploy の再実行は「変更なし」で何もしないので、入れ直しの手順を出す。
+    expect(result.stderr).toContain('deploy を同じコマンドで再実行しても');
+    expect(result.stderr).toContain(`restart --expect-pid ${pid} --build`);
     expect(result.stderr).toContain('サーバーは触っていません');
     expect(git(repo, 'rev-parse', 'HEAD')).toBe(originHead);
     expect(listenerPid()).toBe(pid);
@@ -392,7 +428,10 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     // node-version-check.mjs が SyntaxError 等で落ちる (exit 1) 古すぎる node を模す。
     const oldBin = path.join(tmpRoot, 'old-bin');
     mkdirSync(oldBin, { recursive: true });
-    writeFileSync(path.join(oldBin, 'node'), '#!/bin/sh\necho "SyntaxError: Unexpected token" >&2\nexit 1\n');
+    writeFileSync(
+      path.join(oldBin, 'node'),
+      '#!/bin/sh\nif [ "$1" = --version ]; then echo v14.15.0; exit 0; fi\necho "SyntaxError: Unexpected token \'||=\'" >&2\nexit 1\n',
+    );
     chmodSync(path.join(oldBin, 'node'), 0o755);
 
     const result = run(['start', '--port', String(port), '--tunnel-ack'], {
@@ -402,6 +441,8 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
 
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('node の版チェックを実行できませんでした');
+    expect(result.stderr).toContain('node v14.15.0');
+    expect(result.stderr).toContain("SyntaxError: Unexpected token '||='"); // チェッカーの出力も見せる
     expect(result.stderr).toContain('サーバーは触っていません');
     expect(result.stdout).not.toContain('== starting');
     expect(listenerPid()).toBeNull();
