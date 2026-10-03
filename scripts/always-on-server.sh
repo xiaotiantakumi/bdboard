@@ -7,8 +7,8 @@
 # 議長の仕事で、手順 (skill bdboard-server-ops) は文章としては正しかったが、誰が実行して
 # よいかを機械的に区別する手段が無かった。このスクリプトは:
 #   - 呼び出し元に BDBOARD_SERVER_CALLER=chair の宣言を要求する (身元の証明ではなく宣言 +
-#     監査ログ。hook 側 (harness pack 規則 7) はサブエージェントからのこのスクリプト実行を
-#     agent_id で止める)
+#     監査ログ。bdboard-worker は isolation: worktree で main checkout での実行を塞がれ、
+#     非隔離の子は文書規律のみ。hook 規則 7 は bdboard-cm2q.10 で削除済み)
 #   - --expect-pid で「いま動いている listener がこの PID のときだけ」再起動する (CAS)。
 #     2 つの議長セッションが同時に再起動しようとしても片方は止まる
 #   - cloudflared が動いていれば止まる (--tunnel-ack で承知のうえ続行)
