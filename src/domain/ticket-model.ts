@@ -15,6 +15,16 @@ export interface TicketModelRecord {
   readonly model: string;
 }
 
+/** 統計 (複雑度 × 実装モデル) が「実装モデル」として読む工程名 (bdboard-p5l.27)。 */
+export const IMPLEMENT_STAGE = 'implement';
+
+/** `bdboard.model.implement` のモデル名。未記録なら undefined。 */
+export function findImplementModel(
+  models: readonly TicketModelRecord[] | undefined,
+): string | undefined {
+  return models?.find((record) => record.stage === IMPLEMENT_STAGE)?.model;
+}
+
 function sortTicketModelRecords(
   records: readonly TicketModelRecord[],
 ): TicketModelRecord[] {

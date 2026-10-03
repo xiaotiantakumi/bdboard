@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { PrBadgeCommentCache } from '../../application/board/get-pr-badges.js';
+import { createPrBadgeShared, type PrBadgeShared } from '../../application/board/pr-badge-shared.js';
 import { createHygieneStatusRoutes } from './hygiene-status-routes.js';
 import { createLeaseHealthRoutes } from './lease-health-routes.js';
 import { createPrLinksRoutes } from './pr-links-routes.js';
@@ -18,13 +18,27 @@ import type { ApiDeps } from './api-deps.js';
 // bdboard-sso1.56 と同じ方針)。ルート登録順は元のファイルでの並び
 // (hygiene → lease-health → pr-links → merge-slot-status → graph) をそのまま維持。
 
-export function createHygieneRoutes(deps: ApiDeps, memo: InFlightOverlapMemo): Hono {
+// bdboard-p5l.27: PR 情報のキャッシュ・ゲート (prBadgeShared) は routes.ts が1組だけ作り、
+// /api/model-stats (修正 push 回数) とも共有する。省略時 (このグループ単体のテスト等) は
+// 従来どおりこの関数の中で作る。
+export function createHygieneRoutes(
+  deps: ApiDeps,
+  memo: InFlightOverlapMemo,
+  prBadgeShared: PrBadgeShared = createPrBadgeShared(deps.prBadgeStatusCache),
+): Hono {
   const app = new Hono();
-  const prBadgeCommentCache = new PrBadgeCommentCache();
+  const prBadgeCommentCache = prBadgeShared.commentCache;
 
   app.route('/', createHygieneStatusRoutes(deps, memo, { prBadgeCommentCache }));
   app.route('/', createLeaseHealthRoutes(deps));
-  app.route('/', createPrLinksRoutes(deps, { prBadgeCommentCache }));
+  app.route(
+    '/',
+    createPrLinksRoutes(deps, {
+      prBadgeCommentCache,
+      prBadgeStatusCache: prBadgeShared.statusCache,
+      gates: prBadgeShared.gates,
+    }),
+  );
   app.route('/', createMergeSlotStatusRoutes(deps));
   app.route('/', createDependencyGraphRoutes(deps));
 

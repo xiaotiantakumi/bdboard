@@ -8,6 +8,7 @@ import type {
   WeeklyCloseCount,
 } from '../../../application/board/get-throughput-stats.js';
 import type { CfdDayEntry, CfdStats, ProjectCfdStats } from '../../../application/board/get-cfd-stats.js';
+import type { ComplexityModelRow } from '../../../application/board/complexity-model-stats.js';
 import type {
   ModelStats,
   StageModelCounts,
@@ -51,9 +52,32 @@ export interface StageModelCountsDto {
   counts: Record<string, number>;
 }
 
+/**
+ * 複雑度 × 実装モデル × 修正 push 回数の1行 (bdboard-p5l.27)。complexity / model が null の
+ * 行は、そのメタデータが未記録のチケット (UI は「未記録」と表示する)。
+ */
+export interface ComplexityModelRowDto {
+  complexity: string | null;
+  model: string | null;
+  ticketCount: number;
+  fixPushKnownCount: number;
+  fixPushTotal: number;
+  fixPushUnknownCount: number;
+  fixPushAverage: number | null;
+}
+
+export interface ComplexityModelStatsDto {
+  rows: ComplexityModelRowDto[];
+  /** 複雑度も実装モデルも未記録のクローズ済みチケット数 (行には含めない)。 */
+  unrecordedTicketCount: number;
+  /** 修正 push 回数の取得待ち (先読み中) のチケット数。0 でなければ後で値が変わりうる。 */
+  fixPushPendingCount: number;
+}
+
 export interface ModelStatsDto {
   weeklyCloses: WeeklyModelCloseCountsDto[];
   stageModelDistribution: StageModelCountsDto[];
+  complexityModel: ComplexityModelStatsDto;
 }
 
 export interface CfdDayEntryDto {
@@ -125,10 +149,27 @@ function toStageModelCountsDto(entry: StageModelCounts): StageModelCountsDto {
   };
 }
 
+function toComplexityModelRowDto(row: ComplexityModelRow): ComplexityModelRowDto {
+  return {
+    complexity: row.complexity,
+    model: row.model,
+    ticketCount: row.ticketCount,
+    fixPushKnownCount: row.fixPushKnownCount,
+    fixPushTotal: row.fixPushTotal,
+    fixPushUnknownCount: row.fixPushUnknownCount,
+    fixPushAverage: row.fixPushAverage,
+  };
+}
+
 export function toModelStatsDto(stats: ModelStats): ModelStatsDto {
   return {
     weeklyCloses: stats.weeklyCloses.map(toWeeklyModelCloseCountsDto),
     stageModelDistribution: stats.stageModelDistribution.map(toStageModelCountsDto),
+    complexityModel: {
+      rows: stats.complexityModel.rows.map(toComplexityModelRowDto),
+      unrecordedTicketCount: stats.complexityModel.unrecordedTicketCount,
+      fixPushPendingCount: stats.complexityModel.fixPushPendingCount,
+    },
   };
 }
 

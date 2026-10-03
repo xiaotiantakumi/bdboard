@@ -4,7 +4,15 @@ import { expect, test, type Page } from '@playwright/test';
  * Model stats table horizontal scroll (bdboard-83tc).
  * Targets the stage×model distribution table because countStageModelDistribution
  * has no date filter — unlike weekly closes, fixture columns stay stable over time.
+ *
+ * bdboard-p5l.27: the complexity×model fix-push table was added to the same block.
+ * Like the stage table it covers every closed ticket (no date filter), so the fixture
+ * rows stay stable. It reuses the same reachability helpers, and additionally checks
+ * every body cell (not only the headers) so a column that scrolls out of reach is caught.
  */
+
+const STAGE_TABLE_HEADING = '工程×モデルの分布';
+const COMPLEXITY_TABLE_HEADING = '複雑度×実装モデルの修正push';
 
 const MOBILE_VIEWPORT = { width: 375, height: 812 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
@@ -36,26 +44,33 @@ async function openStatsView(page: Page): Promise<void> {
   await expect(modelStatsSection(page)).toBeVisible({ timeout: 15_000 });
 }
 
+function tableBlock(page: Page, heading: string) {
+  return modelStatsSection(page).locator('.throughput-chart-block').filter({
+    has: page.getByRole('heading', { name: heading, level: 4 }),
+  });
+}
+
+function tableScroller(page: Page, heading: string) {
+  return tableBlock(page, heading).locator('.model-stats-table-scroller');
+}
+
+function tableWrapper(page: Page, heading: string) {
+  return tableBlock(page, heading).locator('.model-stats-table-scroll');
+}
+
 function stageDistributionScroller(page: Page) {
-  return modelStatsSection(page)
-    .locator('.throughput-chart-block')
-    .filter({
-      has: page.getByRole('heading', { name: '工程×モデルの分布', level: 4 }),
-    })
-    .locator('.model-stats-table-scroller');
+  return tableScroller(page, STAGE_TABLE_HEADING);
 }
 
 function stageDistributionWrapper(page: Page) {
-  return modelStatsSection(page)
-    .locator('.throughput-chart-block')
-    .filter({
-      has: page.getByRole('heading', { name: '工程×モデルの分布', level: 4 }),
-    })
-    .locator('.model-stats-table-scroll');
+  return tableWrapper(page, STAGE_TABLE_HEADING);
 }
 
-async function measureWrapperScroll(page: Page): Promise<WrapperScrollMetrics> {
-  const wrapper = stageDistributionWrapper(page);
+async function measureWrapperScroll(
+  page: Page,
+  heading: string = STAGE_TABLE_HEADING,
+): Promise<WrapperScrollMetrics> {
+  const wrapper = tableWrapper(page, heading);
   await expect(wrapper).toBeVisible();
 
   return wrapper.evaluate((el) => {
@@ -72,8 +87,11 @@ async function measureWrapperScroll(page: Page): Promise<WrapperScrollMetrics> {
   });
 }
 
-async function assertAllHeadersReachableInWrapper(page: Page): Promise<HeaderReachResult[]> {
-  const wrapper = stageDistributionWrapper(page);
+async function assertAllHeadersReachableInWrapper(
+  page: Page,
+  heading: string = STAGE_TABLE_HEADING,
+): Promise<HeaderReachResult[]> {
+  const wrapper = tableWrapper(page, heading);
   const headers = wrapper.locator('thead th');
   const count = await headers.count();
 
@@ -258,5 +276,104 @@ test.describe('stats model table scroll — desktop', () => {
   }) => {
     await openStatsView(page);
     await assertModelTableScrollBehavior(page);
+  });
+});
+
+/**
+ * bdboard-p5l.27: every header AND body cell of a table must be reachable by scrolling the
+ * in-wrapper scroller (bdboard-83tc left 84 of 119 cells unreachable). Scrolls each cell into
+ * view and checks it fits inside the wrapper horizontally.
+ */
+async function assertAllCellsReachableInWrapper(page: Page, heading: string): Promise<void> {
+  const wrapper = tableWrapper(page, heading);
+  await expect(wrapper).toBeVisible();
+
+  const cells = wrapper.locator('th, td');
+  const count = await cells.count();
+  expect(count, `"${heading}" table must expose cells`).toBeGreaterThan(0);
+
+  for (let i = 0; i < count; i += 1) {
+    const cell = cells.nth(i);
+    await cell.evaluate((el) => {
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
+    const reach = await cell.evaluate((el) => {
+      const scrollWrapper = el.closest('.model-stats-table-scroll');
+      if (!(scrollWrapper instanceof HTMLElement)) {
+        return { text: el.textContent ?? '', fits: false, detail: 'no scroll wrapper' };
+      }
+      const cellRect = el.getBoundingClientRect();
+      const wrapperRect = scrollWrapper.getBoundingClientRect();
+      const epsilon = 0.5;
+      return {
+        text: el.textContent ?? '',
+        fits:
+          cellRect.left >= wrapperRect.left - epsilon &&
+          cellRect.right <= wrapperRect.right + epsilon,
+        detail: `cell=[${cellRect.left}, ${cellRect.right}], wrapper=[${wrapperRect.left}, ${wrapperRect.right}]`,
+      };
+    });
+    expect(
+      reach.fits,
+      `cell #${i} "${reach.text}" of "${heading}" must fit within the scroll wrapper after ` +
+        `scrollIntoView (${reach.detail})`,
+    ).toBe(true);
+  }
+}
+
+async function assertComplexityTableReachable(
+  page: Page,
+  options: { mustOverflow: boolean },
+): Promise<void> {
+  // fixture: closed tickets carry bdboard.complexity (low / med) and one has none (未記録).
+  await expect(tableBlock(page, COMPLEXITY_TABLE_HEADING)).toBeVisible();
+  const labels = await tableWrapper(page, COMPLEXITY_TABLE_HEADING)
+    .locator('tbody tr td:first-child')
+    .allTextContents();
+  expect(labels, 'fixture must produce low / med / 未記録 complexity rows').toEqual(
+    expect.arrayContaining(['low', 'med', '未記録']),
+  );
+
+  const metrics = await measureWrapperScroll(page, COMPLEXITY_TABLE_HEADING);
+  if (options.mustOverflow) {
+    expect(
+      metrics.overflows,
+      `complexity table must overflow on a narrow viewport ` +
+        `(scrollWidth=${metrics.scrollWidth}, clientWidth=${metrics.clientWidth})`,
+    ).toBe(true);
+  }
+  expect(metrics.clientWidth).toBeLessThanOrEqual(metrics.parentClientWidth);
+  expect(metrics.clientWidth).toBeLessThanOrEqual(metrics.innerWidth);
+
+  await assertAllHeadersReachableInWrapper(page, COMPLEXITY_TABLE_HEADING);
+  await assertAllCellsReachableInWrapper(page, COMPLEXITY_TABLE_HEADING);
+  await assertNoBodyHorizontalOverflow(page);
+}
+
+test.describe('stats complexity×model table scroll — mobile', () => {
+  test.use({
+    viewport: MOBILE_VIEWPORT,
+    isMobile: true,
+    hasTouch: true,
+  });
+
+  test('375x812: every header and cell of the complexity×model table is reachable', async ({
+    page,
+  }) => {
+    await openStatsView(page);
+    await assertComplexityTableReachable(page, { mustOverflow: true });
+  });
+});
+
+test.describe('stats complexity×model table scroll — desktop', () => {
+  test.use({
+    viewport: DESKTOP_VIEWPORT,
+  });
+
+  test('1280x800: every header and cell of the complexity×model table is reachable', async ({
+    page,
+  }) => {
+    await openStatsView(page);
+    await assertComplexityTableReachable(page, { mustOverflow: false });
   });
 });

@@ -5,6 +5,7 @@ import type {
   PrStatusReader,
   PrStatusResult,
 } from '../../application/ports/pr-status-reader.js';
+import { countPostCreateCommits } from '../../domain/pr-fix-push.js';
 import type { PrCheckStatus, PrState, PrStatus } from '../../domain/pr-link.js';
 
 const DEFAULT_GH_PATH = 'gh';
@@ -24,10 +25,21 @@ const rollupItemSchema = z
   })
   .passthrough();
 
+const commitItemSchema = z
+  .object({
+    committedDate: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+// bdboard-p5l.27: createdAt/commits は統計 (修正 push 回数) 専用の付加情報。形が想定外でも
+// バッジに必要な state/statusCheckRollup まで巻き添えにしないよう、読めなければ
+// undefined に落として (= 修正 push 回数だけ不明にして) 全体の parse は成功させる。
 const ghPrViewSchema = z
   .object({
     state: z.string().optional(),
     statusCheckRollup: z.array(rollupItemSchema).nullable().optional(),
+    createdAt: z.string().nullable().optional().catch(undefined),
+    commits: z.array(commitItemSchema).nullable().optional().catch(undefined),
   })
   .passthrough();
 
@@ -173,7 +185,7 @@ export function createGhCliPrStatusReader(
       try {
         commandResult = await commandRunner.run(
           ghPath,
-          ['pr', 'view', prUrl, '--json', 'state,statusCheckRollup'],
+          ['pr', 'view', prUrl, '--json', 'state,statusCheckRollup,createdAt,commits'],
           { timeoutMs },
         );
       } catch (error) {
@@ -204,6 +216,10 @@ export function createGhCliPrStatusReader(
       const status: PrStatus = {
         state: mapPrState(result.data.state),
         checkStatus: deriveCheckStatus(result.data.statusCheckRollup),
+        // 読めなかったときは undefined ではなく null (= 試した上で不明)。undefined は
+        // 「この項目が入る前の古いエントリ」を表し、統計側が再取得の要否を区別するのに使う。
+        fixPushCount:
+          countPostCreateCommits(result.data.createdAt, result.data.commits) ?? null,
       };
       return { status };
     },

@@ -66,6 +66,16 @@ export function isValidPersistedPrBadgeStatusEntry(
   ) {
     return false;
   }
+  // bdboard-p5l.27: fixPushCount は省略可 (この項目が入る前に永続化した古いエントリには
+  // 無い) で、null は「試したが不明」。数値なら 0 以上の整数でなければ破損とみなす。
+  const fixPushCount = statusCandidate.fixPushCount;
+  if (
+    fixPushCount !== undefined &&
+    fixPushCount !== null &&
+    (typeof fixPushCount !== 'number' || !Number.isInteger(fixPushCount) || fixPushCount < 0)
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -106,6 +116,18 @@ export function isMergedPendingStatus(status: PrStatus): boolean {
   );
 }
 
+/**
+ * 取得に成功した結果のエントリ (failureStreak は常に 0)。pr-badge-status-cache.ts の
+ * recordSuccess から切り出した (bdboard-p5l.27, 行数上限対応。挙動は変えていない)。
+ */
+export function buildSuccessPrBadgeStatusEntry(
+  status: PrStatus,
+  fetchedAt: number,
+  permanent: boolean,
+  mergedPendingRetries: number,
+): PrBadgeStatusCacheEntry {
+  return { status, fetchedAt, permanent, failureStreak: 0, mergedPendingRetries };
+}
 
 /**
  * 起動時の初期化用: 永続化ストアから読んだ配列を検証しつつ Map へ変換する。

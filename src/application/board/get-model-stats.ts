@@ -4,6 +4,8 @@ import type { Ticket } from '../../domain/ticket.js';
 import type { BoardCache } from '../ports/board-cache.js';
 import { readProjectEntries } from './read-cached-projects.js';
 import { forEachChunked } from './aggregation-yield.js';
+import { countComplexityModelRows, type ComplexityModelStats } from './complexity-model-stats.js';
+import type { FixPushLookup } from './fix-push-lookup-types.js';
 import {
   buildWeekBoundaries,
   isInWeekBounds,
@@ -26,12 +28,22 @@ export interface StageModelCounts {
 export interface ModelStats {
   readonly weeklyCloses: readonly WeeklyModelCloseCounts[];
   readonly stageModelDistribution: readonly StageModelCounts[];
+  /**
+   * 複雑度 (bdboard.complexity) × 実装モデル (bdboard.model.implement) × 修正 push 回数
+   * (bdboard-p5l.27)。既存のモデル別集計に complexity 軸を足したもので、上の2つは変えない。
+   */
+  readonly complexityModel: ComplexityModelStats;
 }
 
 export interface GetModelStatsOptions {
   readonly projectIds?: readonly string[];
   readonly weeks?: number;
   readonly timeZone?: string;
+  /**
+   * 修正 push 回数の引き当て (キャッシュを読むだけ。gh も bd も起動しない — 統計 API の
+   * レイテンシを悪化させないため)。未指定なら全チケットを「修正 push 回数不明」で数える。
+   */
+  readonly fixPushLookup?: FixPushLookup;
 }
 
 const DEFAULT_WEEKS = 8;
@@ -179,9 +191,11 @@ export async function getModelStats(
 
   const weeklyCloses = await countWeeklyModelCloses(tickets, weekStarts, weekRanges);
   const stageModelDistribution = await countStageModelDistribution(tickets);
+  const complexityModel = await countComplexityModelRows(tickets, options?.fixPushLookup);
 
   return {
     weeklyCloses,
     stageModelDistribution,
+    complexityModel,
   };
 }

@@ -44,6 +44,26 @@ export interface ResolvePrStatusDeps {
    * (優先度を意識しない既存呼び出し元との後方互換)。
    */
   readonly getPriority?: () => SemaphorePriority;
+  /**
+   * true のとき、キャッシュにある成功結果でも fixPushCount が「省略」(= この項目が入る前に
+   * 取得・永続化された古いエントリ) のものはヒット扱いにせず取り直す (bdboard-p5l.27)。
+   * 統計 (修正 push 回数) の先読みだけが指定する — バッジ表示 (/api/pr-links) は古い恒久
+   * エントリをそのまま使い続けてよく、ここで取り直させると表示が一時的に URL のみに
+   * 戻ってしまう。取り直した結果は fixPushCount が number か null になるので、
+   * 取り直しは各 URL につき一度で終わる。
+   */
+  readonly requireFixPushCount?: boolean;
+}
+
+export function canReuseStatus(
+  cached: PrBadge['status'],
+  requireFixPushCount: boolean | undefined,
+): boolean {
+  if (requireFixPushCount !== true || cached === null) {
+    // null は否定キャッシュ (直近の失敗) のヒット — 要件に関係なく再試行間隔を尊重する。
+    return true;
+  }
+  return cached.fixPushCount !== undefined;
 }
 
 export async function resolvePrStatus(
@@ -59,10 +79,11 @@ export async function resolvePrStatus(
     onDeferred,
     onAttempt,
     onFailure,
+    requireFixPushCount,
   } = deps;
   const cachedStatus = statusCache?.get(url);
 
-  if (cachedStatus !== undefined) {
+  if (cachedStatus !== undefined && canReuseStatus(cachedStatus, requireFixPushCount)) {
     return cachedStatus;
   }
 

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { createWriteGuardMiddleware } from './write-guard.js';
 import { createInFlightOverlapMemo } from './api-route-shared.js';
 import type { ApiDeps } from './api-deps.js';
+import { createPrBadgeShared } from '../../application/board/pr-badge-shared.js';
 import { createHealthStatusRoutes } from './health-status-routes.js';
 import { createBoardRoutes } from './board-routes.js';
 import { createStatsRoutes } from './stats-routes.js';
@@ -54,13 +55,18 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   // (ticket-read-routes.ts) が共有する着手中重複メモ。
   const inFlightOverlapMemo = createInFlightOverlapMemo();
 
+  // bdboard-p5l.27: PR 情報 (コメント由来の PR URL / gh pr view の結果) のキャッシュと
+  // gh/bd の同時実行ゲートは、/api/pr-links・/api/hygiene・/api/model-stats (修正 push 回数)
+  // で1組だけ共有する。経路ごとに持つと同じ PR を取り直し、ゲートの上限も掛け算される。
+  const prBadgeShared = createPrBadgeShared(deps.prBadgeStatusCache);
+
   // 元の routes.ts の登録順そのまま: health/status → board/projects/search/activity →
   // stats 系 → hygiene 系 → tickets 読み取り (catch-all含む) → tickets 書き込み →
   // comments → sessions/processes → refresh/events(SSE)。
   app.route('/', createHealthStatusRoutes(deps));
   app.route('/', createBoardRoutes(deps));
-  app.route('/', createStatsRoutes(deps));
-  app.route('/', createHygieneRoutes(deps, inFlightOverlapMemo));
+  app.route('/', createStatsRoutes(deps, prBadgeShared));
+  app.route('/', createHygieneRoutes(deps, inFlightOverlapMemo, prBadgeShared));
   app.route('/', createTicketReadRoutes(deps, inFlightOverlapMemo));
   app.route('/', createTicketWriteRoutes(deps));
   app.route('/', createCommentRoutes(deps));
