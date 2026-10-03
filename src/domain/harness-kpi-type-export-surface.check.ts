@@ -15,11 +15,14 @@
 import type {
   ComputeHarnessKpiInput,
   HarnessKpi,
+  HarnessKpiAccumulator,
+  HarnessKpiAccumulatorInput,
   HarnessKpiRange,
   HarnessShareKpi,
   PendingDecisionDwellKpi,
   ReclaimKpi,
   ReclaimRunRecord,
+  TicketAccumulator,
 } from './harness-kpi.js';
 
 // 全型を1箇所で「使う」ための tuple。コンパイル後は消える (実行時に影響しない)。
@@ -31,4 +34,8 @@ export type HarnessKpiTypeExportSurfaceCheck = [
   PendingDecisionDwellKpi,
   ReclaimKpi,
   ReclaimRunRecord,
+  // bdboard-kuui: 分割後に足した型 (集計器)。
+  HarnessKpiAccumulator,
+  HarnessKpiAccumulatorInput,
+  TicketAccumulator<unknown>,
 ];

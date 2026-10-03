@@ -144,3 +144,21 @@ export interface ComputeHarnessKpiInput {
    */
   readonly leftoverCandidates?: readonly LeftoverCandidate[];
 }
+
+/**
+ * チケットを 1 件ずつ add して、最後に finish で結果を取り出す集計器 (bdboard-kuui)。
+ *
+ * 4 指標を 4 回走査する代わりに、呼び出し側が 1 回のループで add し続けられる形。
+ * add の間に await を挟めるので、application 層は forEachChunked 越しに回して
+ * 数十万件でもイベントループを塞がずに済む (ドメインは純粋なまま、yield は知らない)。
+ * add は同期で副作用は集計器の内部状態だけ、finish は何度呼んでも同じ結果を返す。
+ */
+export interface TicketAccumulator<TResult> {
+  add(ticket: Ticket): void;
+  finish(): TResult;
+}
+
+/** createHarnessKpiAccumulator の入力 = ComputeHarnessKpiInput から tickets を除いたもの。 */
+export type HarnessKpiAccumulatorInput = Omit<ComputeHarnessKpiInput, 'tickets'>;
+
+export type HarnessKpiAccumulator = TicketAccumulator<HarnessKpi>;

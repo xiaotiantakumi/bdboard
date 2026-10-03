@@ -12,6 +12,8 @@ import * as harnessKpi from './harness-kpi.js';
  * 持たない (コンパイルで消える) ため `Object.keys()` には現れずこのリストにも含めていない —
  * 型エクスポート面は harness-kpi-type-export-surface.check.ts が tsc (`npm run build`) で固定する。
  *
+ * (bdboard-kuui で createHarnessKpiAccumulator を 1 件足した。分割前の 14 件 + 1 件。)
+ *
  * 分割後の harness-kpi.ts は名前を明示した re-export (harness-contract.ts の分割
  * (PR #568) / board.ts の分割 (PR #595) と同じ方式) のみになる。ここが崩れる (関数の
  * 移し忘れ・名前の変更・re-export の欠落) と、この一覧との差分としてすぐ検出できる。
@@ -31,6 +33,8 @@ const EXPECTED_VALUE_EXPORTS = [
   'computeHarnessLabeledShare',
   'computeDuplicateMentionShare',
   'computeHarnessKpi',
+  // bdboard-kuui: 分割後に足した値エクスポート (1 回走査版の集計器)。
+  'createHarnessKpiAccumulator',
 ].sort();
 
 describe('harness-kpi.ts export surface (bdboard-sso1.52 module split regression guard)', () => {

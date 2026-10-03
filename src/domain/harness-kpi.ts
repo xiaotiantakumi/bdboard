@@ -24,6 +24,9 @@ export type {
   HarnessShareKpi,
   HarnessKpi,
   ComputeHarnessKpiInput,
+  TicketAccumulator,
+  HarnessKpiAccumulatorInput,
+  HarnessKpiAccumulator,
 } from './harness-kpi/types.js';
 
 export {
@@ -42,4 +45,6 @@ export {
   computeDuplicateMentionShare,
 } from './harness-kpi/share.js';
 
-export { computeHarnessKpi } from './harness-kpi/aggregate.js';
+// bdboard-kuui: computeHarnessKpi の 1 回走査版 (add / finish)。application 層が
+// forEachChunked 越しに回してイベントループを分割するための入口。
+export { computeHarnessKpi, createHarnessKpiAccumulator } from './harness-kpi/aggregate.js';

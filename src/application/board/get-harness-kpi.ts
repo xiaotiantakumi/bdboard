@@ -1,12 +1,13 @@
 import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import {
-  computeHarnessKpi,
+  createHarnessKpiAccumulator,
   type HarnessKpi,
+  type HarnessKpiAccumulator,
   type ReclaimRunRecord,
 } from '../../domain/harness-kpi.js';
-import type { Ticket } from '../../domain/ticket.js';
-import type { BoardCache } from '../ports/board-cache.js';
+import type { BoardCache, CachedProject } from '../ports/board-cache.js';
+import { createYieldGate, forEachChunked } from './aggregation-yield.js';
 import { readProjectEntries } from './read-cached-projects.js';
 import { buildWeekStarts } from './week-boundary.js';
 
@@ -46,25 +47,37 @@ export interface HarnessKpiStats {
 
 const DEFAULT_WEEKS = 8;
 
-async function collectTickets(
+async function collectProjectEntries(
   cache: BoardCache,
   projectIdFilter?: ReadonlySet<string>,
-): Promise<readonly Ticket[]> {
+): Promise<readonly CachedProject[]> {
   // bdboard-4x55: getThroughputStats / getModelStats (bdboard-mkkx) と同じ理由で
   // listProjectsChunked() を優先し、無ければ (インメモリ fake 等) listProjects() に
   // 同じ結果でフォールバックする。
-  let entries = await readProjectEntries(cache);
-  if (projectIdFilter !== undefined) {
-    entries = entries.filter((entry) => projectIdFilter.has(entry.project.id));
-  }
+  const entries = await readProjectEntries(cache);
+  return projectIdFilter === undefined
+    ? entries
+    : entries.filter((entry) => projectIdFilter.has(entry.project.id));
+}
 
-  const tickets: Ticket[] = [];
+/**
+ * 全プロジェクトのチケットを集計器へ流し込む (bdboard-kuui)。
+ *
+ * 以前は全チケットを 1 本の配列に積んで computeHarnessKpi (同期・4 回走査) に渡して
+ * いたため、200,000 件で 170〜220ms 以上イベントループを塞いでいた。いまは集計器の
+ * add を 1 件ずつ呼び、forEachChunked でチャンク境界ごとに制御を返す。gate は
+ * プロジェクトをまたいで共有するので、境界は通算件数で決まる (小さなプロジェクトが
+ * 大量にあっても、プロジェクトごとにカウンタがリセットされて yield し損ねることはない)。
+ * 配列に積まないので、巨大プロジェクトでの RangeError (bdboard-6nq2) とも無縁。
+ */
+async function addTicketsChunked(
+  accumulator: HarnessKpiAccumulator,
+  entries: readonly CachedProject[],
+): Promise<void> {
+  const gate = createYieldGate();
   for (const entry of entries) {
-    for (const ticket of entry.tickets) {
-      tickets.push(ticket);
-    }
+    await forEachChunked(entry.tickets, (ticket) => accumulator.add(ticket), gate);
   }
-  return tickets;
 }
 
 /**
@@ -113,8 +126,7 @@ export async function getHarnessKpi(
   const projectIdFilter =
     options?.projectIds !== undefined ? new Set(options.projectIds) : undefined;
 
-  const kpi = computeHarnessKpi({
-    tickets: await collectTickets(cache, projectIdFilter),
+  const accumulator = createHarnessKpiAccumulator({
     range: { start: rangeStart, end: now },
     ...(options?.reclaimRuns !== undefined
       ? { reclaimRuns: filterReclaimRuns(options.reclaimRuns, projectIdFilter) }
@@ -128,6 +140,8 @@ export async function getHarnessKpi(
         }
       : {}),
   });
+  await addTicketsChunked(accumulator, await collectProjectEntries(cache, projectIdFilter));
+  const kpi = accumulator.finish();
 
   return {
     kpi,
