@@ -164,11 +164,14 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       // bdboard-z9mn: この送信より前に始まった一覧 fetch(E7 の初回取得など)があとから届いても、送信した会話を
       // 一覧と open から落とさないよう、足すエントリを一覧の順序管理(chat/threadListFetchOrder.ts)に記録する。
       // 置き換えられた死んだスレッドの記録は捨てる(古い一覧で蘇らせない)。
+      // 既存スレッドへの送信(convKey === result.sessionId)は記録しない。そのスレッドは送信前からサーバーの
+      // 一覧に載っている。このエントリはタイトルを今回の送信文・pinned を false にした仮の値なので、記録すると
+      // 古い一覧が持つ正しいタイトル(リネーム済みなら付けた名前、未設定なら最初の発言)とピン留めを潰す。
       const listEntry: ChatThreadDto = {
         sessionId: result.sessionId, agentId: result.agentId, title: summarizeTitle(sentText), pinned: false,
         updatedAt: new Date().toISOString(),
       };
-      threadListOrder.noteEntryWrite(selectedProjectId, listEntry, 'upsert');
+      if (convKey !== result.sessionId) threadListOrder.noteEntryWrite(selectedProjectId, listEntry, 'upsert');
       if (plan.goneSessionId !== undefined) threadListOrder.forgetEntry(selectedProjectId, plan.goneSessionId);
       setThreadLists((prev) => ({
         ...prev,

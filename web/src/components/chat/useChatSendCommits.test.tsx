@@ -388,6 +388,15 @@ describe('commitSuccess', () => {
       const seq = order.begin('proj-a');
       expect(order.admit('proj-a', seq, [])).toEqual([]);
     });
+
+    it('does not lay a send into an existing thread over a list fetch that started before it, keeping the listed title and pin', () => {
+      const { hook, params } = setup();
+      const order = params.threadListOrder;
+      const seq = order.begin('proj-a');
+      const listed = { sessionId: 'sess-new', agentId: 'claude', title: 'renamed', pinned: true, updatedAt: 'x' };
+      act(() => hook.result.current.commitSuccess('sess-new', 'hello', RESULT));
+      expect(order.admit('proj-a', seq, [listed])).toEqual([listed]);
+    });
   });
 
   it('records the sent model only when the model select is shown with a model', () => {
