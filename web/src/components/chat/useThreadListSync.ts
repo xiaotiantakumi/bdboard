@@ -208,8 +208,9 @@ export function useThreadListSync({
         // (applyRecoveredTurn)は既に上の isSupersededByRecovery() が先に捕まえて
         // 早期 return するため、実際にはここまで到達しない(hydrate は自分の
         // 適用直前に threadListRequestIdRef を進めるので、この fetch は必ず
-        // supersede される側になる) — このガードが効く経路は handleAgentChange の
-        // ケースだけ。pending なチケット起動ドラフトの消化だけは、この応答でしか
+        // supersede される側になる) — このガードが効く経路は handleAgentChange と、
+        // CLI セッションの採用(handleResumeDiscoveredSession。bdboard-oaak 以降マーカーを
+        // 立てる)。pending なチケット起動ドラフトの消化だけは、この応答でしか
         // 担えないので続ける。
         if (establishedByOtherPath) {
           consumePendingTicketDraft();

@@ -14,6 +14,10 @@ import type { ChatThreadDto } from '../../api';
  * なので、そのエントリを一覧から落とす理由が無い。閉じているスレッドの古いエントリや、応答が
  * 載せていない id は足さない(他タブでサーバー側から消えたスレッドを一覧に蘇らせない)。
  * 応答に載っている id は応答を優先する(順序も応答のまま、足すのは末尾)。
+ *
+ * 既知の限界: 再訪中に採用し、古い応答が採用の取り直しより先に届くと、`current` は前回訪問の
+ * 一覧なので、サーバーでは消えたが永続化上は開いているタブのエントリが古いタイトルのまま一時的に残る。
+ * 取り直しが届けば一覧は置き換わり、open からも pruneDeadOpenThreads が落とす。
  */
 export function keepOpenThreadEntries(
   fetched: readonly ChatThreadDto[],
