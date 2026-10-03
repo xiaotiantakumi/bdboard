@@ -485,7 +485,7 @@ describe('createApiRoutes', () => {
     const listProjects = vi.fn(() => base.listProjects());
     const listProjectsChunked = vi.fn(() => Promise.resolve(base.listProjects()));
     // bdboard-5lnh: the worktree scan only needs the projects, so it goes through the
-    // light listProjectRefs() (the real SQLite cache implements it).
+    // projection-only listProjectRefs() (the real SQLite cache implements it).
     const listProjectRefs = vi.fn(() => base.listProjects().map((entry) => entry.project));
     const cache = { ...base, listProjects, listProjectsChunked, listProjectRefs };
 
@@ -517,7 +517,7 @@ describe('createApiRoutes', () => {
     const scan = vi.fn(async () => ({ worktrees: [], bdBranches: [], complete: true }));
     const worktreeScanner: WorktreeScanner = { listChangedFiles: async () => [], scan };
 
-    // Fallback path (no listProjectRefs on this fake) and the light path must agree.
+    // Fallback path (no listProjectRefs on this fake) and the listProjectRefs path must agree.
     const withRefs = {
       ...base,
       listProjectRefs: () => base.listProjects().map((entry) => entry.project),

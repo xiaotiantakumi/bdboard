@@ -80,9 +80,14 @@ export function createStatsRoutes(deps: ApiDeps): Hono {
       // bdboard-5lnh: scanGitLeftovers が要るのは project (rootPath 等) だけで、チケットは
       // 要らない。以前 (bdboard-4x55) は listProjectsChunked() で全チケットを読んでおり、
       // 直後の getHarnessKpi でも同じ listProjectsChunked() が走って2回読んでいた。
-      // 軽量な listProjectRefs() (温まっていればチケットのテキストに触れない同期の
-      // 読み出し。無い fake では listProjects() にフォールバック) に寄せ、チケット側の
-      // 読み出しは getHarnessKpi の1回だけにする。
+      // project だけを返す listProjectRefs() (listProjects() と同コストの射影。無い fake では
+      // listProjects() にフォールバック) に寄せ、チケット側の読み出しは getHarnessKpi の
+      // 1回だけにする。
+      // 注意: これは yield しない同期呼び出し。パースキャッシュが温まっていれば約 0.2ms だが、
+      // リフレッシュ直後 (無効化済みで onResult の再ウォームアップ前) は無効化された
+      // プロジェクトをここで同期パースする (1.4万件のプロジェクトで約 33ms/件、最悪は全
+      // プロジェクトが cold で約 640〜770ms)。/api/board の同期読み出しが一度払うのと
+      // 同じコストを、ここも一度だけ払う。
       let scanProjects = readProjectRefs(deps.cache);
       if (projectIds !== undefined) {
         const filterSet = new Set(projectIds);

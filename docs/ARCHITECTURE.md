@@ -78,7 +78,7 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `ProjectDiscovery` | `createFsProjectDiscovery` | スキャンルート配下の `.beads/` プロジェクト検出 |
 | `ProjectFingerprinter` | `createBeadsFingerprinter` | 変化検知用フィンガープリント計算 |
 | `ProjectWatcher` | `createChokidarProjectWatcher` | プロジェクトのファイル変更監視 |
-| `BoardCache` | `createSqliteBoardCache` | 横断ボードの永続キャッシュ(プロジェクト/チケット/セッションリンク/オフセット)。全プロジェクトの読み出し口は `listProjects`(同期・チケット込み)/ `listProjectRefs`(同期・project のみ・省略可)/ `listProjectsChunked`(非同期でイベントループに制御を返す・省略可)の3つで、どれも「id, fingerprint の一括取得 → パース済みキャッシュ → 外れた分だけ行を読む」ので温まっていれば全チケット JSON を読み直さない。呼び出し側は三項演算子や `.map(entry => entry.project)` を自前で書かず `application/board/read-cached-projects.ts` の `readProjectEntries` / `readProjectRefs` を使う(bdboard-5lnh) |
+| `BoardCache` | `createSqliteBoardCache` | 横断ボードの永続キャッシュ(プロジェクト/チケット/セッションリンク/オフセット)。全プロジェクトの読み出し口は `listProjects`(同期・チケット込み)/ `listProjectRefs`(同期・project だけを返す射影でコストは `listProjects` と同じ・省略可)/ `listProjectsChunked`(非同期でイベントループに制御を返す・省略可)の3つで、どれも「id, fingerprint の一括取得 → パース済みキャッシュ → 外れた分だけ行を読む」ので温まっていれば全チケット JSON を読み直さない(cold なら外れた分をパースする)。呼び出し側は三項演算子や `.map(entry => entry.project)` を自前で書かず `application/board/read-cached-projects.ts` の `readProjectEntries` / `readProjectRefs` を使う(bdboard-5lnh) |
 | `SessionRegistry` | `createClaudeSessionRegistry` | `~/.claude/sessions/*.json` + PID生存確認からセッション列挙 |
 | `TranscriptScanner` | `createJsonlTranscriptScanner` | セッショントランスクリプトの増分tail走査(チケットID抽出) |
 | `SessionTailReader` | `createSessionTailReader` | セッションログ末尾の取得 |

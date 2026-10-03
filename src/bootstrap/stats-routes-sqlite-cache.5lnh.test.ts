@@ -12,7 +12,7 @@ import { NOW, project, createDeps } from '../interface/http/routes-test-support.
 // 回数だけで固定する (interface 層は infrastructure を import できないので bootstrap に置く。
 // 理由は stats-routes-sqlite-cache.mkkx.test.ts の冒頭を参照)。
 describe('/api/harness-kpi + createSqliteBoardCache (bdboard-5lnh)', () => {
-  it('reads tickets once (chunked) and projects once (light), never the synchronous listProjects()', async () => {
+  it('reads tickets once (chunked) and projects once (listProjectRefs), never the synchronous listProjects()', async () => {
     const cache = createSqliteBoardCache(':memory:');
     const a = project('proj-a', '/projects/a');
     const b = project('proj-b', '/projects/b');

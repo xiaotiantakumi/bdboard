@@ -219,6 +219,62 @@ describe('SqliteBoardCache project listing (bdboard-5lnh)', () => {
       expect(selectStarCalls(executions)).toEqual([]);
       db.close();
     });
+
+    // parseCache のヒット判定は fingerprint の一致まで見る (project-listing.ts の resolve)。
+    // writer を介さない書き換え (別プロセス等) では parseCache は無効化されないので、
+    // fingerprint の不一致だけが「キャッシュの b は古い」と気づく手段になる。
+    it('re-reads a project rewritten behind the parse cache (fingerprint mismatch) in all three listings, one get per call', async () => {
+      type Reader = ReturnType<typeof setup>['reader'];
+      interface Seen {
+        readonly names: readonly string[];
+        readonly bTicketCount: number | undefined;
+      }
+      const seenOf = (entries: readonly CachedProject[]): Seen => ({
+        names: entries.map((entry) => entry.project.name),
+        bTicketCount: entries.find((entry) => entry.project.id === 'b')?.tickets.length,
+      });
+      const listings: readonly (readonly [string, (reader: Reader) => Promise<Seen>])[] = [
+        ['listProjects', (reader) => Promise.resolve(seenOf(reader.listProjects()))],
+        [
+          'listProjectRefs',
+          (reader) =>
+            Promise.resolve({
+              names: reader.listProjectRefs!().map((project) => project.name),
+              bTicketCount: undefined,
+            }),
+        ],
+        ['listProjectsChunked', async (reader) => seenOf(await reader.listProjectsChunked!())],
+      ];
+
+      for (const [label, list] of listings) {
+        const { db, executions, reader, writer } = setup();
+        writer.putProject(makeEntry(makeProject('a', '/a')));
+        writer.putProject(makeEntry(makeProject('b', '/b'), { ticketCount: 3 }));
+        expect(seenOf(reader.listProjects()).bTicketCount, label).toBe(3); // warm
+        db.prepare(
+          `UPDATE projects SET name = 'renamed-b', fingerprint = 'fp-2', tickets = '[]' WHERE id = ?`,
+        ).run('b');
+        executions.length = 0;
+
+        const seen = await list(reader);
+
+        expect(seen.names, label).toEqual(['name-a', 'renamed-b']);
+        if (label !== 'listProjectRefs') {
+          expect(seen.bTicketCount, label).toBe(0);
+        }
+        // id/fingerprint の一括取得1回 + 不一致だった b の行取得1回だけ (a は warm のまま)。
+        expect(executions, label).toEqual([
+          { sql: REFS_SQL, method: 'all' },
+          { sql: ROW_BY_ID_SQL, method: 'get' },
+        ]);
+
+        // 読み直したあとは parseCache が新しい fingerprint で温まり、次は行を読まない。
+        executions.length = 0;
+        await list(reader);
+        expect(executions, label).toEqual([{ sql: REFS_SQL, method: 'all' }]);
+        db.close();
+      }
+    });
   });
 
   describe('output is identical to the previous SELECT * implementation', () => {

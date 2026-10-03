@@ -73,8 +73,8 @@ export function createReadOperations(
 
   const listEntries = (): readonly CachedProject[] => {
     const results: CachedProject[] = [];
-    for (const ref of listing.listRefs()) {
-      const entry = listing.resolve(ref);
+    for (const key of listing.listKeys()) {
+      const entry = listing.resolve(key);
       if (entry !== null) {
         results.push(entry);
       }
@@ -93,15 +93,18 @@ export function createReadOperations(
 
     // bdboard-5lnh: 以前は `SELECT * FROM projects` で全チケットの JSON テキストを毎回
     // コピーしていたため、parseCache が温まっていても 200k 件で 163〜179ms 同期ブロック
-    // した。いまは listing.listRefs() (id, fingerprint だけ) → parseCache → 外れた分だけ
-    // 行を読む、の同期のままの手順なので、1回の同期呼び出しの中で完結し (await を挟まない
-    // ので呼び出しの途中に putProject 等が割り込めない)、原子性は変わらない。
+    // した。いまは listing.listKeys() (id, fingerprint だけ) → parseCache → 外れた分だけ
+    // 行を読む、の同期のままの手順。1 + (外れた件数) 本の文は各々が自分の autocommit
+    // スナップショットで走るので、全体で1つのスナップショットではない。ただし await を
+    // 挟まない同期呼び出しなので、同じ接続からの書き込み (projects への書き込みは現状
+    // すべてこの接続) は途中に割り込めない。
     listProjects(): readonly CachedProject[] {
       return listEntries();
     },
 
-    // bdboard-5lnh: project (定義) だけを返す軽量版。listProjects() と同じ順序・同じ
-    // 「壊れた行は飛ばす」扱いで、温まった状態ではチケットのテキストにも一切触れない。
+    // bdboard-5lnh: project (定義) だけを返す射影。コストは listProjects() と同じ
+    // (listEntries() の結果から project を取り出すだけ。parseCache が温まっていれば速く、
+    // cold なら全件パースする)。順序・「壊れた行は飛ばす」扱いも listProjects() と同じ。
     listProjectRefs(): readonly Project[] {
       return listEntries().map((entry) => entry.project);
     },
@@ -110,7 +113,9 @@ export function createReadOperations(
     // チケットJSONパース (rowToCachedProject -> deserializeTickets) を1回の
     // 同期処理で行っており、チケット数が多い (実測: 200,000件で590-613ms) と
     // その間イベントループを塞ぐ (bdboard-ve1y で chunk 化した集計ループの
-    // 手前で、集計自体より大きなブロックが起きうる)。
+    // 手前で、集計自体より大きなブロックが起きうる)。bdboard-5lnh 以降、この
+    // ブロックは parseCache が cold (未パース / putProject 等で無効化直後) のときだけ
+    // 起きる。温まっていれば listProjects() は約 0.2ms で、以下はその cold 時の話。
     //
     // stmt.all() で一括取得すると、行の読み出し自体 (SQLite の各行の TEXT
     // 列をJSの文字列としてコピーする部分) がまだチャンク化されずに残る。
@@ -158,16 +163,16 @@ export function createReadOperations(
     // トレードオフ: (1)の id 一覧取得は1回のスナップショットなので、
     // listProjectsChunked() の実行中に削除された project は該当 id の
     // get() が undefined を返しスキップされる (await を挟まない同期版
-    // listProjects() / listProjectRefs() と違い、呼び出しの途中に他の書き込みが
-    // 割り込めるため、1回の同期呼び出しの中で完結するアトミック性は無い)。実行中に新規追加
+    // listProjects() / listProjectRefs() と違い、yield の合間に同じ接続からの書き込みが
+    // 割り込めるため、途中で書き込みが入らないという保証は無い)。実行中に新規追加
     // された project は (1)の時点の一覧に含まれないため結果に現れない。
     // どちらも「統計表示が一瞬だけ古いスナップショットを見る」程度の実害で、
     // このAPIの用途 (定期ポーリングされる集計) では許容できる。
     async listProjectsChunked(): Promise<readonly CachedProject[]> {
       const results: CachedProject[] = [];
       const gate = createYieldGate(1);
-      for (const ref of listing.listRefs()) {
-        const entry = listing.resolve(ref);
+      for (const key of listing.listKeys()) {
+        const entry = listing.resolve(key);
         if (entry !== null) {
           results.push(entry);
         }

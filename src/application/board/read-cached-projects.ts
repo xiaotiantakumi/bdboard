@@ -5,7 +5,8 @@ import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 // これまで次の2つの書き方が呼び出し元ごとに複製されていた:
 //   - `cache.listProjectsChunked !== undefined ? await cache.listProjectsChunked() : cache.listProjects()`
 //     (get-throughput-stats / get-model-stats / get-cfd-stats / get-harness-kpi / stats-routes の5か所)
-//   - `cache.listProjects().map((entry) => entry.project)` (14か所)
+//   - `cache.listProjects().map((entry) => entry.project)` (13か所。ほかに wire-board-api の
+//     rootPath 検索 `.find((entry) => entry.project.rootPath === rootPath)` が1か所、計14か所)
 // 省略可能なポートメソッド (listProjectsChunked / listProjectRefs) を持たないインメモリ fake
 // でも同じ結果が返るよう、フォールバックはここだけに置く。
 
@@ -23,9 +24,10 @@ export async function readProjectEntries(
 }
 
 /**
- * project (定義) だけ要る呼び出し元向け。listProjectRefs() があればそれ (温まっていれば
- * チケットのテキストに触れない)、無ければ listProjects().map((entry) => entry.project)。
- * どちらも project.rootPath 昇順で同じ結果を返す。
+ * project (定義) だけ要る呼び出し元向け。listProjectRefs() があればそれ (project だけを
+ * 返す射影。コストは listProjects() と同じ)、無ければ
+ * listProjects().map((entry) => entry.project)。どちらも project.rootPath 昇順で同じ
+ * 結果を返す。
  */
 export function readProjectRefs(
   cache: Pick<BoardCache, 'listProjects' | 'listProjectRefs'>,
