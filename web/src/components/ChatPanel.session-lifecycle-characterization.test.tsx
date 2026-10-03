@@ -375,6 +375,56 @@ describe('ChatPanel session lifecycle characterization (bdboard-sso1.83 第15a�
       });
     });
 
+    it('keeps the resumed tab title when a stale first thread list lands after the refreshed one (bdboard-znnl)', async () => {
+      const user = userEvent.setup();
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-1'],
+        selectedSessionId: 'sess-1',
+      });
+      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
+      // 初回の一覧(E7)は in-flight のまま。採用後の取り直し(2回目、採用したセッションを含む)が先に届き、
+      // その後に採用したセッションを含まない古い初回の一覧が届く(bdboard-oaak と同じ順序)。
+      let resolveFirstList: (threads: ChatThreadDto[]) => void = () => undefined;
+      fetchChatThreadsMock
+        .mockReturnValueOnce(
+          new Promise<ChatThreadDto[]>((resolve) => {
+            resolveFirstList = resolve;
+          }),
+        )
+        .mockResolvedValue([THREAD_1, { ...THREAD_1, sessionId: 'discovered-1', title: 'resumed title' }]);
+      fetchDiscoveredChatSessionsMock.mockResolvedValue({
+        sessions: [{ sessionId: 'discovered-1', lastActivityAt: '2026-08-16T12:00:00.000Z', alreadyAdopted: false }],
+      });
+      stubFetch((url, init) => {
+        if (url.startsWith('/api/chat/sessions/sess-1/messages')) {
+          return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/projects/proj-a/discovered-sessions/discovered-1/adopt' && init?.method === 'POST') {
+          return adoptResponse('discovered-1', 'resumed other session');
+        }
+        return unexpected(url, init);
+      });
+
+      const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+      await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+      await resumeDiscoveredSession(container, user, 'discovered-1');
+
+      expect(await screen.findByText('resumed other session')).toBeInTheDocument();
+      await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(2));
+      await waitFor(() => {
+        expect(container.querySelector('.chat-thread-switcher-title')).toHaveTextContent('resumed title');
+      });
+
+      // 遅れて採用前の初回の一覧が届いても、採用したタブのタイトルは (無題) に戻らない。
+      resolveFirstList([THREAD_1]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(container.querySelector('.chat-thread-switcher-title')).toHaveTextContent('resumed title');
+      expect(container.querySelector('.chat-thread-switcher-count')).toHaveTextContent('スレッド 2');
+      expect(readPersistedChatThreads()).toEqual({
+        'proj-a': { activeSessionIds: ['sess-1', 'discovered-1'], selectedSessionId: 'discovered-1' },
+      });
+    });
+
     it('keeps the resumed conversation and shows no error when the thread-list refresh fails', async () => {
       const user = userEvent.setup();
       fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
