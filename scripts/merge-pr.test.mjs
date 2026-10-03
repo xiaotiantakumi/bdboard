@@ -794,7 +794,12 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     // 次に落ちたとき原因が分かるよう、終了コードの不一致には merge-pr の出力と監査ログを添える。
     const expectExit = (result, code) =>
       expect(result.status, `merge-pr exited ${result.status}:\n${result.stderr}\naudit:\n${auditText()}`).toBe(code);
+    // bdboard-rlvz: 偽 verify の push は tracking ref を触らない (触ると、abandon の SIGTERM 次第で lock が残る)。
+    // merge-pr 自身の refetch も同じ ref を動かすので、値ではなく reflog の push 由来の更新を数える。
+    const pushUpdates = () => git(mainCheckout, ['log', '-g', '--format=%gs', 'refs/remotes/origin/main']).split('\n').filter((line) => line.startsWith('update by push')).length;
+    const pushUpdatesBefore = pushUpdates();
     expectExit(run(['prepare', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog, FAKE_VERIFY_MOVE_MAIN: later }), 75);
+    expect(pushUpdates()).toBe(pushUpdatesBefore);
     const { since } = JSON.parse(readFileSync(queueFile, 'utf8'));
     // bdboard-pwae: prepare defines exit 75 as a transient retry; retry only its exact fetch failure so other 75s still expose regressions.
     const retryFetchFailure = () => {
@@ -802,7 +807,9 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       for (let attempt = 0; attempt < 5; attempt++) {
         result = run(['prepare', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog });
         if (result.status !== 75 || !/^merge-pr: git fetch origin main に失敗しました:/m.test(result.stderr)) return result;
-        // 原因はまだ仮説なので、捨てる 75 の出力を残して次の発生時の証拠にする。
+        // bdboard-rlvz: 5 回とも lock の File exists で落ちた原因 (偽 verify の名前宛て push が abandon の
+        // SIGTERM で refs/remotes/origin/main.lock を残す) は直した。pwae の元の失敗もおそらく同じ原因で、
+        // 残った lock は再試行では消えない。一時的な失敗のための再試行と出力の記録は害が無いので残す。
         process.stderr.write(`bdboard-pwae: prepare attempt ${attempt + 1} exited 75 on fetch, retrying:\n${result.stderr}\n`);
       }
       return result;
