@@ -17,6 +17,7 @@ vi.mock('../../api', async (importOriginal) => {
 
 import { acknowledgeChatTurn, ChatStreamEndedWithoutResultError, postChatMessage, postChatMessageStream } from '../../api';
 import { deliverChatSend, type DeliverChatSendParams } from './deliverChatSend';
+import { createReplacedThreadMarks } from './replacedThread';
 import { CHAT_STREAM_DETACHED_FAILED_MESSAGE } from './turnStatusPolicy';
 import type { DetachedStreamSend } from './useChatSendState';
 
@@ -46,6 +47,7 @@ function setup(overrides: Partial<DeliverChatSendParams> = {}, detached: Record<
       events.push(`clear:${key}`);
     }),
     detachedStreamSendRef,
+    replacedMarksRef: { current: createReplacedThreadMarks() },
   };
   const onSuccess = vi.fn<(result: ChatMessageResponseDto) => void>(() => {
     events.push('success');
@@ -224,5 +226,48 @@ describe('deliverChatSend — streaming', () => {
     });
     await expect(deliverChatSend(params)).rejects.toThrow('commit exploded');
     expect(events).toEqual(['failure', 'clear:key-a']);
+  });
+});
+
+// bdboard-w9hv: sessionId 無しの送信(clearSession 後の再送、ドラフトの初回送信)は、結果を見届けられなく
+// ても未解決の印(markUnresolvedSend)を付けられない。turn-status 回収が返したセッションの送信元を
+// 辿れるよう、送信元の会話キーをプロジェクトごとに憶える(chat/replacedThread.ts)。
+describe('deliverChatSend — remembering the origin of an unobserved send (bdboard-w9hv)', () => {
+  it('remembers sendKey on a non-streaming AbortError of a send without a session id', async () => {
+    postMock.mockRejectedValue(abortError());
+    const { params, send } = setup({ sessionId: undefined });
+    await deliverChatSend(params);
+    expect(send.replacedMarksRef.current.unobservedOrigins).toEqual({ 'proj-a': 'key-a' });
+  });
+
+  it('remembers sendKey on a streaming AbortError of a send without a session id', async () => {
+    streamMock.mockRejectedValue(abortError());
+    const { params, send } = setup({ streaming: true, sessionId: undefined });
+    await deliverChatSend(params);
+    expect(send.replacedMarksRef.current.unobservedOrigins).toEqual({ 'proj-a': 'key-a' });
+  });
+
+  it('remembers sendKey when the stream of a send without a session id ends without a result', async () => {
+    streamMock.mockRejectedValue(new ChatStreamEndedWithoutResultError());
+    const { params, send } = setup({ streaming: true, sessionId: undefined });
+    await deliverChatSend(params);
+    expect(send.replacedMarksRef.current.unobservedOrigins).toEqual({ 'proj-a': 'key-a' });
+  });
+
+  it('does not remember a send that has a session id (markUnresolvedSend covers it)', async () => {
+    postMock.mockRejectedValue(abortError());
+    const { params, send } = setup();
+    await deliverChatSend(params);
+    expect(send.replacedMarksRef.current.unobservedOrigins).toEqual({});
+  });
+
+  it('does not remember a send whose outcome was observed (success or a normal failure)', async () => {
+    postMock.mockResolvedValueOnce(RESULT).mockRejectedValueOnce(new Error('boom'));
+    const first = setup({ sessionId: undefined });
+    await deliverChatSend(first.params);
+    const second = setup({ sessionId: undefined });
+    await deliverChatSend(second.params);
+    expect(first.send.replacedMarksRef.current.unobservedOrigins).toEqual({});
+    expect(second.send.replacedMarksRef.current.unobservedOrigins).toEqual({});
   });
 });

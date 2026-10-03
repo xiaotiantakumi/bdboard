@@ -6,6 +6,7 @@ import {
   type ChatMessageRequest,
   type ChatMessageResponseDto,
 } from '../../api';
+import { markUnobservedSend } from './replacedThread';
 import { CHAT_STREAM_DETACHED_FAILED_MESSAGE } from './turnStatusPolicy';
 import type { UseChatSendStateResult } from './useChatSendState';
 
@@ -28,6 +29,7 @@ export interface DeliverChatSendParams {
     | 'markUnresolvedSend'
     | 'clearStreamingReplyForKey'
     | 'detachedStreamSendRef'
+    | 'replacedMarksRef'
   >;
 }
 
@@ -48,6 +50,7 @@ export async function deliverChatSend(params: DeliverChatSendParams): Promise<vo
     markUnresolvedSend,
     clearStreamingReplyForKey,
     detachedStreamSendRef,
+    replacedMarksRef,
   } = params.send;
   // bdboard-zlzo: 新しいターンが完走したならサーバーは空いていたので、前の配信停止分の
   // 判定は捨てる (失われるのは失敗表示だけ)。送信の開始時点では捨てない —
@@ -62,6 +65,14 @@ export async function deliverChatSend(params: DeliverChatSendParams): Promise<vo
       // ことはもう無い (このあと fail() も呼ばれない)。
       clearStreamingReplyForKey(detached.streamingKey);
     }
+  };
+
+  // 結果をこのクライアントでは見届けられなかった(abort / 配信停止)送信の後始末。sessionId 付きは
+  // 未解決の印(bdboard-3tw.156)、sessionId 無しは送信元の会話キーの記録(bdboard-w9hv、
+  // chat/replacedThread.ts)。どちらも turn-status 回収が引き取る。
+  const markOutcomeUnobserved = (): void => {
+    markUnresolvedSend(sessionId);
+    markUnobservedSend(replacedMarksRef.current, projectId, sendKey, sessionId);
   };
 
   if (streaming) {
@@ -111,7 +122,7 @@ export async function deliverChatSend(params: DeliverChatSendParams): Promise<vo
         // generation で明示的に再起動する。
         setTurnRecoveryGeneration((generation) => generation + 1);
         // 回収が取りこぼしたときの安全網 (bdboard-3tw.156)。
-        markUnresolvedSend(sessionId);
+        markOutcomeUnobserved();
       } else if (error instanceof ChatStreamEndedWithoutResultError) {
         // bdboard-zlzo: サーバーが done/error を送らずに配信だけを止めた
         // (SSE キュー上限超過など)。ターンはサーバー側で完走・保存されるので、
@@ -127,7 +138,7 @@ export async function deliverChatSend(params: DeliverChatSendParams): Promise<vo
           fail: () => onFailure(new Error(CHAT_STREAM_DETACHED_FAILED_MESSAGE, { cause: detachedError })),
         };
         setTurnRecoveryGeneration((generation) => generation + 1);
-        markUnresolvedSend(sessionId);
+        markOutcomeUnobserved();
       } else {
         // bdboard-w26w: まだ接続中のクライアントがインライン SSE 'error' で
         // 受け取った失敗 (この else 分岐、ApiError(502, ...) 等。プリストリーム
@@ -205,7 +216,7 @@ export async function deliverChatSend(params: DeliverChatSendParams): Promise<vo
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         setTurnRecoveryGeneration((generation) => generation + 1);
-        markUnresolvedSend(sessionId);
+        markOutcomeUnobserved();
       } else {
         onFailure(error);
       }

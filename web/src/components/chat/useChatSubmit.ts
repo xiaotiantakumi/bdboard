@@ -72,6 +72,7 @@ export function useChatSubmit(params: UseChatSubmitParams): UseChatSubmitResult 
     markUnresolvedSend,
     detachedStreamSendRef,
     requestAbortControllerRef,
+    replacedMarksRef,
   } = params.send;
   const { commitSuccess, commitFailure, appendTranscript, resetBackgroundTurnStatus, inputRef } = params;
   // bdboard-dcyi: 送信の finally で setIsSending(false) と同じバッチで1つ進める
@@ -189,6 +190,7 @@ export function useChatSubmit(params: UseChatSubmitParams): UseChatSubmitResult 
             markUnresolvedSend,
             clearStreamingReplyForKey,
             detachedStreamSendRef,
+            replacedMarksRef,
           },
         });
       } catch (error) {
@@ -223,6 +225,7 @@ export function useChatSubmit(params: UseChatSubmitParams): UseChatSubmitResult 
       markUnresolvedSend,
       detachedStreamSendRef,
       requestAbortControllerRef,
+      replacedMarksRef,
       setInput,
       updateConversationAttachments,
       setAttachmentError,

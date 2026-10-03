@@ -24,6 +24,7 @@ vi.mock('../../api', async (importOriginal) => {
 
 import { deleteChatThread, fetchChatThreads } from '../../api';
 import { makeDraftKey } from './draftKey';
+import { createReplacedThreadMarks } from './replacedThread';
 import { useChatSendCommits } from './useChatSendCommits';
 import { useChatSessionLifecycle } from './useChatSessionLifecycle';
 import { useChatThreadLists } from './useChatThreadLists';
@@ -63,6 +64,7 @@ function useThreadListsProbe(projectId: string) {
 
   const historyRequestIdRef = useRef(0);
   const threadListRequestIdRef = useRef(0);
+  const replacedMarksRef = useRef(createReplacedThreadMarks());
   const conversationInputsRef = useRef<Record<string, string>>({});
   const conversationAttachmentsRef = useRef<Record<string, never[]>>({});
   const draftSeedTextRef = useRef<Record<string, string>>({});
@@ -152,6 +154,7 @@ function useThreadListsProbe(projectId: string) {
     setSelectedAgentId,
     cancelThreadConfirmDelete,
     advanceDraftNonceAfterSessionGone: launcher.advanceDraftNonceAfterSessionGone,
+    replacedMarksRef,
   });
 
   const commits = useChatSendCommits({
@@ -171,6 +174,7 @@ function useThreadListsProbe(projectId: string) {
     conversationAttachmentsRef,
     setInput,
     updateConversationAttachments,
+    replacedMarksRef,
   });
 
   return {

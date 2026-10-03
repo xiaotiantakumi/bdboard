@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, type MutableRefObject } from 'react';
 import {
   fetchChatThreads,
   type ChatThreadDto,
@@ -9,7 +9,8 @@ import { readPersistedChatThreads, writePersistedChatThreadState } from '../../c
 import { dropGoneFromPersistedOpen } from './dropGoneFromPersistedOpen';
 import { toChatMessages, type ChatMessage } from './messages';
 import { pruneDeadOpenThreads } from './pruneDeadOpenThreads';
-import { restoreThreadView } from './threadViewRestore';
+import { planRecoveredTurn } from './recoveredTurnPlan';
+import { takeUnobservedOrigin, withHistoryLoaded, withoutKey, type ReplacedThreadMarks } from './replacedThread';
 import type { UseChatAgentModelStateResult } from './useChatAgentModelState';
 import type { UseChatConversationsStateResult } from './useChatConversationsState';
 import type { UseChatThreadListsResult } from './useChatThreadLists';
@@ -27,6 +28,8 @@ export interface UseChatSessionLifecycleParams
     >,
     Pick<UseChatAgentModelStateResult, 'setSelectedAgentId'> {
   selectedProjectId: string;
+  /** bdboard-w9hv: 回収が返すセッションの送信元(置き換えられたスレッド)を辿る印。 */
+  replacedMarksRef: MutableRefObject<ReplacedThreadMarks>;
   cancelThreadConfirmDelete: () => void;
   /** chat/useDraftThreadLauncher.ts の 23u nonce 前進(第14b段)。 */
   advanceDraftNonceAfterSessionGone: (projectId: string) => void;
@@ -44,14 +47,18 @@ export interface UseChatSessionLifecycleParams
  * - handleResumeDiscoveredSession: ドロワーの「CLIセッションを再開」から呼ぶ。
  * effect は持たない(useCallback 2つと、元どおり毎レンダー作り直す関数1つ)。
  * 本体・依存配列・読み取り方式(ref で読む/prev で読む/render の値で読む)は
- * 元のまま。handleHistorySessionGone の依存配列に selectedThreadIdsRef が無い
- * (exhaustive-deps の警告1件)のも元のまま持ってきた(ref は安定なので実害は無い)。
+ * 元のまま。ただし applyRecoveredTurn の open・選択の決定(置き換えられたスレッドを外す
+ * 判断を含む)は chat/recoveredTurnPlan.ts の planRecoveredTurn へ移した(bdboard-w9hv。
+ * 復元・ドラフト抑止の規則は変えていない)。handleHistorySessionGone の依存配列に
+ * selectedThreadIdsRef が無い(exhaustive-deps の警告1件)のは元のまま持ってきた
+ * (ref は安定なので実害は無い)。
  */
 export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
   const { selectedProjectId, selectedThreadIdsRef, setSelectedThreadIds } = params;
   const { historyRequestIdRef, setConversations, setHistoryLoadedFor, setLoadingHistoryFor, setThreadModelIds } = params;
   const { openThreadIdsRef, restoredProjectsRef, setThreadLists, setOpenThreadIds } = params;
   const { setSelectedAgentId, cancelThreadConfirmDelete, advanceDraftNonceAfterSessionGone, draftNoncesRef } = params;
+  const { replacedMarksRef } = params;
 
   const applyRecoveredTurn = useCallback(
     (
@@ -87,21 +94,7 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       // 安全弁は変更コストが無いのでそのまま残している。
       const knownOpen = openThreadIdsRef.current[selectedProjectId];
       const alreadyRestored = restoredProjectsRef.current.has(selectedProjectId) && knownOpen !== undefined;
-      const restored = alreadyRestored
-        ? undefined
-        : restoreThreadView(threads, readPersistedChatThreads()[selectedProjectId]);
-      if (!alreadyRestored) {
-        restoredProjectsRef.current.add(selectedProjectId);
-      }
-      // bdboard-4w2d: 復元を行う場合、永続化からの open と、この fetch の in-flight
-      // 中に別経路が先に openThreadIds へ書いていた分の両方を残す(和集合)。
-      // 復元を「永続化からの完全な置き換え」にすると、その racing write を
-      // 握りつぶしてしまう。
-      const currentOpen = alreadyRestored
-        ? (knownOpen ?? [])
-        : Array.from(new Set([...(restored?.open ?? []), ...(knownOpen ?? [])]));
-      const nextOpen = [...currentOpen.filter((id) => id !== payload.sessionId), payload.sessionId];
-      const currentSelected = selectedThreadIdsRef.current[selectedProjectId] ?? restored?.selected;
+      restoredProjectsRef.current.add(selectedProjectId);
       // bdboard-cemi: チケット起動のドラフト表示中(draftNonces[projectId] > 0 かつ
       // selectedThreadIds[projectId] が未設定。判定式は
       // chat/useThreadListSync.ts の isExplicitDraftStillSelected と同じ)に turn-status
@@ -120,18 +113,29 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
         !detachedMatchesThisRecovery &&
         (draftNoncesRef.current[selectedProjectId] ?? 0) > 0 &&
         selectedThreadIdsRef.current[selectedProjectId] === undefined;
-      const nextSelected = isExplicitDraftStillSelected ? undefined : currentSelected ?? payload.sessionId;
+      // bdboard-w9hv: 回収したセッションが、見届けられなかった sessionId 無しの再送(clearSession 後)の
+      // 結果なら、置き換えられた送信元のスレッドを open・選択・永続化から外す(commitSuccess と同じ
+      // 規則。chat/recoveredTurnPlan.ts → chat/replacedThread.ts)。スレッド一覧は下でサーバーの
+      // 一覧に置き換わるので、gone の判定は要らない。
+      // 引き取りは ref の書き換え(記録を消す)なので、引数のオブジェクトの中に隠さず先に読む。
+      const origin = takeUnobservedOrigin(replacedMarksRef.current, selectedProjectId);
+      const { nextOpen, nextSelected, persistedSelected, replacedKey } = planRecoveredTurn({
+        threads, sessionId: payload.sessionId, alreadyRestored, knownOpen, explicitDraftSelected: isExplicitDraftStillSelected,
+        origin,
+        persisted: readPersistedChatThreads()[selectedProjectId],
+        knownSelected: selectedThreadIdsRef.current[selectedProjectId],
+      });
       setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpen }));
       setConversations((prev) => ({
-        ...prev,
+        ...withoutKey(prev, replacedKey),
         [payload.sessionId]: {
           messages: toChatMessages(payload.messages),
           sessionId: payload.sessionId,
           agentId: payload.agentId,
         },
       }));
-      setHistoryLoadedFor((prev) => ({ ...prev, [payload.sessionId]: true }));
+      setHistoryLoadedFor((prev) => withHistoryLoaded(prev, payload.sessionId, replacedKey));
       if (payload.model !== undefined && payload.model !== '') {
         setThreadModelIds((prev) => ({ ...prev, [payload.sessionId]: payload.model! }));
       }
@@ -149,14 +153,11 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       // bdboard-cemi 追補(Opus レビュー minor 指摘): 抑止時(isExplicitDraftStillSelected)は
       // selectedSessionId を undefined で上書きしない — chat/useDraftThreadLauncher.ts の
       // startNewDraftThread 内 N2 コメント(「ドラフトへの切り替えは永続化済みの選択を
-      // そのまま残す」)と同じ不変条件をここでも守る。抑止していない通常経路は今まで
-      // どおり nextSelected をそのまま書く。
-      const persistedSelectedSessionId = isExplicitDraftStillSelected
-        ? readPersistedChatThreads()[selectedProjectId]?.selectedSessionId
-        : nextSelected;
+      // そのまま残す」)と同じ不変条件をここでも守る(persistedSelected、
+      // chat/recoveredTurnPlan.ts)。抑止していない通常経路は今までどおり nextSelected を書く。
       writePersistedChatThreadState(selectedProjectId, {
         activeSessionIds: nextOpen,
-        selectedSessionId: persistedSelectedSessionId,
+        selectedSessionId: persistedSelected,
       });
     },
     [
@@ -172,6 +173,7 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       setSelectedThreadIds,
       draftNoncesRef,
       setSelectedAgentId,
+      replacedMarksRef,
     ],
   );
 
