@@ -450,7 +450,7 @@ describe('commitFailure', () => {
     // 失敗時に activeSessionIds は触らない (jwu8)。この store ではメモリの open が空
     // (openThreadIdsRef に sess-c が無い) ので置き換えとは扱われず、永続化済みの sess-c が残る。
     // 開いているスレッドの置き換え (sess-c がメモリの open にある) で外れることは、
-    // 下の bdboard-drfb のテストが固定する。
+    // 上の bdboard-drfb のテストが固定する。
     expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-c2']);
   });
 

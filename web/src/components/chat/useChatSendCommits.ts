@@ -114,8 +114,11 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       // historyLoadedFor を立てないため)。
       setHistoryLoadedFor((prev) => {
         const next: Record<string, true> = { ...prev, [result.sessionId]: true };
-        // bdboard-drfb: 置き換えられた実スレッドのロード済み印は、conversations[convKey] を消す
-        // (上)のと対で外す。残すと、そのスレッドを開き直しても履歴 effect が early return して
+        // bdboard-drfb: 置き換えられた実スレッドのロード済み印を外す。conversations[convKey] は
+        // sessionId が変われば常に消す(上)が、こちらは convKey が open のとき(置き換え)だけ外す。
+        // 差が出るのは open でない convKey だが、ドラフトには印が無く、送信中にスレッドを閉じると
+        // 送信が abort されて commitSuccess まで来ないので、今のところ到達しない。
+        // 印を残すと、そのスレッドを開き直しても履歴 effect が early return して
         // 履歴 GET が走らず、conversations が空のまま死んだ/古い sessionId で再送してしまう。
         // 外せば、再オープン時に死んでいれば 404 → handleHistorySessionGone で落ち、
         // 生きていれば(agent mismatch)履歴が戻る。
@@ -137,9 +140,10 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       // bdboard-drfb: 置き換えられたスレッド convKey は永続化の open にも残さない。復元済みなら
       // nextOpenAfterCommit(convKey を除いてある)がそのまま基点になる。未復元の分岐は永続化済み
       // エントリが基点なので、置き換えが起きたときだけ、そのエントリから convKey(と、末尾へ
-      // 足し直す新セッション)を除いた open を基点として渡す。到達は稀(一覧の初回読込中に、
-      // この画面で確定したスレッドへ送って clearSession 失敗 → 再送が成功したとき)だが、
-      // 残すと再読み込みまで死んだ id が永続化に居座る。
+      // 足し直す新セッション)を除いた open を基点として渡す。未復元の分岐は初回訪問に加えて、
+      // プロジェクトを訪れ直すたびに一覧の読込が終わるまで通る(useThreadListSync が訪問の頭で
+      // 復元の印を外す)。置き換えが起きるのは clearSession 失敗と再送の成功の両方がその読込中に
+      // 終わったときだけなので実際には稀だが、残すと再読み込みまで死んだ id が永続化に居座る。
       const persistedOpenBase =
         restoredProjectsRef.current.has(selectedProjectId) && liveOpen !== undefined
           ? nextOpenAfterCommit
