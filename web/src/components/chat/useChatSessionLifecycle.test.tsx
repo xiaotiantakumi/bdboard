@@ -632,6 +632,39 @@ describe('useChatSessionLifecycle', () => {
         });
       });
 
+      it('moves the selection to the first remaining open thread when the adopted tab was closed before the refreshed list arrived', async () => {
+        writePersistedChatThreadState('project-a', {
+          activeSessionIds: ['sess-dead', 'sess-1'],
+          selectedSessionId: 'sess-1',
+        });
+        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
+        fetchChatThreadsMock.mockReturnValue(
+          new Promise<ChatThreadDto[]>((resolve) => {
+            resolveThreads = resolve;
+          }),
+        );
+        const { result, params } = setup();
+        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+        // 取り直しが届く前に採用したタブを閉じた: closeThread の代わりの選択は open の先頭 (死んだ id)。
+        act(() => {
+          params.setOpenThreadIds((prev) => ({ ...prev, 'project-a': ['sess-dead', 'sess-1'] }));
+          params.setSelectedThreadIds((prev) => ({ ...prev, 'project-a': 'sess-dead' }));
+        });
+
+        await act(async () => {
+          resolveThreads([thread('sess-1', 'live'), thread('sess-new', 'resumed')]);
+          await Promise.resolve();
+        });
+        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
+
+        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1'] });
+        expect(params.selectedThreadIdsRef.current).toEqual({ 'project-a': 'sess-1' });
+        expect(readPersistedChatThreads()['project-a']).toEqual({
+          activeSessionIds: ['sess-1'],
+          selectedSessionId: 'sess-1',
+        });
+      });
+
       it('does not prune anything when the project was already restored (the open list was filtered at restore time)', async () => {
         fetchChatThreadsMock.mockResolvedValue([thread('sess-new', 'resumed')]);
         const { result, params } = setup({

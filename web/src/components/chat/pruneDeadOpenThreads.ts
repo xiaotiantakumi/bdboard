@@ -1,5 +1,5 @@
 import type { ChatThreadDto } from '../../api';
-import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
+import { resolvePersistedSelectionAfterClose, writePersistedChatThreadState } from '../../chatThreadStorage';
 import type { UseChatThreadListsResult } from './useChatThreadLists';
 import type { UseConversationKeyResult } from './useConversationKey';
 
@@ -26,8 +26,13 @@ export interface PruneDeadOpenThreadsParams
  * 落とす対象は baseOpenThreads(採用の基点にした永続化 id)のうち一覧に無いものだけ:
  * 採用したセッション自身は一覧に載る前でも残し、採用の後に別経路(送信成功など)が open へ足した id は、
  * この一覧より新しい可能性があるので触らない。選択が落とした id を指していれば採用したセッションへ
+ * 付け替える。ただし取り直しが届く前にユーザーが採用したタブを閉じていたら、残った open の先頭へ
  * 付け替える。永続化の書き込みは setState の updater の外で行う(StrictMode の二重実行対策。
  * openThreadIdsRef / selectedThreadIdsRef は useLiveMirroredState なので set の直後に同期済み)。
+ *
+ * 既知の限界: 1 回目の採用の取り直しが届く前に、基点に入っていて一覧に無い id を 2 回目で採用すると、
+ * 1 回目の取り直しがその id を落とす。2 回目の採用にはドロワーの再操作が要り、取り直しはローカルで
+ * ms 単位なので、実際にはまず起きない(PR #824 のレビュー)。
  */
 export function pruneDeadOpenThreads({
   projectId,
@@ -46,16 +51,16 @@ export function pruneDeadOpenThreads({
     ...prev,
     [projectId]: (prev[projectId] ?? []).filter((id) => !dead.has(id)),
   }));
+  const nextOpen = openThreadIdsRef.current[projectId] ?? [];
+  const replacement = nextOpen.includes(adoptedSessionId) ? adoptedSessionId : nextOpen[0];
   setSelectedThreadIds((prev) => {
     const current = prev[projectId];
-    return current !== undefined && dead.has(current) ? { ...prev, [projectId]: adoptedSessionId } : prev;
+    return current !== undefined && dead.has(current) ? { ...prev, [projectId]: replacement } : prev;
   });
-  const liveSelected = selectedThreadIdsRef.current[projectId];
-  const persistedSelected = readPersistedChatThreads()[projectId]?.selectedSessionId;
   writePersistedChatThreadState(projectId, {
-    activeSessionIds: openThreadIdsRef.current[projectId] ?? [],
-    // ライブの選択が無い(ドラフト表示中)ときは永続化済みの選択を残す。ただし落とした id なら消す。
+    activeSessionIds: nextOpen,
+    // ライブの選択が無い(ドラフト表示中)ときは、open に残る永続化済みの選択だけを残す(e5cz と同じ規則)。
     selectedSessionId:
-      liveSelected ?? (persistedSelected !== undefined && dead.has(persistedSelected) ? undefined : persistedSelected),
+      selectedThreadIdsRef.current[projectId] ?? resolvePersistedSelectionAfterClose(projectId, nextOpen, undefined),
   });
 }
