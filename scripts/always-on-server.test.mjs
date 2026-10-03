@@ -231,8 +231,8 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
   }
 
-  function chair(args) {
-    return run(args, { BDBOARD_SERVER_CALLER: 'chair' });
+  function chair(args, extraEnv = {}) {
+    return run(args, { BDBOARD_SERVER_CALLER: 'chair', ...extraEnv });
   }
 
   function listenerPid() {
@@ -400,15 +400,45 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     expect(result.status).toBe(2);
     expect(result.stderr).toContain(TOO_OLD);
     expect(result.stderr).toContain('pull は完了しています');
-    // 同じ deploy の再実行は「変更なし」で何もしないので、入れ直しの手順を出す。
-    expect(result.stderr).toContain('deploy を同じコマンドで再実行しても');
-    expect(result.stderr).toContain(`restart --expect-pid ${pid} --build`);
+    // 同じ deploy の再実行は、最後にデプロイに成功した版からの差分で入れ直すので、そのまま案内する
+    // (bdboard-oga4。以前は「変更なし」で何もしないため restart --build を案内していた)。
+    expect(result.stderr).toContain('node を直して同じコマンドを再実行');
+    expect(result.stderr).not.toContain('deploy を同じコマンドで再実行しても');
+    expect(result.stderr).not.toContain('--build');
     expect(result.stderr).toContain('サーバーは触っていません');
     expect(git(repo, 'rev-parse', 'HEAD')).toBe(originHead);
     expect(listenerPid()).toBe(pid);
     expect(run(['status', '--port', String(port)]).stdout).toContain('HTTP 200');
     expect(readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8')).toContain('\tdeploy\tcaller=chair\t');
-  }, 60_000);
+
+    // node を直した (満たす要件にした) ことに相当する。コミットは足さず、同じ deploy を打ち直すと
+    // pull 済みの package.json の変更も含めて install → build → 再起動まで進む。npm install は使い捨て
+    // リポジトリ (依存なし) 向けに、ネットワークを使わない設定で走らせる。package.json が変わったので
+    // deploy は build:web も走らせる (偽の build は index.html を作り直すだけ)。
+    writeFileSync(
+      path.join(repo, 'package.json'),
+      JSON.stringify({
+        name: 'fake-bdboard',
+        private: true,
+        engines: { node: '>=1.0.0' },
+        scripts: {
+          start: 'node server.js',
+          'build:web': `node -e "require('fs').writeFileSync('web/dist/index.html', '<html>rebuilt</html>')"`,
+        },
+      }),
+    );
+    const retried = chair(['deploy', '--port', String(port), '--expect-pid', String(pid), '--tunnel-ack'], {
+      npm_config_offline: 'true',
+      npm_config_audit: 'false',
+      npm_config_fund: 'false',
+    });
+    expect(retried.status, retried.stderr).toBe(0);
+    expect(retried.stdout).not.toContain('server-side unchanged');
+    expect(retried.stdout).toContain('== npm install');
+    expect(retried.stdout).toContain(`== OK: PID ${pid} ->`);
+    expect(listenerPid()).not.toBe(pid);
+    git(repo, 'checkout', '--', 'package.json'); // 次のテストは、コミット済みの TOO_OLD を前提にする
+  }, 90_000);
 
   it('start refuses without starting a listener when the node is too old', async () => {
     process.kill(listenerPid(), 'SIGTERM');
@@ -626,7 +656,8 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     expectUntouched(result, pid, logBefore);
     expect(result.stderr).toContain('index.html');
     expect(result.stderr).toContain('今回の build');
-    expect(result.stderr).toContain(`restart --expect-pid ${pid} --build`);
+    expect(result.stderr).toContain('同じコマンドを再実行');
+    expect(result.stderr).not.toContain('deploy の再実行ではなく');
     expect(readFileSync(indexHtml(), 'utf8')).toBe('<html>old</html>');
     expect(readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8')).toContain('result=build-artifact-stale');
   }, 60_000);
@@ -656,7 +687,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     expect(readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8')).toContain('result=build-failed');
   }, 60_000);
 
-  it('deploy stops before the listener when the build it triggered left index.html stale; restart --build then recovers', () => {
+  it('deploy stops before the listener when the build it triggered left index.html stale; the same deploy then recovers', () => {
     const pid = listenerPid();
     const logBefore = readFileSync(env.BDBOARD_SERVER_LOG, 'utf8');
     seedOldIndexHtml();
@@ -675,9 +706,12 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     const audit = readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8');
     expect(audit).toMatch(/\tdeploy\tcaller=chair\t[^\n]*result=build-artifact-stale/);
 
-    // 案内どおり restart --build で入れ直せる (build が今度は index.html を作る)。
-    const recovered = restartBuild(pid, 'fresh');
+    // 案内どおり同じ deploy を打ち直せば入れ直せる (build が今度は index.html を作る。bdboard-oga4:
+    // 以前は OLD_HEAD == NEW_HEAD で「変更なし」になり、restart --build を案内していた)。
+    expect(result.stderr).toContain('同じコマンドを再実行');
+    const recovered = chair(['deploy', '--port', String(port), '--expect-pid', String(pid), '--tunnel-ack'], 'fresh');
     expect(recovered.status, recovered.stderr).toBe(0);
+    expect(recovered.stdout).not.toContain('server-side unchanged');
     expect(recovered.stdout).toContain(`== OK: PID ${pid} ->`);
     expect(readFileSync(indexHtml(), 'utf8')).toBe('<html>fresh</html>');
     expect(listenerPid()).not.toBe(pid);
@@ -696,5 +730,265 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     expect(readFileSync(indexHtml(), 'utf8')).toBe('<html>fresh</html>');
     expect(listenerPid()).not.toBe(pid);
     expect(readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8')).toContain('result=ok');
+  }, 60_000);
+});
+
+// bdboard-oga4: pull の後・旧 listener の停止の前に止まった deploy (build:web の失敗・build 成果物が古い・
+// node 版ゲートなど) は、以前は同じコマンドを再実行しても OLD_HEAD == NEW_HEAD で「変更なし」と判定され、
+// マージしたコードが反映されないまま exit 0 の成功扱いになった。いまは「最後にデプロイに成功した sha」
+// (監査ログの横の状態ファイル) からの差分で install / build / 再起動の要否を決めるので、停止の前に
+// 止まった deploy は原因 (環境) を直して同じコマンドを打ち直せば最後まで進む。
+// 偽の build:web (FAKE_BUILD_MODE) と偽サーバー、origin (bare) から clone した使い捨てリポジトリで確かめる。
+describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-server.sh deploy retry after an early stop', () => {
+  let tmpRoot;
+  let repo;
+  let other;
+  let port;
+  let env;
+
+  function run(args, extraEnv = {}) {
+    const result = spawnSync('bash', [SCRIPT, ...args], {
+      cwd: repo,
+      env: { ...env, ...extraEnv },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+  }
+
+  function chair(args, mode = 'fresh') {
+    return run(args, { BDBOARD_SERVER_CALLER: 'chair', FAKE_BUILD_MODE: mode });
+  }
+
+  function listenerPid() {
+    const match = /listener PID\s*:\s*([0-9]+)/.exec(run(['status', '--port', String(port)]).stdout);
+    return match === null ? null : Number(match[1]);
+  }
+
+  function git(cwd, ...args) {
+    const result = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
+    }
+    return result.stdout.trim();
+  }
+
+  function commitAll(cwd, message) {
+    git(cwd, 'add', '.');
+    git(
+      cwd,
+      '-c',
+      'user.name=bdboard-test',
+      '-c',
+      'user.email=bdboard-test@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-q',
+      '-m',
+      message,
+    );
+  }
+
+  const indexHtml = () => path.join(repo, 'web', 'dist', 'index.html');
+  const deployedFile = () => `${env.BDBOARD_SERVER_AUDIT_LOG}.deployed-head`;
+  const savedSha = () => readFileSync(deployedFile(), 'utf8').split('\t')[0];
+  const deploy = (pid, mode) =>
+    chair(['deploy', '--port', String(port), '--expect-pid', String(pid), '--tunnel-ack'], mode);
+
+  // 前の build が作った index.html を 1 時間前のものにする (今回の build より確実に古い)。
+  function seedOldIndexHtml() {
+    const old = new Date(Date.now() - 3_600_000);
+    mkdirSync(path.dirname(indexHtml()), { recursive: true });
+    writeFileSync(indexHtml(), '<html>old</html>');
+    utimesSync(indexHtml(), old, old);
+  }
+
+  // origin に web/ だけを変えるコミットを 1 つ足し、その sha を返す。
+  function pushWebChange(label) {
+    mkdirSync(path.join(other, 'web', 'src'), { recursive: true });
+    writeFileSync(path.join(other, 'web', 'src', 'App.tsx'), `// ${label}\n`);
+    commitAll(other, label);
+    git(other, 'push', '-q', 'origin', 'main');
+    return git(other, 'rev-parse', 'HEAD');
+  }
+
+  beforeAll(async () => {
+    tmpRoot = mkdtempSync(path.join(tmpdir(), 'bdboard-always-on-retry-'));
+    repo = path.join(tmpRoot, 'repo');
+    other = path.join(tmpRoot, 'other');
+    const origin = path.join(tmpRoot, 'origin.git');
+    port = await findFreePort();
+    env = {
+      PATH: process.env.PATH ?? '/usr/bin:/bin',
+      HOME: path.join(tmpRoot, 'home'),
+      BDBOARD_SERVER_LOG: path.join(tmpRoot, 'server.log'),
+      BDBOARD_SERVER_AUDIT_LOG: path.join(tmpRoot, 'restarts.log'),
+      BDBOARD_SERVER_LOCK_DIR: path.join(tmpRoot, 'restart.lock.d'),
+    };
+    mkdirSync(env.HOME, { recursive: true });
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(path.join(repo, 'server.js'), FAKE_SERVER);
+    writeFileSync(path.join(repo, 'build-web.js'), FAKE_BUILD);
+    writeFileSync(path.join(repo, '.gitignore'), 'web/dist/\n');
+    writeFileSync(
+      path.join(repo, 'package.json'),
+      JSON.stringify({
+        name: 'fake-bdboard',
+        private: true,
+        engines: { node: '>=1.0.0' },
+        scripts: { start: 'node server.js', 'build:web': 'node build-web.js' },
+      }),
+    );
+    seedOldIndexHtml();
+    git(repo, 'init', '-q');
+    git(repo, 'checkout', '-q', '-b', 'main');
+    commitAll(repo, 'fake server');
+    git(tmpRoot, 'init', '-q', '--bare', origin);
+    git(origin, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+    git(repo, 'remote', 'add', 'origin', origin);
+    git(repo, 'push', '-q', '-u', 'origin', 'main');
+    git(tmpRoot, 'clone', '-q', origin, other);
+  });
+
+  afterAll(() => {
+    const pid = listenerPid();
+    if (pid !== null) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // already gone
+      }
+    }
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('a deploy stopped by a failing build:web is completed by running the same command again', () => {
+    const started = chair(['start', '--port', String(port), '--tunnel-ack']);
+    expect(started.status, started.stderr).toBe(0);
+    const pid = listenerPid();
+    const headBefore = git(repo, 'rev-parse', 'HEAD');
+    const logBefore = readFileSync(env.BDBOARD_SERVER_LOG, 'utf8');
+    expect(run(['status', '--port', String(port)]).stdout).toContain('deployed HEAD : (記録なし');
+    const head1 = pushWebChange('web change 1');
+
+    const failed = deploy(pid, 'fail');
+
+    expect(failed.status).toBe(2);
+    expect(failed.stderr).toContain('npm run build:web に失敗しました');
+    expect(failed.stderr).toContain('同じコマンドを再実行');
+    expect(failed.stdout).not.toContain('== stopping');
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(head1); // pull は済んでいる
+    expect(listenerPid()).toBe(pid);
+    expect(readFileSync(env.BDBOARD_SERVER_LOG, 'utf8')).toBe(logBefore);
+    expect(readFileSync(indexHtml(), 'utf8')).toBe('<html>old</html>');
+    // 停止前に止まったので「デプロイ成功」は記録されない (初回は pull 前の HEAD を起点として残す)。
+    expect(savedSha()).toBe(headBefore);
+
+    // 原因 (環境) を直した = build が通る。コミットは足さず、同じコマンドを打ち直す。
+    const retried = deploy(pid, 'fresh');
+
+    expect(retried.status, retried.stderr).toBe(0);
+    expect(retried.stdout).not.toContain('server-side unchanged');
+    expect(retried.stdout).toContain('== npm run build:web');
+    expect(retried.stdout).toContain('== stopping');
+    expect(retried.stdout).toContain(`== OK: PID ${pid} ->`);
+    expect(readFileSync(indexHtml(), 'utf8')).toBe('<html>fresh</html>');
+    expect(listenerPid()).not.toBe(pid);
+    expect(savedSha()).toBe(head1);
+    expect(run(['status', '--port', String(port)]).stdout).toContain(`deployed HEAD : ${head1.slice(0, 7)}`);
+  }, 120_000);
+
+  it('a deploy on an already deployed HEAD does nothing and says so', () => {
+    const pid = listenerPid();
+    const logBefore = readFileSync(env.BDBOARD_SERVER_LOG, 'utf8');
+
+    const again = deploy(pid, 'fresh');
+
+    expect(again.status, again.stderr).toBe(0);
+    expect(again.stdout).toContain('nothing to deploy');
+    expect(again.stdout).toContain(`PID ${pid}`);
+    expect(again.stdout).not.toContain('== npm run build:web');
+    expect(again.stdout).not.toContain('== stopping');
+    expect(listenerPid()).toBe(pid);
+    expect(readFileSync(env.BDBOARD_SERVER_LOG, 'utf8')).toBe(logBefore);
+    expect(readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8')).toContain('result=no-restart-needed');
+
+    const dry = chair(['deploy', '--port', String(port), '--expect-pid', String(pid), '--dry-run', '--tunnel-ack']);
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain(`最後にデプロイに成功した sha (${savedSha().slice(0, 7)})`);
+  }, 60_000);
+
+  it('a deploy stopped by a stale build artifact is also completed by the same command', () => {
+    const pid = listenerPid();
+    seedOldIndexHtml();
+    const head2 = pushWebChange('web change 2');
+
+    const stopped = deploy(pid, 'stale');
+
+    expect(stopped.status).toBe(2);
+    expect(stopped.stderr).toContain('index.html');
+    expect(stopped.stderr).toContain('同じコマンドを再実行');
+    expect(stopped.stderr).not.toContain('deploy の再実行ではなく');
+    expect(stopped.stdout).not.toContain('== stopping');
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(head2);
+    expect(listenerPid()).toBe(pid);
+    expect(savedSha()).not.toBe(head2);
+
+    const retried = deploy(pid, 'fresh');
+
+    expect(retried.status, retried.stderr).toBe(0);
+    expect(retried.stdout).not.toContain('server-side unchanged');
+    expect(retried.stdout).toContain(`== OK: PID ${pid} ->`);
+    expect(readFileSync(indexHtml(), 'utf8')).toBe('<html>fresh</html>');
+    expect(savedSha()).toBe(head2);
+  }, 120_000);
+
+  it('restart --pull --no-build does not record the sha, so the next deploy still builds it', () => {
+    const pid = listenerPid();
+    const recorded = savedSha();
+    const head3 = pushWebChange('web change 3');
+
+    const skipped = chair(
+      ['restart', '--port', String(port), '--expect-pid', String(pid), '--pull', '--no-build', '--tunnel-ack'],
+      'fresh',
+    );
+
+    expect(skipped.status, skipped.stderr).toBe(0);
+    expect(skipped.stdout).not.toContain('== npm run build:web');
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(head3);
+    expect(savedSha()).toBe(recorded); // build を飛ばしたので「デプロイ済み」にはしない
+    const pid2 = listenerPid();
+    expect(pid2).not.toBe(pid);
+
+    const deployed = deploy(pid2, 'fresh');
+
+    expect(deployed.status, deployed.stderr).toBe(0);
+    expect(deployed.stdout).toContain('== npm run build:web');
+    expect(deployed.stdout).toContain(`== OK: PID ${pid2} ->`);
+    expect(savedSha()).toBe(head3);
+  }, 120_000);
+
+  it('ignores a saved sha that names an unknown commit or another checkout', () => {
+    const pid = listenerPid();
+    const head = git(repo, 'rev-parse', 'HEAD');
+    const logBefore = readFileSync(env.BDBOARD_SERVER_LOG, 'utf8');
+
+    writeFileSync(deployedFile(), `${'0'.repeat(40)}\t${repo}\n`);
+    const unknown = deploy(pid, 'fresh');
+    expect(unknown.status, unknown.stderr).toBe(0);
+    expect(unknown.stdout).toContain('server-side unchanged');
+    expect(unknown.stdout).not.toContain('== npm run build:web');
+
+    // 実在する sha でも、別の checkout が書いたものは起点にしない (起点にしていれば HEAD と同じなので
+    // "nothing to deploy" になるはず)。
+    writeFileSync(deployedFile(), `${head}\t${path.join(tmpRoot, 'somewhere-else')}\n`);
+    const foreign = deploy(pid, 'fresh');
+    expect(foreign.status, foreign.stderr).toBe(0);
+    expect(foreign.stdout).toContain('server-side unchanged');
+    expect(foreign.stdout).not.toContain('nothing to deploy');
+
+    expect(listenerPid()).toBe(pid);
+    expect(readFileSync(env.BDBOARD_SERVER_LOG, 'utf8')).toBe(logBefore);
   }, 60_000);
 });

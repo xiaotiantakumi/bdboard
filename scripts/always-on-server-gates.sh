@@ -2,9 +2,15 @@
 # shellcheck shell=bash disable=SC2154
 # scripts/always-on-server-gates.sh — always-on-server.sh の「停止前ゲート」2 つ (node 版・build 成果物)。
 # always-on-server.sh が deploy-changed.sh と同じ位置 (pull の前) で source する (bdboard-oga4:
-# always-on-server.sh の 500 行上限を守るための純粋な切り出し。挙動は変えていない)。
-# 単体では実行しない。呼び出し側が SCRIPT_DIR / MAIN / OLD_HEAD / NEW_HEAD / CURRENT_PIDS /
+# always-on-server.sh の 500 行上限を守るための切り出し)。
+# 単体では実行しない。呼び出し側が SCRIPT_DIR / MAIN / BASE_HEAD / NEW_HEAD / CURRENT_PIDS /
 # BUILD_STAMP を持ち、audit / die を定義済みであることを前提にする (SC2154 はそのため)。
+
+# 停止前に止まった実行の案内 (bdboard-oga4)。deploy と --pull は install / build / 再起動の要否を
+# 「最後にデプロイに成功した sha」からの差分で決めるので、pull や install が済んでいても、原因を直して
+# 同じコマンドを再実行すれば入れ直せる (以前は OLD_HEAD == NEW_HEAD で「変更なし」になり、
+# restart --build を案内していた)。
+RETRY_NOTE='原因を直したら同じコマンドを再実行してください。pull や install が済んでいても、deploy / --pull は最後にデプロイに成功した版 (status の deployed HEAD) からの差分で入れ直します。'
 
 # --- node 版ゲート (bdboard-qoxg)。npm install / build:web / 旧 listener の停止 / 起動の前に、
 # PATH 上の node が main checkout の package.json の engines.node を満たすか確かめる。
@@ -17,19 +23,20 @@
 # 1 回目は pull の前 (ロック取得直後) に見る。一番よくある原因 (シェル既定の node が古いだけ) は
 # ここで main checkout に触れずに止まり、node を直して同じコマンドを再実行すれば最初からやり直せる。
 # pull の後は、pull が package.json を変えたとき (engines.node が上がりうる) だけもう一度見る。
-# pull の後に止まると、deploy の再実行は OLD_HEAD == NEW_HEAD で「変更なし」になって何もしないので、
-# 入れ直しの手順を別に出す (PR #825 のレビュー)。チェックは $MAIN を cwd にして走らせる
+# pull の後に止まっても、deploy / --pull の再実行は最後にデプロイに成功した sha からの差分で入れ直す
+# ので、node を直して同じコマンドを再実行すればよい (bdboard-oga4。PR #825 のレビューで指摘された
+# 「OLD_HEAD == NEW_HEAD で変更なしになる」穴の解消)。チェックは $MAIN を cwd にして走らせる
 # (asdf / mise など cwd で node を選ぶ shim でも、npm run start と同じ node を見るため)。
 node_version_gate() {
   checker="$SCRIPT_DIR/node-version-check.mjs"
   untouched='サーバーは触っていません (旧プロセスのまま)。'
   if [ "$1" = 'after-pull' ]; then
     retry=(
-      "pull は完了しています ($(git -C "$MAIN" rev-parse --short "$OLD_HEAD")..$(git -C "$MAIN" rev-parse --short "$NEW_HEAD"))。deploy を同じコマンドで再実行しても、変更なしと判定されて何もしません。"
-      "node を直したら main checkout で npm install と npm --prefix web install をしてから、restart --expect-pid ${CURRENT_PIDS:-<PID>} --build で入れ直してください (サーバーが止まっていれば start --build)。"
+      "pull は完了しています ($(git -C "$MAIN" rev-parse --short "$BASE_HEAD")..$(git -C "$MAIN" rev-parse --short "$NEW_HEAD"))。node を直して同じコマンドを再実行してください。"
+      'deploy / --pull は最後にデプロイに成功した版 (status の deployed HEAD) からの差分で install / build / 再起動まで入れ直すので、pull 済みでも「変更なし」にはなりません。'
     )
   else
-    retry=('node を直して同じコマンドを再実行してください (pull はまだしていません)。')
+    retry=('node を直して同じコマンドを再実行してください (この実行ではまだ pull していません)。')
   fi
   if [ ! -f "$checker" ]; then
     audit "$CURRENT_PIDS" '' 'node-version-check-failed'
@@ -60,8 +67,9 @@ node_version_gate() {
 # (2026-09-26: 古い node で vite が構文エラーを握りつぶして exit 0、build-meta.json だけ HEAD の sha になり
 # index.html は古いまま)。build の直前に作った stamp (ロックディレクトリ内) より後に web/dist/index.html が
 # 更新されたかを見る。mtime の比較は stat ではなく node (build-artifact-check.mjs。BSD/GNU の stat 書式差を
-# 避ける。node の版は上のゲートで確認済み)。止まったときは pull や install が済んでいることがあり、deploy の
-# 再実行は「変更なし」で何もしないので、入れ直しは restart --build を案内する。チェッカーが走らないときも fail-closed。
+# 避ける。node の版は上のゲートで確認済み)。止まったときは pull や install が済んでいることがあるが、
+# deploy / --pull の再実行は最後にデプロイに成功した sha からの差分で入れ直すので、同じコマンドの再実行を
+# 案内する (RETRY_NOTE)。チェッカーが走らないときも fail-closed。
 build_artifact_gate() {
   artifact_out="$(cd "$MAIN" && node "$SCRIPT_DIR/build-artifact-check.mjs" "$MAIN/web/dist/index.html" "$BUILD_STAMP" 2>&1)"
   artifact_rc=$?
@@ -74,7 +82,5 @@ build_artifact_gate() {
     artifact_msg="build 成果物のチェックを実行できませんでした (exit $artifact_rc)。"
   fi
   [ -z "$artifact_out" ] || printf '%s\n' "$artifact_out" | tail -n 5 >&2
-  die 2 "$artifact_msg" \
-    "pull や install は済んでいることがあります。原因を直したら deploy の再実行ではなく restart --expect-pid ${CURRENT_PIDS:-<PID>} --build で入れ直してください (サーバーが止まっていれば start --build)。" \
-    'サーバーは触っていません (旧プロセスのまま)。'
+  die 2 "$artifact_msg" "$RETRY_NOTE" 'サーバーは触っていません (旧プロセスのまま)。'
 }

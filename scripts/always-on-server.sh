@@ -35,6 +35,11 @@
 #     build:web を走らせたときは、その後・旧 listener の停止の前に web/dist/index.html が今回の
 #     build で更新されたか (mtime が build 開始以降か) を確かめ、古いまま・無いなら exit 2 で止める。
 #     build:web が exit 0 を返しても成果物が古いままのことがあるため (bdboard-5st4)。
+#     deploy と --pull は install・build・再起動の要否を、pull 前後の HEAD の差ではなく「最後にデプロイ
+#     に成功した sha」(状態ファイル。既定は監査ログの隣の *.deployed-head) からの差分で決める。pull の後・
+#     停止の前に止まった deploy (build 失敗・成果物が古い・node 版など) は、原因を直して同じコマンドを
+#     再実行すれば入れ直せる (bdboard-oga4)。記録が無い初回は pull 前の HEAD が起点。ゲートは
+#     always-on-server-gates.sh、判定の pathspec は deploy-changed.sh。
 #
 # 終了コード: 0 成功 / 1 使い方 / 2 前提不成立 (トンネル稼働・ロック中・health 不通・
 #             build 失敗・build 成果物が古い・node 版不足) / 3 --expect-pid 不一致 / 4 BDBOARD_SERVER_CALLER 未宣言
@@ -62,6 +67,9 @@ always-on-server.sh — 常時稼働サーバー (main checkout の npm run star
   node の切り替えはせず、使うべき node と入れ直しの手順を表示する
   build:web を走らせたときは、その後・停止の前に web/dist/index.html が今回の build で更新された
   か (mtime が build 開始以降か) も確かめ、古いまま・無いなら exit 2 (サーバーは無傷)
+  deploy と --pull は install / build / 再起動の要否を「最後にデプロイに成功した sha」(status の
+  deployed HEAD) からの差分で決める。pull の後・停止の前に止まったときは、原因を直して同じコマンド
+  を再実行すれば入れ直せる。デプロイ済みの HEAD に対する deploy は何もしない ("nothing to deploy")
 
   --expect-pid  いま listen している PID がこれと一致するときだけ進む (CAS)。status で確認する
   --verify      kill の前に main checkout で契約の検証コマンド (npm run verify) を通す。赤なら触らない
@@ -168,6 +176,7 @@ esac
 SERVER_LOG="${BDBOARD_SERVER_LOG:-/tmp/bdboard-server.log}"
 AUDIT_LOG="${BDBOARD_SERVER_AUDIT_LOG:-/tmp/bdboard-server-restarts.log}"
 LOCK_DIR="${BDBOARD_SERVER_LOCK_DIR:-/tmp/bdboard-server-restart.lock.d}"
+DEPLOYED_FILE="${BDBOARD_SERVER_DEPLOYED_FILE:-$AUDIT_LOG.deployed-head}"
 HEALTH_URL="http://127.0.0.1:$PORT/api/health"
 
 listener_pids() {
@@ -194,10 +203,31 @@ audit() {
     >>"$AUDIT_LOG" 2>/dev/null || true
 }
 
+# 最後にデプロイに成功した sha (bdboard-oga4)。状態ファイルは "<sha><TAB><main checkout のパス>"。
+# deploy と --pull は install / build / 再起動の要否をこの sha からの差分で決める。pull 後・停止前に
+# 止まった deploy を同じコマンドで再実行すると、OLD_HEAD == NEW_HEAD で「変更なし」になるのを防ぐ。
+# web/dist/build-meta.json の sha は「最後に build を試みた sha」で成功の印にならない (2026-09-26) ので
+# 使わない。ファイルが無い・壊れている・別の checkout のもの・リポジトリに無い sha は「記録なし」(空出力)。
+read_deployed_sha() {
+  local saved_sha='' saved_main=''
+  [ -f "$DEPLOYED_FILE" ] || return 0
+  IFS=$'\t' read -r saved_sha saved_main <"$DEPLOYED_FILE" || true
+  case "$saved_sha" in '' | *[!0-9a-f]*) return 0 ;; esac
+  [ "$saved_main" = "$MAIN" ] || return 0
+  git -C "$MAIN" rev-parse --verify --quiet "$saved_sha^{commit}" 2>/dev/null || true
+}
+
+write_deployed_sha() {
+  printf '%s\t%s\n' "$1" "$MAIN" >"$DEPLOYED_FILE" 2>/dev/null || true
+}
+
 print_status() {
   pids="$(listener_pids)"
+  deployed="$(read_deployed_sha)"
+  deployed="${deployed:+$(git -C "$MAIN" rev-parse --short "$deployed" 2>/dev/null)}"
   printf 'main checkout : %s\n' "$MAIN"
   printf 'HEAD          : %s\n' "$(git -C "$MAIN" log -1 --format='%h %s' 2>/dev/null)"
+  printf 'deployed HEAD : %s\n' "${deployed:-(記録なし。deploy / --pull が成功すると記録される)}"
   printf 'port          : %s\n' "$PORT"
   if [ -n "$pids" ]; then
     printf 'listener PID  : %s\n' "$pids"
@@ -260,6 +290,10 @@ if [ -n "$DRY_RUN" ]; then
   printf '[dry-run] node 版チェック (engines.node) → 満たさなければ exit 2 (pull・サーバーを止める前)\n'
   if [ -n "$DO_PULL" ] || [ "$ACTION" = 'deploy' ]; then
     printf '[dry-run] git -C %s pull --ff-only → package.json が変わっていれば node 版チェックをもう一度\n' "$MAIN"
+    dry_base="$(read_deployed_sha)"
+    dry_base="${dry_base:0:7}"
+    printf '[dry-run] install / build / 再起動の要否は、最後にデプロイに成功した sha (%s) からの差分で決める\n' \
+      "${dry_base:-記録なし: pull 前の HEAD}"
   fi
   printf '[dry-run] build:web mode=%s\n' "$BUILD_MODE"
   [ "$BUILD_MODE" = 'never' ] ||
@@ -285,32 +319,55 @@ fi
 printf '%s\n' "$$" >"$LOCK_DIR/pid"
 trap 'rm -rf "$LOCK_DIR"' EXIT
 
+# install / build / 再起動の要否の差分は BASE_HEAD..NEW_HEAD (bdboard-oga4)。pull する action (deploy と
+# --pull) では、BASE_HEAD は「最後にデプロイに成功した sha」(記録が無い・読めない初回は pull 前の HEAD)。
+# pull の後・停止の前に止まった実行を再実行すると、pull は何もせず OLD_HEAD == NEW_HEAD になるが、
+# BASE_HEAD は前回成功した版のままなので、止まった分の install / build / 再起動を入れ直せる。
+# pull しない action は BASE_HEAD == NEW_HEAD で、従来どおり差分なし。
 changed() {
-  [ "$OLD_HEAD" != "$NEW_HEAD" ] || return 1
-  [ -n "$(git -C "$MAIN" diff --name-only "$OLD_HEAD" "$NEW_HEAD" -- "$@" 2>/dev/null)" ]
+  [ "$BASE_HEAD" != "$NEW_HEAD" ] || return 1
+  [ -n "$(git -C "$MAIN" diff --name-only "$BASE_HEAD" "$NEW_HEAD" -- "$@" 2>/dev/null)" ]
+}
+
+# 成功の記録。build を飛ばした (--no-build) 実行は「デプロイ済み」にしない: 飛ばした build を次の deploy が拾う。
+record_deployed() {
+  [ -z "$SYNC" ] || [ "$BUILD_MODE" = 'never' ] || write_deployed_sha "$NEW_HEAD"
 }
 
 OLD_HEAD="$(git -C "$MAIN" rev-parse HEAD 2>/dev/null)"
 NEW_HEAD="$OLD_HEAD"
+SYNC=''
+{ [ -n "$DO_PULL" ] || [ "$ACTION" = 'deploy' ]; } && SYNC='yes'
+BASE_HEAD="$OLD_HEAD"
+BASE_SOURCE='head'
+if [ -n "$SYNC" ]; then
+  saved_head="$(read_deployed_sha)"
+  [ -z "$saved_head" ] || { BASE_HEAD="$saved_head"; BASE_SOURCE='state'; }
+fi
 node_version_gate 'before-pull'
 
 # --- pull (deploy は常に、restart/start は --pull のとき)。
-if [ -n "$DO_PULL" ] || [ "$ACTION" = 'deploy' ]; then
+if [ -n "$SYNC" ]; then
   printf '== git -C %s pull --ff-only\n' "$MAIN"
   git -C "$MAIN" pull --ff-only || { audit "$CURRENT_PIDS" '' 'pull-failed'; die 2 'git pull --ff-only に失敗しました (main checkout に未コミットの変更や分岐がないか確認)。'; }
 fi
 NEW_HEAD="$(git -C "$MAIN" rev-parse HEAD 2>/dev/null)"
+# 記録が無い初回は、pull 前の HEAD を「サーバーが動いている版」として残す。この後の install / build で
+# 止まっても、再実行が同じ起点 (pull 前の HEAD) から差分を取れるようにするため。
+if [ "$BASE_SOURCE" = 'head' ] && [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
+  write_deployed_sha "$OLD_HEAD"
+fi
 if changed package.json; then
   node_version_gate 'after-pull'
 fi
 
 if changed package-lock.json package.json; then
   printf '== npm install (package-lock.json changed)\n'
-  (cd "$MAIN" && npm install) || die 2 'npm install に失敗しました。'
+  (cd "$MAIN" && npm install) || die 2 'npm install に失敗しました。サーバーは触っていません。' "$RETRY_NOTE"
 fi
 if changed web/package-lock.json web/package.json; then
   printf '== npm --prefix web install (web/package-lock.json changed)\n'
-  (cd "$MAIN" && npm --prefix web install) || die 2 'npm --prefix web install に失敗しました。'
+  (cd "$MAIN" && npm --prefix web install) || die 2 'npm --prefix web install に失敗しました。サーバーは触っていません。' "$RETRY_NOTE"
 fi
 
 NEED_BUILD=''
@@ -318,7 +375,7 @@ case "$BUILD_MODE" in
   always) NEED_BUILD='yes' ;;
   never) ;;
   auto)
-    if [ "$ACTION" = 'deploy' ] || [ -n "$DO_PULL" ]; then
+    if [ -n "$SYNC" ]; then
       # docs/help-content.json is bundled into the web UI too (web/src/helpContent.ts
       # imports it directly), not just read server-side at startup, so a
       # docs/help-content.json-only change needs a rebuild here as well as the
@@ -332,7 +389,7 @@ if [ -n "$NEED_BUILD" ]; then
   printf '== npm run build:web\n'
   BUILD_STAMP="$LOCK_DIR/build-started"
   : >"$BUILD_STAMP"
-  (cd "$MAIN" && npm run build:web) || { audit "$CURRENT_PIDS" '' 'build-failed'; die 2 'npm run build:web に失敗しました。サーバーは触っていません。'; }
+  (cd "$MAIN" && npm run build:web) || { audit "$CURRENT_PIDS" '' 'build-failed'; die 2 'npm run build:web に失敗しました。サーバーは触っていません。' "$RETRY_NOTE"; }
   build_artifact_gate
 fi
 
@@ -348,11 +405,17 @@ fi
 # docs/help-content.json も src/infrastructure/chat/help-content.ts が起動時に 1 回だけ読む
 # ため同様 (bdboard-kpim)。
 if [ "$ACTION" = 'deploy' ] && [ -n "$CURRENT_PIDS" ]; then
-  if ! deploy_relevant_changed "$MAIN" "$OLD_HEAD" "$NEW_HEAD" "${DEPLOY_RESTART_PATHSPEC[@]}"; then
-    printf '== server-side unchanged (%s..%s); keeping PID %s. health=HTTP %s\n' \
-      "$(git -C "$MAIN" rev-parse --short "$OLD_HEAD")" "$(git -C "$MAIN" rev-parse --short "$NEW_HEAD")" \
-      "$CURRENT_PIDS" "$(health_code)"
+  if ! deploy_relevant_changed "$MAIN" "$BASE_HEAD" "$NEW_HEAD" "${DEPLOY_RESTART_PATHSPEC[@]}"; then
+    if [ "$BASE_SOURCE" = 'state' ] && [ "$BASE_HEAD" = "$NEW_HEAD" ]; then
+      printf '== nothing to deploy: HEAD %s is already deployed; keeping PID %s. health=HTTP %s\n' \
+        "$(git -C "$MAIN" rev-parse --short "$NEW_HEAD")" "$CURRENT_PIDS" "$(health_code)"
+    else
+      printf '== server-side unchanged (%s..%s); keeping PID %s. health=HTTP %s\n' \
+        "$(git -C "$MAIN" rev-parse --short "$BASE_HEAD")" "$(git -C "$MAIN" rev-parse --short "$NEW_HEAD")" \
+        "$CURRENT_PIDS" "$(health_code)"
+    fi
     audit "$CURRENT_PIDS" "$CURRENT_PIDS" 'no-restart-needed'
+    record_deployed
     exit 0
   fi
 fi
@@ -418,6 +481,7 @@ if ! grep -q "Serving static web UI from $MAIN/web/dist" "$SERVER_LOG" 2>/dev/nu
   printf '== warning: %s に "Serving static web UI from %s/web/dist" が見当たりません (別の checkout から起動?)\n' "$SERVER_LOG" "$MAIN"
 fi
 audit "$CURRENT_PIDS" "$NEW_PIDS" 'ok'
+record_deployed
 printf '== OK: PID %s -> %s, HEAD %s, health HTTP %s\n' "${CURRENT_PIDS:-none}" "$NEW_PIDS" \
   "$(git -C "$MAIN" rev-parse --short HEAD 2>/dev/null)" "$code"
 exit 0
