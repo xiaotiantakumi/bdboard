@@ -50,17 +50,23 @@ function buildDayEntry(
   return { date, counts };
 }
 
-export function getCfdStats(
+export async function getCfdStats(
   cache: BoardCache,
   now: Date,
   options?: GetCfdStatsOptions,
-): CfdStats {
+): Promise<CfdStats> {
   const days = Math.max(1, options?.days ?? DEFAULT_DAYS);
   const timeZone = options?.timeZone ?? getBoardTimeZone();
   const cutoff = cutoffDate(now, days, timeZone);
   const projectIdFilter = options?.projectIds;
 
-  let entries = cache.listProjects();
+  // bdboard-4x55: getThroughputStats / getModelStats (bdboard-mkkx) と同じ理由で
+  // listProjectsChunked() を優先し、無ければ (インメモリ fake 等) listProjects() に
+  // 同じ結果でフォールバックする。CFD が使うのは entry.project と id 集合だけだが、
+  // 同期の listProjects() は全チケット JSON をデシリアライズして数百ms ブロックしうる。
+  let entries = cache.listProjectsChunked !== undefined
+    ? await cache.listProjectsChunked()
+    : cache.listProjects();
   if (projectIdFilter !== undefined) {
     const filterSet = new Set(projectIdFilter);
     entries = entries.filter((entry) => filterSet.has(entry.project.id));

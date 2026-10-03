@@ -6,7 +6,7 @@
 // Windows は skip (bash / lsof / nohup 前提)。
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -162,6 +162,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('[dry-run] action=start');
     expect(result.stdout).toContain('nohup npm run start');
+    expect(result.stdout).toContain('[dry-run] node 版チェック');
     expect(listenerPid()).toBeNull();
   });
 
@@ -203,4 +204,247 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     expect(audit).toContain(`\trestart\tcaller=chair\told=${firstPid}\tnew=${secondPid}\t`);
     expect(audit.split('\n').filter((line) => line.endsWith('result=ok')).length).toBe(2);
   }, 90_000);
+});
+
+// bdboard-qoxg: 停止前の node 版ゲート。実際の事故は nvm 既定の node v14.15.0 で deploy が走り、
+// build:web が `||=` の SyntaxError で落ちたのに exit 0 を返し、旧 listener を止めた後で起動に失敗したこと。
+// ここでは「PATH 上の node では満たせない要件」を engines.node >=999.0.0 で模し (実 node は相対的に
+// 古い node になる)、start / restart --build / deploy のどれも旧 listener を止める前に exit 2 で
+// 止まること、満たす要件では従来どおり進むことを、origin (bare) から clone した使い捨てリポジトリと
+// 偽サーバーで確かめる。本物の古い node でチェッカー自体が走ることは
+// scripts/node-version-guard.old-node.test.mjs (BDBOARD_OLD_NODE) が見る。
+describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-server.sh node version gate', () => {
+  const TOO_OLD = '>=999.0.0';
+  let tmpRoot;
+  let repo;
+  let other;
+  let port;
+  let env;
+
+  function run(args, extraEnv = {}) {
+    const result = spawnSync('bash', [SCRIPT, ...args], {
+      cwd: repo,
+      env: { ...env, ...extraEnv },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+  }
+
+  function chair(args) {
+    return run(args, { BDBOARD_SERVER_CALLER: 'chair' });
+  }
+
+  function listenerPid() {
+    const match = /listener PID\s*:\s*([0-9]+)/.exec(run(['status', '--port', String(port)]).stdout);
+    return match === null ? null : Number(match[1]);
+  }
+
+  function git(cwd, ...args) {
+    const result = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
+    }
+    return result.stdout.trim();
+  }
+
+  function commitAll(cwd, message) {
+    git(cwd, 'add', '.');
+    git(
+      cwd,
+      '-c',
+      'user.name=bdboard-test',
+      '-c',
+      'user.email=bdboard-test@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-q',
+      '-m',
+      message,
+    );
+  }
+
+  function writePackage(dir, enginesNode) {
+    writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({
+        name: 'fake-bdboard',
+        private: true,
+        engines: { node: enginesNode },
+        scripts: { start: 'node server.js' },
+      }),
+    );
+  }
+
+  async function waitForNoListener() {
+    for (let attempt = 0; attempt < 50 && listenerPid() !== null; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  beforeAll(async () => {
+    tmpRoot = mkdtempSync(path.join(tmpdir(), 'bdboard-always-on-node-gate-'));
+    repo = path.join(tmpRoot, 'repo');
+    other = path.join(tmpRoot, 'other');
+    const origin = path.join(tmpRoot, 'origin.git');
+    port = await findFreePort();
+    env = {
+      PATH: process.env.PATH ?? '/usr/bin:/bin',
+      HOME: path.join(tmpRoot, 'home'),
+      BDBOARD_SERVER_LOG: path.join(tmpRoot, 'server.log'),
+      BDBOARD_SERVER_AUDIT_LOG: path.join(tmpRoot, 'restarts.log'),
+      BDBOARD_SERVER_LOCK_DIR: path.join(tmpRoot, 'restart.lock.d'),
+    };
+    mkdirSync(env.HOME, { recursive: true });
+    mkdirSync(path.join(repo, 'web', 'dist'), { recursive: true });
+    writeFileSync(path.join(repo, 'web', 'dist', 'index.html'), '<html></html>');
+    writeFileSync(path.join(repo, 'server.js'), FAKE_SERVER);
+    writeFileSync(path.join(repo, '.nvmrc'), '22\n');
+    writePackage(repo, '>=1.0.0');
+    git(repo, 'init', '-q');
+    git(repo, 'checkout', '-q', '-b', 'main');
+    commitAll(repo, 'fake server');
+    git(tmpRoot, 'init', '-q', '--bare', origin);
+    git(origin, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+    git(repo, 'remote', 'add', 'origin', origin);
+    git(repo, 'push', '-q', '-u', 'origin', 'main');
+    git(tmpRoot, 'clone', '-q', origin, other);
+  });
+
+  afterAll(() => {
+    const pid = listenerPid();
+    if (pid !== null) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // already gone
+      }
+    }
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('proceeds as before when the running node satisfies engines.node', () => {
+    const started = chair(['start', '--port', String(port), '--tunnel-ack']);
+    expect(started.stderr).toBe('');
+    expect(started.status).toBe(0);
+    expect(started.stdout).toContain('== OK: PID none ->');
+    expect(listenerPid()).not.toBeNull();
+  }, 60_000);
+
+  it('restart --build stops before touching the listener when the node is too old', () => {
+    const pid = listenerPid();
+    const logBefore = readFileSync(env.BDBOARD_SERVER_LOG, 'utf8');
+    writePackage(repo, TOO_OLD);
+
+    const result = chair(['restart', '--port', String(port), '--expect-pid', String(pid), '--build', '--tunnel-ack']);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(TOO_OLD);
+    expect(result.stderr).toContain(`v${process.versions.node}`);
+    expect(result.stderr).toContain('サーバーは触っていません');
+    // build:web (この偽リポジトリには無いスクリプト) まで進んだなら別のエラーになる。ゲートが先に止めた証拠。
+    expect(result.stderr).not.toContain('build:web');
+    expect(result.stdout).not.toContain('== stopping');
+    expect(listenerPid()).toBe(pid);
+    expect(run(['status', '--port', String(port)]).stdout).toContain('HTTP 200');
+    expect(readFileSync(env.BDBOARD_SERVER_LOG, 'utf8')).toBe(logBefore);
+    const audit = readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8');
+    expect(audit).toContain('\trestart\tcaller=chair\t');
+    expect(audit).toContain('result=node-version');
+  }, 60_000);
+
+  it('deploy stops before pulling when the shell node is already too old, so the same command can be retried', () => {
+    // 一番よくある原因 (シェル既定の node が古いだけ、pull は engines.node を変えない)。pull の前に
+    // 止まるので main checkout は動かず、node を直して同じ deploy を打ち直せば入れ直しまで進む。
+    // pull の後に止めていた版では、2 回目は OLD_HEAD == NEW_HEAD で「変更なし」になり何もしなかった
+    // (PR #825 のレビュー)。作業ツリーの package.json は前のテストで TOO_OLD のまま。
+    const pid = listenerPid();
+    const headBefore = git(repo, 'rev-parse', 'HEAD');
+    mkdirSync(path.join(other, 'src'), { recursive: true });
+    writeFileSync(path.join(other, 'src', 'marker.txt'), 'server-side change\n');
+    commitAll(other, 'server-side change that does not touch package.json');
+    git(other, 'push', '-q', 'origin', 'main');
+    const originHead = git(other, 'rev-parse', 'HEAD');
+
+    const refused = chair(['deploy', '--port', String(port), '--expect-pid', String(pid), '--tunnel-ack']);
+
+    expect(refused.status).toBe(2);
+    expect(refused.stderr).toContain(TOO_OLD);
+    expect(refused.stderr).toContain('同じコマンドを再実行');
+    expect(refused.stderr).not.toContain('pull は完了しています');
+    expect(refused.stdout).not.toContain('pull --ff-only');
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(headBefore);
+    expect(listenerPid()).toBe(pid);
+
+    git(repo, 'checkout', '--', 'package.json'); // node を直した (要件を満たす) ことに相当
+    const retried = chair(['deploy', '--port', String(port), '--expect-pid', String(pid), '--tunnel-ack']);
+
+    expect(retried.status, retried.stderr).toBe(0); // stderr には git pull の fetch 表示が出る
+    expect(retried.stdout).toContain('== OK: PID');
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(originHead);
+    expect(listenerPid()).not.toBeNull();
+    expect(listenerPid()).not.toBe(pid);
+  }, 90_000);
+
+  it('deploy judges the engines.node it just pulled, and leaves the listener running', () => {
+    const pid = listenerPid();
+    git(repo, 'checkout', '--', 'package.json'); // 作業ツリーは >=1.0.0 (満たす) に戻す
+    writePackage(other, TOO_OLD);
+    commitAll(other, 'raise engines.node');
+    git(other, 'push', '-q', 'origin', 'main');
+    const originHead = git(other, 'rev-parse', 'HEAD');
+
+    const result = chair(['deploy', '--port', String(port), '--expect-pid', String(pid), '--tunnel-ack']);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(TOO_OLD);
+    expect(result.stderr).toContain('pull は完了しています');
+    // 同じ deploy の再実行は「変更なし」で何もしないので、入れ直しの手順を出す。
+    expect(result.stderr).toContain('deploy を同じコマンドで再実行しても');
+    expect(result.stderr).toContain(`restart --expect-pid ${pid} --build`);
+    expect(result.stderr).toContain('サーバーは触っていません');
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(originHead);
+    expect(listenerPid()).toBe(pid);
+    expect(run(['status', '--port', String(port)]).stdout).toContain('HTTP 200');
+    expect(readFileSync(env.BDBOARD_SERVER_AUDIT_LOG, 'utf8')).toContain('\tdeploy\tcaller=chair\t');
+  }, 60_000);
+
+  it('start refuses without starting a listener when the node is too old', async () => {
+    process.kill(listenerPid(), 'SIGTERM');
+    await waitForNoListener();
+    expect(listenerPid()).toBeNull();
+
+    const result = chair(['start', '--port', String(port), '--tunnel-ack']);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(TOO_OLD);
+    expect(result.stderr).toContain('サーバーは触っていません');
+    expect(result.stdout).not.toContain('== starting');
+    expect(listenerPid()).toBeNull();
+  }, 60_000);
+
+  it('fails closed when the checker itself cannot run on a very old node', () => {
+    // node-version-check.mjs が SyntaxError 等で落ちる (exit 1) 古すぎる node を模す。
+    const oldBin = path.join(tmpRoot, 'old-bin');
+    mkdirSync(oldBin, { recursive: true });
+    writeFileSync(
+      path.join(oldBin, 'node'),
+      '#!/bin/sh\nif [ "$1" = --version ]; then echo v14.15.0; exit 0; fi\necho "SyntaxError: Unexpected token \'||=\'" >&2\nexit 1\n',
+    );
+    chmodSync(path.join(oldBin, 'node'), 0o755);
+
+    const result = run(['start', '--port', String(port), '--tunnel-ack'], {
+      BDBOARD_SERVER_CALLER: 'chair',
+      PATH: `${oldBin}:${env.PATH}`,
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('node の版チェックを実行できませんでした');
+    expect(result.stderr).toContain('node v14.15.0');
+    expect(result.stderr).toContain("SyntaxError: Unexpected token '||='"); // チェッカーの出力も見せる
+    expect(result.stderr).toContain('サーバーは触っていません');
+    expect(result.stdout).not.toContain('== starting');
+    expect(listenerPid()).toBeNull();
+  }, 60_000);
 });

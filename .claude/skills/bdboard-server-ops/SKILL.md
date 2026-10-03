@@ -280,7 +280,21 @@ worktree-cwd case above, where every attempt reproduces (2/2).
 
 `2` (前提不成立) は2種類ある:
 - **停止前の失敗** — トンネル稼働・ロック中・`pull` 失敗・`install` 失敗・`build:web`
-  失敗・`--verify` の赤。この場合サーバーは無傷 (旧プロセスがまだ動いている)。
+  失敗・`--verify` の赤・**node 版不足**。この場合サーバーは無傷 (旧プロセスがまだ動いている)。
+  - node 版不足 (bdboard-qoxg): `start` / `restart` / `deploy` は、pull・install・build・停止の前
+    (ロック取得直後) に、PATH 上の `node` が main checkout の `package.json` の `engines.node` を
+    満たすか確かめる。満たさなければ exit 2 で、要件・現在の node・使うべき nvm の node の bin
+    (`.nvmrc` の系列を優先) を表示して止まる。**node は自動では切り替わらない** — 表示された bin を
+    `PATH="<bin>:$PATH"` で前置して同じコマンドを再実行する。非対話シェルは nvm の既定 (古い v14 等)
+    のままのことがある (2026-09-26 に `||=` の SyntaxError で build:web が exit 0 のまま失敗し、旧
+    listener を止めた後で起動に失敗して約 10 分停止した)。
+  - pull で `package.json` が変わったときは pull の後にもう一度確かめる。**ここで止まったときは
+    pull 済みなので、`deploy` を同じコマンドで再実行しても「変更なし」で何もしない。** 表示どおり
+    main checkout で `npm install` と `npm --prefix web install` をしてから
+    `restart --expect-pid <PID> --build` で入れ直す。
+  - チェッカー自体が走らない (node が古すぎて構文エラー、チェッカーが壊れた等) ときも exit 2
+    (fail-closed) で、チェッカーの出力の末尾を表示する。このときは使うべき bin は表示されないので、
+    `.nvmrc` の系列の node を自分で PATH の先頭に置く。
 - **停止後の失敗** — `port-still-bound`・health 不通・pid 不変。この場合**旧プロセスは
   既に止まっている**。新しいプロセスが起動中の可能性もある。手でもう一度 `start` しない
   — まず `status` を見直し、`/tmp/bdboard-server.log` を読む。起動中らしければ待ち、それ
