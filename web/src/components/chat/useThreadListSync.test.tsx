@@ -8,6 +8,7 @@ import { useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatThreadDto } from '../../api';
 import { writePersistedChatThreadState } from '../../chatThreadStorage';
+import { createThreadListFetchOrder } from './threadListFetchOrder';
 import { useChatConversationsState } from './useChatConversationsState';
 import { useChatNotifications } from './useChatNotifications';
 import { useConversationKey } from './useConversationKey';
@@ -53,6 +54,8 @@ function useSyncProbe({ projectId, startNewDraftThread }: { projectId: string; s
   const pendingTicketDraftProjectRef = useRef<string | null>(null);
   // bdboard-4w2d: E7 と applyRecoveredTurn が共有する「一覧・open 復元済み」マーカー。
   const restoredProjectsRef = useRef<Set<string>>(new Set());
+  // bdboard-z9mn: E7・採用の取り直し・回収が共有する、プロジェクトごとの fetch 開始順序。
+  const [threadListOrder] = useState(createThreadListFetchOrder);
   useThreadListSync({
     selectedProjectId: projectId,
     setThreadError: notifications.setThreadError,
@@ -67,6 +70,7 @@ function useSyncProbe({ projectId, startNewDraftThread }: { projectId: string; s
     setSelectedThreadIds: key.setSelectedThreadIds,
     startNewDraftThread,
     restoredProjectsRef,
+    threadListOrder,
   });
   return {
     key,
@@ -79,6 +83,7 @@ function useSyncProbe({ projectId, startNewDraftThread }: { projectId: string; s
     pendingPrefillRef,
     pendingTicketDraftProjectRef,
     restoredProjectsRef,
+    threadListOrder,
   };
 }
 
@@ -289,6 +294,53 @@ describe('useThreadListSync', () => {
     });
     await act(async () => { list.resolve([thread('sess-1')]); await list.promise; });
     expect(result.current.threadLists['proj-a']?.map((t) => t.sessionId)).toEqual(['sess-1']);
+  });
+
+  describe('thread-list fetch order (bdboard-z9mn)', () => {
+    it('does not write a response that started before a list another writer already applied', async () => {
+      const list = deferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockReturnValue(list.promise);
+      const { result } = renderProbe();
+      // 採用の取り直し(E7 より後に始まった)の一覧が先に当たっている。
+      act(() => {
+        result.current.restoredProjectsRef.current.add('proj-a');
+        result.current.openThreadIdsRef.current = { 'proj-a': ['sess-1', 'sess-new'] };
+        const seq = result.current.threadListOrder.begin('proj-a');
+        const applied = result.current.threadListOrder.admit('proj-a', seq, [thread('sess-1'), thread('sess-new')]);
+        result.current.setThreadLists({ 'proj-a': applied ?? [] });
+      });
+      await act(async () => { list.resolve([thread('sess-1'), thread('sess-2')]); await list.promise; });
+      // 古い一覧はそれを上書きしない(開いているタブのエントリを残す合成すら要らない)。
+      expect(result.current.threadLists['proj-a']?.map((t) => t.sessionId)).toEqual(['sess-1', 'sess-new']);
+      expect(result.current.openThreadIds).toEqual({});
+    });
+
+    it('lays an entry written after the fetch started over the response, and restores from that list', async () => {
+      const list = deferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockReturnValue(list.promise);
+      const { result } = renderProbe();
+      // 初回の一覧が in-flight の間に、ドラフトからの送信が成功した(マーカーは立てない)。永続化は新しい会話だけ。
+      act(() => {
+        result.current.threadListOrder.noteEntryWrite('proj-a', thread('sess-new'), 'upsert');
+        writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+      });
+      await act(async () => { list.resolve([thread('sess-1'), thread('sess-2')]); await list.promise; });
+      expect(result.current.threadLists['proj-a']?.map((t) => t.sessionId)).toEqual(['sess-1', 'sess-2', 'sess-new']);
+      // 応答に無い送信した会話を、復元で open と選択から落とさない。
+      expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-new'] });
+      expect(result.current.key.selectedThreadIds).toEqual({ 'proj-a': 'sess-new' });
+    });
+
+    it('lays a rename made after the fetch started over the response', async () => {
+      const list = deferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockReturnValue(list.promise);
+      const { result } = renderProbe();
+      act(() => {
+        result.current.threadListOrder.noteEntryWrite('proj-a', { ...thread('sess-1'), title: 'renamed' }, 'replace');
+      });
+      await act(async () => { list.resolve([thread('sess-1'), thread('sess-2')]); await list.promise; });
+      expect(result.current.threadLists['proj-a']?.map((t) => t.title)).toEqual(['renamed', 'sess-2']);
+    });
   });
 
   it('consumes a pending ticket draft on the failure path too', async () => {

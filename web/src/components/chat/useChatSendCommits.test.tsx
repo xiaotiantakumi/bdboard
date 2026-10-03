@@ -15,6 +15,7 @@ vi.mock('../../api', async (importOriginal) => {
 import { acknowledgeChatTurn, ApiError } from '../../api';
 import type { ChatAttachment } from './attachments';
 import { createReplacedThreadMarks } from './replacedThread';
+import { createThreadListFetchOrder } from './threadListFetchOrder';
 import type { ChatConversationEntry } from './useChatConversationsState';
 import { useChatSendCommits, type UseChatSendCommitsParams } from './useChatSendCommits';
 
@@ -94,6 +95,7 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
     setOpenThreadIds: setterForWithRef(store, 'openThreadIds', openThreadIdsRef),
     openThreadIdsRef,
     restoredProjectsRef,
+    threadListOrder: createThreadListFetchOrder(),
     setSelectedThreadIds: setterForWithRef(store, 'selectedThreadIds', selectedThreadIdsRef),
     selectedThreadIdsRef,
     conversationInputsRef,
@@ -364,6 +366,36 @@ describe('commitSuccess', () => {
         activeSessionIds: ['sess-a', 'sess-c'],
         selectedSessionId: 'sess-c',
       });
+    });
+  });
+
+  describe('bdboard-z9mn: the entry added to the thread list survives a list that started before the send', () => {
+    it('lays the sent session over a list fetch that started before the send', () => {
+      const { hook, params } = setup();
+      const order = params.threadListOrder;
+      const seq = order.begin('proj-a');
+      act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
+      expect(order.admit('proj-a', seq, [{ sessionId: 'sess-a', agentId: 'claude', title: 'a', pinned: false, updatedAt: 'x' }])).toEqual([
+        { sessionId: 'sess-a', agentId: 'claude', title: 'a', pinned: false, updatedAt: 'x' },
+        expect.objectContaining({ sessionId: 'sess-new', title: 'hello', pinned: false }),
+      ]);
+    });
+
+    it('does not lay the sent session over a list fetch that started after the send', () => {
+      const { hook, params } = setup();
+      const order = params.threadListOrder;
+      act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
+      const seq = order.begin('proj-a');
+      expect(order.admit('proj-a', seq, [])).toEqual([]);
+    });
+
+    it('does not lay a send into an existing thread over a list fetch that started before it, keeping the listed title and pin', () => {
+      const { hook, params } = setup();
+      const order = params.threadListOrder;
+      const seq = order.begin('proj-a');
+      const listed = { sessionId: 'sess-new', agentId: 'claude', title: 'renamed', pinned: true, updatedAt: 'x' };
+      act(() => hook.result.current.commitSuccess('sess-new', 'hello', RESULT));
+      expect(order.admit('proj-a', seq, [listed])).toEqual([listed]);
     });
   });
 

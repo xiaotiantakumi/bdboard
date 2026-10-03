@@ -9,6 +9,7 @@ import {
   type ChatTurnStatusDto,
 } from '../../api';
 import { discardUnobservedOriginOnSettle, type ReplacedThreadMarks } from './replacedThread';
+import type { ThreadListFetchOrder } from './threadListFetchOrder';
 import { TURN_STATUS_POLL_RETRY_BACKOFF_MS } from './turnStatusPolicy';
 import { decideTurnStatusStep } from './turnStatusStep';
 
@@ -48,13 +49,13 @@ export function useTurnStatusRecovery(params: {
   historyRequestIdRef: MutableRefObject<number>;
   threadListRequestIdRef: MutableRefObject<number>;
   replacedMarksRef: MutableRefObject<ReplacedThreadMarks>;
+  /** bdboard-z9mn: hydrate の一覧 fetch の開始順序番号を取る(chat/threadListFetchOrder.ts)。 */
+  threadListOrder: ThreadListFetchOrder;
   setLoadingHistoryFor: (value: string | null) => void;
   clearStreamingReplyForKey: (key: string) => void;
   clearUnresolvedSend: (sessionId: string) => void;
   applyRecoveredTurn: (
-    threads: ChatThreadDto[],
-    payload: ChatSessionMessagesDto,
-    detachedMatchesThisRecovery?: boolean,
+    threads: ChatThreadDto[], payload: ChatSessionMessagesDto, detachedMatchesThisRecovery?: boolean, listFetchSeq?: number,
   ) => void;
 }): UseTurnStatusRecoveryResult {
   const {
@@ -64,6 +65,7 @@ export function useTurnStatusRecovery(params: {
     historyRequestIdRef,
     threadListRequestIdRef,
     replacedMarksRef,
+    threadListOrder,
     setLoadingHistoryFor,
     clearStreamingReplyForKey,
     clearUnresolvedSend,
@@ -174,6 +176,11 @@ export function useTurnStatusRecovery(params: {
         // fetch が始まっていなければ)当てる。履歴の request-id も同じく当てる直前に進める
         // (bdboard-lsv2、下の apply 直前のコメント)。
         const listRequestIdAtStart = threadListRequestIdRef.current;
+        // bdboard-z9mn: この一覧 fetch の開始順序番号(プロジェクトごと。E7・採用の取り直しと共通)。
+        // threadListRequestIdRef とは別で、これを進めても hydrate を止める条件(上の
+        // listRequestIdAtStart との比較)には効かない — 採用の取り直しが hydrate の fetch 中に始まっても
+        // 回収は止まらず、applyRecoveredTurn が番号を見て、古い一覧だけを捨てる。
+        const listFetchSeq = threadListOrder.begin(selectedProjectId);
         let threads: ChatThreadDto[];
         let payload: ChatSessionMessagesDto;
         try {
@@ -203,7 +210,7 @@ export function useTurnStatusRecovery(params: {
         // 変わらない。他のスレッドの応答は、それより前に届いたものはそのまま残る。
         historyRequestIdRef.current += 1;
         setLoadingHistoryFor(null);
-        applyRecoveredTurn(threads, payload, step.detachedMatchesThisRecovery);
+        applyRecoveredTurn(threads, payload, step.detachedMatchesThisRecovery, listFetchSeq);
         if (step.detachedMatchesThisRecovery) {
           const matched = detachedSendsRef.current[selectedProjectId];
           if (matched !== undefined) {
@@ -256,6 +263,7 @@ export function useTurnStatusRecovery(params: {
     historyRequestIdRef,
     threadListRequestIdRef,
     replacedMarksRef,
+    threadListOrder,
     setLoadingHistoryFor,
     clearStreamingReplyForKey,
     clearUnresolvedSend,

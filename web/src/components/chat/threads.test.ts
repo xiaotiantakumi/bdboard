@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../../boardTimeZone';
+import type { ChatThreadDto } from '../../api';
 import {
+  appendSentThread,
   chatSettingsSummaryParts,
   compareThreadsNewestFirst,
   formatThreadUpdatedAt,
@@ -89,6 +91,37 @@ describe('partitionThreadDrawerRows', () => {
     const result = partitionThreadDrawerRows(['sess-unknown'], [], new Map());
     expect(result.pinnedOpen).toEqual([]);
     expect(result.unpinnedOpen).toEqual(['sess-unknown']);
+  });
+});
+
+// bdboard-z9mn: useChatSendCommits の commitSuccess から挙動を変えずに移した一覧への足し込み。
+describe('appendSentThread', () => {
+  const thread = (sessionId: string, title: string): ChatThreadDto => ({
+    sessionId, agentId: 'claude', title, pinned: false, updatedAt: '2026-01-01T00:00:00Z',
+  });
+
+  it('末尾へ足す', () => {
+    expect(appendSentThread([thread('a', 'A')], thread('b', 'B'), undefined)).toEqual([thread('a', 'A'), thread('b', 'B')]);
+  });
+
+  it('同じ sessionId の既存行は落として足し直す', () => {
+    expect(appendSentThread([thread('a', 'old'), thread('c', 'C')], thread('a', 'new'), undefined)).toEqual([
+      thread('c', 'C'),
+      thread('a', 'new'),
+    ]);
+  });
+
+  it('置き換えられて死んだスレッドの行を落とす', () => {
+    expect(appendSentThread([thread('gone', 'G'), thread('c', 'C')], thread('b', 'B'), 'gone')).toEqual([
+      thread('c', 'C'),
+      thread('b', 'B'),
+    ]);
+  });
+
+  it('元の配列は書き換えない', () => {
+    const list = [thread('a', 'A')];
+    appendSentThread(list, thread('b', 'B'), undefined);
+    expect(list).toEqual([thread('a', 'A')]);
   });
 });
 

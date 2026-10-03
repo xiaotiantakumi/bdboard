@@ -8,6 +8,17 @@ export function buildThreadById(threads: readonly ChatThreadDto[]): Map<string, 
   return new Map(threads.map((thread) => [thread.sessionId, thread]));
 }
 
+// 送信成功で一覧へ足すエントリ(useChatSendCommits の commitSuccess)。同じ sessionId の既存行と、
+// 置き換えられて死んだスレッド(goneSessionId)の行を落として、末尾へ足す。
+// bdboard-z9mn: useChatSendCommits.ts の max-lines のため、挙動を変えずに setThreadLists の中身を移した。
+export function appendSentThread(
+  list: readonly ChatThreadDto[],
+  entry: ChatThreadDto,
+  goneSessionId: string | undefined,
+): ChatThreadDto[] {
+  return [...list.filter((thread) => thread.sessionId !== entry.sessionId && thread.sessionId !== goneSessionId), entry];
+}
+
 export function summarizeTitle(content: string): string {
   const chars = Array.from(content.trim());
   return chars.length > 40 ? `${chars.slice(0, 40).join('')}…` : chars.join('');

@@ -1,5 +1,6 @@
 import {
   useRef,
+  useState,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -10,6 +11,7 @@ import {
   type ChatThreadDto,
 } from '../../api';
 import { resolvePersistedSelectionAfterClose, writePersistedChatThreadState } from '../../chatThreadStorage';
+import { createThreadListFetchOrder, type ThreadListFetchOrder } from './threadListFetchOrder';
 import { buildThreadById, compareThreadsNewestFirst } from './threads';
 import type { UseConversationKeyResult } from './useConversationKey';
 import { useLiveMirroredState } from './useLiveMirroredState';
@@ -55,6 +57,13 @@ export interface UseChatThreadListsResult {
    * 推測しない。
    */
   restoredProjectsRef: MutableRefObject<Set<string>>;
+  /**
+   * bdboard-z9mn: サーバーの一覧 fetch の結果でスレッド一覧を書く 3 つの処理(E7・採用の取り直し・
+   * 回収の hydrate)を、プロジェクトごとの fetch 開始順序で一本化するための状態
+   * (chat/threadListFetchOrder.ts)。参照は安定している。リネーム・ピン留め・送信成功のような
+   * ローカルの書き込みも、ここへ記録して、あとから届く古い一覧に上書きされないようにする。
+   */
+  threadListOrder: ThreadListFetchOrder;
   openThreads: string[];
   threadById: Map<string, ChatThreadDto>;
   displayedOpenThreads: string[];
@@ -157,6 +166,8 @@ export function useChatThreadLists({
   // プロジェクト単位の Set なので、useRef の初期値はこのフックの
   // 生存期間(ChatPanel 相当のマウント)を通じて1つだけ作られる。
   const restoredProjectsRef = useRef<Set<string>>(new Set());
+  // bdboard-z9mn: UseChatThreadListsResult.threadListOrder 参照。
+  const [threadListOrder] = useState(createThreadListFetchOrder);
 
   const openThreads = openThreadIds[selectedProjectId] ?? [];
   const threadById = buildThreadById(threadLists[selectedProjectId] ?? []);
@@ -261,6 +272,8 @@ export function useChatThreadLists({
     try {
       await deleteChatThread(sessionId, selectedProjectId);
       closeThread(sessionId);
+      // bdboard-z9mn: 削除したスレッドのローカル書き込みの記録を捨てる(古い一覧で蘇らせない)。
+      threadListOrder.forgetEntry(selectedProjectId, sessionId);
       setThreadLists((prev) => ({
         ...prev,
         [selectedProjectId]: (prev[selectedProjectId] ?? []).filter(
@@ -276,17 +289,22 @@ export function useChatThreadLists({
     }
   };
 
+  // bdboard-z9mn: サーバーが返したスレッド(リネーム・ピン留めの応答)を一覧へ当てる。この更新より前に
+  // 始まった一覧 fetch があとから届いても古いタイトル・ピン状態へ戻さないよう、順序管理にも記録する
+  // (chat/threadListFetchOrder.ts)。
+  const applyUpdatedThread = (sessionId: string, updated: ChatThreadDto) => {
+    threadListOrder.noteEntryWrite(selectedProjectId, updated, 'replace');
+    setThreadLists((prev) => ({
+      ...prev,
+      [selectedProjectId]: (prev[selectedProjectId] ?? []).map((thread) => (thread.sessionId === sessionId ? updated : thread)),
+    }));
+  };
+
   const renameThread = async (sessionId: string) => {
     const trimmed = renameDraft.trim();
     const patch = trimmed === '' ? { title: null as string | null } : { title: trimmed };
     try {
-      const updated = await updateChatThread(sessionId, selectedProjectId, patch);
-      setThreadLists((prev) => ({
-        ...prev,
-        [selectedProjectId]: (prev[selectedProjectId] ?? []).map((thread) =>
-          thread.sessionId === sessionId ? updated : thread,
-        ),
-      }));
+      applyUpdatedThread(sessionId, await updateChatThread(sessionId, selectedProjectId, patch));
       setThreadError(null);
     } catch (error) {
       console.error('chat thread rename failed', error);
@@ -298,13 +316,7 @@ export function useChatThreadLists({
 
   const togglePin = async (sessionId: string, pinned: boolean) => {
     try {
-      const updated = await updateChatThread(sessionId, selectedProjectId, { pinned: !pinned });
-      setThreadLists((prev) => ({
-        ...prev,
-        [selectedProjectId]: (prev[selectedProjectId] ?? []).map((thread) =>
-          thread.sessionId === sessionId ? updated : thread,
-        ),
-      }));
+      applyUpdatedThread(sessionId, await updateChatThread(sessionId, selectedProjectId, { pinned: !pinned }));
       setThreadError(null);
     } catch (error) {
       console.error('chat thread pin failed', error);
@@ -319,6 +331,7 @@ export function useChatThreadLists({
     setOpenThreadIds,
     openThreadIdsRef,
     restoredProjectsRef,
+    threadListOrder,
     openThreads,
     threadById,
     displayedOpenThreads,

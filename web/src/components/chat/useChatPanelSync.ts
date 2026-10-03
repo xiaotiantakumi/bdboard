@@ -41,7 +41,8 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     turnRecoveryGeneration, unresolvedSends, clearUnresolvedSend, clearStreamingReplyForKey,
     detachedStreamSendRef, requestAbortControllerRef, cancelThreadConfirmDelete, setThreadError,
     ticketProjectFallbackNotice, setTicketProjectFallbackNotice, setThreadLists, openThreadIds,
-    setOpenThreadIds, openThreadIdsRef, restoredProjectsRef, openThreads, conversationInputs, conversationAttachments,
+    setOpenThreadIds, openThreadIdsRef, restoredProjectsRef, threadListOrder, openThreads, conversationInputs,
+    conversationAttachments,
     attachmentErrors, conversationInputsRef, conversationAttachmentsRef, draftSeedTextRef, agents,
     setAgents, setSelectedAgentId, selectedAgent, selectedAgentUnavailable, setSelectedModelId,
     chatModelSelections, migrateDraftPayloadKey, purgeDraftPayloadKeys, pendingPrefillRef,
@@ -129,6 +130,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     setSelectedThreadIds,
     startNewDraftThread,
     restoredProjectsRef,
+    threadListOrder,
   });
 
   // bdboard-sso1.83 第15a段: applyRecoveredTurn(E8 の hydrate)・
@@ -150,6 +152,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
       openThreads,
       openThreadIdsRef,
       restoredProjectsRef,
+      threadListOrder,
       setThreadLists,
       setOpenThreadIds,
       setSelectedAgentId,
@@ -166,6 +169,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     historyRequestIdRef,
     threadListRequestIdRef,
     replacedMarksRef: send.replacedMarksRef,
+    threadListOrder,
     setLoadingHistoryFor,
     clearStreamingReplyForKey,
     clearUnresolvedSend,

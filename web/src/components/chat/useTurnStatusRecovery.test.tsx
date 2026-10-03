@@ -9,6 +9,7 @@ import { useEffect, useRef, type MutableRefObject } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSessionMessagesDto, ChatThreadDto, ChatTurnStatusDto } from '../../api';
 import { createReplacedThreadMarks, type ReplacedThreadMarks } from './replacedThread';
+import { createThreadListFetchOrder, type ThreadListFetchOrder } from './threadListFetchOrder';
 import { useTurnStatusRecovery, type DetachedTurnSend } from './useTurnStatusRecovery';
 
 vi.mock('../../api', async (importOriginal) => {
@@ -42,12 +43,13 @@ const setLoadingHistoryFor = vi.fn();
 const clearStreamingReplyForKey = vi.fn();
 const clearUnresolvedSend = vi.fn();
 
-function useRecoveryProbe({ projectId, generation, applyRecoveredTurn, onListFetch, replacedMarksRef }: {
+function useRecoveryProbe({ projectId, generation, applyRecoveredTurn, onListFetch, replacedMarksRef, threadListOrder }: {
   projectId: string;
   generation: number;
   applyRecoveredTurn: (threads: ChatThreadDto[], payload: ChatSessionMessagesDto) => void;
   onListFetch: (projectId: string, requestId: number) => void;
   replacedMarksRef: MutableRefObject<ReplacedThreadMarks>;
+  threadListOrder: ThreadListFetchOrder;
 }) {
   const detachedSendsRef = useRef<Record<string, DetachedTurnSend>>({});
   const historyRequestIdRef = useRef(0);
@@ -64,6 +66,7 @@ function useRecoveryProbe({ projectId, generation, applyRecoveredTurn, onListFet
     historyRequestIdRef,
     threadListRequestIdRef,
     replacedMarksRef,
+    threadListOrder,
     setLoadingHistoryFor,
     clearStreamingReplyForKey,
     clearUnresolvedSend,
@@ -81,12 +84,13 @@ function renderProbe(initial: { projectId?: string; generation?: number; origins
   const marks = createReplacedThreadMarks();
   Object.assign(marks.unobservedOrigins, initial.origins);
   const replacedMarksRef = { current: marks };
+  const threadListOrder = createThreadListFetchOrder();
   const rendered = renderHook(
     (props: { projectId: string; generation: number }) =>
-      useRecoveryProbe({ ...props, applyRecoveredTurn, onListFetch, replacedMarksRef }),
+      useRecoveryProbe({ ...props, applyRecoveredTurn, onListFetch, replacedMarksRef, threadListOrder }),
     { initialProps: { projectId: initial.projectId ?? 'proj-a', generation: initial.generation ?? 0 } },
   );
-  return { ...rendered, applyRecoveredTurn, listFetchIds, marks };
+  return { ...rendered, applyRecoveredTurn, listFetchIds, marks, threadListOrder };
 }
 
 describe('useTurnStatusRecovery request-id guards', () => {
@@ -155,13 +159,42 @@ describe('useTurnStatusRecovery request-id guards', () => {
     // bdboard-cemi(Opus レビュー): applyRecoveredTurn は第3引数に
     // step.detachedMatchesThisRecovery を渡すようになった。このテストでは
     // detachedSendsRef が空(何も追跡していない)なので false が渡る。
-    await waitFor(() => expect(applyRecoveredTurn).toHaveBeenCalledWith(threads, payload, false));
+    // bdboard-z9mn: 第4引数は hydrate の一覧 fetch の開始順序番号(このプロジェクトで最初の 1)。
+    await waitFor(() => expect(applyRecoveredTurn).toHaveBeenCalledWith(threads, payload, false, 1));
     // bdboard-tsen: hydrate の fetch 中は id を進めない(その間に届く E7 の一覧応答は生きていて、
     // 永続化済み open/選択の復元と pending ドラフトの消化を行える)。当てる直前に進めるので、
     // それより後に届く E7 の応答は一覧・open・選択を当てない。
     expect(probe.idAtFetch).toBe(listFetchIds['proj-a']);
     expect(probe.idAtApply).toBe(listFetchIds['proj-a'] + 1);
     expect(result.current.threadListRequestIdRef.current).toBe(listFetchIds['proj-a'] + 1);
+  });
+
+  it('keeps hydrating when another thread-list writer takes a later fetch order during the hydrate fetch (bdboard-z9mn)', async () => {
+    fetchChatTurnStatusMock.mockResolvedValueOnce(COMPLETED).mockResolvedValue(IDLE);
+    let resolveThreads!: (threads: ChatThreadDto[]) => void;
+    fetchChatThreadsMock.mockImplementation(
+      () => new Promise<ChatThreadDto[]>((resolve) => { resolveThreads = resolve; }),
+    );
+    const payload: ChatSessionMessagesDto = { sessionId: 'sess-1', agentId: 'claude', messages: [] };
+    fetchChatSessionMessagesMock.mockResolvedValue(payload);
+
+    const { result, applyRecoveredTurn, threadListOrder } = renderProbe();
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+    const requestIdBefore = result.current.threadListRequestIdRef.current;
+    // 回収の fetch 中に、採用の取り直しが一覧 fetch を始めた(開始順序番号だけを取る。threadListRequestIdRef は進めない)。
+    const adoptionSeq = threadListOrder.begin('proj-a');
+    expect(result.current.threadListRequestIdRef.current).toBe(requestIdBefore);
+    await act(async () => {
+      resolveThreads([]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // 回収は止まらずに当たる(recoveredSessionIds から外さずに return しない)。一覧の新旧は applyRecoveredTurn が
+    // 番号で決めるので、hydrate の番号はこの取り直しより小さいまま渡る。
+    await waitFor(() => expect(applyRecoveredTurn).toHaveBeenCalledTimes(1));
+    const hydrateSeq = applyRecoveredTurn.mock.calls[0]?.[3] as number;
+    expect(hydrateSeq).toBeLessThan(adoptionSeq);
+    await waitFor(() => expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-1'));
   });
 
   it('drops a hydrate whose thread-list request id was superseded while its fetch was in flight', async () => {

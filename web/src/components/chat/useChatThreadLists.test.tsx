@@ -229,6 +229,54 @@ describe('useChatThreadLists', () => {
     expect(setThreadError).toHaveBeenCalledWith('ピン留めの変更に失敗しました。');
   });
 
+  describe('thread-list fetch order (bdboard-z9mn)', () => {
+    it('renameThread lays the renamed entry over a list that started before the rename', async () => {
+      updateChatThreadMock.mockResolvedValueOnce(thread({ sessionId: 'sess-1', title: 'renamed' }));
+      const { result } = setup({ renameDraft: 'renamed' });
+      const seq = result.current.threadListOrder.begin('project-a');
+      await act(async () => result.current.renameThread('sess-1'));
+      expect(result.current.threadListOrder.admit('project-a', seq, [thread({ sessionId: 'sess-1', title: 'old title' })])).toEqual([
+        thread({ sessionId: 'sess-1', title: 'renamed' }),
+      ]);
+    });
+
+    it('togglePin lays the pinned entry over a list that started before the toggle', async () => {
+      updateChatThreadMock.mockResolvedValueOnce(thread({ sessionId: 'sess-1', pinned: true }));
+      const { result } = setup();
+      const seq = result.current.threadListOrder.begin('project-a');
+      await act(async () => result.current.togglePin('sess-1', false));
+      expect(result.current.threadListOrder.admit('project-a', seq, [thread({ sessionId: 'sess-1', pinned: false })])).toEqual([
+        thread({ sessionId: 'sess-1', pinned: true }),
+      ]);
+    });
+
+    it('does not record a failed rename', async () => {
+      updateChatThreadMock.mockRejectedValueOnce(new Error('boom'));
+      const { result } = setup({ renameDraft: 'x' });
+      const seq = result.current.threadListOrder.begin('project-a');
+      await act(async () => result.current.renameThread('sess-1'));
+      expect(result.current.threadListOrder.admit('project-a', seq, [thread({ sessionId: 'sess-1', title: 'old title' })])).toEqual([
+        thread({ sessionId: 'sess-1', title: 'old title' }),
+      ]);
+    });
+
+    it('deleteThread forgets the local write so a later list does not bring the thread back', async () => {
+      const { result } = setup();
+      const order = result.current.threadListOrder;
+      const seq = order.begin('project-a');
+      order.noteEntryWrite('project-a', thread({ sessionId: 'sess-1', title: 'sent' }), 'upsert');
+      await act(async () => result.current.deleteThread('sess-1'));
+      expect(order.admit('project-a', seq, [])).toEqual([]);
+    });
+
+    it('keeps the order object stable across renders', () => {
+      const { result, rerender, params } = setup();
+      const before = result.current.threadListOrder;
+      rerender({ ...params, renameDraft: 'changed' });
+      expect(result.current.threadListOrder).toBe(before);
+    });
+  });
+
   it('derives displayedOpenThreads newest-first while leaving openThreadIds insertion order intact', async () => {
     const { result } = setup();
     act(() => {
