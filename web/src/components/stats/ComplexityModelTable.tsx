@@ -64,7 +64,7 @@ export function ComplexityModelTable({ stats }: { stats: ComplexityModelStatsDto
       {stats.fixPushPendingCount > 0 && (
         <p className="throughput-chart-description" role="status">
           修正push回数を取得中のチケットが {stats.fixPushPendingCount} 件あります
-          (取得でき次第、自動で更新されます)。
+          (数回までは自動で更新します。残った分は再読み込みで反映されます)。
         </p>
       )}
       {stats.unrecordedTicketCount > 0 && (

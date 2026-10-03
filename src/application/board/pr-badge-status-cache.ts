@@ -7,6 +7,7 @@ import {
   collectTerminalPrBadgeStatusEntries,
   isMergedPendingStatus,
   isTerminalPrStatus,
+  keepPermanentStatusOnFailure,
   type PersistedPrBadgeStatusEntry,
   type PrBadgeStatusCacheEntry,
 } from './pr-badge-status-cache-types.js';
@@ -267,6 +268,13 @@ export class PrBadgeStatusCache {
 
   private recordFailure(url: string): void {
     const previous = this.entries.get(url);
+    // bdboard-p5l.27: 恒久エントリの取り直し (統計の先読みだけが行う) の失敗では、バッジの
+    // 確定ステータスを否定キャッシュへ落とさない (keepPermanentStatusOnFailure)。
+    const kept = keepPermanentStatusOnFailure(previous);
+    if (kept !== undefined) {
+      this.entries.set(url, kept);
+      return;
+    }
     this.entries.set(url, {
       status: null,
       fetchedAt: this.now(),

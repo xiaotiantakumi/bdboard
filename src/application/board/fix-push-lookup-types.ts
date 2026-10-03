@@ -6,7 +6,8 @@ import type { Ticket } from '../../domain/ticket.js';
  *
  * - known: 取得できた値 (0 は「PR 作成後の追加コミットなし」という確定値)。
  * - unknown + pending=false: 確定した「不明」(PR のコメントが無い / PR URL が無い /
- *   gh が応答したが日時が読めなかった / 直近の gh 取得が失敗して否定キャッシュ中)。
+ *   gh が応答したが日時が読めなかった / 直近の gh 取得が失敗して否定キャッシュ中 /
+ *   古い恒久エントリの取り直しが失敗した)。
  * - unknown + pending=true: まだ取れていないだけ (PR URL の解決前・gh の取得前・古い
  *   永続エントリの取り直し待ち)。先読みが進めば known / 確定 unknown に変わりうる。
  */

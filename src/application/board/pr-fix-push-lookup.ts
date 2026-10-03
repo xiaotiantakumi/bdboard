@@ -50,8 +50,9 @@ export function createFixPushLookup(
     if (typeof status.fixPushCount === 'number') {
       return { kind: 'known', count: status.fixPushCount };
     }
-    // null = gh は応答したが日時が読めなかった (確定した不明)。undefined = この項目が入る前
-    // の古い恒久エントリで、先読みが取り直すまで pending。
+    // null = gh は応答したが日時が読めなかった、または古い恒久エントリの取り直しが失敗した
+    // (確定した不明)。undefined = この項目が入る前の古い恒久エントリで、先読みが取り直す
+    // まで pending。
     return status.fixPushCount === null ? NO_PR : PENDING;
   };
 }

@@ -323,6 +323,40 @@ describe('createFixPushWarmer (bdboard-p5l.27)', () => {
     ]);
   });
 
+  // レビュー指摘: 恒久エントリを取り直すのは統計の先読みだけ。その取り直しが gh の失敗
+  // (高負荷時のタイムアウト・認証切れ・PR 削除) で終わったとき、バッジ用の確定ステータスを
+  // 否定キャッシュへ落とすと、バッジが URL のみに劣化し、永続ファイルからも消え、
+  // /api/pr-links が gh で取り直し続けることになる。
+  it('keeps a legacy permanent badge status when its re-fetch fails, and counts it as a confirmed unknown', async () => {
+    const legacyStatus: PrStatus = { state: 'merged', checkStatus: 'pass' };
+    const legacy = target('bdboard-legacy');
+    const cache = setup([legacy]);
+    const statusCache = new PrBadgeStatusCache({
+      initialEntries: [{ url: URL_A, status: legacyStatus, fetchedAt: 1, mergedPendingRetries: 0 }],
+    });
+    const shared = createPrBadgeShared(statusCache);
+    const prStatusReader = statusReaderFor({ [URL_A]: { status: null, reason: 'timeout' } });
+    const warm = createFixPushWarmer({
+      cache,
+      commentReader: commentReaderFor({ 'bdboard-legacy': URL_A }),
+      prStatusReader,
+      shared,
+    });
+
+    await warm();
+    await warm();
+
+    // バッジ (/api/pr-links は get() を読む) は確定ステータスのまま。
+    expect(statusCache.get(URL_A)).toMatchObject(legacyStatus);
+    // 統計は確定した「不明」で、同じプロセスの中では取り直さない (ポーリングも止まる)。
+    expect(createFixPushLookup(shared)(legacy)).toEqual({ kind: 'unknown', pending: false });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+    // 永続化する写しは恒久のまま件数を省く (= 次の起動で一度だけ取り直す)。
+    expect(statusCache.getTerminalEntries()).toEqual([
+      { url: URL_A, status: legacyStatus, fetchedAt: 1, mergedPendingRetries: 0 },
+    ]);
+  });
+
   it('shares one in-flight warm per project filter (single-flight)', async () => {
     const cache = setup([target('bdboard-t1')]);
     const commentReader = commentReaderFor({ 'bdboard-t1': URL_A });
