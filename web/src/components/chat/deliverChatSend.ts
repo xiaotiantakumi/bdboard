@@ -136,8 +136,10 @@ export async function deliverChatSend(params: DeliverChatSendParams): Promise<vo
           streamingKey: sendKey,
           detachedAt: Date.now(),
           fail: () => {
-            // bdboard-0u16: turn-status が回収できなかった(idle / 回収の諦め)ので、憶えていた起点も古い。
+            // bdboard-0u16: この送信は失敗として確定する(idle / 一致する failed / 回収の諦め)ので、憶えていた起点も捨てる。
             // 残すと後の無関係な回収がその起点を「置き換えられた」と判定して別のスレッドを閉じる。
+            // ネットワーク断による諦めではターンがサーバーで完走しうるが、その後の回収で B を閉じないことは許容する
+            // (この画面は B で送信失敗を表示し入力も戻しているので、w9hv 以前の挙動に戻るだけ)。
             clearUnobservedOriginFor(replacedMarksRef.current, projectId, sendKey);
             onFailure(new Error(CHAT_STREAM_DETACHED_FAILED_MESSAGE, { cause: detachedError }));
           },

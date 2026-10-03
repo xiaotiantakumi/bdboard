@@ -926,8 +926,8 @@ describe('ChatPanel', () => {
   // 流れ: 再送(POST 2、sessionId 無し)を別スレッドへの切り替えで abort → turn-status は settled(idle / failed)
   // → other-session から別の送信(POST 3)を出して abort → 回収が closed-session の完了を返す。
   it.each([
-    ['idle', { state: 'idle' } as ChatTurnStatusDto],
-    ['failed', { state: 'failed', code: 'agent_error', agentId: 'claude', failedAt: '2026-01-02T00:00:30Z' } as ChatTurnStatusDto],
+    ['idle', { state: 'idle' } satisfies ChatTurnStatusDto],
+    ['failed', { state: 'failed', code: 'agent_error', agentId: 'claude', failedAt: '2026-01-02T00:00:30Z' } satisfies ChatTurnStatusDto],
   ])('bdboard-0u16: an aborted re-send whose turn ended %s does not close an unrelated open thread when a later turn-status recovery returns a known closed session', async (_label, settled) => {
     const user = userEvent.setup();
     const titles: Record<string, string> = {
