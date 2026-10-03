@@ -254,6 +254,30 @@ describe('deliverChatSend — remembering the origin of an unobserved send (bdbo
     expect(send.replacedMarksRef.current.unobservedOrigins).toEqual({ 'proj-a': 'key-a' });
   });
 
+  // bdboard-0u16: 配信停止した送信を turn-status が回収できず(idle / 回収の諦め)fail() で送信失敗に戻すとき、
+  // 憶えていた起点も捨てる。残すと、後の無関係な回収がその起点を「置き換えられた」と判定して別のスレッドを閉じる。
+  it('bdboard-0u16: fail() of a detached send without a session id drops its own origin record and then commits the failure', async () => {
+    streamMock.mockRejectedValue(new ChatStreamEndedWithoutResultError());
+    const { params, send, onFailure, detachedStreamSendRef } = setup({ streaming: true, sessionId: undefined });
+    await deliverChatSend(params);
+    expect(send.replacedMarksRef.current.unobservedOrigins).toEqual({ 'proj-a': 'key-a' });
+
+    detachedStreamSendRef.current['proj-a'].fail();
+    expect(send.replacedMarksRef.current.unobservedOrigins).toEqual({});
+    expect(onFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('bdboard-0u16: fail() of a detached send leaves another send\'s origin record alone', async () => {
+    streamMock.mockRejectedValue(new ChatStreamEndedWithoutResultError());
+    const { params, send, onFailure, detachedStreamSendRef } = setup({ streaming: true, sessionId: undefined });
+    await deliverChatSend(params);
+    send.replacedMarksRef.current.unobservedOrigins['proj-a'] = 'key-other';
+
+    detachedStreamSendRef.current['proj-a'].fail();
+    expect(send.replacedMarksRef.current.unobservedOrigins).toEqual({ 'proj-a': 'key-other' });
+    expect(onFailure).toHaveBeenCalledTimes(1);
+  });
+
   it('does not remember a send that has a session id (markUnresolvedSend covers it)', async () => {
     postMock.mockRejectedValue(abortError());
     const { params, send } = setup();

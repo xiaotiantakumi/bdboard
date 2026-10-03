@@ -5,9 +5,10 @@
 // 握りつぶす)。進めるのは回収したターンを当てる直前だけ(hydrate の fetch の後。一覧は
 // bdboard-tsen、履歴は bdboard-lsv2)で、そこでは従来どおり古い応答を無効化する。
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type MutableRefObject } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSessionMessagesDto, ChatThreadDto, ChatTurnStatusDto } from '../../api';
+import { createReplacedThreadMarks, type ReplacedThreadMarks } from './replacedThread';
 import { useTurnStatusRecovery, type DetachedTurnSend } from './useTurnStatusRecovery';
 
 vi.mock('../../api', async (importOriginal) => {
@@ -41,11 +42,12 @@ const setLoadingHistoryFor = vi.fn();
 const clearStreamingReplyForKey = vi.fn();
 const clearUnresolvedSend = vi.fn();
 
-function useRecoveryProbe({ projectId, generation, applyRecoveredTurn, onListFetch }: {
+function useRecoveryProbe({ projectId, generation, applyRecoveredTurn, onListFetch, replacedMarksRef }: {
   projectId: string;
   generation: number;
   applyRecoveredTurn: (threads: ChatThreadDto[], payload: ChatSessionMessagesDto) => void;
   onListFetch: (projectId: string, requestId: number) => void;
+  replacedMarksRef: MutableRefObject<ReplacedThreadMarks>;
 }) {
   const detachedSendsRef = useRef<Record<string, DetachedTurnSend>>({});
   const historyRequestIdRef = useRef(0);
@@ -61,6 +63,7 @@ function useRecoveryProbe({ projectId, generation, applyRecoveredTurn, onListFet
     detachedSendsRef,
     historyRequestIdRef,
     threadListRequestIdRef,
+    replacedMarksRef,
     setLoadingHistoryFor,
     clearStreamingReplyForKey,
     clearUnresolvedSend,
@@ -69,16 +72,21 @@ function useRecoveryProbe({ projectId, generation, applyRecoveredTurn, onListFet
   return { historyRequestIdRef, threadListRequestIdRef };
 }
 
-function renderProbe(initial: { projectId?: string; generation?: number } = {}) {
+// origins: bdboard-0u16 の、deliverChatSend が憶えた中断した再送の起点の記録(projectId → 会話キー)。
+// 最初のポーリングより前に入れておく必要があるので、フックを描画する前に ref へ仕込む。
+function renderProbe(initial: { projectId?: string; generation?: number; origins?: Record<string, string> } = {}) {
   const applyRecoveredTurn = vi.fn();
   const listFetchIds: Record<string, number> = {};
   const onListFetch = (projectId: string, requestId: number) => { listFetchIds[projectId] = requestId; };
+  const marks = createReplacedThreadMarks();
+  Object.assign(marks.unobservedOrigins, initial.origins);
+  const replacedMarksRef = { current: marks };
   const rendered = renderHook(
     (props: { projectId: string; generation: number }) =>
-      useRecoveryProbe({ ...props, applyRecoveredTurn, onListFetch }),
+      useRecoveryProbe({ ...props, applyRecoveredTurn, onListFetch, replacedMarksRef }),
     { initialProps: { projectId: initial.projectId ?? 'proj-a', generation: initial.generation ?? 0 } },
   );
-  return { ...rendered, applyRecoveredTurn, listFetchIds };
+  return { ...rendered, applyRecoveredTurn, listFetchIds, marks };
 }
 
 describe('useTurnStatusRecovery request-id guards', () => {
@@ -264,5 +272,60 @@ describe('useTurnStatusRecovery request-id guards', () => {
     expect(applyRecoveredTurn).not.toHaveBeenCalled();
     expect(result.current.historyRequestIdRef.current).toBe(0);
     expect(setLoadingHistoryFor).not.toHaveBeenCalledWith(null);
+  });
+});
+
+// bdboard-0u16: 中断した sessionId 無しの再送の起点の記録(replacedMarksRef.unobservedOrigins)は、
+// そのターンが回収できる完了を残さず終わった(idle / failed)のに残ると、後の無関係な回収
+// (開いていない既知のセッション)がその起点を「置き換えられた」と判定して無関係なスレッドを閉じる。
+describe('useTurnStatusRecovery discards a stale unobserved-origin record (bdboard-0u16)', () => {
+  const FAILED_SESSIONLESS: ChatTurnStatusDto = {
+    state: 'failed',
+    code: 'agent_error',
+    agentId: 'claude',
+    failedAt: '2026-01-01T00:00:00Z',
+  };
+
+  beforeEach(() => {
+    fetchChatTurnStatusMock.mockResolvedValue(IDLE);
+    acknowledgeChatTurnMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    try {
+      cleanup();
+    } finally {
+      vi.resetAllMocks();
+    }
+  });
+
+  it('drops the project record when turn-status is idle, and keeps another project\'s', async () => {
+    const { marks } = renderProbe({ origins: { 'proj-a': 'sess-b', 'proj-b': 'sess-d' } });
+    await waitFor(() => expect(marks.unobservedOrigins).toEqual({ 'proj-b': 'sess-d' }));
+  });
+
+  it('drops the record when the aborted turn failed on the server (a sessionless failed turn nobody can ACK)', async () => {
+    fetchChatTurnStatusMock.mockResolvedValue(FAILED_SESSIONLESS);
+    const { marks } = renderProbe({ origins: { 'proj-a': 'sess-b' } });
+    await waitFor(() => expect(marks.unobservedOrigins).toEqual({}));
+  });
+
+  it('keeps the record while the turn is still processing', async () => {
+    fetchChatTurnStatusMock.mockResolvedValue({ state: 'processing' });
+    const { marks } = renderProbe({ origins: { 'proj-a': 'sess-b' } });
+    await waitFor(() => expect(fetchChatTurnStatusMock).toHaveBeenCalledTimes(1));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(marks.unobservedOrigins).toEqual({ 'proj-a': 'sess-b' });
+  });
+
+  it('leaves the record for applyRecoveredTurn to take when the turn completed (the recovery consumes it, not the poll)', async () => {
+    fetchChatTurnStatusMock.mockResolvedValueOnce(COMPLETED).mockResolvedValue(IDLE);
+    fetchChatThreadsMock.mockResolvedValue([]);
+    fetchChatSessionMessagesMock.mockResolvedValue({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+    const seen: Record<string, string>[] = [];
+    const { marks, applyRecoveredTurn } = renderProbe({ origins: { 'proj-a': 'sess-b' } });
+    applyRecoveredTurn.mockImplementation(() => { seen.push({ ...marks.unobservedOrigins }); });
+    await waitFor(() => expect(applyRecoveredTurn).toHaveBeenCalledTimes(1));
+    expect(seen).toEqual([{ 'proj-a': 'sess-b' }]);
   });
 });

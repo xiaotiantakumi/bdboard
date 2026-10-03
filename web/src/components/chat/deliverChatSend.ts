@@ -6,7 +6,7 @@ import {
   type ChatMessageRequest,
   type ChatMessageResponseDto,
 } from '../../api';
-import { markUnobservedSend } from './replacedThread';
+import { clearUnobservedOriginFor, markUnobservedSend } from './replacedThread';
 import { CHAT_STREAM_DETACHED_FAILED_MESSAGE } from './turnStatusPolicy';
 import type { UseChatSendStateResult } from './useChatSendState';
 
@@ -135,7 +135,12 @@ export async function deliverChatSend(params: DeliverChatSendParams): Promise<vo
           sessionId,
           streamingKey: sendKey,
           detachedAt: Date.now(),
-          fail: () => onFailure(new Error(CHAT_STREAM_DETACHED_FAILED_MESSAGE, { cause: detachedError })),
+          fail: () => {
+            // bdboard-0u16: turn-status が回収できなかった(idle / 回収の諦め)ので、憶えていた起点も古い。
+            // 残すと後の無関係な回収がその起点を「置き換えられた」と判定して別のスレッドを閉じる。
+            clearUnobservedOriginFor(replacedMarksRef.current, projectId, sendKey);
+            onFailure(new Error(CHAT_STREAM_DETACHED_FAILED_MESSAGE, { cause: detachedError }));
+          },
         };
         setTurnRecoveryGeneration((generation) => generation + 1);
         markOutcomeUnobserved();
