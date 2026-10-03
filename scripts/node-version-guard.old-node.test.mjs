@@ -3,7 +3,9 @@
 // Windows と通常のローカル実行を変えないため skip する。ただし BDBOARD_OLD_NODE_REQUIRED=1
 // (CI の verify job に job 単位で設定) のときに未設定なら skip せず落とす — ワークフローの
 // ステップが消えて黙って skip に戻り、CI が緑のまま検出力を失うのを防ぐ。
-// ローカル再現: BDBOARD_OLD_NODE=$HOME/.nvm/versions/node/v14.15.0/bin/node npm run test:server -- scripts/node-version-guard.old-node.test.mjs
+// ローカル再現 (arm64 Mac): BDBOARD_OLD_NODE=$HOME/.nvm/versions/node/v16.17.0/bin/node npm run test:server -- scripts/node-version-guard.old-node.test.mjs
+// nvm の v14.15.0 は x86_64 で arm64 Mac では動かず、v16 は `||=` を通すので v14 固有のパース失敗は
+// CI だけが確かめる。詳細: docs/VERIFY.md「旧 node テストをローカルで再現する」(bdboard-exh7)。
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';

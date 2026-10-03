@@ -73,7 +73,9 @@ function useSyncProbe({ projectId, startNewDraftThread }: { projectId: string; s
     conv,
     notifications,
     threadLists,
+    setThreadLists,
     openThreadIds,
+    openThreadIdsRef,
     pendingPrefillRef,
     pendingTicketDraftProjectRef,
     restoredProjectsRef,
@@ -242,6 +244,51 @@ describe('useThreadListSync', () => {
     expect(result.current.openThreadIds).toEqual({});
     expect(result.current.key.selectedThreadIds).toEqual({});
     expect(startNewDraftThread.mock.calls).toEqual([['proj-a']]);
+  });
+
+  it('keeps the list entries of open tabs when another writer established the project and refreshed the list before the stale fetch resolves (bdboard-znnl)', async () => {
+    // 採用(handleResumeDiscoveredSession)が open と一覧を先に確立し、その後で採用より前に始まった
+    // 古い初回の応答が届く。応答には sess-new が無いが、開いているタブのエントリは残す。
+    // 開いていない古いエントリ(sess-closed)は応答に無ければ落とす。
+    const list = deferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockReturnValue(list.promise);
+    const { result } = renderProbe();
+    act(() => {
+      result.current.restoredProjectsRef.current.add('proj-a');
+      result.current.openThreadIdsRef.current = { 'proj-a': ['sess-1', 'sess-new'] };
+      result.current.setThreadLists({
+        'proj-a': [thread('sess-1'), thread('sess-new'), thread('sess-closed')],
+      });
+    });
+    await act(async () => { list.resolve([thread('sess-1'), thread('sess-2')]); await list.promise; });
+    expect(result.current.threadLists['proj-a']?.map((t) => t.sessionId)).toEqual(['sess-1', 'sess-2', 'sess-new']);
+    // open と選択は復元し直さない(既存の bdboard-4w2d の振る舞いのまま)。
+    expect(result.current.openThreadIds).toEqual({});
+    expect(result.current.key.selectedThreadIds).toEqual({});
+  });
+
+  it('applies the response as-is when another writer established the project but no list was written yet (bdboard-znnl)', async () => {
+    const list = deferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockReturnValue(list.promise);
+    const { result } = renderProbe();
+    act(() => {
+      result.current.restoredProjectsRef.current.add('proj-a');
+      result.current.openThreadIdsRef.current = { 'proj-a': ['sess-new'] };
+    });
+    await act(async () => { list.resolve([thread('sess-1')]); await list.promise; });
+    expect(result.current.threadLists['proj-a']?.map((t) => t.sessionId)).toEqual(['sess-1']);
+  });
+
+  it('replaces a previous visit\'s list outright when no other writer established the project (bdboard-znnl)', async () => {
+    const list = deferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockReturnValue(list.promise);
+    const { result } = renderProbe();
+    act(() => {
+      result.current.openThreadIdsRef.current = { 'proj-a': ['sess-old'] };
+      result.current.setThreadLists({ 'proj-a': [thread('sess-old')] });
+    });
+    await act(async () => { list.resolve([thread('sess-1')]); await list.promise; });
+    expect(result.current.threadLists['proj-a']?.map((t) => t.sessionId)).toEqual(['sess-1']);
   });
 
   it('consumes a pending ticket draft on the failure path too', async () => {
