@@ -14,6 +14,7 @@ vi.mock('../../api', async (importOriginal) => {
 
 import { acknowledgeChatTurn, ApiError } from '../../api';
 import type { ChatAttachment } from './attachments';
+import { createReplacedThreadMarks } from './replacedThread';
 import type { ChatConversationEntry } from './useChatConversationsState';
 import { useChatSendCommits, type UseChatSendCommitsParams } from './useChatSendCommits';
 
@@ -103,6 +104,7 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
         store.attachments = updater(store.attachments);
       },
     ),
+    replacedMarksRef: { current: createReplacedThreadMarks() },
     ...overrides,
   };
   const hook = renderHook((props: UseChatSendCommitsParams) => useChatSendCommits(props), { initialProps: params });

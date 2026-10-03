@@ -45,7 +45,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     attachmentErrors, conversationInputsRef, conversationAttachmentsRef, draftSeedTextRef, agents,
     setAgents, setSelectedAgentId, selectedAgent, selectedAgentUnavailable, setSelectedModelId,
     chatModelSelections, migrateDraftPayloadKey, purgeDraftPayloadKeys, pendingPrefillRef,
-    pendingTicketDraftProjectRef, startNewDraftThread, advanceDraftNonceAfterSessionGone,
+    pendingTicketDraftProjectRef, startNewDraftThread, advanceDraftNonceAfterSessionGone, send,
   } = params;
   const currentInput = conversationInputs[currentConversationKey] ?? '';
   const currentAttachments = conversationAttachments[currentConversationKey] ?? [];
@@ -156,6 +156,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
       cancelThreadConfirmDelete,
       advanceDraftNonceAfterSessionGone,
       draftNoncesRef,
+      replacedMarksRef: send.replacedMarksRef,
     });
 
   const { backgroundTurnStatus, backgroundTurnProjectId, resetBackgroundTurnStatus } = useTurnStatusRecovery({

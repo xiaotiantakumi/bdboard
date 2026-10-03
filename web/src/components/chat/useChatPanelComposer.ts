@@ -91,6 +91,7 @@ export function useChatPanelComposer(params: UseChatPanelComposerParams) {
     conversationAttachmentsRef,
     setInput,
     updateConversationAttachments,
+    replacedMarksRef: send.replacedMarksRef,
   });
 
   const { handleSubmit } = useChatSubmit({

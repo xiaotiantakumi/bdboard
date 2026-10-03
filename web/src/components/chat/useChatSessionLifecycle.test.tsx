@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSessionMessagesDto, ChatThreadDto } from '../../api';
 import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
+import { createReplacedThreadMarks } from './replacedThread';
 import { useChatSessionLifecycle, type UseChatSessionLifecycleParams } from './useChatSessionLifecycle';
 
 vi.mock('../../api', async (importOriginal) => {
@@ -64,6 +65,7 @@ function setup(overrides: Partial<UseChatSessionLifecycleParams> = {}) {
     setSelectedAgentId: vi.fn(),
     cancelThreadConfirmDelete: vi.fn(),
     advanceDraftNonceAfterSessionGone: vi.fn(),
+    replacedMarksRef: { current: createReplacedThreadMarks() },
     ...overrides,
   };
   const hook = renderHook((props: UseChatSessionLifecycleParams) => useChatSessionLifecycle(props), {
@@ -365,6 +367,147 @@ describe('useChatSessionLifecycle', () => {
       expect(result.current.applyRecoveredTurn).toBe(first);
       rerender({ ...params, selectedProjectId: 'project-b' });
       expect(result.current.applyRecoveredTurn).not.toBe(first);
+    });
+  });
+
+  // bdboard-w9hv: 再送が abort / 配信停止で見届けられず、返答が回収で戻ったとき、送信元の
+  // 置き換えられたスレッド(origin)を commitSuccess と同じ規則で外す。origin は
+  // deliverChatSend が replacedMarksRef.unobservedOrigins[projectId] に憶えている。
+  describe('applyRecoveredTurn — the thread replaced by a re-send (bdboard-w9hv)', () => {
+    function setupReplaced(overrides: Partial<UseChatSessionLifecycleParams> = {}, origin: string | null = 'sess-dead') {
+      const marks = createReplacedThreadMarks();
+      if (origin !== null) marks.unobservedOrigins['project-a'] = origin;
+      marks.goneKeys.add('sess-dead');
+      return setup({
+        replacedMarksRef: { current: marks },
+        openThreadIdsRef: { current: { 'project-a': ['sess-other', 'sess-dead'] } },
+        selectedThreadIdsRef: { current: { 'project-a': 'sess-other' } },
+        restoredProjectsRef: { current: new Set(['project-a']) },
+        ...overrides,
+      });
+    }
+
+    it('drops the replaced thread from open, the persisted entry, the conversation store and the history-loaded flag, and consumes the record', () => {
+      const { result, params } = setupReplaced();
+      act(() => result.current.applyRecoveredTurn([thread('sess-other'), thread('sess-rec')], RECOVERED));
+
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-other', 'sess-rec'],
+      });
+      const conversations = lastUpdate(params.setConversations as ReturnType<typeof vi.fn>, {
+        'sess-dead': { messages: [] },
+        'sess-other': { messages: [] },
+      });
+      expect(Object.keys(conversations).sort()).toEqual(['sess-other', 'sess-rec']);
+      expect(
+        lastUpdate(params.setHistoryLoadedFor as ReturnType<typeof vi.fn>, { 'sess-dead': true, 'sess-other': true }),
+      ).toEqual({ 'sess-other': true, 'sess-rec': true });
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-other', 'sess-rec'],
+        selectedSessionId: 'sess-other',
+      });
+      expect(params.replacedMarksRef.current.unobservedOrigins).toEqual({});
+      expect(params.replacedMarksRef.current.goneKeys.has('sess-dead')).toBe(false);
+    });
+
+    it('moves the selection to the recovered session when the replaced thread was the selected one', () => {
+      const { result, params } = setupReplaced({ selectedThreadIdsRef: { current: { 'project-a': 'sess-dead' } } });
+      act(() => result.current.applyRecoveredTurn([thread('sess-other'), thread('sess-rec')], RECOVERED));
+
+      expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': 'sess-rec',
+      });
+      expect(params.setSelectedAgentId).toHaveBeenCalledWith('agent-b');
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-other', 'sess-rec'],
+        selectedSessionId: 'sess-rec',
+      });
+    });
+
+    it('keeps an explicit draft selected but moves a persisted selection that pointed at the replaced thread (bdboard-cemi, bdboard-e5cz)', () => {
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['sess-other', 'sess-dead'],
+        selectedSessionId: 'sess-dead',
+      });
+      const { result, params } = setupReplaced({
+        draftNoncesRef: { current: { 'project-a': 1 } },
+        selectedThreadIdsRef: { current: {} },
+      });
+      act(() => result.current.applyRecoveredTurn([thread('sess-other'), thread('sess-rec')], RECOVERED));
+
+      expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': undefined,
+      });
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-other', 'sess-rec'],
+        selectedSessionId: 'sess-rec',
+      });
+    });
+
+    it('also drops the replaced thread when the list is not restored yet and the server still lists it (chat agent mismatch)', () => {
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['sess-dead', 'sess-other'],
+        selectedSessionId: 'sess-other',
+      });
+      const { result, params } = setupReplaced({
+        openThreadIdsRef: { current: {} },
+        selectedThreadIdsRef: { current: {} },
+        restoredProjectsRef: { current: new Set() },
+      });
+      act(() =>
+        result.current.applyRecoveredTurn([thread('sess-dead'), thread('sess-other'), thread('sess-rec')], RECOVERED),
+      );
+
+      // 一覧には残るので閉じたスレッドとして再オープンできる。open と永続化からは外れる。
+      expect(
+        lastUpdate<Record<string, ChatThreadDto[]>>(params.setThreadLists as ReturnType<typeof vi.fn>, {})['project-a'],
+      ).toHaveLength(3);
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-other', 'sess-rec'],
+      });
+      expect(readPersistedChatThreads()['project-a']?.activeSessionIds).toEqual(['sess-other', 'sess-rec']);
+    });
+
+    it('does not treat a draft key, an unknown key, or no record at all as a replaced thread', () => {
+      for (const origin of ['draft:project-a:1', 'sess-not-open', null]) {
+        localStorage.clear();
+        const { result, params } = setupReplaced({}, origin);
+        act(() => result.current.applyRecoveredTurn([thread('sess-other'), thread('sess-rec')], RECOVERED));
+        expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+          'project-a': ['sess-other', 'sess-dead', 'sess-rec'],
+        });
+        expect(lastUpdate(params.setHistoryLoadedFor as ReturnType<typeof vi.fn>, { 'sess-dead': true })).toEqual({
+          'sess-dead': true,
+          'sess-rec': true,
+        });
+      }
+    });
+
+    it('ignores a leftover record when the recovered session is already open (it is not a newly started session)', () => {
+      const { result, params } = setupReplaced({
+        openThreadIdsRef: { current: { 'project-a': ['sess-dead', 'sess-rec'] } },
+      });
+      act(() => result.current.applyRecoveredTurn([thread('sess-dead'), thread('sess-rec')], RECOVERED));
+
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-dead', 'sess-rec'],
+      });
+      expect(params.replacedMarksRef.current.unobservedOrigins).toEqual({});
+    });
+
+    it('applies the record to one recovery only', () => {
+      const { result, params } = setupReplaced();
+      act(() => result.current.applyRecoveredTurn([thread('sess-other'), thread('sess-rec')], RECOVERED));
+      act(() =>
+        result.current.applyRecoveredTurn([thread('sess-other'), thread('sess-rec'), thread('sess-next')], {
+          ...RECOVERED,
+          sessionId: 'sess-next',
+        }),
+      );
+
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-other', 'sess-rec', 'sess-next'],
+      });
     });
   });
 

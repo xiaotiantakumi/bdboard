@@ -796,6 +796,129 @@ describe('ChatPanel', () => {
     expect(state.historyGets).toBe(1);
   });
 
+  // bdboard-w9hv: 「clearSession 系の 400 → 同じスレッドから再送 → 返答を待たずに別スレッドへ切り替えて
+  // 送信が abort され、返答は turn-status の回収(applyRecoveredTurn)で戻る」流れ。drfb の
+  // commitSuccess と同じく、置き換えられたスレッド(stale-session)は回収後に open・永続化から外れる。
+  // threads: 開いている 2 スレッド(other-session / stale-session)。回収後のサーバー一覧は
+  // serverThreadsAfter(unknown chat session ならサーバーに stale-session は無い)。
+  function mockAbortedResendRecovery(
+    errorMessage: string,
+    serverThreadsAfter: readonly string[],
+    state: { staleHistoryGets: number },
+  ) {
+    const titles: Record<string, string> = {
+      'other-session': 'other thread',
+      'stale-session': 'stale thread',
+      'new-session': 'fresh thread',
+    };
+    const listOf = (ids: readonly string[]): ChatThreadDto[] =>
+      ids.map((sessionId) => ({
+        sessionId,
+        agentId: 'claude',
+        title: titles[sessionId] ?? null,
+        pinned: false,
+        updatedAt: '2026-01-02T00:00:00Z',
+      }));
+    let aborted = false;
+    let postCount = 0;
+    fetchChatThreadsMock.mockImplementation(() =>
+      Promise.resolve(listOf(aborted ? serverThreadsAfter : ['other-session', 'stale-session'])),
+    );
+    fetchChatTurnStatusMock.mockImplementation(() =>
+      Promise.resolve<ChatTurnStatusDto>(
+        aborted
+          ? { state: 'completed', sessionId: 'new-session', agentId: 'claude', completedAt: '2026-01-02T00:01:00Z' }
+          : { state: 'idle' },
+      ),
+    );
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        postCount += 1;
+        if (postCount === 1) return Promise.resolve(jsonResponse({ error: errorMessage }, 400));
+        // 2 回目(再送)は返答が来る前に、切り替えによる abort で打ち切られる。
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            aborted = true;
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          });
+        });
+      }
+      const sessionId = /\/api\/chat\/sessions\/([^/]+)\/messages/.exec(url)?.[1];
+      if (sessionId !== undefined) {
+        if (sessionId === 'stale-session') state.staleHistoryGets += 1;
+        return Promise.resolve(
+          jsonResponse({
+            sessionId,
+            agentId: 'claude',
+            messages: [{ role: 'user', content: `${sessionId} history`, createdAt: '2026-01-02T00:00:00Z' }],
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+  }
+
+  async function runAbortedResend(user: ReturnType<typeof userEvent.setup>, container: HTMLElement) {
+    await selectThreadFromDrawer(container, user, 'stale thread');
+    await within(screen.getByRole('log')).findByText('stale-session history');
+    await user.type(screen.getByLabelText('メッセージ'), 'second');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('メッセージ')).toHaveValue('second');
+    });
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(getChatMessagePostCalls(fetchMock)).toHaveLength(2);
+    });
+    expect(parseChatMessageBody(fetchMock, 1)).not.toHaveProperty('sessionId');
+    // 返答を待たずに別スレッドへ切り替える(これが再送を abort する)。
+    await selectThreadFromDrawer(container, user, 'other thread');
+    await waitFor(() => {
+      expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'new-session');
+    });
+  }
+
+  it('bdboard-w9hv: after an aborted re-send is recovered from turn-status, the replaced dead thread is gone from the persisted entry and the drawer', async () => {
+    const user = userEvent.setup();
+    const state = { staleHistoryGets: 0 };
+    mockAbortedResendRecovery('unknown chat session', ['other-session', 'new-session'], state);
+    const { container } = renderChatPanel([PROJECT_A]);
+    await runAbortedResend(user, container);
+
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['other-session', 'new-session'],
+      selectedSessionId: 'other-session',
+    });
+    openThreadDrawer(container);
+    const drawer = getThreadDrawer(container);
+    expect(within(drawer).queryByText('stale thread')).not.toBeInTheDocument();
+    expect(within(drawer).queryByText('(無題)')).not.toBeInTheDocument();
+    const openSection = drawerSection(container, '開いているスレッド');
+    expect(within(openSection as HTMLElement).getByRole('button', { name: 'fresh thread' })).toBeInTheDocument();
+    expect(drawerSection(container, '閉じたスレッド')).toBeNull();
+  });
+
+  it('bdboard-w9hv: after a chat-agent-mismatch re-send is aborted and recovered, the live thread moves to the closed list and reopening it loads its history again', async () => {
+    const user = userEvent.setup();
+    const state = { staleHistoryGets: 0 };
+    mockAbortedResendRecovery('chat agent mismatch', ['other-session', 'stale-session', 'new-session'], state);
+    const { container } = renderChatPanel([PROJECT_A]);
+    await runAbortedResend(user, container);
+
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['other-session', 'new-session']);
+    openThreadDrawer(container);
+    const closedSection = drawerSection(container, '閉じたスレッド');
+    expect(within(closedSection as HTMLElement).getByRole('button', { name: 'stale thread' })).toBeInTheDocument();
+    const openSection = drawerSection(container, '開いているスレッド');
+    expect(within(openSection as HTMLElement).queryByText('stale thread')).not.toBeInTheDocument();
+    const getsBeforeReopen = state.staleHistoryGets;
+
+    await selectThreadFromDrawer(container, user, 'stale thread');
+    await waitFor(() => {
+      expect(state.staleHistoryGets).toBe(getsBeforeReopen + 1);
+    });
+  });
+
   it('disables the textarea and submit button while sending', async () => {
     const user = userEvent.setup();
     const deferred = createDeferred<Response>();

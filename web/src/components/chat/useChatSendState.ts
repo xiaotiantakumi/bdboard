@@ -4,6 +4,7 @@ import {
   initialChatSendState,
   type ChatSendState,
 } from './chatSendState';
+import { createReplacedThreadMarks, type ReplacedThreadMarks } from './replacedThread';
 
 export interface DetachedStreamSend {
   // undefined は新規ドラフトの初回送信で sessionId が未確定の間にありうる。
@@ -30,6 +31,8 @@ export interface UseChatSendStateResult extends ChatSendState {
   clearUnresolvedSend: (sessionId: string) => void;
   detachedStreamSendRef: MutableRefObject<Record<string, DetachedStreamSend>>;
   requestAbortControllerRef: MutableRefObject<AbortController | null>;
+  /** bdboard-drfb / bdboard-w9hv: 置き換えられたスレッドの判断材料(chat/replacedThread.ts)。 */
+  replacedMarksRef: MutableRefObject<ReplacedThreadMarks>;
 }
 
 /**
@@ -55,6 +58,11 @@ export function useChatSendState(): UseChatSendStateResult {
   // 分離することで、この上書き自体が構造的に起きなくなる — B の代入は A のキーに
   // 触れない。
   const requestAbortControllerRef = useRef<AbortController | null>(null);
+  // bdboard-drfb / bdboard-w9hv: 再送が別のセッションへ移ったとき、送信元の死んだスレッドを
+  // open・永続化・一覧から外すための印。commitFailure / deliverChatSend(abort・配信停止)が
+  // 書き、commitSuccess / applyRecoveredTurn(turn-status 回収)が読む。state ではなく ref:
+  // 描画に使わず、書き込みも読み取りもイベント(送信の確定・失敗・回収)の中だけ。
+  const replacedMarksRef = useRef<ReplacedThreadMarks>(createReplacedThreadMarks());
 
   const setIsSending = useCallback((value: boolean) => dispatch({ type: 'set-is-sending', value }), []);
   const setStreamingReply = useCallback(
@@ -98,5 +106,6 @@ export function useChatSendState(): UseChatSendStateResult {
     clearUnresolvedSend,
     detachedStreamSendRef,
     requestAbortControllerRef,
+    replacedMarksRef,
   };
 }

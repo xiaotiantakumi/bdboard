@@ -21,6 +21,7 @@ vi.mock('../../api', async (importOriginal) => {
 import { postChatMessage } from '../../api';
 import { CHAT_AGENT_UNAVAILABLE_WARNING } from '../../writeAccessMessage';
 import { CHAT_IMAGE_ONLY_PROMPT, type ChatAttachment } from './attachments';
+import { createReplacedThreadMarks } from './replacedThread';
 import { useChatSubmit, type ChatSubmitContext, type UseChatSubmitParams } from './useChatSubmit';
 import type { UseChatSendStateResult } from './useChatSendState';
 
@@ -50,6 +51,7 @@ function setup(contextOverrides: Partial<ChatSubmitContext> = {}, sendOverrides:
     setIsSending: log('setIsSending'), setStreamingReply: vi.fn(), setTurnRecoveryGeneration: vi.fn(),
     clearStreamingReplyForKey: vi.fn(), markUnresolvedSend: log('markUnresolvedSend'), clearUnresolvedSend: vi.fn(),
     detachedStreamSendRef: { current: {} }, requestAbortControllerRef: { current: null },
+    replacedMarksRef: { current: createReplacedThreadMarks() },
     ...sendOverrides,
   };
   const focus = vi.fn(() => { events.push('focus'); });
