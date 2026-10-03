@@ -1,10 +1,11 @@
 import type { Project } from '../../domain/project.js';
 import type { BoardCache } from '../ports/board-cache.js';
 import type { ProjectWatchHandle } from '../ports/project-watcher.js';
+import { readProjectRefs } from './read-cached-projects.js';
 
 export interface SyncWatchedProjectsDeps {
   /** 現在のプロジェクト一覧の出どころ(リフレッシュ後のキャッシュ) */
-  readonly cache: Pick<BoardCache, 'listProjects'>;
+  readonly cache: Pick<BoardCache, 'listProjects' | 'listProjectRefs'>;
   readonly handle: ProjectWatchHandle;
   /** watch() 開始時に既に渡してあるプロジェクト。冗長な update を1回省くためだけの情報 */
   readonly initialProjects?: readonly Project[];
@@ -40,7 +41,7 @@ export function createWatchedProjectsSync(
 
   return {
     async sync(): Promise<boolean> {
-      const projects = deps.cache.listProjects().map((entry) => entry.project);
+      const projects = readProjectRefs(deps.cache);
       const key = watchKey(projects);
 
       if (key === lastKey) {

@@ -2,6 +2,7 @@ import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { Project } from '../../domain/project.js';
 import type { Status } from '../../domain/status.js';
 import type { BoardCache } from '../ports/board-cache.js';
+import { readProjectEntries } from './read-cached-projects.js';
 import {
   localDateKey,
   subtractCalendarDaysFromDateKey,
@@ -64,9 +65,7 @@ export async function getCfdStats(
   // listProjectsChunked() を優先し、無ければ (インメモリ fake 等) listProjects() に
   // 同じ結果でフォールバックする。CFD が使うのは entry.project と id 集合だけだが、
   // 同期の listProjects() は全チケット JSON をデシリアライズして数百ms ブロックしうる。
-  let entries = cache.listProjectsChunked !== undefined
-    ? await cache.listProjectsChunked()
-    : cache.listProjects();
+  let entries = await readProjectEntries(cache);
   if (projectIdFilter !== undefined) {
     const filterSet = new Set(projectIdFilter);
     entries = entries.filter((entry) => filterSet.has(entry.project.id));

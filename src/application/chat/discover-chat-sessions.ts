@@ -7,6 +7,7 @@ import type {
 import type { TranscriptTailMessage } from '../transcript/parse-transcript-messages.js';
 import type { ChatAgentRegistry } from './chat-agent-registry.js';
 import type { ChatSessionStore } from './chat-session-store.js';
+import { readProjectRefs } from '../board/read-cached-projects.js';
 
 /**
  * adopt が既定で紐付ける chat エージェントの id (bdboard-3tw.104.3 レビュー S2)。
@@ -44,7 +45,7 @@ export async function listDiscoveredChatSessions(
     return { ok: false, failure: { kind: 'project-not-found' } };
   }
 
-  const allProjects = deps.cache.listProjects().map((entry) => entry.project);
+  const allProjects = readProjectRefs(deps.cache);
   const discovered = await deps.discovery.listDiscoveredSessions(cached.project, allProjects);
   return {
     ok: true,
@@ -122,7 +123,7 @@ export async function adoptChatSession(
   }
   const agentId = CLAUDE_CLI_CHAT_AGENT_ID;
 
-  const allProjects = deps.cache.listProjects().map((entry) => entry.project);
+  const allProjects = readProjectRefs(deps.cache);
   if (!(await deps.discovery.verifySessionExists(cached.project, allProjects, input.sessionId))) {
     return { ok: false, failure: { kind: 'unknown-session' } };
   }

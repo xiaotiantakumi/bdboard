@@ -11,6 +11,7 @@ import {
 } from './dto.js';
 import { parseProjectIds, resolveLivenessThresholds } from './api-route-shared.js';
 import type { ApiDeps } from './api-deps.js';
+import { readProjectRefs } from '../../application/board/read-cached-projects.js';
 
 const SESSION_HISTORY_DEFAULT_LIMIT = 50;
 const SESSION_HISTORY_MIN_LIMIT = 1;
@@ -70,7 +71,7 @@ export function createSessionProcessRoutes(deps: ApiDeps): Hono {
       return c.json({ error: 'session not found' }, 404);
     }
 
-    const projects = deps.cache.listProjects().map((entry) => entry.project);
+    const projects = readProjectRefs(deps.cache);
     const project = resolveSessionProject(session.cwd, projects);
     if (project === undefined) {
       return c.json({ error: 'session not found' }, 404);

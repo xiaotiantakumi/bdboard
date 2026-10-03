@@ -39,11 +39,12 @@ export function createParseCache(): ParseCache {
 }
 
 /**
- * bdboard-3c36: listProjects()/listProjectsChunked()/getProject() が row を
- * CachedProject へパースする共通の入口。fingerprint が一致すればパース済み
- * (frozen な) オブジェクトを再利用し、JSON.parse (rowToCachedProject 内の
- * deserializeTickets) を丸ごとスキップする。read.ts の3メソッドから共有する
- * ためここに置く (read.ts 側の行数上限 (max-lines 200) を圧迫しないため)。
+ * bdboard-3c36: getProject() と project-listing.ts の resolve() (listProjects() /
+ * listProjectRefs() / listProjectsChunked() 共通) が row を CachedProject へパースする
+ * 共通の入口。fingerprint が一致すればパース済み (frozen な) オブジェクトを再利用し、
+ * JSON.parse (rowToCachedProject 内の deserializeTickets) を丸ごとスキップする。
+ * read.ts と project-listing.ts の両方から共有するためここに置く (read.ts 側の行数上限
+ * (max-lines 200) を圧迫しないため)。
  */
 export function parseCachedProjectRow(row: ProjectRow, cache: ParseCache): CachedProject | null {
   const cached = cache.get(row.id);

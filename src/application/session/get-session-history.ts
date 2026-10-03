@@ -4,6 +4,7 @@ import type { AgentSession, SessionLink } from '../../domain/session.js';
 import type { TicketId } from '../../domain/ticket-id.js';
 import type { BoardCache } from '../ports/board-cache.js';
 import { resolveSessionProject } from './link-sessions-to-projects.js';
+import { readProjectRefs } from '../board/read-cached-projects.js';
 
 export interface SessionHistoryTicketRef {
   readonly ticketId: TicketId;
@@ -82,7 +83,7 @@ export function getSessionHistory(
     return [];
   }
 
-  const projects = cache.listProjects().map((entry) => entry.project);
+  const projects = readProjectRefs(cache);
   const ticketTitles = buildTicketTitleMap(cache);
   const projectIds =
     options?.projectIds === undefined ? undefined : new Set(options.projectIds);

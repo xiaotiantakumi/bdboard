@@ -4,6 +4,7 @@ import { readProjectHarnessStatus } from '../../application/harness/get-project-
 import type { ProjectHarnessStatus } from '../../domain/harness-pack.js';
 import type { HarnessRoutesDeps } from './harness-routes-deps.js';
 import { extractProjectIdFromHarnessPath, toHarnessStatusJson } from './harness-routes-shared.js';
+import { readProjectRefs } from '../../application/board/read-cached-projects.js';
 
 // harness-routes.ts (旧347行) の分割 (bdboard-sso1.56) で、ハーネス状態の読み取り系
 // (GET /api/harness/packs・GET /api/harness/status・GET /api/projects/*/harness) を
@@ -43,7 +44,7 @@ export function createHarnessStatusRoutes(
   });
 
   app.get('/api/harness/status', async (c) => {
-    const projects = deps.cache.listProjects().map((entry) => entry.project);
+    const projects = readProjectRefs(deps.cache);
     const statuses = await getAllProjectsHarnessStatus({
       registry: deps.registry,
       injector: deps.injector,

@@ -102,7 +102,8 @@ export function createWriteOperations(db: Database.Database, parseCache: ParseCa
       // スナップショットし、1件ずつ await で処理する) が、自分の開始後に
       // clear() が呼ばれた場合、未処理の id について古い parseCache のエントリを
       // 依然ヒットさせてしまい、DB からはもう消えた project を結果に混入させる
-      // (listProjects() は毎回 DB 行を先に読み直すので影響されないが、
+      // (listProjects() / listProjectRefs() は await を挟まない同期呼び出しで
+      // 同じ接続上の clear() が途中に割り込めないので影響されないが、
       // listProjectsChunked() は id 一覧取得後の各ステップで parseCache を
       // 見るため影響される)。(2) clear() 後も Map が空にならず、消えたはずの
       // project 分のパース結果がプロセス終了までメモリに残り続ける。
