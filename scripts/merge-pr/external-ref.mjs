@@ -3,7 +3,7 @@
 // それ以外は Refs を書く規約 (docs/GIT-WORKFLOW.md「PR 本文で external-ref の issue を閉じる」、
 // worktree-pr-flow.md §4 が正本)。どちらを書くかは担当の判断で、ここでは「どちらかがあること」
 // だけを機械的に確かめる — 最後の PR かどうかの判定はしない (bd に「最後」を機械的に決める
-//情報が無い)。
+// 情報が無い)。
 import { EXIT, fail } from './context.mjs';
 import { externalRefSteps } from './messages.mjs';
 import { audit } from './state.mjs';

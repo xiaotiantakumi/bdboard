@@ -504,6 +504,20 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(existsSync(stateFile())).toBe(false);
   });
 
+  it('S2 prepare: a missing issue reference blocks class F before the predicted verify (no verify run, no state)', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    writeFake({ bdShow: { 'demo-1': [{ external_ref: 'gh-432', metadata: { 'bdboard.model.review': 'opus-5' } }] } });
+    setPullBody('Closes: demo-1');
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(2);
+    expect(prepared.stderr).toContain('クラス=F');
+    expect(prepared.stderr).toContain('#432 への言及が PR #7 の本文にありません');
+    expect(verified()).toEqual([]); // 着地予定ツリーの verify (数分・verify スロット) を走らせる前に止まる
+    expect(existsSync(stateFile())).toBe(false);
+    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
+  });
+
   it('prepare: the external-ref check reuses the review check\'s single bd read (no second bd show)', () => {
     setup();
     writeFake({ bdShow: { 'demo-1': [{ external_ref: 'gh-432', metadata: { 'bdboard.model.review': 'opus-5' } }] } });

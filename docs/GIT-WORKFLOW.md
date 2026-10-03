@@ -108,12 +108,18 @@ closing keyword (`Closes` / `Fixes` / `Resolves`。大小文字は無視) か `R
 
 **機械的な強制 (bdboard-4y8q.8)**: `npm run merge-pr -- prepare <N>` が、対象チケットの
 external-ref が `gh-<N>` 形式のときだけ、PR 本文 (コードブロックを除く) に `Closes #N` /
-`Fixes #N` / `Resolves #N` / `Refs #N` のいずれか (大小文字無視) があるかを確かめる。無ければ
-既存の前提条件エラーと同じ exit code (2) で止め、どのキーワードを書けばよいかをメッセージに
-示す。external-ref がそもそも無いチケット、または `gh-<N>` 形式でない external-ref (例: URL
-形式) は対象外 (何もしない)。チケットは prepare のレビュー記録の確認 (`bdboard.model.review`)
-が読んだものを使う (bd は 1 回だけ読む)。bd が読めない (bd 未接続・タイムアウト等) ときは、
-このチェックに来る前にレビュー記録の確認が止める。実装: `scripts/merge-pr/external-ref.mjs`
+`Fixes #N` / `Resolves #N` / `Refs #N` のいずれか (大小文字無視。`Fixed #N` 等 GitHub が閉じる
+活用形も可) があるかを確かめる。無ければ既存の前提条件エラーと同じ exit code (2) で止め、
+どのキーワードを書けばよいかをメッセージに示す。本文を直すだけでよい (head は変わらないので
+push も CI のやり直しも要らない) — 直したら prepare をやり直す。external-ref がそもそも無い
+チケット、または `gh-<N>` 形式でない external-ref (例: URL 形式) は対象外 (何もしない)。
+走るのは `merge.mode` が S1 / S2 の prepare だけ。rebase が要る (exit 3) PR と必須チェックが
+green でない PR では、それを直して prepare し直したときに初めて走る。S2 クラス F の着地予定ツリー
+verify よりは前に走る (本文だけの不備で verify スロットを使わない)。S0 の prepare (分類表示だけ)
+と `--dry-run` では走らない。チケットは prepare のレビュー記録の確認
+(`bdboard.model.review`) が読んだものを使う (bd は 1 回だけ読む)。bd が読めない (bd 未接続・
+タイムアウト等) ときは、このチェックに来る前にレビュー記録の確認が止める (fail-open はしない)。
+実装: `scripts/merge-pr/external-ref.mjs`
 と `scripts/merge-pr/prepare.mjs`。詳細な手順は
 harness/packs/bdboard-harness/references/worktree-pr-flow.md「PR 作成」節。
 
@@ -289,7 +295,9 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
 (`-s` keeps npm's `> bdboard@… merge-pr` banner off stdout, so stdout is exactly the one
 `gh pr merge …` line; everything else goes to stderr.)
 
-- **Exit codes**: `2` precondition failed (no review record / ticket not found in bd); `7` caller is not the chair.
+- **Exit codes**: `2` precondition failed (no review record / ticket not found in bd / the PR body
+  does not reference the ticket's `gh-<N>` external-ref issue — see "PR 本文で external-ref の issue
+  を閉じる" above); `7` caller is not the chair.
   `3` main moved (class R) → `git rebase origin/main` (or `git merge origin/main`)
   → push → wait for CI → `prepare` again. `75` start over from `prepare` (CAS lost, main moved
   while waiting, `ls-remote` failed, slot not free within `merge.slotWaitMinutes`, CI pending or
