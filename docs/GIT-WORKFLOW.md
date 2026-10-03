@@ -46,7 +46,7 @@ exploratory branches use `spike/` and never get a PR.
 worktree ではなく、Claude Code 組み込みの `isolation: worktree` で動く一時 worktree の中で
 実装する。ディレクトリ名も Claude Code が付ける任意の slug (`bd/<ticket-id>` 由来ではない)
 なので、その worktree がどのチケットの作業かはディレクトリ名では分からない。
-`.claude/agents/bdboard-worker.md` の手順1で作り直すブランチ `bd/<ticket-id>` の方で識別する。
+`.claude/agents/bdboard-worker.md` の手順3で作るブランチ `bd/<ticket-id>` の方で識別する。
 merge-pr とマージ後の片付けは、`git worktree list --porcelain` の
 `branch refs/heads/bd/<ticket-id>` で引いた worktree に対して行う。実測 (bdboard-cm2q.5、
 議長が片付け、2026-09-26): この worktree は `locked` になっている — `lsof -a -d cwd +D <path>`
@@ -55,6 +55,18 @@ merge-pr とマージ後の片付けは、`git worktree list --porcelain` の
 `git branch -D` で消す (worktree が残っている間は `--delete-branch` がローカル側を消せないため、
 worker の `bd/<ticket-id>` はここで消さないと残り続ける。bdboard-cm2q.12)。
 「Cleanup after merge」節にも同じ手順を書いてある (bdboard-cm2q.11)。
+
+途中で止めた worker の片付け (bdboard-kmoe): 議長が引き取る・チケットを分ける・human gate・
+打ち切るのどれにするかと claim の扱いは `.claude/agents/bdboard-worker.md` の「予算」節。
+worktree を消すのは「打ち切る」と、範囲内が進んでいないまま「分ける」ときだけで、引き取る・
+human gate では残す。消す前に、worker が残した `logs/progress.md` の要旨を `bd comment <ticket-id>`
+でチケットに写す (logs/ は gitignore 済みで、worktree と一緒に消える)。消し方は上と同じで、
+`lsof` に何か出たら (worker が run_in_background で回した verify など) 終わるまで待ち、kill しない。
+PR を作っていたら先に `gh pr close <N>`、push 済みなら `git push origin --delete bd/<ticket-id>` で
+リモートも消す。ローカルかリモートに `bd/<ticket-id>` が残っていると、同じチケットで起動し直した
+worker は手順2-3 で precheck-failed になる (human gate の回答後に新しい worker を起動せず、同じ
+worker に SendMessage するか議長が引き取るのも同じ理由)。
+「打ち切る」の `bd unclaim` は、この片付けが済んでから最後に打つ。「議長が引き取る」ときも、先に `lsof -a -d cwd +D <path>` で worker の background verify が残っていないか見て、残っていれば終わるまで待つ。
 
 ## bd チケット title の命名規約
 
