@@ -428,8 +428,9 @@ the cleanup a subagent does: the chair (top-level session) runs
 `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh deploy --expect-pid <pid>`
 (pull --ff-only / build:web / restart; see skill `bdboard-server-ops`). Kill commands
 are blocked for every agent via `permissions.deny`; a `bdboard-worker` subagent's
-main-checkout pull / start is additionally blocked by its `isolation: "worktree"`
-sandbox (bdboard-hpu8, bdboard-cm2q.10) — a non-isolated subagent has no such
+main-checkout pull / start, when typed directly, is additionally blocked by its
+`isolation: "worktree"` sandbox (bdboard-hpu8, bdboard-cm2q.10). Running
+`scripts/always-on-server.sh` is not blocked by isolation (bdboard-25n3), and a non-isolated subagent has no such
 backstop and relies on the written rules (AGENTS.md, this document, the agent
 definitions). A subagent that merged a PR just
 reports that a restart is needed. At session start,
