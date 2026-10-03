@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ChatMessageResponseDto, ChatSessionMessageDto } from '../../api';
-import { toAssistantMessage, toChatMessages } from './messages';
+import { toAdoptionSeedMessages, toAssistantMessage, toChatMessages } from './messages';
 
 // bdboard-sso1.83 第4段: turn-status 回収(E8)・履歴 fetch(E12)・未回収の取り直し
 // (E13) の3箇所で重複していた変換を toChatMessages/toAssistantMessage へ寄せた際に
@@ -90,5 +90,38 @@ describe('toAssistantMessage', () => {
     const message = toAssistantMessage(result, 1);
     expect(message.failedTools).toEqual(['bd_create']);
     expect(message.agentWarnings).toEqual(['warn1']);
+  });
+});
+
+// bdboard-z9mn: useChatSessionLifecycle.ts の handleResumeDiscoveredSession から挙動を変えずに移した変換。
+describe('toAdoptionSeedMessages', () => {
+  it('seedMessages が空なら説明メッセージ 1 行にフォールバックする', () => {
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      expect(toAdoptionSeedMessages([])).toEqual([
+        { role: 'assistant', text: 'このCLIセッションの直近の会話をここに表示できませんでした。続きから会話できます。', at: 1_700_000_000_000 },
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('timestamp があればその時刻、無ければ Date.now() + index で並び順を保つ', () => {
+    const now = 1_700_000_000_000;
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const messages = toAdoptionSeedMessages([
+        { role: 'user', text: 'a', timestamp: '2026-09-24T00:00:00.000Z' },
+        { role: 'assistant', text: 'b' },
+        { role: 'user', text: 'c' },
+      ]);
+      expect(messages).toEqual([
+        { role: 'user', text: 'a', at: Date.parse('2026-09-24T00:00:00.000Z') },
+        { role: 'assistant', text: 'b', at: now + 1 },
+        { role: 'user', text: 'c', at: now + 2 },
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

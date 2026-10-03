@@ -1,5 +1,5 @@
 import { useCallback, type MutableRefObject } from 'react';
-import { acknowledgeChatTurn, type ChatMessageResponseDto } from '../../api';
+import { acknowledgeChatTurn, type ChatMessageResponseDto, type ChatThreadDto } from '../../api';
 import { readPersistedChatThreads, writePersistedChatThread } from '../../chatThreadStorage';
 import { referenceDraftPayloadStoreCarryPlan } from '../conversationKeyspace';
 import type { ChatAttachment } from './attachments';
@@ -9,7 +9,7 @@ import { toAssistantMessage, type ChatMessage } from './messages';
 import {
   clearUnobservedOriginFor, persistedOpenBaseAfterCommit, planReplacedThread, withHistoryLoaded, type ReplacedThreadMarks,
 } from './replacedThread';
-import { summarizeTitle } from './threads';
+import { appendSentThread, summarizeTitle } from './threads';
 import type { UseChatConversationsStateResult } from './useChatConversationsState';
 import type { UseChatDraftStateResult } from './useChatDraftState';
 import type { UseChatThreadListsResult } from './useChatThreadLists';
@@ -17,7 +17,10 @@ import type { UseConversationKeyResult } from './useConversationKey';
 
 export interface UseChatSendCommitsParams
   extends Pick<UseChatConversationsStateResult, 'setConversations' | 'setHistoryLoadedFor' | 'setThreadModelIds'>,
-    Pick<UseChatThreadListsResult, 'setThreadLists' | 'setOpenThreadIds' | 'openThreadIdsRef' | 'restoredProjectsRef'>,
+    Pick<
+      UseChatThreadListsResult,
+      'setThreadLists' | 'setOpenThreadIds' | 'openThreadIdsRef' | 'restoredProjectsRef' | 'threadListOrder'
+    >,
     Pick<UseConversationKeyResult, 'setSelectedThreadIds' | 'selectedThreadIdsRef'>,
     Pick<
       UseChatDraftStateResult,
@@ -64,6 +67,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
     setOpenThreadIds,
     openThreadIdsRef,
     restoredProjectsRef,
+    threadListOrder,
     setSelectedThreadIds,
     selectedThreadIdsRef,
     conversationInputsRef,
@@ -157,14 +161,18 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       // bdboard-drfb: unknown chat session 由来で置き換わったスレッド(plan.goneSessionId)は、サーバーに
       // 無いので一覧(閉じたスレッド)からも落とす。chat agent mismatch のスレッドは生きているので
       // 残し、ドロワーの「閉じたスレッド」から再オープンできるようにする。
+      // bdboard-z9mn: この送信より前に始まった一覧 fetch(E7 の初回取得など)があとから届いても、送信した会話を
+      // 一覧と open から落とさないよう、足すエントリを一覧の順序管理(chat/threadListFetchOrder.ts)に記録する。
+      // 置き換えられた死んだスレッドの記録は捨てる(古い一覧で蘇らせない)。
+      const listEntry: ChatThreadDto = {
+        sessionId: result.sessionId, agentId: result.agentId, title: summarizeTitle(sentText), pinned: false,
+        updatedAt: new Date().toISOString(),
+      };
+      threadListOrder.noteEntryWrite(selectedProjectId, listEntry, 'upsert');
+      if (plan.goneSessionId !== undefined) threadListOrder.forgetEntry(selectedProjectId, plan.goneSessionId);
       setThreadLists((prev) => ({
         ...prev,
-        [selectedProjectId]: [
-          ...(prev[selectedProjectId] ?? []).filter(
-            (thread) => thread.sessionId !== result.sessionId && thread.sessionId !== plan.goneSessionId,
-          ),
-          { sessionId: result.sessionId, agentId: result.agentId, title: summarizeTitle(sentText), pinned: false, updatedAt: new Date().toISOString() },
-        ],
+        [selectedProjectId]: appendSentThread(prev[selectedProjectId] ?? [], listEntry, plan.goneSessionId),
       }));
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: plan.nextOpen }));
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: result.sessionId }));
@@ -189,6 +197,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       setOpenThreadIds,
       openThreadIdsRef,
       restoredProjectsRef,
+      threadListOrder,
       setSelectedThreadIds,
       selectedThreadIdsRef,
       replacedMarksRef,

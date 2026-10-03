@@ -12,7 +12,10 @@ import type { useDraftThreadLauncher } from './useDraftThreadLauncher';
 export interface UseThreadListSyncParams
   extends Pick<UseConversationKeyResult, 'draftNoncesRef' | 'selectedThreadIdsRef' | 'setSelectedThreadIds'>,
     Pick<UseChatConversationsStateResult, 'threadListRequestIdRef'>,
-    Pick<UseChatThreadListsResult, 'setThreadLists' | 'setOpenThreadIds' | 'restoredProjectsRef' | 'openThreadIdsRef'>,
+    Pick<
+      UseChatThreadListsResult,
+      'setThreadLists' | 'setOpenThreadIds' | 'restoredProjectsRef' | 'openThreadIdsRef' | 'threadListOrder'
+    >,
     Pick<UseChatNotificationsResult, 'setThreadError'>,
     Pick<
       ReturnType<typeof useDraftThreadLauncher>,
@@ -62,6 +65,7 @@ export function useThreadListSync({
   setSelectedThreadIds,
   startNewDraftThread,
   restoredProjectsRef,
+  threadListOrder,
 }: UseThreadListSyncParams): void {
   useEffect(() => {
     if (selectedProjectId === '') return;
@@ -99,6 +103,10 @@ export function useThreadListSync({
     }
     let cancelled = false;
     const threadListRequestId = ++threadListRequestIdRef.current;
+    // bdboard-z9mn: スレッド一覧を書く 3 つの処理(この E7、採用の取り直し、回収の hydrate)に共通の
+    // 「プロジェクトごとの fetch 開始順序番号」(chat/threadListFetchOrder.ts)。threadListRequestIdRef
+    // とは別物で、応答を捨てる(一覧を書かない)判断にだけ使う。
+    const threadListFetchSeq = threadListOrder.begin(selectedProjectId);
     // bdboard-4w2d(2巡目 Opus レビュー指摘対応): restoredProjectsRef は
     // プロジェクトIDをキーにした Set で、どこからも delete/clear されない
     // (ChatPanel がマウントされている限り一度立ったら残る)。下の .then()/.catch()
@@ -185,21 +193,28 @@ export function useThreadListSync({
           consumePendingTicketDraft();
           return;
         }
+        // bdboard-z9mn: これより後に始まった fetch(採用の取り直し・回収)の一覧が既に当たっていれば
+        // admitted は undefined — この応答は古いので、一覧は書かない(新しい一覧を上書きしない)。
+        // そうでなければ、この fetch の開始より後にローカルで書かれたエントリ(リネーム、送信成功で足した
+        // 会話)を重ねた一覧が返る。open・選択の復元はこの一覧(古ければ応答そのまま)で行う。
+        const admitted = threadListOrder.admit(selectedProjectId, threadListFetchSeq, threads);
         // bdboard-znnl: この応答が届くより前に、他経路(CLI セッションの採用など)が restoredProjectsRef を
         // 立てていたら(マーカーは上でこのサイクルの先頭に下ろしてあるので、立っていれば
-        // 「この fetch の in-flight 中に他経路が確立した」)、その経路が取り直した新しい一覧が
-        // 先に当たっていることがある。この応答は採用より前に始まった古い一覧なので、そのまま
-        // 置き換えると採用したタブのエントリが消えて「(無題)」に戻る。open はその経路が確立した
-        // まま残す(下で復元し直さない)ので、開いているタブのエントリだけは一覧に残す。
+        // 「この fetch の in-flight 中に他経路が確立した」)、その経路の取り直しはまだ届いていない
+        // (届いていれば上の admitted が undefined)ことがある。この応答は採用より前に始まった古い一覧
+        // なので、そのまま置き換えると採用したタブのエントリが消えて「(無題)」に戻る。open はその経路が
+        // 確立したまま残す(下で復元し直さない)ので、開いているタブのエントリだけは一覧に残す。
         // マーカーが無い通常の初回復元・再訪は従来どおり応答で置き換える。
         const establishedByOtherPath = restoredProjectsRef.current.has(selectedProjectId);
         const openIdsNow = openThreadIdsRef.current[selectedProjectId];
-        setThreadLists((prev) => ({
-          ...prev,
-          [selectedProjectId]: establishedByOtherPath
-            ? keepOpenThreadEntries(threads, prev[selectedProjectId], openIdsNow)
-            : threads,
-        }));
+        if (admitted !== undefined) {
+          setThreadLists((prev) => ({
+            ...prev,
+            [selectedProjectId]: establishedByOtherPath
+              ? keepOpenThreadEntries(admitted, prev[selectedProjectId], openIdsNow)
+              : admitted,
+          }));
+        }
         // bdboard-4w2d(Opus レビュー対応、2巡目レビューで文言訂正): この fetch が
         // in-flight の間に handleAgentChange が先にこのプロジェクトの open を [] に
         // 確定させ、restoredProjectsRef もマーク済みなら、ここで persisted から
@@ -217,7 +232,7 @@ export function useThreadListSync({
           return;
         }
         // bdboard-4w2d: 応答が届いた時点の永続化を読む(効果開始時のスナップショットではない)。
-        const { open, selected } = restoreThreadView(threads, readPersistedChatThreads()[selectedProjectId]);
+        const { open, selected } = restoreThreadView(admitted ?? threads, readPersistedChatThreads()[selectedProjectId]);
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: open }));
         // bdboard-4w2d: 「このプロジェクトの一覧・open は復元済み」を明示的に立てる。
         // applyRecoveredTurn(chat/useChatSessionLifecycle.ts)はこれを見て、既に
@@ -277,5 +292,6 @@ export function useThreadListSync({
     setSelectedThreadIds,
     startNewDraftThread,
     restoredProjectsRef,
+    threadListOrder,
   ]);
 }

@@ -1,4 +1,4 @@
-import type { ChatMessageResponseDto, ChatSessionMessageDto } from '../../api';
+import type { ChatMessageResponseDto, ChatSessionMessageDto, SessionTailMessageDto } from '../../api';
 import type { ChatMessageImage } from './attachments';
 
 export type ChatMessage = {
@@ -49,4 +49,26 @@ export function toAssistantMessage(
       ? { agentWarnings: result.agentWarnings }
       : {}),
   };
+}
+
+// CLI セッション採用(handleResumeDiscoveredSession、chat/useChatSessionLifecycle.ts)が会話の
+// 初期表示に使う、採用レスポンスの seedMessages 変換。取れる会話が無ければ説明メッセージ 1 行に
+// フォールバックする。timestamp が無いメッセージは Date.now() + index で並び順だけ保つ。
+// bdboard-z9mn: useChatSessionLifecycle.ts が行数上限(max-lines 200)に達したため、本体から
+// 挙動を変えずに移しただけ。
+export function toAdoptionSeedMessages(seedMessages: readonly SessionTailMessageDto[]): ChatMessage[] {
+  if (seedMessages.length === 0) {
+    return [
+      {
+        role: 'assistant',
+        text: 'このCLIセッションの直近の会話をここに表示できませんでした。続きから会話できます。',
+        at: Date.now(),
+      },
+    ];
+  }
+  return seedMessages.map((message, index) => ({
+    role: message.role,
+    text: message.text,
+    at: message.timestamp !== undefined ? Date.parse(message.timestamp) : Date.now() + index,
+  }));
 }

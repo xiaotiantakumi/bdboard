@@ -134,6 +134,7 @@ function useThreadListsProbe(projectId: string) {
     setSelectedThreadIds: key.setSelectedThreadIds,
     startNewDraftThread: launcher.startNewDraftThread,
     restoredProjectsRef: threadLists.restoredProjectsRef,
+    threadListOrder: threadLists.threadListOrder,
   });
 
   const lifecycle = useChatSessionLifecycle({
@@ -151,6 +152,7 @@ function useThreadListsProbe(projectId: string) {
     restoredProjectsRef: threadLists.restoredProjectsRef,
     setThreadLists: threadLists.setThreadLists,
     setOpenThreadIds: threadLists.setOpenThreadIds,
+    threadListOrder: threadLists.threadListOrder,
     setSelectedAgentId,
     cancelThreadConfirmDelete,
     advanceDraftNonceAfterSessionGone: launcher.advanceDraftNonceAfterSessionGone,
@@ -168,6 +170,7 @@ function useThreadListsProbe(projectId: string) {
     setOpenThreadIds: threadLists.setOpenThreadIds,
     openThreadIdsRef: threadLists.openThreadIdsRef,
     restoredProjectsRef: threadLists.restoredProjectsRef,
+    threadListOrder: threadLists.threadListOrder,
     setSelectedThreadIds: key.setSelectedThreadIds,
     selectedThreadIdsRef: key.selectedThreadIdsRef,
     conversationInputsRef,

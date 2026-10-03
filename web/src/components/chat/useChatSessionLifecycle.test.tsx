@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSessionMessagesDto, ChatThreadDto } from '../../api';
 import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { createReplacedThreadMarks } from './replacedThread';
+import { createThreadListFetchOrder } from './threadListFetchOrder';
 import { useChatSessionLifecycle, type UseChatSessionLifecycleParams } from './useChatSessionLifecycle';
 
 vi.mock('../../api', async (importOriginal) => {
@@ -60,6 +61,7 @@ function setup(overrides: Partial<UseChatSessionLifecycleParams> = {}) {
     openThreads: [],
     openThreadIdsRef,
     restoredProjectsRef: { current: new Set() },
+    threadListOrder: createThreadListFetchOrder(),
     setThreadLists: vi.fn(),
     setOpenThreadIds,
     setSelectedAgentId: vi.fn(),
@@ -373,6 +375,61 @@ describe('useChatSessionLifecycle', () => {
   // bdboard-w9hv: 再送が abort / 配信停止で見届けられず、返答が回収で戻ったとき、送信元の
   // 置き換えられたスレッド(origin)を commitSuccess と同じ規則で外す。origin は
   // deliverChatSend が replacedMarksRef.unobservedOrigins[projectId] に憶えている。
+  describe('applyRecoveredTurn — thread-list fetch order (bdboard-z9mn)', () => {
+    it('writes the recovered list when no later-started list was applied, laying a rename made after the fetch started over it', () => {
+      const threadListOrder = createThreadListFetchOrder();
+      const { result, params } = setup({
+        openThreadIdsRef: { current: { 'project-a': ['sess-old'] } },
+        restoredProjectsRef: { current: new Set(['project-a']) },
+        threadListOrder,
+      });
+      const seq = threadListOrder.begin('project-a');
+      threadListOrder.noteEntryWrite('project-a', thread('sess-old', 'renamed'), 'replace');
+      act(() => result.current.applyRecoveredTurn([thread('sess-old', 'old title'), thread('sess-rec')], RECOVERED, false, seq));
+
+      expect(lastUpdate(params.setThreadLists as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': [thread('sess-old', 'renamed'), thread('sess-rec')],
+      });
+    });
+
+    it('does not write a recovered list that started before an already-applied list, but still applies the recovered session', () => {
+      const threadListOrder = createThreadListFetchOrder();
+      const { result, params } = setup({
+        openThreadIdsRef: { current: { 'project-a': ['sess-old', 'sess-adopted'] } },
+        restoredProjectsRef: { current: new Set(['project-a']) },
+        threadListOrder,
+      });
+      const recoverySeq = threadListOrder.begin('project-a');
+      // 採用の取り直し(回収より後に始まった)の一覧が先に当たっている。
+      const adoptionSeq = threadListOrder.begin('project-a');
+      expect(threadListOrder.admit('project-a', adoptionSeq, [thread('sess-adopted', 'resumed')])).toBeDefined();
+      act(() => result.current.applyRecoveredTurn([thread('sess-rec')], RECOVERED, false, recoverySeq));
+
+      expect(params.setThreadLists).not.toHaveBeenCalled();
+      // 回収したセッションは、一覧の新旧に関わらず open と会話に当たる。
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-old', 'sess-adopted', 'sess-rec'],
+      });
+      expect(params.setConversations).toHaveBeenCalled();
+    });
+
+    it('treats a call without a start number as a list that starts now', () => {
+      const threadListOrder = createThreadListFetchOrder();
+      const { result, params } = setup({
+        openThreadIdsRef: { current: { 'project-a': ['sess-old'] } },
+        restoredProjectsRef: { current: new Set(['project-a']) },
+        threadListOrder,
+      });
+      const earlier = threadListOrder.begin('project-a');
+      expect(threadListOrder.admit('project-a', earlier, [thread('sess-old')])).toBeDefined();
+      act(() => result.current.applyRecoveredTurn([thread('sess-rec')], RECOVERED));
+
+      expect(lastUpdate(params.setThreadLists as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': [thread('sess-rec')],
+      });
+    });
+  });
+
   describe('applyRecoveredTurn — the thread replaced by a re-send (bdboard-w9hv)', () => {
     function setupReplaced(overrides: Partial<UseChatSessionLifecycleParams> = {}, origin: string | null = 'sess-dead') {
       const marks = createReplacedThreadMarks();
@@ -756,6 +813,78 @@ describe('useChatSessionLifecycle', () => {
       expect(readPersistedChatThreads()['project-a']).toEqual({
         activeSessionIds: ['sess-live', 'sess-new'],
         selectedSessionId: 'sess-new',
+      });
+    });
+
+    describe('thread-list fetch order (bdboard-z9mn)', () => {
+      it('does not write a refresh that started before an already-applied list', async () => {
+        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
+        fetchChatThreadsMock.mockReturnValue(
+          new Promise<ChatThreadDto[]>((resolve) => {
+            resolveThreads = resolve;
+          }),
+        );
+        const threadListOrder = createThreadListFetchOrder();
+        const { result, params } = setup({ threadListOrder });
+        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+        await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+        // 取り直しの途中で、あとから始まった別の取り直し(2 回目の採用など)の一覧が先に当たった。
+        const later = threadListOrder.begin('project-a');
+        expect(threadListOrder.admit('project-a', later, [thread('sess-new'), thread('sess-newer')])).toBeDefined();
+        await act(async () => {
+          resolveThreads([thread('sess-new')]);
+          await Promise.resolve();
+        });
+
+        expect(params.setThreadLists).not.toHaveBeenCalled();
+      });
+
+      it('lays a rename made after the refresh started over the refreshed list', async () => {
+        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
+        fetchChatThreadsMock.mockReturnValue(
+          new Promise<ChatThreadDto[]>((resolve) => {
+            resolveThreads = resolve;
+          }),
+        );
+        const threadListOrder = createThreadListFetchOrder();
+        const { result, params } = setup({ threadListOrder });
+        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+        await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+        threadListOrder.noteEntryWrite('project-a', thread('sess-new', 'renamed'), 'replace');
+        await act(async () => {
+          resolveThreads([thread('sess-new', 'old title')]);
+          await Promise.resolve();
+        });
+
+        expect(lastUpdate(params.setThreadLists as ReturnType<typeof vi.fn>, {})).toEqual({
+          'project-a': [thread('sess-new', 'renamed')],
+        });
+      });
+
+      it('still prunes the persisted ids the server no longer lists when its own list is the stale one', async () => {
+        writePersistedChatThreadState('project-a', {
+          activeSessionIds: ['sess-dead', 'sess-1'],
+          selectedSessionId: 'sess-1',
+        });
+        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
+        fetchChatThreadsMock.mockReturnValue(
+          new Promise<ChatThreadDto[]>((resolve) => {
+            resolveThreads = resolve;
+          }),
+        );
+        const threadListOrder = createThreadListFetchOrder();
+        const { result, params } = setup({ threadListOrder });
+        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+        await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+        const later = threadListOrder.begin('project-a');
+        expect(threadListOrder.admit('project-a', later, [thread('sess-1'), thread('sess-new')])).toBeDefined();
+        await act(async () => {
+          resolveThreads([thread('sess-1'), thread('sess-new')]);
+          await Promise.resolve();
+        });
+
+        expect(params.setThreadLists).not.toHaveBeenCalled();
+        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1', 'sess-new'] });
       });
     });
 

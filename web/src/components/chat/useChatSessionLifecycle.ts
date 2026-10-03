@@ -7,7 +7,7 @@ import {
 } from '../../api';
 import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { dropGoneFromPersistedOpen } from './dropGoneFromPersistedOpen';
-import { toChatMessages, type ChatMessage } from './messages';
+import { toAdoptionSeedMessages, toChatMessages } from './messages';
 import { pruneDeadOpenThreads } from './pruneDeadOpenThreads';
 import { planRecoveredTurn } from './recoveredTurnPlan';
 import { takeUnobservedOrigin, withHistoryLoaded, withoutKey, type ReplacedThreadMarks } from './replacedThread';
@@ -24,7 +24,7 @@ export interface UseChatSessionLifecycleParams
     >,
     Pick<
       UseChatThreadListsResult,
-      'openThreads' | 'openThreadIdsRef' | 'restoredProjectsRef' | 'setThreadLists' | 'setOpenThreadIds'
+      'openThreads' | 'openThreadIdsRef' | 'restoredProjectsRef' | 'setThreadLists' | 'setOpenThreadIds' | 'threadListOrder'
     >,
     Pick<UseChatAgentModelStateResult, 'setSelectedAgentId'> {
   selectedProjectId: string;
@@ -56,7 +56,7 @@ export interface UseChatSessionLifecycleParams
 export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
   const { selectedProjectId, selectedThreadIdsRef, setSelectedThreadIds } = params;
   const { historyRequestIdRef, setConversations, setHistoryLoadedFor, setLoadingHistoryFor, setThreadModelIds } = params;
-  const { openThreadIdsRef, restoredProjectsRef, setThreadLists, setOpenThreadIds } = params;
+  const { openThreadIdsRef, restoredProjectsRef, setThreadLists, setOpenThreadIds, threadListOrder } = params;
   const { setSelectedAgentId, cancelThreadConfirmDelete, advanceDraftNonceAfterSessionGone, draftNoncesRef } = params;
   const { replacedMarksRef } = params;
 
@@ -65,7 +65,14 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       threads: ChatThreadDto[],
       payload: ChatSessionMessagesDto,
       detachedMatchesThisRecovery = false,
+      // bdboard-z9mn: この一覧 fetch の開始順序番号(chat/threadListFetchOrder.ts。回収が一覧の fetch を
+      // 始める直前に取る)。省略したときは「いま始めた fetch の一覧」として扱う。
+      listFetchSeq: number = threadListOrder.begin(selectedProjectId),
     ) => {
+      // bdboard-z9mn: この一覧より後に始まった fetch(採用の取り直しなど)の一覧が既に当たっていれば
+      // orderedThreads は undefined — 回収の一覧は古いので書かない(採用したタブのタイトルを戻さない)。
+      // open・選択・会話は、一覧の新旧に関わらず回収したセッションを当てる。
+      const orderedThreads = threadListOrder.admit(selectedProjectId, listFetchSeq, threads);
       // bdboard-tsen: スレッド一覧 effect(E7)がこのプロジェクトの open/選択をまだ復元して
       // いない(初回の一覧 fetch が in-flight)なら、E7 と同じ規則で永続化から復元した上に
       // 回収したセッションを足す。E7 の応答はこの後に届いても一覧・open・選択を当てない
@@ -120,12 +127,14 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       // 引き取りは ref の書き換え(記録を消す)なので、引数のオブジェクトの中に隠さず先に読む。
       const origin = takeUnobservedOrigin(replacedMarksRef.current, selectedProjectId);
       const { nextOpen, nextSelected, persistedSelected, replacedKey } = planRecoveredTurn({
-        threads, sessionId: payload.sessionId, alreadyRestored, knownOpen, explicitDraftSelected: isExplicitDraftStillSelected,
+        threads: orderedThreads ?? threads, sessionId: payload.sessionId, alreadyRestored, knownOpen, explicitDraftSelected: isExplicitDraftStillSelected,
         origin,
         persisted: readPersistedChatThreads()[selectedProjectId],
         knownSelected: selectedThreadIdsRef.current[selectedProjectId],
       });
-      setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
+      if (orderedThreads !== undefined) {
+        setThreadLists((prev) => ({ ...prev, [selectedProjectId]: orderedThreads }));
+      }
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpen }));
       setConversations((prev) => ({
         ...withoutKey(prev, replacedKey),
@@ -174,6 +183,7 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       draftNoncesRef,
       setSelectedAgentId,
       replacedMarksRef,
+      threadListOrder,
     ],
   );
 
@@ -181,6 +191,8 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     (sessionId: string) => {
       const nextOpenAfterGone = (openThreadIdsRef.current[selectedProjectId] ?? []).filter((id) => id !== sessionId);
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpenAfterGone }));
+      // bdboard-z9mn: 死んだセッションのローカル書き込みの記録を捨てる(古い一覧で蘇らせない)。
+      threadListOrder.forgetEntry(selectedProjectId, sessionId);
       // bdboard-23u: handleDeleteThread(threadOps.deleteThread、bdboard-sso1.83
       // 第10段で useChatThreadLists.ts へ移設済み)の prune と対称にする —
       // でないと閉じたスレッドの再オープン経路から死亡スレッドを再選択できる。
@@ -220,6 +232,7 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       setSelectedThreadIds,
       openThreadIdsRef,
       advanceDraftNonceAfterSessionGone,
+      threadListOrder,
     ],
   );
 
@@ -279,22 +292,8 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     seedMessages: readonly SessionTailMessageDto[],
   ) => {
     const projectId = selectedProjectId;
-    const fallbackNote: ChatMessage = {
-      role: 'assistant',
-      text: 'このCLIセッションの直近の会話をここに表示できませんでした。続きから会話できます。',
-      at: Date.now(),
-    };
-    const seeded: ChatMessage[] =
-      seedMessages.length > 0
-        ? seedMessages.map((message, index) => ({
-            role: message.role,
-            text: message.text,
-            at:
-              message.timestamp !== undefined
-                ? Date.parse(message.timestamp)
-                : Date.now() + index,
-          }))
-        : [fallbackNote];
+    // bdboard-z9mn: 取り込み用の変換は chat/messages.ts へ移した(このファイルの max-lines のため。挙動は同じ)。
+    const seeded = toAdoptionSeedMessages(seedMessages);
 
     // bdboard-2n8 レビュー should-fix: handleAgentChange と同じ理由でここでも
     // historyRequestIdRef を進める。resume したセッションIDが現在選択中の
@@ -333,9 +332,19 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     cancelThreadConfirmDelete();
     setLoadingHistoryFor((prev) => (prev === sessionId ? null : prev));
 
+    // bdboard-z9mn: 取り直しの開始順序番号。E7・回収の一覧より後に始まったなら、先に始まった(古い)
+    // それらの一覧が後から届いても、この一覧を上書きしない。逆に、あとから始まった取り直し・回収の一覧が
+    // 先に当たっていれば、この一覧は古いので書かない(採用が 2 回続いたときの 1 回目の取り直しなど)。
+    // threadListRequestIdRef は進めない — 進めると回収の hydrate が止まる(chat/useTurnStatusRecovery.ts)。
+    const listFetchSeq = threadListOrder.begin(projectId);
     void fetchChatThreads(projectId)
       .then((threads) => {
-        setThreadLists((prev) => ({ ...prev, [projectId]: threads }));
+        const orderedThreads = threadListOrder.admit(projectId, listFetchSeq, threads);
+        if (orderedThreads !== undefined) {
+          setThreadLists((prev) => ({ ...prev, [projectId]: orderedThreads }));
+        }
+        // 古い一覧でも、基点の永続化 id のうち一覧に無いものが落ちたこと自体は新しい一覧にも当てはまるので、
+        // 下の prune は応答の新旧に関わらず行う(基点の id はこの採用より前から存在していた)。
         if (!usedPersistedBase) return;
         // bdboard-oaak: 採用は restoredProjectsRef を立てるので、この後に届く E7 の応答は open を
         // 復元し直さない。サーバーがもう持たない永続化 id を残すと「(無題)」タブになるため落とす。
