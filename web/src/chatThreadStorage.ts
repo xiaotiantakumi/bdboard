@@ -101,7 +101,9 @@ export function resolvePersistedSelectionAfterClose(
  * 未復元のうちは渡さない: 永続化の方が正本で、live の open は他経路の書き込み分しか
  * 持たないことがある(bdboard-4w2d)。ここで E7 側に永続化を書かせる直し方は採らない —
  * 再訪時に E7 が「離れている間に増えたスレッド」を取り込めなくなる
- * (chat/useThreadListSync.test.tsx の再訪テスト)。
+ * (chat/useThreadListSync.test.tsx の再訪テスト)。ただしこの性質が実際に残るのは、初回訪問で
+ * 履歴ロードも送信も無かったとき(チケット起動のドラフト・履歴ロードの失敗・スレッド 0 件)
+ * だけ: E7 の直後に走る最初の履歴ロードが、live の open でエントリを丸ごと書くため。
  */
 export function writePersistedChatThread(
   projectId: string,

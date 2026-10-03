@@ -222,6 +222,48 @@ describe('ChatPanel', () => {
     });
   });
 
+  it('first visit that sends from a ticket-launch draft keeps every server thread persisted (bdboard-7feq)', async () => {
+    // チケット起動のドラフトでは E7 が履歴を読まないので、最初の永続化は送信成功になる。
+    // そこで永続化エントリ(無い)を基点にすると {[D], D} に潰れ、A〜C が閉じられていた。
+    const user = userEvent.setup();
+    fetchChatThreadsMock.mockResolvedValue(
+      ['sess-a', 'sess-b', 'sess-c'].map((sessionId) => ({
+        sessionId,
+        agentId: 'claude',
+        title: sessionId,
+        pinned: false,
+        updatedAt: '2026-08-16T03:00:00.000Z',
+      })),
+    );
+    fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        return jsonResponse({ reply: 'AI reply', sessionId: 'sess-d', agentId: 'claude' });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    const view = renderChatPanel([PROJECT_A], {
+      initialProjectId: 'proj-a',
+      initialInput: 'x.1 について: ',
+      ticketContextToken: 1,
+    });
+    await waitFor(() => expect(screen.getByLabelText('メッセージ')).toHaveValue('x.1 について: '));
+    await waitFor(() => {
+      expect(view.container.querySelector('.chat-thread-switcher-count')).toHaveTextContent('スレッド 3');
+    });
+
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('AI reply');
+    await waitFor(() => {
+      expect(view.container.querySelector('.chat-thread-switcher-count')).toHaveTextContent('スレッド 4');
+    });
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['sess-a', 'sess-b', 'sess-c', 'sess-d'],
+      selectedSessionId: 'sess-d',
+    });
+  });
+
   it('blocks sending an existing thread until history finishes loading', async () => {
     const user = userEvent.setup();
     writePersistedChatThread('proj-a', {
