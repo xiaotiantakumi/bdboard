@@ -2,6 +2,7 @@ import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { Project } from '../../domain/project.js';
 import type { Ticket } from '../../domain/ticket.js';
 import type { BoardCache } from '../ports/board-cache.js';
+import { readProjectEntries } from './read-cached-projects.js';
 import { createYieldGate, forEachChunked, type YieldGate } from './aggregation-yield.js';
 import { MS_PER_DAY } from './board-date-time.js';
 import {
@@ -169,9 +170,7 @@ export async function getThroughputStats(
   // チケットJSONパースをプロジェクト単位でチャンク化し、/api/health 等の他
   // リクエストを長時間待たせない)。無ければ (インメモリ fake 等) listProjects()
   // に同じ結果でフォールバックする。
-  let entries = cache.listProjectsChunked !== undefined
-    ? await cache.listProjectsChunked()
-    : cache.listProjects();
+  let entries = await readProjectEntries(cache);
   if (projectIdFilter !== undefined) {
     const filterSet = new Set(projectIdFilter);
     entries = entries.filter((entry) => filterSet.has(entry.project.id));

@@ -35,8 +35,26 @@ export interface CacheStats {
 export interface BoardCache {
   getProject(projectId: string): CachedProject | undefined;
   putProject(entry: CachedProject): void;
-  /** project.rootPath 昇順 */
+  /**
+   * project.rootPath 昇順。
+   * bdboard-5lnh: 実装は同期のまま、parseCache が温まっていれば全チケットの JSON
+   * テキストを SQLite から読み直さない (id, fingerprint の一括取得 → parseCache →
+   * 外れた分だけ行を読む)。1回の同期呼び出しの中で完結するので、呼び出しの途中に
+   * 他の書き込みが割り込めない (原子性は変わらない)。壊れた行 (prefixes/tickets の
+   * JSON が不正) は結果に含めない。
+   */
   listProjects(): readonly CachedProject[];
+  /**
+   * bdboard-5lnh: listProjects().map((entry) => entry.project) と同じ結果 (同じ
+   * project.rootPath 昇順・同じく壊れた行は含めない) を返す軽量版。チケットを使わず
+   * project (id / name / rootPath / prefixes / aliasPaths) だけが要る呼び出し元
+   * (セッション走査・reclaim・ヘルス系ルート等) 向け。実装は同期で、parseCache が
+   * 温まっていればチケットのテキストに一切触れない。
+   * 省略可能: インメモリ fake は未実装でよい。呼び出し側は直接呼ばず
+   * application/board/read-cached-projects.ts の readProjectRefs() を使うこと
+   * (未実装なら listProjects().map(...) にフォールバックする)。
+   */
+  listProjectRefs?(): readonly Project[];
   /**
    * bdboard-mkkx: listProjects() と同じ結果 (project.rootPath 昇順) を返すが、
    * SQLite からの読み出し・チケットJSONのパースをプロジェクト単位でチャンク化し、
@@ -45,7 +63,9 @@ export interface BoardCache {
    * listProjects() は1回の同期処理で数百msブロックしうるため、/api/health 等
    * 他リクエストを長時間待たせたくない経路 (stats集計) はこちらを使う。
    * 省略可能: インメモリ fake は同期実装のままで構わない (listProjects() に
-   * フォールバックする)。
+   * フォールバックする)。呼び出し側は三項演算子を自前で書かず
+   * application/board/read-cached-projects.ts の readProjectEntries() を使うこと
+   * (bdboard-5lnh)。
    */
   listProjectsChunked?(): Promise<readonly CachedProject[]>;
   deleteProject(projectId: string): void;

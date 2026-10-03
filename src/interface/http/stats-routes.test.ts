@@ -484,7 +484,10 @@ describe('createApiRoutes', () => {
 
     const listProjects = vi.fn(() => base.listProjects());
     const listProjectsChunked = vi.fn(() => Promise.resolve(base.listProjects()));
-    const cache = { ...base, listProjects, listProjectsChunked };
+    // bdboard-5lnh: the worktree scan only needs the projects, so it goes through the
+    // light listProjectRefs() (the real SQLite cache implements it).
+    const listProjectRefs = vi.fn(() => base.listProjects().map((entry) => entry.project));
+    const cache = { ...base, listProjects, listProjectsChunked, listProjectRefs };
 
     const scan = vi.fn(async () => ({ worktrees: [], bdBranches: [], complete: true }));
     const worktreeScanner: WorktreeScanner = { listChangedFiles: async () => [], scan };
@@ -497,7 +500,34 @@ describe('createApiRoutes', () => {
     expect(body.reclaim).toMatchObject({ reclaimedLiveWorktreeCount: 0 });
     // 前処理がプロジェクト一覧を読めていること (scan が呼ばれる) と、同期版を使わないこと。
     expect(scan).toHaveBeenCalledWith(a.rootPath);
-    expect(listProjectsChunked).toHaveBeenCalled();
     expect(listProjects).not.toHaveBeenCalled();
+    // bdboard-5lnh: 以前は scan 前処理と getHarnessKpi の2回 listProjectsChunked() が
+    // 走っていた。チケットを読むのは getHarnessKpi の1回だけ、project だけの読み出しは
+    // listProjectRefs() の1回だけ。
+    expect(listProjectRefs).toHaveBeenCalledTimes(1);
+    expect(listProjectsChunked).toHaveBeenCalledTimes(1);
+  });
+  it('applies the ?projects= filter to the worktree scan targets of /api/harness-kpi', async () => {
+    const base = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const b = project('proj-b', '/projects/b');
+    base.putProject({ project: a, tickets: [], fingerprint: 'fp-a', fetchedAt: NOW });
+    base.putProject({ project: b, tickets: [], fingerprint: 'fp-b', fetchedAt: NOW });
+
+    const scan = vi.fn(async () => ({ worktrees: [], bdBranches: [], complete: true }));
+    const worktreeScanner: WorktreeScanner = { listChangedFiles: async () => [], scan };
+
+    // Fallback path (no listProjectRefs on this fake) and the light path must agree.
+    const withRefs = {
+      ...base,
+      listProjectRefs: () => base.listProjects().map((entry) => entry.project),
+    };
+    for (const cache of [base, withRefs]) {
+      scan.mockClear();
+      const app = createApiRoutes(createDeps({ cache, worktreeScanner }));
+      const response = await app.request('/api/harness-kpi?weeks=1&projects=proj-b');
+      expect(response.status).toBe(200);
+      expect(scan.mock.calls.map((call) => (call as unknown[])[0])).toEqual([b.rootPath]);
+    }
   });
 });

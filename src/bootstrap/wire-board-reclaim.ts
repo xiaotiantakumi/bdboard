@@ -13,6 +13,7 @@ import {
 } from '../application/lease/reclaim-scheduler.js';
 import { createReclaimHistory } from '../application/lease/reclaim-history.js';
 import { planProjectReclaim } from '../application/lease/plan-project-reclaim.js';
+import { readProjectRefs } from '../application/board/read-cached-projects.js';
 
 export interface WireBoardReclaimDeps {
   readonly leaseReclaimer: LeaseReclaimer;
@@ -39,7 +40,7 @@ export function wireBoardReclaim(deps: WireBoardReclaimDeps) {
   const reclaimHistory = createReclaimHistory();
   const reclaimScheduler = createReclaimScheduler({
     reclaimer: deps.leaseReclaimer,
-    listProjects: () => deps.cache.listProjects().map((entry) => entry.project),
+    listProjects: () => readProjectRefs(deps.cache),
     config: {
       enabled: deps.reclaimEnabled,
       intervalMs: deps.reclaimIntervalMs,

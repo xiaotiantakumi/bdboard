@@ -4,6 +4,7 @@ import { getThroughputStats } from '../../application/board/get-throughput-stats
 import { getModelStats } from '../../application/board/get-model-stats.js';
 import { getHarnessKpi } from '../../application/board/get-harness-kpi.js';
 import { getCfdStats } from '../../application/board/get-cfd-stats.js';
+import { readProjectRefs } from '../../application/board/read-cached-projects.js';
 import { scanGitLeftovers } from '../../application/board/scan-git-leftovers.js';
 import { describeFetchFailures } from '../../application/board/fetch-failure-log.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
@@ -76,18 +77,19 @@ export function createStatsRoutes(deps: ApiDeps): Hono {
     let leftoverCandidates: readonly LeftoverCandidate[] | undefined;
     let leftoverScanComplete = false;
     if (deps.worktreeScanner !== undefined) {
-      // bdboard-4x55: listProjects() は全チケット JSON をデシリアライズする同期処理で
-      // イベントループを塞ぐ。getHarnessKpi / getModelStats と同じく
-      // listProjectsChunked() を優先し、無ければ listProjects() にフォールバックする。
-      let entries = deps.cache.listProjectsChunked !== undefined
-        ? await deps.cache.listProjectsChunked()
-        : deps.cache.listProjects();
+      // bdboard-5lnh: scanGitLeftovers が要るのは project (rootPath 等) だけで、チケットは
+      // 要らない。以前 (bdboard-4x55) は listProjectsChunked() で全チケットを読んでおり、
+      // 直後の getHarnessKpi でも同じ listProjectsChunked() が走って2回読んでいた。
+      // 軽量な listProjectRefs() (温まっていればチケットのテキストに触れない同期の
+      // 読み出し。無い fake では listProjects() にフォールバック) に寄せ、チケット側の
+      // 読み出しは getHarnessKpi の1回だけにする。
+      let scanProjects = readProjectRefs(deps.cache);
       if (projectIds !== undefined) {
         const filterSet = new Set(projectIds);
-        entries = entries.filter((entry) => filterSet.has(entry.project.id));
+        scanProjects = scanProjects.filter((project) => filterSet.has(project.id));
       }
       const scan = await scanGitLeftovers(
-        entries.map((entry) => entry.project),
+        scanProjects,
         deps.worktreeScanner,
         {
           // m4 (bdboard-t3ct): [hygiene] パネル向けの既定文言だと、統計タブの

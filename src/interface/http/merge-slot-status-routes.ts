@@ -3,6 +3,7 @@ import { getMergeSlotStatus } from '../../application/board/get-merge-slot-statu
 import { toMergeSlotStatusDto } from './dto.js';
 import { parseProjectIds } from './api-route-shared.js';
 import type { ApiDeps } from './api-deps.js';
+import { readProjectRefs } from '../../application/board/read-cached-projects.js';
 
 // bdboard-sso1.61: hygiene-routes.ts (旧284行、5ルートが同居) の分割で
 // GET /api/merge-slot-status をここへ切り出した (move only, 挙動変更ゼロ)。
@@ -16,7 +17,7 @@ export function createMergeSlotStatusRoutes(deps: ApiDeps): Hono {
     }
 
     const projectIds = parseProjectIds(c.req.query('projects'));
-    const projects = deps.cache.listProjects().map((entry) => entry.project);
+    const projects = readProjectRefs(deps.cache);
     const statuses = await getMergeSlotStatus(
       projects,
       deps.mergeSlotReader,

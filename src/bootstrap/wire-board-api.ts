@@ -25,6 +25,7 @@ import type { ProcessScanner } from '../application/ports/process-scanner.js';
 import type { SessionLinkWriterPort } from '../application/ports/session-link-writer.js';
 import type { WorktreeScanner } from '../application/ports/worktree-scanner.js';
 import { PrBadgeStatusCache } from '../application/board/get-pr-badges.js';
+import { readProjectRefs } from '../application/board/read-cached-projects.js';
 import type { ReclaimScheduler } from '../application/lease/reclaim-scheduler.js';
 import type { ReclaimHistory } from '../application/lease/reclaim-history.js';
 import { readProjectMainBranch } from '../application/harness/get-project-harness-status.js';
@@ -103,9 +104,9 @@ export function wireBoardApi(deps: WireBoardApiDeps) {
   });
 
   const refreshProjectByRootPath = async (rootPath: string): Promise<void> => {
-    const projectId = deps.cache
-      .listProjects()
-      .find((entry) => entry.project.rootPath === rootPath)?.project.id;
+    const projectId = readProjectRefs(deps.cache).find(
+      (project) => project.rootPath === rootPath,
+    )?.id;
     // キャッシュに無い rootPath は絞り込みようがないので、安全側に倒して
     // 従来どおり全体を強制リフレッシュする。
     await deps.boardRefreshServices.runRefresh(

@@ -23,6 +23,7 @@ import {
 } from '../infrastructure/index.js';
 import { createTranscriptLinkTracker } from '../application/board/transcript-link-tracker.js';
 import { createSessionLivenessTracker } from '../application/board/session-liveness-tracker.js';
+import { readProjectRefs } from '../application/board/read-cached-projects.js';
 
 export interface WireBoardSessionsDeps {
   readonly fsPort: InstanceType<typeof NodeFileSystem>;
@@ -153,7 +154,7 @@ export async function startTranscriptInterval(
 
   try {
     const initialLinks = await services.transcriptScanner.scan({
-      projects: deps.cache.listProjects().map((entry) => entry.project),
+      projects: readProjectRefs(deps.cache),
       knownIdsByProject: new Map(
         deps.cache.listProjects().map((entry) => [
           entry.project.id,
@@ -166,7 +167,7 @@ export async function startTranscriptInterval(
     log(`Initial transcript scan: links=${initialLinks.length}`);
 
     const initialInteractions = await services.interactionReader.read({
-      projects: deps.cache.listProjects().map((entry) => entry.project),
+      projects: readProjectRefs(deps.cache),
     });
     log(`Initial interaction read: records=${initialInteractions.length}`);
   } catch (err) {

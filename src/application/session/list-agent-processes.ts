@@ -2,6 +2,7 @@ import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import type { BoardCache } from '../ports/board-cache.js';
 import type { ScannedProcess } from '../ports/process-scanner.js';
+import { readProjectRefs } from '../board/read-cached-projects.js';
 
 export interface ListedAgentProcess {
   readonly pid: number;
@@ -86,7 +87,7 @@ export function listAgentProcesses(
   options?: { readonly platform?: NodeJS.Platform },
 ): readonly ListedAgentProcess[] {
   const platform = options?.platform ?? process.platform;
-  const projects = cache.listProjects().map((entry) => entry.project);
+  const projects = readProjectRefs(cache);
 
   const listed: ListedAgentProcess[] = processes.map((proc) => {
     const project = resolveProject(proc.cwd, projects, platform);

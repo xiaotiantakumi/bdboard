@@ -9,6 +9,7 @@ import type {
 } from '../../../application/ports/board-cache.js';
 import type { ModelUsageTotals } from '../../../application/transcript/extract-usage.js';
 import type { InteractionRecord } from '../../../domain/interaction.js';
+import type { Project } from '../../../domain/project.js';
 import { CACHE_TABLE_NAMES } from './schema.js';
 import { createYieldGate, yieldToEventLoop } from '../../../application/board/aggregation-yield.js';
 import { rowToCfdSnapshot, rowToInteraction, rowToSessionLink } from './convert.js';
@@ -21,6 +22,7 @@ import type {
   TranscriptOffsetRow,
 } from './row-types.js';
 import { parseCachedProjectRow, type ParseCache } from './parse-cache.js';
+import { createProjectListing } from './project-listing.js';
 
 // BoardCache (アプリ層のポート) の一部を実装する。Pick で束ねることで、ポート側に
 // メソッドが増減したときにここが自動追随し (増分は他モジュール側で要実装、削除は
@@ -29,6 +31,7 @@ export type BoardCacheReadOperations = Pick<
   BoardCache,
   | 'getProject'
   | 'listProjects'
+  | 'listProjectRefs'
   | 'listProjectsChunked'
   | 'getTranscriptOffset'
   | 'getSessionUsage'
@@ -39,19 +42,15 @@ export type BoardCacheReadOperations = Pick<
   | 'listInteractions'
 >;
 
-// listProjects() (同期・共有 Statement) が使う全件取得SQL。
-// listProjectsChunked() はこれとは別に「id だけ先に一括取得 →
-// 1件ずつ getProjectStmt.get(id)」という方式を取る (下記
-// listProjectsChunked() 本体のコメント参照)。
-const LIST_PROJECTS_SQL = `SELECT * FROM projects ORDER BY root_path ASC`;
-
 export function createReadOperations(
   db: Database.Database,
   dbPath: string,
   parseCache: ParseCache,
 ): BoardCacheReadOperations {
   const getProjectStmt = db.prepare(`SELECT * FROM projects WHERE id = ?`);
-  const listProjectsStmt = db.prepare(LIST_PROJECTS_SQL);
+  // bdboard-5lnh: listProjects / listProjectRefs / listProjectsChunked 共通の解決手順
+  // (id, fingerprint の一括取得 → parseCache → 外れた分だけ getProjectStmt.get)。
+  const listing = createProjectListing(db, getProjectStmt, parseCache);
   const getTranscriptOffsetStmt = db.prepare(`SELECT byte_offset FROM transcript_offsets WHERE file_path = ?`);
   const listCfdSnapshotsAllStmt = db.prepare(
     `SELECT project_id, status, snapshot_date, snapshotted_at, count FROM cfd_snapshots ORDER BY snapshot_date ASC, project_id ASC, status ASC`,
@@ -72,6 +71,17 @@ export function createReadOperations(
     ORDER BY at DESC, id ASC
   `);
 
+  const listEntries = (): readonly CachedProject[] => {
+    const results: CachedProject[] = [];
+    for (const ref of listing.listRefs()) {
+      const entry = listing.resolve(ref);
+      if (entry !== null) {
+        results.push(entry);
+      }
+    }
+    return results;
+  };
+
   return {
     getProject(projectId: string): CachedProject | undefined {
       const row = getProjectStmt.get(projectId) as ProjectRow | undefined;
@@ -81,16 +91,19 @@ export function createReadOperations(
       return parseCachedProjectRow(row, parseCache) ?? undefined;
     },
 
+    // bdboard-5lnh: 以前は `SELECT * FROM projects` で全チケットの JSON テキストを毎回
+    // コピーしていたため、parseCache が温まっていても 200k 件で 163〜179ms 同期ブロック
+    // した。いまは listing.listRefs() (id, fingerprint だけ) → parseCache → 外れた分だけ
+    // 行を読む、の同期のままの手順なので、1回の同期呼び出しの中で完結し (await を挟まない
+    // ので呼び出しの途中に putProject 等が割り込めない)、原子性は変わらない。
     listProjects(): readonly CachedProject[] {
-      const rows = listProjectsStmt.all() as ProjectRow[];
-      const results: CachedProject[] = [];
-      for (const row of rows) {
-        const entry = parseCachedProjectRow(row, parseCache);
-        if (entry !== null) {
-          results.push(entry);
-        }
-      }
-      return results;
+      return listEntries();
+    },
+
+    // bdboard-5lnh: project (定義) だけを返す軽量版。listProjects() と同じ順序・同じ
+    // 「壊れた行は飛ばす」扱いで、温まった状態ではチケットのテキストにも一切触れない。
+    listProjectRefs(): readonly Project[] {
+      return listEntries().map((entry) => entry.project);
     },
 
     // bdboard-mkkx: listProjects() は SQLite からの読み出しと、行ごとの
@@ -138,32 +151,25 @@ export function createReadOperations(
     // でのチャンク化はできない — チャンク境界は「プロジェクト単位」になる
     // (受け入れ基準が許容する粒度)。listProjects() と同じ行順
     // (ORDER BY root_path ASC) で処理するので、戻り値の順序は変わらない。
+    // bdboard-5lnh: (1)(2) の手順 (id, fingerprint の一括取得 → parseCache →
+    // 外れた分だけ getProjectStmt.get) は同期版 listProjects() / listProjectRefs()
+    // と共通の project-listing.ts に切り出した。違いは yield を挟むかどうかだけ。
     //
     // トレードオフ: (1)の id 一覧取得は1回のスナップショットなので、
     // listProjectsChunked() の実行中に削除された project は該当 id の
-    // get() が undefined を返しスキップされる (listProjects() の
-    // 1回の同期読み出しにあるようなアトミック性は無い)。実行中に新規追加
+    // get() が undefined を返しスキップされる (await を挟まない同期版
+    // listProjects() / listProjectRefs() と違い、呼び出しの途中に他の書き込みが
+    // 割り込めるため、1回の同期呼び出しの中で完結するアトミック性は無い)。実行中に新規追加
     // された project は (1)の時点の一覧に含まれないため結果に現れない。
     // どちらも「統計表示が一瞬だけ古いスナップショットを見る」程度の実害で、
     // このAPIの用途 (定期ポーリングされる集計) では許容できる。
     async listProjectsChunked(): Promise<readonly CachedProject[]> {
-      const idRows = db
-        .prepare(`SELECT id, fingerprint FROM projects ORDER BY root_path ASC`)
-        .all() as { readonly id: string; readonly fingerprint: string }[];
       const results: CachedProject[] = [];
       const gate = createYieldGate(1);
-      for (const { id, fingerprint } of idRows) {
-        const cached = parseCache.get(id);
-        if (cached !== undefined && cached.fingerprint === fingerprint) {
-          results.push(cached.entry);
-        } else {
-          const row = getProjectStmt.get(id) as ProjectRow | undefined;
-          if (row !== undefined) {
-            const entry = parseCachedProjectRow(row, parseCache);
-            if (entry !== null) {
-              results.push(entry);
-            }
-          }
+      for (const ref of listing.listRefs()) {
+        const entry = listing.resolve(ref);
+        if (entry !== null) {
+          results.push(entry);
         }
         if (gate.shouldYield()) {
           await yieldToEventLoop();

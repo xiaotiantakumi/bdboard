@@ -33,6 +33,7 @@ import {
 } from '../infrastructure/index.js';
 import type { CommandRunner } from '../application/ports/command-runner.js';
 import type { ScanRootsConfigPort } from '../application/ports/scan-roots-config.js';
+import { readProjectRefs } from '../application/board/read-cached-projects.js';
 
 function updateStatusFromResult(
   cache: BoardCache,
@@ -178,7 +179,7 @@ export async function wireBoardRefresh(deps: WireBoardRefreshDeps) {
     /** watcher 作成 + インターバル起動一式。sessions/transcript の初期処理の後に main.ts が呼ぶ。 */
     startWatchAndIntervals: async () => {
       const watcher = createChokidarProjectWatcher();
-      const initialWatchedProjects = deps.cache.listProjects().map((entry) => entry.project);
+      const initialWatchedProjects = readProjectRefs(deps.cache);
       const watchHandle = await watcher.watch(initialWatchedProjects, () => {
         void runUnattendedRefresh({ refresh: () => runRefresh(false) });
       });

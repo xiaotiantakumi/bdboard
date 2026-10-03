@@ -2,6 +2,7 @@ import { getBoardTimeZone } from '../../config/board-timezone.js';
 import { KNOWN_STAGE_ORDER } from '../../domain/ticket-model.js';
 import type { Ticket } from '../../domain/ticket.js';
 import type { BoardCache } from '../ports/board-cache.js';
+import { readProjectEntries } from './read-cached-projects.js';
 import { forEachChunked } from './aggregation-yield.js';
 import {
   buildWeekBoundaries,
@@ -151,9 +152,7 @@ async function collectTickets(
 ): Promise<Ticket[]> {
   // bdboard-mkkx: getThroughputStats と同じ理由で listProjectsChunked() を
   // 優先し、無ければ listProjects() にフォールバックする。
-  let entries = cache.listProjectsChunked !== undefined
-    ? await cache.listProjectsChunked()
-    : cache.listProjects();
+  let entries = await readProjectEntries(cache);
   if (projectIdFilter !== undefined) {
     const filterSet = new Set(projectIdFilter);
     entries = entries.filter((entry) => filterSet.has(entry.project.id));

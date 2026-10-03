@@ -7,6 +7,7 @@ import {
 } from '../../domain/harness-kpi.js';
 import type { Ticket } from '../../domain/ticket.js';
 import type { BoardCache } from '../ports/board-cache.js';
+import { readProjectEntries } from './read-cached-projects.js';
 import { buildWeekStarts } from './week-boundary.js';
 
 export interface GetHarnessKpiOptions {
@@ -52,9 +53,7 @@ async function collectTickets(
   // bdboard-4x55: getThroughputStats / getModelStats (bdboard-mkkx) と同じ理由で
   // listProjectsChunked() を優先し、無ければ (インメモリ fake 等) listProjects() に
   // 同じ結果でフォールバックする。
-  let entries = cache.listProjectsChunked !== undefined
-    ? await cache.listProjectsChunked()
-    : cache.listProjects();
+  let entries = await readProjectEntries(cache);
   if (projectIdFilter !== undefined) {
     entries = entries.filter((entry) => projectIdFilter.has(entry.project.id));
   }
