@@ -191,6 +191,8 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       // bdboard-v9tz: 選択中だった場合は下の if 内で選択クリアと一緒に永続化を書く。選択中ではない id が
       // 消えたときは else で、メモリの open と同じく永続化の activeSessionIds からも落とす
       // (chat/dropGoneFromPersistedOpen.ts)。どちらも書き込みは setState の updater の外。
+      // 基点が if はメモリの open、else は永続化なのは意図どおり: else は一覧が未復元(メモリの open が空)
+      // でも他の id を巻き込まないため。選択中の if 側に来るときは実質いつも復元済み。
       const wasSelected = selectedThreadIdsRef.current[selectedProjectId] === sessionId;
       if (wasSelected) {
         setSelectedThreadIds((prev) =>

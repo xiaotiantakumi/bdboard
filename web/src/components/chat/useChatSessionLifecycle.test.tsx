@@ -462,6 +462,28 @@ describe('useChatSessionLifecycle', () => {
         expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['A'], selectedSessionId: 'A' });
       });
 
+      it('clears the persisted selection while a draft is shown when it pointed at the dead id', () => {
+        writePersistedChatThreadState('project-a', { activeSessionIds: ['A', 'B'], selectedSessionId: 'B' });
+        const { result } = setup({
+          selectedThreadIdsRef: { current: {} },
+          openThreadIdsRef: { current: { 'project-a': ['A', 'B'] } },
+        });
+        act(() => result.current.handleHistorySessionGone('B'));
+
+        expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['A'], selectedSessionId: undefined });
+      });
+
+      it('prefers the live selection over a different, still-open persisted one', () => {
+        writePersistedChatThreadState('project-a', { activeSessionIds: ['A', 'B', 'C'], selectedSessionId: 'C' });
+        const { result } = setup({
+          selectedThreadIdsRef: { current: { 'project-a': 'A' } },
+          openThreadIdsRef: { current: { 'project-a': ['A', 'B', 'C'] } },
+        });
+        act(() => result.current.handleHistorySessionGone('B'));
+
+        expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['A', 'C'], selectedSessionId: 'A' });
+      });
+
       it('does not write when the persisted open list never held the dead id, or when nothing is persisted', () => {
         writePersistedChatThreadState('project-a', { activeSessionIds: ['A'], selectedSessionId: 'A' });
         const setItem = vi.spyOn(Storage.prototype, 'setItem');
