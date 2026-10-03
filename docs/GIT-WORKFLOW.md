@@ -66,6 +66,7 @@ PR を作っていたら先に `gh pr close <N>`、push 済みなら `git push o
 リモートも消す。ローカルかリモートに `bd/<ticket-id>` が残っていると、同じチケットで起動し直した
 worker は手順2-3 で precheck-failed になる (human gate の回答後に新しい worker を起動せず、同じ
 worker に SendMessage するか議長が引き取るのも同じ理由)。
+「打ち切る」の `bd unclaim` は、この片付けが済んでから最後に打つ。「議長が引き取る」ときも、先に `lsof -a -d cwd +D <path>` で worker の background verify が残っていないか見て、残っていれば終わるまで待つ。
 
 ## bd チケット title の命名規約
 
