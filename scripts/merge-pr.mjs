@@ -19,6 +19,7 @@ export { evaluateLandedStatus } from './merge-pr/landed.mjs';
 export { parseGitHubSlug, parseMergeConfig } from './merge-pr/config.mjs';
 export { mergeCommand } from './merge-pr/gate.mjs';
 export { hasApprovedReview, isReleasePleasePull } from './merge-pr/prepare.mjs';
+export { VERIFYING_PID_MAX_AGE_MS } from './merge-pr/finish.mjs';
 
 const isMain =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
