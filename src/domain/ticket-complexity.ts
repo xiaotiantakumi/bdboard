@@ -7,6 +7,12 @@
 export const TICKET_COMPLEXITY_METADATA_KEY = 'bdboard.complexity';
 
 /**
+ * 統計の表で複雑度を並べる順 (低い順)。現行の運用値 (low/med/high) だけを知っていて、
+ * それ以外の自由文字列はこの後ろにアルファベット順で並べる (bdboard-p5l.27)。
+ */
+export const KNOWN_COMPLEXITY_ORDER = ['low', 'med', 'high'] as const;
+
+/**
  * `bdboard.complexity` の値を取り出す。メタデータは外部入力なので、非文字列
  * (数値・null 等)や空文字/空白のみの値は「未記録」として undefined を返す。
  */

@@ -3,9 +3,11 @@ import type { SemaphorePriority } from '../concurrency.js';
 import type { PrStatusResult } from '../ports/pr-status-reader.js';
 import {
   buildInitialPrBadgeStatusEntries,
+  buildSuccessPrBadgeStatusEntry,
   collectTerminalPrBadgeStatusEntries,
   isMergedPendingStatus,
   isTerminalPrStatus,
+  keepPermanentStatusOnFailure,
   type PersistedPrBadgeStatusEntry,
   type PrBadgeStatusCacheEntry,
 } from './pr-badge-status-cache-types.js';
@@ -124,6 +126,18 @@ export class PrBadgeStatusCache {
     return undefined;
   }
 
+  /**
+   * 統計 (修正 push 回数。bdboard-p5l.27) 向けの読み取り専用ピーク: TTL を無視して
+   * 「最後に分かっている値」を返す。get() は open PR の 60 秒 TTL で期限切れ扱いにするが、
+   * 統計はクローズ済みチケットの PR を読むので鮮度よりも「取得済みかどうか」が大事で、
+   * ここで TTL を見ると open のまま残った PR が永久に「未取得」に見えてしまう。
+   * undefined = 一度も取れていない / null = 直近の取得が失敗 (否定キャッシュ) /
+   * PrStatus = 取得済み。gh は起動しない。
+   */
+  peekStatus(url: string): PrStatus | null | undefined {
+    return this.entries.get(url)?.status;
+  }
+
   /** bdboard-ye2p: 永続化対象 (permanent なエントリ) だけのスナップショット。 */
   getTerminalEntries(): readonly PersistedPrBadgeStatusEntry[] {
     return collectTerminalPrBadgeStatusEntries(this.entries);
@@ -226,15 +240,13 @@ export class PrBadgeStatusCache {
   private recordSuccess(url: string, status: PrStatus): void {
     const previous = this.entries.get(url);
     const wasPermanent = previous?.permanent === true;
+    // bdboard-p5l.27: fixPushCount が入る前に永続化された古い恒久エントリが、再取得で
+    // fixPushCount を得たときも書き戻す (そうしないと再起動のたびに取り直しになる)。
+    const gainedFixPushCount =
+      previous?.status?.fixPushCount === undefined && status.fixPushCount !== undefined;
     if (isTerminalPrStatus(status)) {
-      this.entries.set(url, {
-        status,
-        fetchedAt: this.now(),
-        permanent: true,
-        failureStreak: 0,
-        mergedPendingRetries: 0,
-      });
-      if (!wasPermanent) {
+      this.entries.set(url, buildSuccessPrBadgeStatusEntry(status, this.now(), true, 0));
+      if (!wasPermanent || gainedFixPushCount) {
         this.onPersistableChange?.();
       }
       return;
@@ -242,29 +254,27 @@ export class PrBadgeStatusCache {
     if (isMergedPendingStatus(status)) {
       const retries = (previous?.mergedPendingRetries ?? 0) + 1;
       const permanent = retries >= this.mergedPendingMaxRetries;
-      this.entries.set(url, {
-        status,
-        fetchedAt: this.now(),
-        permanent,
-        failureStreak: 0,
-        mergedPendingRetries: retries,
-      });
-      if (permanent && !wasPermanent) {
+      this.entries.set(
+        url,
+        buildSuccessPrBadgeStatusEntry(status, this.now(), permanent, retries),
+      );
+      if (permanent && (!wasPermanent || gainedFixPushCount)) {
         this.onPersistableChange?.();
       }
       return;
     }
-    this.entries.set(url, {
-      status,
-      fetchedAt: this.now(),
-      permanent: false,
-      failureStreak: 0,
-      mergedPendingRetries: 0,
-    });
+    this.entries.set(url, buildSuccessPrBadgeStatusEntry(status, this.now(), false, 0));
   }
 
   private recordFailure(url: string): void {
     const previous = this.entries.get(url);
+    // bdboard-p5l.27: 恒久エントリの取り直し (統計の先読みだけが行う) の失敗では、バッジの
+    // 確定ステータスを否定キャッシュへ落とさない (keepPermanentStatusOnFailure)。
+    const kept = keepPermanentStatusOnFailure(previous);
+    if (kept !== undefined) {
+      this.entries.set(url, kept);
+      return;
+    }
     this.entries.set(url, {
       status: null,
       fetchedAt: this.now(),

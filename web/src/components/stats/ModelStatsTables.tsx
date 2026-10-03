@@ -4,6 +4,7 @@ import type { ModelStatsDto } from '../../api';
 import { CHART_DESCRIPTIONS } from './constants';
 import { collectModelNames, hasAnyModelStatsData } from './statsDataHelpers';
 import { ChartBlockHeader } from './ChartBlockHeader';
+import { ComplexityModelTable } from './ComplexityModelTable';
 import { ModelStatsTableScroll } from '../ModelStatsTableScroll';
 import { formatWeekLabel } from '../throughputStatsFormatting';
 
@@ -79,6 +80,7 @@ export function ModelStatsTables({ stats }: { stats: ModelStatsDto }) {
           </table>
         </ModelStatsTableScroll>
       </div>
+      <ComplexityModelTable stats={stats.complexityModel} />
     </>
   );
 }

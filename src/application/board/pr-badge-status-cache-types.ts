@@ -66,6 +66,16 @@ export function isValidPersistedPrBadgeStatusEntry(
   ) {
     return false;
   }
+  // bdboard-p5l.27: fixPushCount は省略可 (この項目が入る前に永続化した古いエントリには
+  // 無い) で、null は「試したが不明」。数値なら 0 以上の整数でなければ破損とみなす。
+  const fixPushCount = statusCandidate.fixPushCount;
+  if (
+    fixPushCount !== undefined &&
+    fixPushCount !== null &&
+    (typeof fixPushCount !== 'number' || !Number.isInteger(fixPushCount) || fixPushCount < 0)
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -89,6 +99,40 @@ export interface PrBadgeStatusCacheEntry {
    * (bdboard-7ln6 #4)。state が merged/closed+pending でなくなると 0 に戻る。
    */
   readonly mergedPendingRetries: number;
+  /**
+   * bdboard-p5l.27: 統計の先読みが fixPushCount を埋めるために恒久エントリを取り直し、gh が
+   * 失敗した印 (keepPermanentStatusOnFailure)。メモリ上の status.fixPushCount は null
+   * (= 不明。このプロセスでは取り直さない) だが、永続化する写しでは件数を省き、次の起動で
+   * 一度だけ取り直せるようにする (collectTerminalPrBadgeStatusEntries)。
+   */
+  readonly fixPushRefetchFailed?: boolean;
+}
+
+/**
+ * bdboard-p5l.27: 恒久エントリを取り直すのは統計の先読み (requireFixPushCount) だけ。その
+ * 取り直しが失敗 (高負荷時のタイムアウト・認証切れ・PR 削除など) したとき、バッジ用の確定
+ * ステータスを否定キャッシュへ落とさずに残す — 落とすとバッジが URL のみに劣化し、永続
+ * ファイルからも消え、/api/pr-links が gh で取り直し続ける。修正 push 回数だけを「不明」
+ * (null) にする。前のエントリがそういう恒久エントリでなければ undefined (通常の否定キャッシュ)。
+ */
+export function keepPermanentStatusOnFailure(
+  previous: PrBadgeStatusCacheEntry | undefined,
+): PrBadgeStatusCacheEntry | undefined {
+  if (previous === undefined || !previous.permanent || previous.status === null) {
+    return undefined;
+  }
+  return {
+    ...previous,
+    status: { ...previous.status, fixPushCount: previous.status.fixPushCount ?? null },
+    fixPushRefetchFailed: true,
+  };
+}
+
+/** 永続化する写し: 取り直しに失敗した印の付いたエントリは、メモリ上だけの null を書かない。 */
+function toPersistedStatus(status: PrStatus, fixPushRefetchFailed: boolean | undefined): PrStatus {
+  return fixPushRefetchFailed === true
+    ? { state: status.state, checkStatus: status.checkStatus }
+    : status;
 }
 
 export function isTerminalPrStatus(status: PrStatus | null): boolean {
@@ -106,6 +150,18 @@ export function isMergedPendingStatus(status: PrStatus): boolean {
   );
 }
 
+/**
+ * 取得に成功した結果のエントリ (failureStreak は常に 0)。pr-badge-status-cache.ts の
+ * recordSuccess から切り出した (bdboard-p5l.27, 行数上限対応。挙動は変えていない)。
+ */
+export function buildSuccessPrBadgeStatusEntry(
+  status: PrStatus,
+  fetchedAt: number,
+  permanent: boolean,
+  mergedPendingRetries: number,
+): PrBadgeStatusCacheEntry {
+  return { status, fetchedAt, permanent, failureStreak: 0, mergedPendingRetries };
+}
 
 /**
  * 起動時の初期化用: 永続化ストアから読んだ配列を検証しつつ Map へ変換する。
@@ -139,7 +195,7 @@ export function collectTerminalPrBadgeStatusEntries(
     if (entry.permanent && entry.status !== null) {
       result.push({
         url,
-        status: entry.status,
+        status: toPersistedStatus(entry.status, entry.fixPushRefetchFailed),
         fetchedAt: entry.fetchedAt,
         mergedPendingRetries: entry.mergedPendingRetries,
       });

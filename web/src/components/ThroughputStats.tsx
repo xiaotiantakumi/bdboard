@@ -27,6 +27,10 @@ import { HarnessKpiTable } from './stats/HarnessKpiTable';
 // 秒単位の鮮度が欲しい場合はヘッダーの再読み込みボタンで明示的に更新する。
 const STATS_QUERY_STALE_TIME_MS = 5 * 60_000;
 
+// bdboard-p5l.27: 修正 push 回数の取得待ち (fixPushPendingCount > 0) の間の再取得間隔と回数上限。
+const MODEL_STATS_PENDING_REFETCH_MS = 15_000;
+const MODEL_STATS_PENDING_REFETCH_MAX = 8;
+
 export interface ThroughputStatsProps {
   readonly projectIds: readonly string[];
   weeks: StatsWeeks;
@@ -53,6 +57,14 @@ export function ThroughputStats({
     queryKey: ['model-stats', weeks, projectIdsKey],
     queryFn: () => fetchModelStats(weeks, projectIds),
     staleTime: STATS_QUERY_STALE_TIME_MS,
+    // bdboard-p5l.27: サーバーが修正 push 回数をバックグラウンドで取得中 (pending > 0) の間だけ、
+    // 控えめな間隔で数回取り直す。無限には回さない (gh が使えない環境で pending が
+    // 解消しないとき、重い集計を叩き続けないため。以降は再読み込みボタンに任せる)。
+    refetchInterval: (query) =>
+      (query.state.data?.complexityModel.fixPushPendingCount ?? 0) > 0 &&
+      query.state.dataUpdateCount <= MODEL_STATS_PENDING_REFETCH_MAX
+        ? MODEL_STATS_PENDING_REFETCH_MS
+        : false,
   });
   const harnessKpiQuery = useQuery({
     queryKey: ['harness-kpi', weeks, projectIdsKey],

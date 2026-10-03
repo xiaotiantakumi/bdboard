@@ -38,6 +38,7 @@
     "parent": "bdboard-3tw",
     "labels": ["housekeeping", "investigation-followup"],
     "metadata": {
+      "bdboard.complexity": "med",
       "bdboard.model.implement": "fixture-model-epsilon",
       "bdboard.model.test": "fixture-model-zeta",
       "bdboard.model.review": "fixture-model-eta",
@@ -93,6 +94,7 @@
     "parent": "bdboard-3tw",
     "labels": ["quality"],
     "metadata": {
+      "bdboard.complexity": "low",
       "bdboard.model.implement": "fixture-model-alpha",
       "bdboard.model.test": "fixture-model-beta",
       "bdboard.model.review": "fixture-model-gamma",

@@ -66,5 +66,8 @@ export function hasAnyModelStatsData(stats: ModelStatsDto): boolean {
   const hasStage = stats.stageModelDistribution.some(
     (entry) => Object.keys(entry.counts).length > 0,
   );
-  return hasWeekly || hasStage;
+  // bdboard-p5l.27: 複雑度だけが記録されたチケット (モデル未記録) も表に出るので、
+  // それだけでも「実績あり」とみなす。
+  const hasComplexityModel = stats.complexityModel.rows.length > 0;
+  return hasWeekly || hasStage || hasComplexityModel;
 }

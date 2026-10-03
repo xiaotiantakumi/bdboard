@@ -4,6 +4,7 @@ import {
   getPrBadges,
   PrBadgeStatusCache,
   type PrBadgeCommentCache,
+  type PrBadgeGates,
 } from '../../application/board/get-pr-badges.js';
 import { toPrBadgeDto } from './dto.js';
 import { parseProjectIds } from './api-route-shared.js';
@@ -41,16 +42,23 @@ const PR_LINKS_OVERALL_TIMEOUT_MS = 4_000;
 
 export interface PrLinksRoutesParams {
   readonly prBadgeCommentCache: PrBadgeCommentCache;
+  /**
+   * bdboard-p5l.27: routes.ts が /api/model-stats (修正 push 回数) と共有するために渡す
+   * PR ステータスキャッシュとゲート。省略時は従来どおりこのルートで組み立てる。
+   */
+  readonly prBadgeStatusCache?: PrBadgeStatusCache;
+  readonly gates?: PrBadgeGates;
 }
 
 export function createPrLinksRoutes(
   deps: ApiDeps,
-  { prBadgeCommentCache }: PrLinksRoutesParams,
+  { prBadgeCommentCache, prBadgeStatusCache: sharedStatusCache, gates: sharedGates }: PrLinksRoutesParams,
 ): Hono {
   const app = new Hono();
   // deps.prBadgeStatusCache が無いテスト/呼び出し経路では、従来どおり
   // プロセス内だけの空キャッシュにフォールバックする (永続化なし、挙動は旧来通り)。
-  const prBadgeStatusCache = deps.prBadgeStatusCache ?? new PrBadgeStatusCache();
+  const prBadgeStatusCache =
+    sharedStatusCache ?? deps.prBadgeStatusCache ?? new PrBadgeStatusCache();
   // bdboard-sgpa: commentGate/statusGate をルート (= プロセス) の寿命で1組だけ作り、
   // すべての /api/pr-links 呼び出しで共有する。以前は getPrBadges() が呼び出しごとに
   // 新しい Semaphore ペアを作っていたため、重なったリクエスト (30秒 staleTime の
@@ -60,7 +68,7 @@ export function createPrLinksRoutes(
   // リクエストの数だけ実質的な gh/bd 起動数の上限が掛け算される —— 実測で3リクエスト
   // 重複時に bd 読み取りが12件で済むはずが27件、gh 起動が3件の意図上限に対し最大9件
   // 同時に起動していた)。
-  const gates = createPrBadgeGates();
+  const gates = sharedGates ?? createPrBadgeGates();
 
   app.get('/api/pr-links', async (c) => {
     if (deps.commentReader === undefined || deps.prStatusReader === undefined) {

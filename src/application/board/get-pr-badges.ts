@@ -7,7 +7,7 @@ import type { Ticket } from '../../domain/ticket.js';
 import { describeFetchFailures, type FetchFailure } from './fetch-failure-log.js';
 import type { PrBadgeCommentCache } from './pr-badge-comment-cache.js';
 import type { PrBadgeStatusCache } from './pr-badge-status-cache.js';
-import { resolvePrStatus, type PrStatusBudget } from './resolve-pr-status.js';
+import { canReuseStatus, resolvePrStatus, type PrStatusBudget } from './resolve-pr-status.js';
 import { resolvePrCommentUrl } from './resolve-pr-comment-url.js';
 import { raceWithOverallTimeout } from './race-with-overall-timeout.js';
 
@@ -78,6 +78,21 @@ export interface GetPrBadgesOptions {
    * の上限が掛け算される)。
    */
   readonly gates?: PrBadgeGates;
+  /**
+   * PR URL 解決・ステータス取得の対象にするチケットを絞る (bdboard-p5l.27)。統計の
+   * 先読み (修正 push 回数) が「クローズ済みで複雑度/実装モデルが記録されたチケット」だけを
+   * 取りに行くために使う。未指定なら commentCount>0 の全チケット (従来どおり)。
+   * キャッシュの prune は盤面全体の集合で行うので、絞っても他のエントリは間引かれない。
+   */
+  readonly ticketFilter?: (ticket: Ticket) => boolean;
+  /** resolvePrStatus の requireFixPushCount を参照 (統計の先読み専用)。 */
+  readonly requireFixPushCount?: boolean;
+  /**
+   * true なら gh 起動の待ち行列で常に 'low' 優先度にする (bdboard-p5l.27)。統計の先読みは
+   * 画面のバッジ取得 (/api/pr-links) と statusGate を共有するので、先読みが大量に並んでも
+   * 画面側のバッジ取得を後回しにしないための指定。
+   */
+  readonly lowPriority?: boolean;
 }
 
 // 1回の getPrBadges 呼び出しで新規に起動する gh の上限 (bdboard-7ln6 #6)。
@@ -106,7 +121,7 @@ export async function getPrBadges(
 
   const workItems: CommentFetchItem[] = entries.flatMap((entry) =>
     entry.tickets
-      .filter((ticket) => ticket.commentCount > 0)
+      .filter((ticket) => ticket.commentCount > 0 && (options?.ticketFilter?.(ticket) ?? true))
       .map((ticket) => ({ entry, ticket })),
   );
 
@@ -254,7 +269,9 @@ export async function getPrBadges(
     // 1つ使うと、遅い gh 呼び出しで枠が埋まっている間、既知のステータスまで
     // 「未取得」に劣化して返ってしまう。opus レビューで指摘 — bdboard-se3v)。
     const cachedStatus = statusCache?.get(url);
-    if (cachedStatus !== undefined) {
+    // bdboard-p5l.27: requireFixPushCount のときは、fixPushCount が省略された古い恒久
+    // エントリをここで確定させず resolvePrStatus に取り直させる。
+    if (cachedStatus !== undefined && canReuseStatus(cachedStatus, options?.requireFixPushCount)) {
       badgesByTicket.set(ticket.id, {
         ticketId: ticket.id,
         projectId: entry.project.id,
@@ -274,6 +291,7 @@ export async function getPrBadges(
       statusCache,
       statusGate,
       budget: statusBudget,
+      requireFixPushCount: options?.requireFixPushCount,
       // bdboard-gfqz: このチケットの gh 起動が「まだ応答を待っている自分のリクエスト」
       // 由来か「応答タイムアウト後のバックグラウンド継続」由来かを表す closure。
       // ここで判定結果を確定させるのではなく、closure そのものを resolvePrStatus →
@@ -287,7 +305,7 @@ export async function getPrBadges(
       // 呼び出し元」の1つとして登録され、launcher 側の待ち行列エントリの優先度に
       // マージされる (mergedGetPriority — pr-badge-status-cache.ts) —— 相乗りが
       // 既に待ち行列にある低優先度の fetch を高優先度へ昇格させられるのはこの経路。
-      getPriority: () => (timedOut ? 'low' : 'high'),
+      getPriority: () => (options?.lowPriority === true || timedOut ? 'low' : 'high'),
       onDeferred: () => {
         deferredFetchCount += 1;
       },

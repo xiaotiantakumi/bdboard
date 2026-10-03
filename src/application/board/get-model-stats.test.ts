@@ -336,4 +336,87 @@ describe('getModelStats', () => {
     const stats = await getModelStats(cache, now, { weeks: 1, timeZone: 'Asia/Tokyo' });
     expect(stats.weeklyCloses[0]?.counts).toEqual({ 'composer-2.5': 1 });
   });
+
+  describe('complexityModel (bdboard-p5l.27)', () => {
+    it('adds the complexity x implement model axis without changing the existing aggregates', async () => {
+      const cache = createFakeBoardCache();
+      const now = utcInstant(2026, 8, 15, 12);
+      const closedAt = utcInstant(2026, 8, 12, 10);
+      const proj = project('/a', '/projects/a');
+
+      cache.putProject({
+        project: proj,
+        tickets: [
+          makeTicket({
+            id: 'bdboard-with-both',
+            projectId: proj.id,
+            closedAt,
+            complexity: 'med',
+            models: [{ stage: 'implement', model: 'composer-2.5' }],
+          }),
+          makeTicket({
+            id: 'bdboard-model-only',
+            projectId: proj.id,
+            closedAt,
+            models: [{ stage: 'implement', model: 'composer-2.5' }],
+          }),
+          makeTicket({ id: 'bdboard-neither', projectId: proj.id, closedAt }),
+        ],
+        fingerprint: 'fp',
+        fetchedAt: now,
+      });
+
+      const stats = await getModelStats(cache, now, { weeks: 1, timeZone: UTC });
+
+      // 既存の2集計は従来どおり (置き換えず、軸を足しただけ)。
+      expect(stats.weeklyCloses[0]?.counts).toEqual({ 'composer-2.5': 2 });
+      expect(stats.stageModelDistribution).toEqual([
+        { stage: 'implement', counts: { 'composer-2.5': 2 } },
+      ]);
+      expect(stats.complexityModel.rows.map((row) => [row.complexity, row.model, row.ticketCount])).toEqual([
+        ['med', 'composer-2.5', 1],
+        [null, 'composer-2.5', 1],
+      ]);
+      expect(stats.complexityModel.unrecordedTicketCount).toBe(1);
+    });
+
+    it('joins fix push counts from the injected lookup and respects the projectIds filter', async () => {
+      const cache = createFakeBoardCache();
+      const now = utcInstant(2026, 8, 15, 12);
+      const closedAt = utcInstant(2026, 8, 12, 10);
+      const projA = project('/a', '/projects/a');
+      const projB = project('/b', '/projects/b');
+      const metadata = {
+        complexity: 'low',
+        models: [{ stage: 'implement', model: 'composer-2.5' }],
+      } as const;
+
+      cache.putProject({
+        project: projA,
+        tickets: [makeTicket({ id: 'bdboard-a', projectId: projA.id, closedAt, ...metadata })],
+        fingerprint: 'fp-a',
+        fetchedAt: now,
+      });
+      cache.putProject({
+        project: projB,
+        tickets: [makeTicket({ id: 'bdboard-b', projectId: projB.id, closedAt, ...metadata })],
+        fingerprint: 'fp-b',
+        fetchedAt: now,
+      });
+
+      const stats = await getModelStats(cache, now, {
+        weeks: 1,
+        timeZone: UTC,
+        projectIds: [projA.id],
+        fixPushLookup: (ticket) =>
+          ticket.id === 'bdboard-a'
+            ? { kind: 'known', count: 3 }
+            : { kind: 'known', count: 99 },
+      });
+
+      expect(stats.complexityModel.rows).toEqual([
+        expect.objectContaining({ ticketCount: 1, fixPushTotal: 3, fixPushAverage: 3 }),
+      ]);
+    });
+  });
 });

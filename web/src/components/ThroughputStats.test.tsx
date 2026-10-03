@@ -101,6 +101,21 @@ function makeModelStats(overrides?: Partial<ModelStatsDto>): ModelStatsDto {
       { stage: 'implement', counts: { 'composer-2.5': 2, 'gpt-5': 1 } },
       { stage: 'review', counts: { 'composer-2.5': 1 } },
     ],
+    complexityModel: {
+      rows: [
+        {
+          complexity: 'low',
+          model: 'composer-2.5',
+          ticketCount: 2,
+          fixPushKnownCount: 2,
+          fixPushTotal: 3,
+          fixPushUnknownCount: 0,
+          fixPushAverage: 1.5,
+        },
+      ],
+      unrecordedTicketCount: 0,
+      fixPushPendingCount: 0,
+    },
     ...overrides,
   };
 }
@@ -527,6 +542,7 @@ describe('ThroughputStats', () => {
       makeModelStats({
         weeklyCloses: [{ weekStart: '2026-08-11T15:00:00.000Z', counts: {} }],
         stageModelDistribution: [],
+        complexityModel: { rows: [], unrecordedTicketCount: 0, fixPushPendingCount: 0 },
       }),
     );
 
@@ -568,6 +584,48 @@ describe('ThroughputStats', () => {
     // cfd-stats はチケットの対象外 (board.changed に残したまま) なので、
     // ここでは staleTime を延ばしていないことも確認する。
     expect(findStaleTime('cfd-stats')).toBeUndefined();
+  });
+
+  // bdboard-p5l.27: サーバーが修正 push 回数を裏で取得中 (pending > 0) の間だけ、model-stats を
+  // 控えめに取り直す。上限回数を超えたら止める (重い集計を叩き続けない)。
+  describe('model-stats refetch while fix push counts are pending (bdboard-p5l.27)', () => {
+    type RefetchInterval = (query: {
+      state: { data: ModelStatsDto | undefined; dataUpdateCount: number };
+    }) => number | false;
+
+    async function getRefetchInterval(): Promise<RefetchInterval> {
+      fetchThroughputStatsMock.mockResolvedValue(makeStats());
+      const { queryClient } = renderThroughputStats();
+      await screen.findByText('全体');
+      const query = queryClient
+        .getQueryCache()
+        .findAll({ predicate: (q) => q.queryKey[0] === 'model-stats' })[0];
+      const refetchInterval = (query?.options as { refetchInterval?: unknown } | undefined)
+        ?.refetchInterval;
+      expect(typeof refetchInterval).toBe('function');
+      return refetchInterval as RefetchInterval;
+    }
+
+    function withPending(fixPushPendingCount: number): ModelStatsDto {
+      return makeModelStats({
+        complexityModel: { rows: [], unrecordedTicketCount: 0, fixPushPendingCount },
+      });
+    }
+
+    it('polls while pending > 0, and not otherwise', async () => {
+      const refetchInterval = await getRefetchInterval();
+
+      expect(refetchInterval({ state: { data: withPending(2), dataUpdateCount: 1 } })).toBe(15_000);
+      expect(refetchInterval({ state: { data: withPending(0), dataUpdateCount: 1 } })).toBe(false);
+      expect(refetchInterval({ state: { data: undefined, dataUpdateCount: 0 } })).toBe(false);
+    });
+
+    it('stops polling after a bounded number of refreshes even if still pending', async () => {
+      const refetchInterval = await getRefetchInterval();
+
+      expect(refetchInterval({ state: { data: withPending(2), dataUpdateCount: 8 } })).toBe(15_000);
+      expect(refetchInterval({ state: { data: withPending(2), dataUpdateCount: 9 } })).toBe(false);
+    });
   });
 
   // bdboard-ws2w レビュー指摘: staleTime の設定値だけでなく、実際の挙動

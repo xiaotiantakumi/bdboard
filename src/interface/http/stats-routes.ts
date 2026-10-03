@@ -4,6 +4,8 @@ import { getThroughputStats } from '../../application/board/get-throughput-stats
 import { getModelStats } from '../../application/board/get-model-stats.js';
 import { getHarnessKpi } from '../../application/board/get-harness-kpi.js';
 import { getCfdStats } from '../../application/board/get-cfd-stats.js';
+import { createPrBadgeShared, type PrBadgeShared } from '../../application/board/pr-badge-shared.js';
+import { createFixPushLookup, createFixPushWarmer } from '../../application/board/pr-fix-push-lookup.js';
 import { readProjectRefs } from '../../application/board/read-cached-projects.js';
 import { scanGitLeftovers } from '../../application/board/scan-git-leftovers.js';
 import { describeFetchFailures } from '../../application/board/fetch-failure-log.js';
@@ -41,8 +43,29 @@ function parseCfdDays(raw: string | undefined): number {
   });
 }
 
-export function createStatsRoutes(deps: ApiDeps): Hono {
+export function createStatsRoutes(
+  deps: ApiDeps,
+  prBadgeShared: PrBadgeShared = createPrBadgeShared(deps.prBadgeStatusCache),
+): Hono {
   const app = new Hono();
+
+  // bdboard-p5l.27: 修正 push 回数は /api/pr-links と同じ PR 情報キャッシュ・ゲートから
+  // 引く。リクエストの中では **キャッシュを読むだけ** (gh も bd も起動しない) にして、
+  // この重い集計のレイテンシを悪化させない。取れていない分は pending として返し、
+  // バックグラウンドの先読み (single-flight) が埋める。gh / コメント読み取りの port が
+  // 無い構成では先読みできないので、引き当て自体を付けず「不明 (確定)」として数える。
+  const fixPush =
+    deps.commentReader !== undefined && deps.prStatusReader !== undefined
+      ? {
+          lookup: createFixPushLookup(prBadgeShared),
+          warm: createFixPushWarmer({
+            cache: deps.cache,
+            commentReader: deps.commentReader,
+            prStatusReader: deps.prStatusReader,
+            shared: prBadgeShared,
+          }),
+        }
+      : undefined;
 
   app.get('/api/stats', async (c) => {
     const projectIds = parseProjectIds(c.req.query('projects'));
@@ -60,7 +83,13 @@ export function createStatsRoutes(deps: ApiDeps): Hono {
     const stats = await getModelStats(deps.cache, deps.now(), {
       ...(projectIds !== undefined ? { projectIds } : {}),
       weeks,
+      ...(fixPush !== undefined ? { fixPushLookup: fixPush.lookup } : {}),
     });
+    // 取れていない修正 push 回数があるときだけ、応答を待たせずに裏で先読みを始める。
+    // 先読みは失敗しても reject しない (createFixPushWarmer)。
+    if (fixPush !== undefined && stats.complexityModel.fixPushPendingCount > 0) {
+      void fixPush.warm(projectIds);
+    }
     return c.json(toModelStatsDto(stats));
   });
 

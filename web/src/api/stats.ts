@@ -37,9 +37,32 @@ export interface StageModelCountsDto {
   counts: Record<string, number>;
 }
 
+/**
+ * 複雑度 × 実装モデル × 修正 push 回数の1行 (bdboard-p5l.27)。complexity / model が null の
+ * 行は、そのメタデータが未記録のチケット。
+ */
+export interface ComplexityModelRowDto {
+  complexity: string | null;
+  model: string | null;
+  ticketCount: number;
+  fixPushKnownCount: number;
+  fixPushTotal: number;
+  fixPushUnknownCount: number;
+  fixPushAverage: number | null;
+}
+
+export interface ComplexityModelStatsDto {
+  rows: ComplexityModelRowDto[];
+  /** 複雑度も実装モデルも未記録のクローズ済みチケット数 (行には含まれない)。 */
+  unrecordedTicketCount: number;
+  /** 修正 push 回数の取得待ち (サーバーが裏で取得中) のチケット数。 */
+  fixPushPendingCount: number;
+}
+
 export interface ModelStatsDto {
   weeklyCloses: WeeklyModelCloseCountsDto[];
   stageModelDistribution: StageModelCountsDto[];
+  complexityModel: ComplexityModelStatsDto;
 }
 
 export interface CfdDayEntryDto {

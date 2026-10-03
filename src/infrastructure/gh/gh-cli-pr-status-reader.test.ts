@@ -56,7 +56,7 @@ describe('createGhCliPrStatusReader', () => {
     const reader = createGhCliPrStatusReader(runner);
     const result = await reader.getPrStatus(PR_URL);
 
-    expect(result).toEqual({ status: { state: 'open', checkStatus: 'pass' } });
+    expect(result).toEqual({ status: { state: 'open', checkStatus: 'pass', fixPushCount: null } });
   });
 
   it('maps MERGED state', async () => {
@@ -80,7 +80,7 @@ describe('createGhCliPrStatusReader', () => {
     const reader = createGhCliPrStatusReader(runner);
     const result = await reader.getPrStatus(PR_URL);
 
-    expect(result).toEqual({ status: { state: 'merged', checkStatus: 'pass' } });
+    expect(result).toEqual({ status: { state: 'merged', checkStatus: 'pass', fixPushCount: null } });
   });
 
   it('returns fail when any rollup item indicates failure', async () => {
@@ -109,7 +109,7 @@ describe('createGhCliPrStatusReader', () => {
     const reader = createGhCliPrStatusReader(runner);
     const result = await reader.getPrStatus(PR_URL);
 
-    expect(result).toEqual({ status: { state: 'open', checkStatus: 'fail' } });
+    expect(result).toEqual({ status: { state: 'open', checkStatus: 'fail', fixPushCount: null } });
   });
 
   it('returns pending when checks are incomplete without failures', async () => {
@@ -137,7 +137,7 @@ describe('createGhCliPrStatusReader', () => {
     const reader = createGhCliPrStatusReader(runner);
     const result = await reader.getPrStatus(PR_URL);
 
-    expect(result).toEqual({ status: { state: 'open', checkStatus: 'pending' } });
+    expect(result).toEqual({ status: { state: 'open', checkStatus: 'pending', fixPushCount: null } });
   });
 
   it('returns unknown check status for empty or missing rollup', async () => {
@@ -160,10 +160,95 @@ describe('createGhCliPrStatusReader', () => {
     const nullReader = createGhCliPrStatusReader(nullRunner);
 
     expect(await emptyReader.getPrStatus(PR_URL)).toEqual({
-      status: { state: 'open', checkStatus: 'unknown' },
+      status: { state: 'open', checkStatus: 'unknown', fixPushCount: null },
     });
     expect(await nullReader.getPrStatus(PR_URL)).toEqual({
-      status: { state: 'open', checkStatus: 'unknown' },
+      status: { state: 'open', checkStatus: 'unknown', fixPushCount: null },
+    });
+  });
+
+  describe('fixPushCount (bdboard-p5l.27)', () => {
+    it('counts only the commits committed after the PR was created', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify({
+            state: 'MERGED',
+            statusCheckRollup: [
+              { __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' },
+            ],
+            createdAt: '2026-10-01T10:00:00Z',
+            commits: [
+              { oid: 'a', committedDate: '2026-10-01T09:00:00Z' },
+              { oid: 'b', committedDate: '2026-10-01T10:00:00Z' },
+              { oid: 'c', committedDate: '2026-10-01T11:00:00Z' },
+              { oid: 'd', committedDate: '2026-10-02T11:00:00Z' },
+            ],
+          }),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+
+      const result = await createGhCliPrStatusReader(runner).getPrStatus(PR_URL);
+
+      expect(result).toEqual({
+        status: { state: 'merged', checkStatus: 'pass', fixPushCount: 2 },
+      });
+    });
+
+    it('reports 0 (known) for a PR whose commits all predate its creation', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify({
+            state: 'MERGED',
+            statusCheckRollup: [],
+            createdAt: '2026-10-01T10:00:00Z',
+            commits: [{ committedDate: '2026-10-01T09:00:00Z' }],
+          }),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+
+      const result = await createGhCliPrStatusReader(runner).getPrStatus(PR_URL);
+
+      expect(result).toEqual({
+        status: { state: 'merged', checkStatus: 'unknown', fixPushCount: 0 },
+      });
+    });
+
+    it('reports fixPushCount null (tried, unknown) when gh returns no createdAt/commits', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify({ state: 'MERGED', statusCheckRollup: [] }),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+
+      const result = await createGhCliPrStatusReader(runner).getPrStatus(PR_URL);
+
+      // null (試したが不明) であって、省略 (= この項目が入る前の古いエントリ) ではない。
+      expect(result.status).toHaveProperty('fixPushCount', null);
+    });
+
+    it('keeps the badge status when commits has an unexpected shape (only fixPushCount is lost)', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify({
+            state: 'MERGED',
+            statusCheckRollup: [],
+            createdAt: '2026-10-01T10:00:00Z',
+            commits: 'not-an-array',
+          }),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+
+      const result = await createGhCliPrStatusReader(runner).getPrStatus(PR_URL);
+
+      expect(result).toEqual({ status: { state: 'merged', checkStatus: 'unknown', fixPushCount: null } });
     });
   });
 
@@ -378,7 +463,7 @@ describe('createGhCliPrStatusReader', () => {
     expect(calls).toEqual([
       {
         command: 'gh',
-        args: ['pr', 'view', PR_URL, '--json', 'state,statusCheckRollup'],
+        args: ['pr', 'view', PR_URL, '--json', 'state,statusCheckRollup,createdAt,commits'],
       },
     ]);
   });

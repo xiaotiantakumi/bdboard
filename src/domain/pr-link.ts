@@ -7,6 +7,16 @@ export type PrCheckStatus = 'pass' | 'fail' | 'pending' | 'unknown';
 export interface PrStatus {
   readonly state: PrState;
   readonly checkStatus: PrCheckStatus;
+  /**
+   * 修正 push 回数 = PR 作成後にコミットされたコミット数 (pr-fix-push.ts の
+   * countPostCreateCommits。bdboard-p5l.27)。3 値で意味が違う:
+   * - number: 取得できた値 (0 は「作成後の追加コミットなし」という確定値)。
+   * - null: gh は応答したが createdAt/commits が読めなかった、または古い恒久エントリの
+   *   取り直しが失敗した (= 不明で確定。このプロセスでは再取得しない)。
+   * - undefined (省略): この項目が入る前に取得・永続化された古いエントリ (= まだ試していない)。
+   * バッジ表示 (PrBadgeDto) には出さず、統計 (get-model-stats) だけが読む。
+   */
+  readonly fixPushCount?: number | null;
 }
 
 export interface PrBadge {

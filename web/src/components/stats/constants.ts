@@ -49,6 +49,8 @@ export const CHART_DESCRIPTIONS = {
     '工程で使用したAIモデルごとの、週次クローズ件数',
   modelStageDistribution:
     '実装/テスト/レビュー等の工程ごとに、どのAIモデルが何件使われたか',
+  modelComplexityFixPush:
+    'クローズ済みチケットを、複雑度と実装モデルごとに集計した表。修正pushは「PR作成後にコミットされたコミット数」(PRが無い/取得できないチケットは不明として数える)で、平均は回数が分かったチケットだけで出す。どちらか一方が未記録のチケットは「未記録」の行に入る',
 } as const;
 
 export const SECTION_DESCRIPTIONS = {
