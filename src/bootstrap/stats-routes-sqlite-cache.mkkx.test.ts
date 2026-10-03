@@ -130,6 +130,21 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
         order.push('model-stats');
         return { response, elapsedMs: Date.now() - statsStartedAt };
       })();
+      // bdboard-4x55: /api/cfd and /api/harness-kpi used to call the sync
+      // listProjects() too (bdboard-mkkx only switched /api/stats and
+      // /api/model-stats), so they are part of the same concurrent bundle.
+      // Deliberately status-only: no timing threshold is derived from them,
+      // so this adds no new flakiness source (see bdboard-uy10 above); the
+      // existing health-vs-slowest-stats ratio guard below still covers them
+      // because their sync read would stall health too. Measured on this
+      // development machine (load average ~10): fixed path kept the ratio at
+      // 0.07-0.08 (8 runs); forcing both back to the sync listProjects()
+      // fallback (mutation check, 4 runs) pushed it to 0.74-0.81 and failed
+      // the guard every time. The deterministic "must not call
+      // listProjects()" guard lives in stats-routes.test.ts /
+      // get-cfd-stats.test.ts / get-harness-kpi.test.ts.
+      const cfdPromise = app.request('/api/cfd?days=30');
+      const harnessKpiPromise = app.request('/api/harness-kpi?weeks=26');
       const healthPromise = (async () => {
         // bdboard-ve1y (see stats-routes.test.ts): wait for our own
         // setImmediate tick before issuing the request. Without this, a
@@ -143,14 +158,18 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
         return { response, elapsedMs: Date.now() - statsStartedAt };
       })();
 
-      const [stats, modelStats, health] = await Promise.all([
+      const [stats, modelStats, health, cfdResponse, harnessKpiResponse] = await Promise.all([
         statsPromise,
         modelStatsPromise,
         healthPromise,
+        cfdPromise,
+        harnessKpiPromise,
       ]);
 
       expect(stats.response.status).toBe(200);
       expect(modelStats.response.status).toBe(200);
+      expect(cfdResponse.status).toBe(200);
+      expect(harnessKpiResponse.status).toBe(200);
       expect(health.response.status).toBe(200);
       // Requested last, but must finish first.
       expect(order[0]).toBe('health');

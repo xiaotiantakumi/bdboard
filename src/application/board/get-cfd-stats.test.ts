@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import {
@@ -67,7 +67,7 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
 }
 
 describe('getCfdStats', () => {
-  it('formats multi-day snapshots per project and totals', () => {
+  it('formats multi-day snapshots per project and totals', async () => {
     const cache = createFakeBoardCache();
     const now = localDate(2026, 8, 15, 12);
     const a = project('/a', '/projects/a', 'Alpha');
@@ -98,7 +98,7 @@ describe('getCfdStats', () => {
       { projectId: b.id, status: 'in_progress', count: 3 },
     ]);
 
-    const stats = getCfdStats(cache, now, { days: 30 });
+    const stats = await getCfdStats(cache, now, { days: 30 });
 
     expect(stats.projects.map((entry) => entry.project.id)).toEqual([a.id, b.id]);
     expect(stats.projects[0]?.days).toEqual([
@@ -116,7 +116,7 @@ describe('getCfdStats', () => {
     ]);
   });
 
-  it('filters snapshots to the requested day window', () => {
+  it('filters snapshots to the requested day window', async () => {
     const cache = createFakeBoardCache();
     const now = localDate(2026, 8, 15, 12);
     const a = project('/a', '/projects/a');
@@ -138,7 +138,7 @@ describe('getCfdStats', () => {
       { projectId: a.id, status: 'open', count: 1 },
     ]);
 
-    const stats = getCfdStats(cache, now, { days: 2 });
+    const stats = await getCfdStats(cache, now, { days: 2 });
 
     expect(stats.projects[0]?.days).toEqual([
       { date: '2026-08-14', counts: { open: 2 } },
@@ -150,7 +150,7 @@ describe('getCfdStats', () => {
     ]);
   });
 
-  it('filters by projectIds and recalculates totals', () => {
+  it('filters by projectIds and recalculates totals', async () => {
     const cache = createFakeBoardCache();
     const now = localDate(2026, 8, 15, 12);
     const a = project('/a', '/projects/a', 'Alpha');
@@ -174,7 +174,7 @@ describe('getCfdStats', () => {
       { projectId: b.id, status: 'open', count: 5 },
     ]);
 
-    const stats = getCfdStats(cache, now, { projectIds: [a.id], days: 7 });
+    const stats = await getCfdStats(cache, now, { projectIds: [a.id], days: 7 });
 
     expect(stats.projects).toHaveLength(1);
     expect(stats.projects[0]?.project.id).toBe(a.id);
@@ -183,7 +183,7 @@ describe('getCfdStats', () => {
     ]);
   });
 
-  it('excludes deleted-project snapshots from unfiltered totals', () => {
+  it('excludes deleted-project snapshots from unfiltered totals', async () => {
     const cache = createFakeBoardCache();
     const now = localDate(2026, 8, 15, 12);
     const live = project('/live', '/projects/live', 'Live');
@@ -209,7 +209,7 @@ describe('getCfdStats', () => {
 
     cache.deleteProject(removed.id);
 
-    const stats = getCfdStats(cache, now, { days: 7 });
+    const stats = await getCfdStats(cache, now, { days: 7 });
 
     expect(stats.projects.map((entry) => entry.project.id)).toEqual([live.id]);
     expect(stats.projects[0]?.days).toEqual([
@@ -220,7 +220,7 @@ describe('getCfdStats', () => {
     ]);
   });
 
-  it('uses the specified timezone for cutoff calculation', () => {
+  it('uses the specified timezone for cutoff calculation', async () => {
     const cache = createFakeBoardCache();
     const now = new Date('2026-08-15T20:00:00.000Z');
     const a = project('/a', '/projects/a');
@@ -242,14 +242,68 @@ describe('getCfdStats', () => {
       { projectId: a.id, status: 'open', count: 3 },
     ]);
 
-    const utcStats = getCfdStats(cache, now, { days: 2, timeZone: 'UTC' });
+    const utcStats = await getCfdStats(cache, now, { days: 2, timeZone: 'UTC' });
     const utcDates = utcStats.projects[0]?.days.map((entry) => entry.date) ?? [];
     expect(utcDates).toContain('2026-08-14');
     expect(utcDates).toContain('2026-08-16');
 
-    const tokyoStats = getCfdStats(cache, now, { days: 2, timeZone: 'Asia/Tokyo' });
+    const tokyoStats = await getCfdStats(cache, now, { days: 2, timeZone: 'Asia/Tokyo' });
     const tokyoDates = tokyoStats.projects[0]?.days.map((entry) => entry.date) ?? [];
     expect(tokyoDates).not.toContain('2026-08-14');
     expect(tokyoDates).toContain('2026-08-16');
+  });
+
+  // bdboard-4x55: listProjects() は全チケット JSON をデシリアライズする同期処理なので、
+  // listProjectsChunked() があるキャッシュ (SQLite) ではそちらを使い、同期版を
+  // 呼ばないこと。戻り値はフォールバック (listProjects) 経路と同一。
+  it('prefers listProjectsChunked() over listProjects() when the cache provides it', async () => {
+    const base = createFakeBoardCache();
+    const now = localDate(2026, 8, 15, 12);
+    const a = project('/a', '/projects/a', 'Alpha');
+    const b = project('/b', '/projects/b', 'Beta');
+
+    base.putProject({ project: a, tickets: [], fingerprint: 'fp-a', fetchedAt: now });
+    base.putProject({ project: b, tickets: [], fingerprint: 'fp-b', fetchedAt: now });
+    base.putCfdSnapshot('2026-08-15', localDate(2026, 8, 15, 9), [
+      { projectId: a.id, status: 'open', count: 1 },
+      { projectId: b.id, status: 'open', count: 5 },
+    ]);
+
+    const expected = await getCfdStats(base, now, { days: 7 });
+
+    const listProjects = vi.fn(() => base.listProjects());
+    const listProjectsChunked = vi.fn(async () => base.listProjects());
+    const cache: BoardCache = { ...base, listProjects, listProjectsChunked };
+
+    const stats = await getCfdStats(cache, now, { days: 7 });
+
+    expect(listProjectsChunked).toHaveBeenCalledTimes(1);
+    expect(listProjects).not.toHaveBeenCalled();
+    expect(stats).toEqual(expected);
+    expect(stats.projects.map((entry) => entry.project.id)).toEqual([a.id, b.id]);
+  });
+
+  it('applies the projectIds filter to the listProjectsChunked() result as well', async () => {
+    const base = createFakeBoardCache();
+    const now = localDate(2026, 8, 15, 12);
+    const a = project('/a', '/projects/a', 'Alpha');
+    const b = project('/b', '/projects/b', 'Beta');
+
+    base.putProject({ project: a, tickets: [], fingerprint: 'fp-a', fetchedAt: now });
+    base.putProject({ project: b, tickets: [], fingerprint: 'fp-b', fetchedAt: now });
+    base.putCfdSnapshot('2026-08-15', localDate(2026, 8, 15, 9), [
+      { projectId: a.id, status: 'open', count: 1 },
+      { projectId: b.id, status: 'open', count: 5 },
+    ]);
+
+    const listProjects = vi.fn(() => base.listProjects());
+    const listProjectsChunked = vi.fn(async () => base.listProjects());
+    const cache: BoardCache = { ...base, listProjects, listProjectsChunked };
+
+    const stats = await getCfdStats(cache, now, { projectIds: [a.id], days: 7 });
+
+    expect(listProjects).not.toHaveBeenCalled();
+    expect(stats.projects.map((entry) => entry.project.id)).toEqual([a.id]);
+    expect(stats.totals).toEqual([{ date: '2026-08-15', counts: { open: 1 } }]);
   });
 });
