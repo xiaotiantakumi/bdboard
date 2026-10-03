@@ -1,6 +1,6 @@
 // bdboard-4dqo: scripts/merge-pr.test.mjs から切り出した finish 系のテスト (finish の拒否・
 // 着地後検証の失敗・SIGINT/SIGTERM による中断・bdboard-2hj4 の verifyingPid 記録)。
-// 一時リポジトリと偽の gh / bd / npm の harness は merge-pr.test-harness.mjs で共有する。
+// 一時リポジトリと偽の gh / bd / npm の harness は merge-pr.test-support.mjs で共有する。
 // describe 名は切り出し前と同じ (テスト名の集合を変えないため)。
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -32,7 +32,7 @@ import {
   waitUntil,
   work,
   writeFake,
-} from './merge-pr.test-harness.mjs';
+} from './merge-pr.test-support.mjs';
 
 // 1 テストで node / git を十数回起こす。verify の並列実行中でも既定 5 秒で落ちないよう余裕を取る。
 describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp repo + fake gh/bd/npm', { timeout: 30_000 }, () => {

@@ -8,7 +8,7 @@
 // 運用するのは macOS のエージェントだけで、always-on-server.test.mjs と同じ扱い)。
 //
 // bdboard-4dqo: 1500 行の max-lines に余裕を作るため分割した。一時リポジトリの harness は
-// merge-pr.test-harness.mjs、finish 系のテストは merge-pr.finish.test.mjs (describe 名は同じ)。
+// merge-pr.test-support.mjs、finish 系のテストは merge-pr.finish.test.mjs (describe 名は同じ)。
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -60,7 +60,7 @@ import {
   waitUntil,
   work,
   writeFake,
-} from './merge-pr.test-harness.mjs';
+} from './merge-pr.test-support.mjs';
 
 describe('merge-pr pure helpers', () => {
   const lease = 8 * 60_000;

@@ -4,8 +4,10 @@
 //
 // 状態 (tmp / work / env / base / head ...) は setup() が毎回作り直すので、モジュール内の `export let`
 // (ESM の live binding) で公開する。テストファイル側は import したまま常に最新の値を読む
-// (代入できるのは setup() だけ)。vitest はテストファイルごとにモジュールを読み直すので、
-// ファイル間で状態は共有されない。この名前 (.test-harness.mjs) は vitest の include
+// (代入できるのはこのモジュールの setup() と registerTempRepoHooks() のフックだけで、import 側は
+// 代入できない)。vitest は既定 (isolate: true) でテストファイルごとにモジュールを読み直すので
+// ファイル間で状態は共有されない。isolate を切っても setup() が毎回すべて作り直すので壊れない。
+// 名前はリポジトリのテスト専用モジュールの慣習 (*.test-support.*) に合わせた。vitest の include
 // (scripts/**/*.test.mjs) にも eslint のテスト扱い (**/*.test.mjs) にも当たらない。
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -14,7 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach } from 'vitest';
 
-import { VERIFY_JS } from './merge-pr.test-verify-script.mjs';
+import { VERIFY_JS } from './merge-pr.test-support-verify-js.mjs';
 
 export const SCRIPT = fileURLToPath(new URL('./merge-pr.mjs', import.meta.url));
 const FAKE = fileURLToPath(new URL('./merge-pr/fake-tools.mjs', import.meta.url));

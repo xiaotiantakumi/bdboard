@@ -1,4 +1,4 @@
-// bdboard-4dqo: scripts/merge-pr.test-harness.mjs が一時リポジトリへ書き込む偽の検証コマンド (`node verify.cjs`)。
+// bdboard-4dqo: scripts/merge-pr.test-support.mjs が一時リポジトリへ書き込む偽の検証コマンド (`node verify.cjs`)。
 // harness を max-lines (非テスト 200 行) に収めるために別モジュールへ出しただけで、中身は
 // scripts/merge-pr.test.mjs の VERIFY_JS だったものそのまま。どの SHA を検証したかをログに残し、
 // FAKE_VERIFY_* 環境変数で終了コード・待ち時間・中断・意味的衝突などを演出する。
