@@ -85,7 +85,7 @@ export function readEnginesNodeRange(repoRoot) {
   }
 }
 
-function readNvmrc(repoRoot) {
+export function readNvmrc(repoRoot) {
   try {
     const value = fs.readFileSync(path.join(repoRoot, '.nvmrc'), 'utf8').trim();
     return value === '' ? undefined : value;
