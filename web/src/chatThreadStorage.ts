@@ -84,13 +84,39 @@ export function resolvePersistedSelectionAfterClose(
   return persisted !== undefined && next.includes(persisted) ? persisted : fallbackSessionId;
 }
 
-// 既存のテスト・呼び出し元向けの一件追加 API。実体は v2 の一覧に保存する。
+/**
+ * 既存のテスト・呼び出し元向けの一件追加 API。実体は v2 の一覧に保存する。
+ *
+ * bdboard-7feq: 既定(liveOpen を渡さない)では、永続化済みエントリの activeSessionIds を基点に
+ * thread を末尾へ 1 件足す。この基点は永続化の値で、メモリ上の open(openThreadIdsRef)は
+ * 見ない。初回訪問(エントリ無し)では E7(chat/useThreadListSync.ts)が全スレッドを
+ * メモリ上でだけ開き、永続化には何も書かない(chat/threadViewRestore.ts)ので、基点が
+ * 空のまま送信確定・履歴ロードがこれを呼ぶと、メモリは [A,B,C] なのに永続化は [A] に
+ * 潰れ、リロードで B と C が黙って閉じられた。
+ *
+ * liveOpen を渡すと、永続化済みエントリではなくそれを open の基点にする(順序はそのまま。
+ * thread.sessionId が含まれていなければ末尾に足す)。メモリと永続化を一致させる呼び出し側
+ * (chat/useChatSendCommits.ts の commitSuccess、chat/useChatHistoryLoader.ts)が、そのプロジェクトの
+ * open が復元済み(restoredProjectsRef がマーク済み)で live の open が分かるときだけ渡す。
+ * 未復元のうちは渡さない: 永続化の方が正本で、live の open は他経路の書き込み分しか
+ * 持たないことがある(bdboard-4w2d)。ここで E7 側に永続化を書かせる直し方は採らない —
+ * 再訪時に E7 が「離れている間に増えたスレッド」を取り込めなくなる
+ * (chat/useThreadListSync.test.tsx の再訪テスト)。ただしこの性質が実際に残るのは、初回訪問で
+ * 履歴ロードも送信も無かったとき(チケット起動のドラフト・履歴ロードの失敗・スレッド 0 件)
+ * だけ: E7 の直後に走る最初の履歴ロードが、live の open でエントリを丸ごと書くため。
+ */
 export function writePersistedChatThread(
   projectId: string,
   thread: PersistedChatThread | undefined,
+  liveOpen?: readonly string[],
 ): void {
   if (thread === undefined) {
     writePersistedChatThreadState(projectId, undefined);
+    return;
+  }
+  if (liveOpen !== undefined) {
+    const ids = liveOpen.includes(thread.sessionId) ? [...liveOpen] : [...liveOpen, thread.sessionId];
+    writePersistedChatThreadState(projectId, { activeSessionIds: ids, selectedSessionId: thread.sessionId });
     return;
   }
   const current = readPersistedChatThreads()[projectId];

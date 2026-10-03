@@ -75,6 +75,10 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
   // useLiveMirroredState に一本化されたため、この probe の setter
   // (setterForWithRef)も setState と同じ場所で ref.current を更新する。
   const openThreadIdsRef = { current: {} as Record<string, string[]> };
+  // bdboard-7feq: 「このプロジェクトの open は復元済み(E7 / applyRecoveredTurn /
+  // handleAgentChange のどれかが確立した)」のマーカー。本番は chat/useChatThreadLists.ts の
+  // restoredProjectsRef。既定は空 = 未復元。
+  const restoredProjectsRef = { current: new Set<string>() };
   // bdboard-d7on(Opus レビュー B1/M1 対応): commitSuccess は selectedThreadIdsRef も
   // 同じ場所で同期する。setterForWithRef が同期するので、初期値は空で足りる。
   const selectedThreadIdsRef = { current: {} as Record<string, string | undefined> };
@@ -88,6 +92,7 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
     setThreadLists: setterFor(store, 'threadLists'),
     setOpenThreadIds: setterForWithRef(store, 'openThreadIds', openThreadIdsRef),
     openThreadIdsRef,
+    restoredProjectsRef,
     setSelectedThreadIds: setterForWithRef(store, 'selectedThreadIds', selectedThreadIdsRef),
     selectedThreadIdsRef,
     conversationInputsRef,
@@ -159,6 +164,89 @@ describe('commitSuccess', () => {
     expect(params.openThreadIdsRef.current).toEqual({ 'proj-a': ['sess-new'] });
     expect(params.selectedThreadIdsRef.current).toEqual({ 'proj-a': 'sess-new' });
     expect(ackMock).toHaveBeenCalledWith('proj-a', 'sess-new');
+  });
+
+  describe('bdboard-7feq: persisted open follows the live open once the project is restored', () => {
+    it('first visit (no persisted entry): persists the live open plus the new session, not just the new session', () => {
+      // E7 は初回訪問(エントリ無し)でサーバー一覧の全スレッドをメモリ上で開くが、
+      // 永続化には何も書かない (threadViewRestore.ts)。ドラフトから送信して sess-d が確定した
+      // とき、永続化を {[sess-d]} に潰すと、リロードで sess-a/b/c が黙って閉じられる。
+      const { hook, params, store } = setup();
+      params.restoredProjectsRef.current.add('proj-a');
+      params.openThreadIdsRef.current = { 'proj-a': ['sess-a', 'sess-b', 'sess-c'] };
+      store.openThreadIds = { 'proj-a': ['sess-a', 'sess-b', 'sess-c'] };
+      expect(readPersistedChatThreads()['proj-a']).toBeUndefined();
+      act(() =>
+        hook.result.current.commitSuccess('new:proj-a:0', 'hello', { reply: 'AI reply', sessionId: 'sess-d', agentId: 'claude' }),
+      );
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-c', 'sess-d'],
+        selectedSessionId: 'sess-d',
+      });
+      // 永続化とメモリの open が一致する(2つが食い違っていたのがこのチケットの不具合)。
+      expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(store.openThreadIds['proj-a']);
+    });
+
+    it('prefers the live open over a stale persisted entry once restored', () => {
+      writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-a'], selectedSessionId: 'sess-a' });
+      const { hook, params, store } = setup();
+      params.restoredProjectsRef.current.add('proj-a');
+      params.openThreadIdsRef.current = { 'proj-a': ['sess-a', 'sess-b', 'sess-c'] };
+      store.openThreadIds = { 'proj-a': ['sess-a', 'sess-b', 'sess-c'] };
+      act(() =>
+        hook.result.current.commitSuccess('new:proj-a:0', 'hello', { reply: 'AI reply', sessionId: 'sess-d', agentId: 'claude' }),
+      );
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-c', 'sess-d'],
+        selectedSessionId: 'sess-d',
+      });
+    });
+
+    it('persists the same order as memory when the sent session is already open (moved to the end)', () => {
+      const { hook, params, store } = setup();
+      params.restoredProjectsRef.current.add('proj-a');
+      params.openThreadIdsRef.current = { 'proj-a': ['sess-a', 'sess-b', 'sess-c'] };
+      store.openThreadIds = { 'proj-a': ['sess-a', 'sess-b', 'sess-c'] };
+      act(() =>
+        hook.result.current.commitSuccess('sess-a', 'hello', { reply: 'AI reply', sessionId: 'sess-a', agentId: 'claude' }),
+      );
+      expect(store.openThreadIds['proj-a']).toEqual(['sess-b', 'sess-c', 'sess-a']);
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-b', 'sess-c', 'sess-a'],
+        selectedSessionId: 'sess-a',
+      });
+    });
+
+    it('bdboard-rhl4: a restored project whose live open is empty (all closed) persists just the new session', () => {
+      writePersistedChatThreadState('proj-a', { activeSessionIds: [], selectedSessionId: undefined });
+      const { hook, params, store } = setup();
+      params.restoredProjectsRef.current.add('proj-a');
+      params.openThreadIdsRef.current = { 'proj-a': [] };
+      store.openThreadIds = { 'proj-a': [] };
+      act(() =>
+        hook.result.current.commitSuccess('new:proj-a:0', 'hello', { reply: 'AI reply', sessionId: 'sess-d', agentId: 'claude' }),
+      );
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-d'],
+        selectedSessionId: 'sess-d',
+      });
+    });
+
+    it('keeps the persisted-entry-based sum while the project is not yet restored (marker unset)', () => {
+      // 一覧の初回 fetch が in-flight の間(restoredProjectsRef 未マーク)は、
+      // openThreadIdsRef が他経路の書き込み分だけで、永続化の方がまだ正本。従来どおり
+      // 永続化済みエントリに足す(live の open で置き換えない)。
+      writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-a', 'sess-b'], selectedSessionId: 'sess-b' });
+      const { hook, params } = setup();
+      params.openThreadIdsRef.current = { 'proj-a': ['sess-x'] };
+      act(() =>
+        hook.result.current.commitSuccess('new:proj-a:0', 'hello', { reply: 'AI reply', sessionId: 'sess-d', agentId: 'claude' }),
+      );
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-d'],
+        selectedSessionId: 'sess-d',
+      });
+    });
   });
 
   it('records the sent model only when the model select is shown with a model', () => {
