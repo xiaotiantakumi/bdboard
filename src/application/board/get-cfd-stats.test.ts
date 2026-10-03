@@ -272,7 +272,7 @@ describe('getCfdStats', () => {
     const expected = await getCfdStats(base, now, { days: 7 });
 
     const listProjects = vi.fn(() => base.listProjects());
-    const listProjectsChunked = vi.fn(async () => base.listProjects());
+    const listProjectsChunked = vi.fn(() => Promise.resolve(base.listProjects()));
     const cache: BoardCache = { ...base, listProjects, listProjectsChunked };
 
     const stats = await getCfdStats(cache, now, { days: 7 });
@@ -297,7 +297,7 @@ describe('getCfdStats', () => {
     ]);
 
     const listProjects = vi.fn(() => base.listProjects());
-    const listProjectsChunked = vi.fn(async () => base.listProjects());
+    const listProjectsChunked = vi.fn(() => Promise.resolve(base.listProjects()));
     const cache: BoardCache = { ...base, listProjects, listProjectsChunked };
 
     const stats = await getCfdStats(cache, now, { projectIds: [a.id], days: 7 });

@@ -140,9 +140,11 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
       // development machine (load average ~10): fixed path kept the ratio at
       // 0.07-0.08 (8 runs); forcing both back to the sync listProjects()
       // fallback (mutation check, 4 runs) pushed it to 0.74-0.81 and failed
-      // the guard every time. The deterministic "must not call
-      // listProjects()" guard lives in stats-routes.test.ts /
-      // get-cfd-stats.test.ts / get-harness-kpi.test.ts.
+      // the guard every time. Reverting /api/cfd alone only reaches ~0.5-0.6,
+      // right at the threshold, so this guard is not reliable for a single
+      // route. The deterministic "must not call listProjects()" guard lives
+      // in stats-routes.test.ts / get-cfd-stats.test.ts /
+      // get-harness-kpi.test.ts.
       const cfdPromise = app.request('/api/cfd?days=30');
       const harnessKpiPromise = app.request('/api/harness-kpi?weeks=26');
       const healthPromise = (async () => {

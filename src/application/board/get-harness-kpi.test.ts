@@ -384,7 +384,7 @@ describe('getHarnessKpi', () => {
     const expected = await getHarnessKpi(base, now, { weeks: 2, timeZone: UTC });
 
     const listProjects = vi.fn(() => base.listProjects());
-    const listProjectsChunked = vi.fn(async () => base.listProjects());
+    const listProjectsChunked = vi.fn(() => Promise.resolve(base.listProjects()));
     const cache: BoardCache = { ...base, listProjects, listProjectsChunked };
 
     const stats = await getHarnessKpi(cache, now, { weeks: 2, timeZone: UTC });

@@ -451,7 +451,7 @@ describe('createApiRoutes', () => {
     base.putProject({ project: a, tickets: [], fingerprint: 'fp-a', fetchedAt: NOW });
 
     const listProjects = vi.fn(() => base.listProjects());
-    const listProjectsChunked = vi.fn(async () => base.listProjects());
+    const listProjectsChunked = vi.fn(() => Promise.resolve(base.listProjects()));
     // routes-test-support の fake は CFD スナップショットを保持しない (空実装) ので、
     // このテストだけメモリ上の実装に差し替える。
     const cache = {
@@ -483,7 +483,7 @@ describe('createApiRoutes', () => {
     });
 
     const listProjects = vi.fn(() => base.listProjects());
-    const listProjectsChunked = vi.fn(async () => base.listProjects());
+    const listProjectsChunked = vi.fn(() => Promise.resolve(base.listProjects()));
     const cache = { ...base, listProjects, listProjectsChunked };
 
     const scan = vi.fn(async () => ({ worktrees: [], bdBranches: [], complete: true }));
