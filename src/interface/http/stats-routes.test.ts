@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createApiRoutes } from './routes.js';
 import { makeTicket } from '../../domain/test-support.js';
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
+import { createInMemoryCfdCacheMethods } from '../../application/ports/board-cache-fakes.js';
 import { createReclaimHistory } from '../../application/lease/reclaim-history.js';
 import { NOW, project, createFakeBoardCache, createDeps, assertNoDates } from './routes-test-support.js';
 
@@ -439,4 +440,64 @@ describe('createApiRoutes', () => {
     },
     10_000,
   );
+
+  // bdboard-4x55: /api/cfd と /api/harness-kpi (誤回収件数用の worktree スキャン
+  // 前処理も含む) が、listProjectsChunked() を持つキャッシュ (SQLite) では同期の
+  // listProjects() を呼ばないこと。getCfdStats/getHarnessKpi 本体のテストでは
+  // 見えない、ルート直下の呼び出し (stats-routes.ts の worktreeScanner 分岐) を守る。
+  it('serves /api/cfd without calling the synchronous listProjects()', async () => {
+    const base = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    base.putProject({ project: a, tickets: [], fingerprint: 'fp-a', fetchedAt: NOW });
+
+    const listProjects = vi.fn(() => base.listProjects());
+    const listProjectsChunked = vi.fn(() => Promise.resolve(base.listProjects()));
+    // routes-test-support の fake は CFD スナップショットを保持しない (空実装) ので、
+    // このテストだけメモリ上の実装に差し替える。
+    const cache = {
+      ...base,
+      ...createInMemoryCfdCacheMethods(),
+      listProjects,
+      listProjectsChunked,
+    };
+    cache.putCfdSnapshot('2026-06-01', NOW, [{ projectId: a.id, status: 'open', count: 3 }]);
+
+    const app = createApiRoutes(createDeps({ cache }));
+    const response = await app.request('/api/cfd?days=7');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.projects).toHaveLength(1);
+    expect(body.totals).toHaveLength(1);
+    expect(listProjectsChunked).toHaveBeenCalled();
+    expect(listProjects).not.toHaveBeenCalled();
+  });
+  it('serves /api/harness-kpi (including the worktree scan path) without calling the synchronous listProjects()', async () => {
+    const base = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    base.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-live', projectId: a.id, status: 'open' })],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const listProjects = vi.fn(() => base.listProjects());
+    const listProjectsChunked = vi.fn(() => Promise.resolve(base.listProjects()));
+    const cache = { ...base, listProjects, listProjectsChunked };
+
+    const scan = vi.fn(async () => ({ worktrees: [], bdBranches: [], complete: true }));
+    const worktreeScanner: WorktreeScanner = { listChangedFiles: async () => [], scan };
+
+    const app = createApiRoutes(createDeps({ cache, worktreeScanner }));
+    const response = await app.request('/api/harness-kpi?weeks=1');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reclaim).toMatchObject({ reclaimedLiveWorktreeCount: 0 });
+    // 前処理がプロジェクト一覧を読めていること (scan が呼ばれる) と、同期版を使わないこと。
+    expect(scan).toHaveBeenCalledWith(a.rootPath);
+    expect(listProjectsChunked).toHaveBeenCalled();
+    expect(listProjects).not.toHaveBeenCalled();
+  });
 });
