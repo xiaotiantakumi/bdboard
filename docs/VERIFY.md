@@ -45,13 +45,14 @@ nvm に入っている `v14.15.0` は **x86_64 バイナリ**で、arm64 の Mac
 無いと `Bad CPU type in executable` で起動すらできない (nodejs.org は Node 14 / 15 の darwin-arm64
 ビルドを配っておらず、arm64 ネイティブの最古は v16.0.0)。そのためローカルでは **arm64 ネイティブの
 旧版**を `BDBOARD_OLD_NODE` に渡す。使える版は `file ~/.nvm/versions/node/<版>/bin/node` が `arm64` と
-答えるもの (無ければ `nvm install 16`):
+答え、かつ `engines.node` を満たさないもの (無ければ `nvm install 16`)。v14.15.0 を渡してしまうと
+「Bad CPU type」とは出ず、`BDBOARD_OLD_NODE could not run` の失敗で 4 件落ちる:
 
 ```bash
 BDBOARD_OLD_NODE=$HOME/.nvm/versions/node/v16.17.0/bin/node npm run test:server -- scripts/node-version-guard.old-node.test.mjs
 ```
 
-テストが要るのは「`engines.node` (>=22.13.0) を満たさない実 node」であることなので v16 でも成立する
+テストが要るのは「`engines.node` (現状 >=22.13.0) を満たさない実 node」であることなので v16 でも成立する
 (arm64 の v16.17.0 / v16.20.2 / v18.15.0 で 5 passed | 1 skipped を実測。skip は
 `BDBOARD_OLD_NODE_REQUIRED=1` のときだけ動く CI 配線の確認)。ただし v16 でローカルから確かめられるのは
 次の範囲に限られ、**Node 14 固有の失敗は CI だけが確かめる**:
@@ -59,13 +60,13 @@ BDBOARD_OLD_NODE=$HOME/.nvm/versions/node/v16.17.0/bin/node npm run test:server 
 | | v16 (arm64 ローカル) | CI (実 v14.15.0) |
 |---|---|---|
 | 版不足のとき `verify.mjs` / `node-version-check.mjs` が SyntaxError ではなく版不足の案内で止まる (exit 1 / exit 3) | 確かめられる | 確かめられる |
-| ガードの import graph に v16 でもパースできない構文 (import attributes 等) や v16 に無い API (`structuredClone` 等) が紛れていない | 確かめられる | 確かめられる |
-| ガードの import graph に v15 以降でパースできる構文 (`||=` / `??=`) や、v16 に既にある API (`Array.prototype.at` / `Object.hasOwn`) が紛れていない | **確かめられない** (v16 は通してしまう。ガードに `||=` を足しても v16 は版不足の案内を出す、を実測) | 確かめられる |
+| ガードの import graph に v16 でもパースできない構文 (import attributes 等) や、ガードより前に評価される v16 に無い API (`structuredClone` 等) が紛れていない | 確かめられる | 確かめられる |
+| ガードの import graph に v15 以降でパースできる構文 (`||=` / `??=`) や、ガードより前に評価される v16 (.9 以降) に既にある API (`Array.prototype.at` / `Object.hasOwn`) が紛れていない | **確かめられない** (v16 は通してしまう。ガードに `||=` を足しても v16 は版不足の案内を出す、を実測) | 確かめられる |
 
 つまりローカルが緑でも、`||=` のような v14 だけが落とす書き方が混じれば CI の旧 Node job は赤くなる。
 ガードや `node-version-check.mjs` を触る PR では、このローカル確認に加えて **CI の `verify` job の結果を
 必ず見る**。v14 を手元で動かしたい場合は、Rosetta 2 が入っている Apple Silicon なら x86_64 の nvm
-`v14.15.0` をそのまま `BDBOARD_OLD_NODE` に渡せるはずだが、これは未検証 (この機には Rosetta が無く、
+`v14.15.0` をそのまま `BDBOARD_OLD_NODE` に渡せるはずだが、これは未検証 (メンテナの arm64 Mac は Rosetta 未導入で、
 `arch -x86_64` でも `Bad CPU type in executable` になることだけ実測した)。
 
 ## tsc プロジェクトの表
