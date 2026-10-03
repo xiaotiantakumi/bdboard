@@ -9,6 +9,7 @@ import { ApiError, fetchChatSessionMessages } from '../../api';
 import { writePersistedChatThread } from '../../chatThreadStorage';
 import { toChatMessages } from './messages';
 import type { ChatConversationEntry } from './useChatConversationsState';
+import type { UseChatThreadListsResult } from './useChatThreadLists';
 
 /**
  * bdboard-sso1.83 第11段: ChatPanel.tsx から履歴 fetch effect(旧 E12)と、
@@ -42,6 +43,13 @@ export function useChatHistoryLoader(params: {
   setThreadModelIds: Dispatch<SetStateAction<Record<string, string>>>;
   historyRequestIdRef: MutableRefObject<number>;
   conversationsRef: MutableRefObject<Record<string, ChatConversationEntry>>;
+  /**
+   * bdboard-7feq: 履歴ロード成功で選択スレッドを永続化するとき、メモリ上の open
+   * (openThreadIdsRef)を基点にするための ref。どちらも参照は変わらない
+   * (chat/useChatThreadLists.ts)ので、effect の再実行の契機は増えない。
+   */
+  openThreadIdsRef: UseChatThreadListsResult['openThreadIdsRef'];
+  restoredProjectsRef: UseChatThreadListsResult['restoredProjectsRef'];
   setSelectedAgentId: Dispatch<SetStateAction<string>>;
   unresolvedSends: Record<string, true>;
   clearUnresolvedSend: (sessionId: string) => void;
@@ -67,6 +75,8 @@ export function useChatHistoryLoader(params: {
     setThreadModelIds,
     historyRequestIdRef,
     conversationsRef,
+    openThreadIdsRef,
+    restoredProjectsRef,
     setSelectedAgentId,
     unresolvedSends,
     clearUnresolvedSend,
@@ -113,10 +123,20 @@ export function useChatHistoryLoader(params: {
             agentId: payload.agentId,
           },
         }));
-        writePersistedChatThread(selectedProjectId, {
-          sessionId: payload.sessionId,
-          agentId: payload.agentId,
-        });
+        // bdboard-7feq: open が復元済み(restoredProjectsRef がマーク済み)で live の open が
+        // 分かるなら、永続化の open はメモリの open を基点にする。永続化済みエントリを基点にする
+        // と、初回訪問(エントリ無し)で E7 が全スレッドをメモリ上で開いていても、選択スレッド
+        // 1 件だけの履歴ロードで永続化が [A] に潰れ、リロードで B/C が黙って閉じられた。
+        // live の open は応答が届いた時点の値を読む(fetch の in-flight 中に変わりうる)。
+        // 未復元(初回一覧の読込中)は従来どおり永続化済みエントリを基点にする(bdboard-4w2d)。
+        // 書き込みは setState の updater の外。
+        writePersistedChatThread(
+          selectedProjectId,
+          { sessionId: payload.sessionId, agentId: payload.agentId },
+          restoredProjectsRef.current.has(selectedProjectId)
+            ? openThreadIdsRef.current[selectedProjectId]
+            : undefined,
+        );
         // bdboard-2n8: 「このレスポンスが今表示中の会話
         // (currentConversationKey)に対応する最新のリクエストである」ことは
         // 直前の `requestId !== historyRequestIdRef.current` ガードで既に
@@ -180,6 +200,8 @@ export function useChatHistoryLoader(params: {
     setLoadingHistoryFor,
     setThreadModelIds,
     setSelectedAgentId,
+    openThreadIdsRef,
+    restoredProjectsRef,
     onSessionGone,
   ]);
 

@@ -76,7 +76,12 @@ export function createStatsRoutes(deps: ApiDeps): Hono {
     let leftoverCandidates: readonly LeftoverCandidate[] | undefined;
     let leftoverScanComplete = false;
     if (deps.worktreeScanner !== undefined) {
-      let entries = deps.cache.listProjects();
+      // bdboard-4x55: listProjects() は全チケット JSON をデシリアライズする同期処理で
+      // イベントループを塞ぐ。getHarnessKpi / getModelStats と同じく
+      // listProjectsChunked() を優先し、無ければ listProjects() にフォールバックする。
+      let entries = deps.cache.listProjectsChunked !== undefined
+        ? await deps.cache.listProjectsChunked()
+        : deps.cache.listProjects();
       if (projectIds !== undefined) {
         const filterSet = new Set(projectIds);
         entries = entries.filter((entry) => filterSet.has(entry.project.id));
@@ -97,7 +102,7 @@ export function createStatsRoutes(deps: ApiDeps): Hono {
       leftoverScanComplete = scan.complete;
     }
 
-    const stats = getHarnessKpi(deps.cache, deps.now(), {
+    const stats = await getHarnessKpi(deps.cache, deps.now(), {
       ...(projectIds !== undefined ? { projectIds } : {}),
       weeks,
       ...(history !== undefined
@@ -113,10 +118,10 @@ export function createStatsRoutes(deps: ApiDeps): Hono {
     return c.json(toHarnessKpiDto(stats));
   });
 
-  app.get('/api/cfd', (c) => {
+  app.get('/api/cfd', async (c) => {
     const projectIds = parseProjectIds(c.req.query('projects'));
     const days = parseCfdDays(c.req.query('days'));
-    const stats = getCfdStats(deps.cache, deps.now(), {
+    const stats = await getCfdStats(deps.cache, deps.now(), {
       ...(projectIds !== undefined ? { projectIds } : {}),
       days,
     });

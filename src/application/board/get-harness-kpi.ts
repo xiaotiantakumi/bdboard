@@ -45,11 +45,16 @@ export interface HarnessKpiStats {
 
 const DEFAULT_WEEKS = 8;
 
-function collectTickets(
+async function collectTickets(
   cache: BoardCache,
   projectIdFilter?: ReadonlySet<string>,
-): readonly Ticket[] {
-  let entries = cache.listProjects();
+): Promise<readonly Ticket[]> {
+  // bdboard-4x55: getThroughputStats / getModelStats (bdboard-mkkx) と同じ理由で
+  // listProjectsChunked() を優先し、無ければ (インメモリ fake 等) listProjects() に
+  // 同じ結果でフォールバックする。
+  let entries = cache.listProjectsChunked !== undefined
+    ? await cache.listProjectsChunked()
+    : cache.listProjects();
   if (projectIdFilter !== undefined) {
     entries = entries.filter((entry) => projectIdFilter.has(entry.project.id));
   }
@@ -97,11 +102,11 @@ function filterLeftoverCandidates(
  * の記録しか無いので、実効期間は max(期間開始, サーバー起動) になる — その旨を
  * reclaimSince で返す。
  */
-export function getHarnessKpi(
+export async function getHarnessKpi(
   cache: BoardCache,
   now: Date,
   options?: GetHarnessKpiOptions,
-): HarnessKpiStats {
+): Promise<HarnessKpiStats> {
   const weeks = Math.max(1, options?.weeks ?? DEFAULT_WEEKS);
   const timeZone = options?.timeZone ?? getBoardTimeZone();
   const weekStarts = buildWeekStarts(now, weeks, timeZone);
@@ -110,7 +115,7 @@ export function getHarnessKpi(
     options?.projectIds !== undefined ? new Set(options.projectIds) : undefined;
 
   const kpi = computeHarnessKpi({
-    tickets: collectTickets(cache, projectIdFilter),
+    tickets: await collectTickets(cache, projectIdFilter),
     range: { start: rangeStart, end: now },
     ...(options?.reclaimRuns !== undefined
       ? { reclaimRuns: filterReclaimRuns(options.reclaimRuns, projectIdFilter) }
