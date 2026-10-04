@@ -136,7 +136,14 @@ export async function finish(ctx, pr) {
       ...(state.repair ? [kept, `success を確かめたら: bd merge-slot release --holder '${state.holder}'`] : []),
     );
   }
-  removeState(ctx.cwd, pr);
+  if (verified.result === 'failure' && state.class === 'L') {
+    // bdboard-ulxa.7: クラス L の failure は記録 (newMain と class: 'L') を残す。lightSlipSteps の「フレークなら
+    // merge-pr verify <sha> でやり直し、数えない」を実行した再検証が L を見分けて light-landed の success を最後の
+    // 行に書けるように (消すと failure by=finish が最後の行として残り、すり抜けに数えられる)。success で消す。
+    clearVerifyRecord(ctx, pr);
+  } else {
+    removeState(ctx.cwd, pr);
+  }
   if (verified.result === 'failure') {
     if (state.repair) {
       say(`修復後も failure です。${kept}`);

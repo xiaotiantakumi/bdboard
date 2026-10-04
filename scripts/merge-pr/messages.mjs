@@ -21,8 +21,9 @@ export function brokenMainSteps(sha, repo, context) {
 export function lightSlipSteps(sha) {
   return [
     `${sha.slice(0, 12)} はクラス L (着地予定ツリーの軽量チェックだけで着地) で、その着地後検証が failure です — S3 のすり抜け (軽量チェックが見ない test 等で壊れた) の疑い。`,
-    `  1. まずログで既知のフレーク (bdboard-241s 等) や負荷由来 (並列 verify の時間切れ等) でないことを確かめる。そうなら壊れていないので npm run merge-pr -- verify ${sha} で検証し直す (すり抜けに数えない)`,
+    `  1. まずログで既知のフレーク (bdboard-241s 等) や負荷由来 (並列 verify の時間切れ等) でないことを確かめる。そうなら壊れていないので npm run merge-pr -- verify ${sha} で検証し直す (クラス L の記録は残してあるので、success が light-landed の最後の行になり、すり抜けに数えない)`,
     '  2. そうでなければすり抜け 1 件で S2 に戻す: 下の修復 PR (fix-forward / revert) に .claude/bdboard-harness.json の merge.mode を "S2" にする 1 行を含め、議長に報告する',
+    `  3. 同じ着地コミットの failure を finish と別の merger の自己修復が両方報告することがある (finish の verify が LEASE より長引くと重なる)。bd search "main 破損: ${sha.slice(0, 12)}" --status open で main 破損の bug や S2 戻しの修復 PR が既に開いていないか確かめ、開いていれば重ねて作らない`,
   ];
 }
 
