@@ -10,7 +10,7 @@
 //   S3 = S2 + main 側の変更と自分の変更が重ならず、どちらも hot file に触れていない PR (クラス L) は
 //        着地予定ツリーで軽量チェック (lightCheck: build + lint + check:boundaries) だけを回す
 //        (bdboard-ulxa.3)。着地後検証 (finish) はフル verify のまま。軽量チェックが中身を見ない
-//        ファイル (lightBlindFiles、既定 scripts/**) に両側が当たる PR は L にしない (hot-files.mjs)
+//        ファイル (lightBlindFiles、既定 scripts/** harness/** .claude/**) に両側が当たる PR は L にしない (hot-files.mjs)
 //
 // 知らないモードは受け付けない (exit 1)。main の契約がこのスクリプトより新しい段階を指している
 // = このブランチの merge-pr が古いので、推測で近い段階に読み替えず止める (安全側)。S3 より前に切った

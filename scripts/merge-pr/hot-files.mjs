@@ -30,7 +30,12 @@ export const DEFAULT_HOT_FILES = Object.freeze([
 // exit 0 になる (実測)。web/src は入れない — build:web の tsc --noEmit (web/tsconfig.json の include は src) が型と import を検査する。
 // main 側と自分の両方がどれかの要素に当たったら (同じ要素でなくても) クラス L にしない (片側だけなら L のまま)。
 // hot file ではない (hotFiles に足すと S2 の R まで増える) ので、契約の別キー merge.lightBlindFiles で丸ごと置き換える。
-export const DEFAULT_LIGHT_BLIND_FILES = Object.freeze(['scripts/**']);
+// bdboard-ulxa.7: harness/** (パックの正本) と .claude/** (注入コピー・agents・設定) も入れた。シェルと Markdown と JSON で、
+// 軽量チェックは何も検査しない。ファイル間の整合 (route.sh の出力を aimix-run.sh が解析する結合、注入コピーとパックの一致、
+// hooks の行数・SKILL.md の大きさの上限など) を見るのは test:server だけで、片側ずつ緑の 2 つの PR が混ざって落ちると、
+// 本番の縮退が穏当 (aimix-run.sh は警告して検査なしで動く) でも着地後検証の failure = すり抜け 1 件で S2 に戻る。
+// 両側が当たる PR はまれで、そのときの費用は S2 と同じフル verify だけ。
+export const DEFAULT_LIGHT_BLIND_FILES = Object.freeze(['scripts/**', 'harness/**', '.claude/**']);
 
 // マージ手順自身 (merge-pr と、その前段の drift)。片側だけの変更でもクラス L にしない — 軽量チェックが見落とした
 // 壊れ方で着地すると、取り込んだ全エージェントの merge-pr が起動時に落ち、修復 PR もこの手順で入れられない。

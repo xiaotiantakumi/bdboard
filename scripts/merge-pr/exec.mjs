@@ -77,6 +77,22 @@ export function gitOk(args, options = {}) {
   return run('git', args, options).status === 0;
 }
 
+/**
+ * コミットの木と親 (クラス L の記録の照合用)。sha が 16 進 40 / 64 桁でない・読めないときは null。
+ * @returns {{ tree: string, parents: string[] } | null}
+ */
+export function readCommit(root, sha) {
+  if (typeof sha !== 'string' || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(sha)) {
+    return null;
+  }
+  const shown = run('git', ['show', '-s', '--format=%T %P', sha], { cwd: root });
+  if (shown.status !== 0) {
+    return null;
+  }
+  const [tree, ...parents] = shown.stdout.trim().split(/\s+/);
+  return { tree, parents };
+}
+
 /** 文字列 1 個をシェルの単一引用符で安全に囲む (印字するコマンド行用)。 */
 export function shellQuote(value) {
   if (/^[A-Za-z0-9_./:=@%+-]+$/.test(value)) {
