@@ -140,5 +140,43 @@ describe('createThreadListFetchOrder (bdboard-z9mn)', () => {
       order.forgetEntry('a', 'new');
       expect(order.admit('a', seq, [thread('s1')])).toEqual([thread('s1')]);
     });
+
+    it('also drops the thread from the applied list (bdboard-0206)', () => {
+      const order = createThreadListFetchOrder();
+      order.admit('a', order.begin('a'), [thread('s1'), thread('s2')]);
+      order.forgetEntry('a', 's2');
+      expect(order.appliedList('a')).toEqual([thread('s1')]);
+    });
+  });
+
+  describe('appliedList (bdboard-0206)', () => {
+    it('is undefined until a list was applied', () => {
+      const order = createThreadListFetchOrder();
+      order.begin('a');
+      expect(order.appliedList('a')).toBeUndefined();
+    });
+
+    it('is the list the last admit returned, with the overlaid writes', () => {
+      const order = createThreadListFetchOrder();
+      const seq = order.begin('a');
+      order.noteEntryWrite('a', thread('new'), 'upsert');
+      order.admit('a', seq, [thread('s1')]);
+      expect(order.appliedList('a')).toEqual([thread('s1'), thread('new')]);
+    });
+
+    it('keeps the newer list when an older one is dropped', () => {
+      const order = createThreadListFetchOrder();
+      const older = order.begin('a');
+      const newer = order.begin('a');
+      order.admit('a', newer, [thread('s1'), thread('s3')]);
+      expect(order.admit('a', older, [thread('s1'), thread('s2')])).toBeUndefined();
+      expect(order.appliedList('a')).toEqual([thread('s1'), thread('s3')]);
+    });
+
+    it('is per project', () => {
+      const order = createThreadListFetchOrder();
+      order.admit('a', order.begin('a'), [thread('s1')]);
+      expect(order.appliedList('b')).toBeUndefined();
+    });
   });
 });

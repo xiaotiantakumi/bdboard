@@ -45,8 +45,15 @@ export interface ThreadListFetchOrder {
   /**
    * スレッドをローカルで一覧から落としたとき(削除・死んだセッションの prune)に、そのスレッドの
    * noteEntryWrite の記録を捨てる。残すと、あとから届く古い一覧に「upsert」で蘇らせてしまう。
+   * 最後に当てた一覧(appliedList)からも、そのスレッドを落とす。
    */
   forgetEntry(projectId: string, sessionId: string): void;
+  /**
+   * bdboard-0206: いま当たっている一覧 — admit が最後に返した一覧から、forgetEntry で落としたスレッドを
+   * 除いたもの。まだ何も当てていなければ undefined。admit が undefined を返した(応答が古い)呼び出し側が、
+   * 古い応答ではなく、当たっている一覧を基にして open を広げるために読む。
+   */
+  appliedList(projectId: string): readonly ChatThreadDto[] | undefined;
 }
 
 export type EntryWriteMode = 'replace' | 'upsert';
@@ -62,6 +69,8 @@ interface ProjectOrder {
   issued: number;
   applied: number;
   writes: Map<string, EntryWrite>;
+  /** bdboard-0206: admit が最後に返した一覧(forgetEntry で落とした分を除く)。 */
+  appliedList: ChatThreadDto[] | undefined;
 }
 
 export function createThreadListFetchOrder(): ThreadListFetchOrder {
@@ -69,7 +78,7 @@ export function createThreadListFetchOrder(): ThreadListFetchOrder {
   const orderOf = (projectId: string): ProjectOrder => {
     let order = projects.get(projectId);
     if (order === undefined) {
-      order = { issued: 0, applied: 0, writes: new Map() };
+      order = { issued: 0, applied: 0, writes: new Map(), appliedList: undefined };
       projects.set(projectId, order);
     }
     return order;
@@ -96,6 +105,7 @@ export function createThreadListFetchOrder(): ThreadListFetchOrder {
         if (index >= 0) merged[index] = write.entry;
         else if (write.mode === 'upsert') merged.push(write.entry);
       }
+      order.appliedList = merged;
       return merged;
     },
     noteEntryWrite(projectId, entry, mode) {
@@ -109,7 +119,12 @@ export function createThreadListFetchOrder(): ThreadListFetchOrder {
       });
     },
     forgetEntry(projectId, sessionId) {
-      orderOf(projectId).writes.delete(sessionId);
+      const order = orderOf(projectId);
+      order.writes.delete(sessionId);
+      order.appliedList = order.appliedList?.filter((thread) => thread.sessionId !== sessionId);
+    },
+    appliedList(projectId) {
+      return orderOf(projectId).appliedList;
     },
   };
 }

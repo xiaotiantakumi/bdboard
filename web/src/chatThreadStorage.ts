@@ -104,6 +104,11 @@ export function resolvePersistedSelectionAfterClose(
  * (chat/useThreadListSync.test.tsx の再訪テスト)。ただしこの性質が実際に残るのは、初回訪問で
  * 履歴ロードも送信も無かったとき(チケット起動のドラフト・履歴ロードの失敗・スレッド 0 件)
  * だけ: E7 の直後に走る最初の履歴ロードが、live の open でエントリを丸ごと書くため。
+ *
+ * bdboard-0206: 未復元のうちに書いたこの 1 件のエントリ(初回訪問の E7 の一覧 fetch が in-flight の間の
+ * 送信成功、採用)は、E7 が応答を受けたときに、サーバー一覧と合わせた open で書き直す
+ * (chat/useThreadListSync.ts。メモリの open も同じ集合にする)。でないと、メモリは [A,B,C,新] なのに
+ * 永続化と open が [新] に潰れる。E7 が書き直すのは、開始時にエントリが無かったプロジェクトに限る。
  */
 export function writePersistedChatThread(
   projectId: string,
