@@ -262,6 +262,25 @@ harness ラベルの起票率、重複解消/やり直しチケットの比率�
 
 transcript から取れる分 (Bash の 10 分タイムアウト、サブエージェントの稼働時間・トークン、`permissions.deny` の拒否、`bdboard-worker` の続行) は `scripts/harness-eval/transcript-metrics.py` が出す (評価手順 B、bdboard-eydu)。
 
+M11 (worker の続行と結末) の読み方の注意 (bdboard-5iwh):
+
+- `ticket` は description の `Worker: <短縮ID>` から取れた確定値、`ticket_hint` は description の先頭の短縮 ID
+  (`<ID>: …`、`bdboard-<ID> …`、`Implement|Fix <ID> …`) から取った**未確認**の値で、同時には出ない。ヒントは ID の形をして
+  いるだけで実在を見ていない。手順 B は結末を分類する前に、ヒントごとに `bd show` で実在を確かめる。
+- ヒントは `Implement` / `Fix` の動詞が先頭に付いた形も受け付ける (大文字小文字は問わない)。動詞も `:` も無い、先頭の
+  3〜6 字の小文字英数字の語だけの形 (`<ID> …`) も拾うので、ヒントには ID でない普通の語の偽陽性が混ざる
+  (`review the PR` は `bdboard-review`、`fix: typo` は `bdboard-fix`、`Implement the …` は `bdboard-the`、
+  `864 status` は `bdboard-864`)。取りこぼしを減らすことを優先した仕様で、偽陽性は `bd show` で落とす。
+- 伏せ字は完全な秘密除去ではない。拒否されたコマンドの先頭 2 語では、`npx` の 2 語目 (パッケージ名) と、`-p` のような
+  短いフラグの直後の 1〜2 字の値が出る。description では、16 字未満の値と英字だけの値が出る。`://` / `@` / `=` を含む
+  語は丸ごと伏せ、全角の `＝` の後ろも ASCII の連なりが 16 字以上で英字と数字が混ざれば伏せる
+  (`TOKEN＝abcdefghij123456` は `TOKEN＝…`)。出るのは、値が日本語などの非 ASCII の文字で 16 字未満の連なりに
+  分かれたときだけ。
+  `ticket` を取る正規表現が description の全体 (40 字で切る前) を探すのは以前からの挙動で、変えていない。
+- `bdboard-worker` が 80 往復で打ち切られたあとの「作業を進めず報告だけして終了して」という SendMessage も、再開行として
+  `continuations` に数えられる。transcript の形では本物の続行と区別できないので、`continuations` は上限として読み、
+  区別が要るときは bd のコメント (milestone / PR) と突き合わせる。
+
 ---
 
 ## 5. 改善提案 (優先順)

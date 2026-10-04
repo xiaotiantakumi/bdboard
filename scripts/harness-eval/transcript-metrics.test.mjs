@@ -16,6 +16,8 @@ import { describe, expect, it } from 'vitest';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = process.env.TRANSCRIPT_METRICS_SCRIPT ?? path.join(HERE, 'transcript-metrics.py');
 const FIXTURE_DIR = path.join(HERE, 'fixtures', 'transcripts');
+// bdboard-5iwh: 伏せ字の allowlist をすり抜けていた偽の秘密の形と by_tool の伏せ字だけを持つ session (中身はすべて架空)。
+const REDACTION_DIR = path.join(HERE, 'fixtures', 'redaction');
 
 const PERIOD = ['--since', '2026-10-01T00:00:00Z', '--until', '2026-10-02T00:00:00Z'];
 
@@ -48,7 +50,7 @@ function withTmpDir(fn) {
 }
 
 // 合成 worker を 1 体書く。segmentSizes = 区切りごとの assistant 一意 id 数 (区切りの間に isMeta の再開行が入る)。
-function writeSyntheticAgent(dir, agentId, agentType, segmentSizes, startHour) {
+function writeSyntheticAgent(dir, agentId, agentType, segmentSizes, startHour, description = `synthetic ${agentId}`) {
   const sub = path.join(dir, '00000000-0000-4000-8000-0000000000aa', 'subagents');
   fs.mkdirSync(sub, { recursive: true });
   const base = Date.UTC(2026, 9, 1, startHour, 0, 0);
@@ -81,7 +83,7 @@ function writeSyntheticAgent(dir, agentId, agentType, segmentSizes, startHour) {
   fs.writeFileSync(path.join(sub, `agent-${agentId}.jsonl`), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
   fs.writeFileSync(
     path.join(sub, `agent-${agentId}.meta.json`),
-    JSON.stringify({ agentType, description: `synthetic ${agentId}`, spawnDepth: 1, model: 'sonnet' }),
+    JSON.stringify({ agentType, description, spawnDepth: 1, model: 'sonnet' }),
   );
 }
 
@@ -331,6 +333,147 @@ describe.skipIf(!hasPython3())('transcript-metrics.py (bdboard-eydu)', () => {
         ['w2', 80, [80], 1, 0, 0, true],
         ['w3', 80, [80, 0], 1, 1, 1, false],
       ]);
+    });
+  });
+
+  // bdboard-5iwh 項目 2: 最初の allowlist をすり抜けた形。fixtures/redaction の 1 行 = 1 形。
+  // mysql -pexamplepass / sshpass -pexamplepw は 2 語目が -p + 長い値、printf examplepassword は 2 語目が小文字だけの値
+  // (サブコマンドを取らない 1 語目の後ろ)、sk-… / AKIA… / xoxb-… は 1 語目そのものが鍵。
+  it('masks the fake secret shapes that the first allowlist let through, and keeps the command names', () => {
+    const out = runJson(PERIOD, { dir: REDACTION_DIR });
+    expect(out.files).toEqual({ main: 1, subagent: 0, skipped_lines: 0 });
+    expect(out.permission_denied.deny).toBe(15);
+    expect(out.permission_denied.by_prefix).toEqual({
+      'mysql …': 1, // -pexamplepass: a flag is shown only when it is -x .. -xyz
+      'sshpass …': 1, // -pexamplepw
+      'printf …': 1, // examplepassword: printf takes a free argument, not a subcommand
+      'claude …': 1, // the second word can be a free-form prompt, so claude / codex are not subcommand CLIs
+      'codex …': 1,
+      '… …': 3, // sk-example123abc (3 digits), AKIAEXAMPLEEXAMPLE12 (upper case), xoxb-1234-example (4 digits)
+      'git stash': 1,
+      'bd -C': 1,
+      'npm run': 1,
+      '… npm': 1, // EXAMPLE_VAR=example-value npm: the second word is itself a known CLI
+      'cli --token': 1,
+      '(none)': 2,
+    });
+
+    const text = run([...PERIOD], { dir: REDACTION_DIR }).stdout;
+    for (const secret of [
+      'examplepass',
+      'examplepw',
+      'sk-example123abc',
+      'AKIAEXAMPLE',
+      'xoxb-1234',
+      'example=value',
+      'example-value',
+      'examplepromptword',
+    ]) {
+      expect(JSON.stringify(out)).not.toContain(secret);
+      expect(text).not.toContain(secret);
+    }
+  });
+
+  // bdboard-5iwh 項目 4: by_tool の伏せ字 (TOOL_NAME_RE に合わない名前を … にする) を固定する。この行を外す
+  // (tool をそのまま key にする) と by_tool['…'] が消えて、secret が出力に出る。
+  it('masks a denied tool name that is not a plain identifier in by_tool', () => {
+    const out = runJson(PERIOD, { dir: REDACTION_DIR });
+    expect(out.permission_denied.by_tool).toEqual({ Bash: 13, Edit: 1, '…': 1 });
+    expect(Object.keys(out.permission_denied.by_tool)).not.toContain('Bash(example=value)');
+    expect(run([...PERIOD], { dir: REDACTION_DIR }).stdout).toContain('by tool: Bash x13, Edit x1, … x1');
+  });
+
+  // bdboard-5iwh 項目 3: description は 40 字に切る前に語ごとに伏せる。
+  it('redacts URL / mail / NAME=value / long mixed alphanumeric words in subagent descriptions before cutting at 40', () => {
+    const cases = [
+      ['Fetch https://example-user:example-password@example.invalid/x now', 'Fetch … now'],
+      ['Mail example-user@example.invalid please', 'Mail … please'],
+      ['Set EXAMPLE_TOKEN=examplevalue then run', 'Set … then run'],
+      ['Rotate AKIAEXAMPLEEXAMPLE12 key', 'Rotate … key'],
+      ['Use sk-example123abcdef now', 'Use … now'],
+      // 15 characters stay, 16 are masked.
+      ['Boundary abcdefghijk1234 abcdefghijk12345 end', 'Boundary abcdefghijk1234 … end'],
+      // No digit, or a bdboard-<id> shape, stays even when it is long.
+      ['Keep abcdefghijklmnopqrst plain', 'Keep abcdefghijklmnopqrst plain'],
+      ['Ticket bdboard-cm2q.9.1 kept', 'Ticket bdboard-cm2q.9.1 kept'],
+      // Only runs of ASCII are measured: kana count as letters for isalpha but are not part of a key, so a version
+      // glued to Japanese text is not one 16-character mixed word.
+      ['Setup v5.0.0アップグレードリスクの調査と設計', 'Setup v5.0.0アップグレードリスクの調査と設計'],
+      // A real key with punctuation attached is still masked (the whole ASCII run, parentheses included).
+      ['Rotate (exampleabc123def456) now', 'Rotate … now'],
+      // A 16+ character ticket run with a leading bracket stays (the exemption strips both sides, not only the end).
+      ['Fix gate (bdboard-3tw.144) now', 'Fix gate (bdboard-3tw.144) now'],
+      // :// / @ / = are checked on the whole whitespace word, so a value after non-ASCII text is masked too.
+      ['Reset パスワード=ひみつ now', 'Reset … now'],
+      ['Open https://example.com/ファイル/AbCdEf123456 now', 'Open … now'],
+      ['Mail 例え@example.com now', 'Mail … now'],
+      // A full-width ＝ is not one of those marks, but the ASCII run after it is still measured.
+      ['Set TOKEN＝abcdefghij123456 now', 'Set TOKEN＝… now'],
+      // The key starts before the 40th character: cutting first would leave "AKIAE" in the output.
+      ['Investigate the flaky behaviour of AKIAEXAMPLEEXAMPLE12 key and more', 'Investigate the flaky behaviour of … key'],
+    ];
+    withTmpDir((dir) => {
+      cases.forEach(([description], n) => {
+        writeSyntheticAgent(dir, `d${String(n).padStart(2, '0')}`, 'bdboard-worker', [1], 1, description);
+      });
+      const out = runJson(['--top', '20', ...PERIOD], { dir });
+      expect(out.worker_continuations.items.map((w) => w.description)).toEqual(cases.map(([, expected]) => expected));
+      expect(out.subagents.top_tokens.map((s) => s.description).sort()).toEqual(cases.map(([, expected]) => expected).sort());
+      for (const secret of ['example-password', 'example-user', 'EXAMPLE_TOKEN', 'examplevalue', 'AKIAE', 'abcdefghijk12345', 'exampleabc123def456', 'ひみつ', 'AbCdEf123456', 'example.com', 'abcdefghij123456']) {
+        expect(JSON.stringify(out)).not.toContain(secret);
+      }
+    });
+  });
+
+  // bdboard-5iwh 項目 1: ticket (Worker: から確定) と ticket_hint (先頭の短縮 ID、未確認) は別のキーで、同時には出ない。
+  it('keeps the confirmed ticket and the unconfirmed ticket_hint apart', () => {
+    const cases = [
+      // [description, description shown (masked words become …), ticket, ticket_hint]
+      ['Worker: ab12 confirmed by Worker line', 'Worker: ab12 confirmed by Worker line', 'bdboard-ab12', null],
+      ['Worker: bdboard-cd34.5 with the prefix', 'Worker: bdboard-cd34.5 with the prefix', 'bdboard-cd34.5', null],
+      ['cm2q.15: short id then a colon', 'cm2q.15: short id then a colon', null, 'bdboard-cm2q.15'],
+      ['5iwh: short id then a colon', '5iwh: short id then a colon', null, 'bdboard-5iwh'],
+      ['bdboard-0206 prefixed id then a space', 'bdboard-0206 prefixed id then a space', null, 'bdboard-0206'],
+      ['Implement 5iwh transcript metrics', 'Implement 5iwh transcript metrics', null, 'bdboard-5iwh'],
+      ['Fix h9s0 Windows test', 'Fix h9s0 Windows test', null, 'bdboard-h9s0'],
+      ['implement bdboard-1syo lower case verb', 'implement bdboard-1syo lower case verb', null, 'bdboard-1syo'],
+      // A plain word is also a hint: only `bd show` (procedure B) tells it from a ticket.
+      ['Implement the synthetic alpha ticket', 'Implement the synthetic alpha ticket', null, 'bdboard-the'],
+      ['V2 worktree isolation probe', 'V2 worktree isolation probe', null, null],
+      ['synthetic noise with a long first word', 'synthetic noise with a long first word', null, null],
+      ['ab: too short to be an id', 'ab: too short to be an id', null, null],
+      // Neither a secret in the Worker: slot nor a secret-like first word turns into a ticket or a hint.
+      ['Worker: AKIAEXAMPLEEXAMPLE12 as an id', 'Worker: … as an id', null, null],
+      ['examplesecret1234567: go', '… go', null, null],
+      // A ticket id with punctuation attached reaches 16 characters but is not a key: the bdboard-<id> exemption looks
+      // at the run without its surrounding punctuation.
+      ['Worker: bdboard-ulxa.10, x', 'Worker: bdboard-ulxa.10, x', 'bdboard-ulxa.10', null],
+      ['(Worker: bdboard-cm2q.12) x', '(Worker: bdboard-cm2q.12) x', 'bdboard-cm2q.12', null],
+      ['bdboard-3tw.144: x', 'bdboard-3tw.144: x', null, 'bdboard-3tw.144'],
+      // ticket and ticket_hint are never both set (a leading id plus a Worker: line gives only the ticket), and the
+      // hint is read after the leading spaces are stripped.
+      ['5iwh: then Worker: ab12', '5iwh: then Worker: ab12', 'bdboard-ab12', null],
+      ['   5iwh: after leading spaces', '   5iwh: after leading spaces', null, 'bdboard-5iwh'],
+      // The bare <id> form (no verb, no colon) also picks up a plain word.
+      ['review the PR', 'review the PR', null, 'bdboard-review'],
+    ];
+    withTmpDir((dir) => {
+      cases.forEach(([description], n) => {
+        writeSyntheticAgent(dir, `h${String(n).padStart(2, '0')}`, 'bdboard-worker', [1], 1, description);
+      });
+      const out = runJson(PERIOD, { dir });
+      expect(out.worker_continuations.items.map((w) => [w.description, w.ticket, w.ticket_hint])).toEqual(
+        cases.map(([, shown, ticket, hint]) => [shown, ticket, hint]),
+      );
+      expect(out.worker_continuations).toMatchObject({ workers: 20, with_ticket: 5, with_ticket_hint: 10, without_ticket: 5 });
+      // Never both: a worker with a confirmed ticket has no hint.
+      expect(out.worker_continuations.items.filter((w) => w.ticket !== null && w.ticket_hint !== null)).toEqual([]);
+
+      const text = run([...PERIOD], { dir }).stdout;
+      expect(text).toContain('workers=20 max_segment=1 breakers=0 continuations=0 resumes=0 ticket=5 ticket_hint=10 no_ticket=5');
+      expect(text).toContain('h00 ticket=bdboard-ab12 turns=1');
+      expect(text).toContain('h02 ticket=- ticket_hint=bdboard-cm2q.15 turns=1');
+      expect(text).not.toContain('AKIAEXAMPLE');
     });
   });
 
