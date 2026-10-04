@@ -4,7 +4,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createIssueDraftService } from '../../application/issue-report/issue-draft-service.js';
 import { ISSUE_DRAFT_MAX_JSON_BYTES, type IssueDraft } from '../../domain/issue-draft.js';
-import { createFsIssueDraftStorage } from './fs-issue-draft-storage.js';
+import type { IssueDraftStoragePort } from '../../application/ports/issue-draft-storage.js';
+import { createFsIssueDraftStorage, type FsIssueDraftStorageOptions } from './fs-issue-draft-storage.js';
 
 function makeDraft(id: string, overrides: Partial<IssueDraft> = {}): IssueDraft {
   return {
@@ -48,6 +49,8 @@ describe('createFsIssueDraftStorage', () => {
   });
 
   afterEach(async () => {
+    vi.resetAllMocks();
+    vi.restoreAllMocks();
     await fs.rm(path.dirname(baseDir), { recursive: true, force: true });
   });
 
@@ -124,6 +127,8 @@ describe('createFsIssueDraftStorage', () => {
       // 同じ下書きの同じ理由は繰り返し警告しない (一覧は何度も呼ばれる)。
       await storage.list();
       expect(warn).toHaveBeenCalledTimes(1);
+      // 恒久の理由で飛ばしただけなら、一覧は欠けていない扱い (受け取りの索引はキャッシュされる)。
+      expect(await storage.scan()).toMatchObject({ complete: true });
     }
 
     const writeBroken = async (content: string): Promise<void> => {
@@ -246,42 +251,296 @@ describe('createFsIssueDraftStorage', () => {
     });
   });
 
-  describe('a transient read failure is not turned into a skipped draft', () => {
-    // EMFILE (ファイルを開きすぎ)・EIO (入出力) はあとで通るかもしれない。飛ばすと、起動後の最初の受け取りが作る
-    // 索引が欠けたままプロセスの間ずっと使われ、既知の指紋が二重に作られる。投げて、索引は作り直させる。
-    it.each(['EMFILE', 'EIO'])('%s on one draft.json fails list() and get() with no warning, and the next receive sees every draft', async (code) => {
-      const warn = vi.fn();
-      const storage = createFsIssueDraftStorage(baseDir, { warn });
-      await storage.save(makeDraft(ID_1));
-      await storage.save(makeDraft(ID_2));
+  // bdboard-r50m: draft.json の読み出しの errno の扱い。分類と再試行の細部は issue-draft-file-reader.test.ts。
+  // ここは「ストア・受け取りのサービスと実 fs でつないだとき」の約束を固定する。
+  describe('read errors on one draft.json (retry, skip, and not caching a gapped index)', () => {
+    const NEW_ID = '1758812345999-d1b2c3d4e5f6a7b8';
+
+    /** ID_2 の draft.json を読むときだけ fs.readFile を差し替える。behave(n) が返したエラーで n 回目の読みを失敗させる。 */
+    function failReadingId2(behave: (call: number) => Error | undefined): { calls: number } {
       const realReadFile = fs.readFile.bind(fs) as unknown as (...args: unknown[]) => Promise<unknown>;
-      const failOnId2 = vi.spyOn(fs, 'readFile').mockImplementation(((...args: unknown[]) => {
-        if (String(args[0]).includes(ID_2)) {
-          return Promise.reject(Object.assign(new Error(`${code}: transient failure`), { code }));
-        }
-        return realReadFile(...args);
+      const state = { calls: 0 };
+      vi.spyOn(fs, 'readFile').mockImplementation(((...args: unknown[]) => {
+        if (!String(args[0]).includes(ID_2)) return realReadFile(...args);
+        state.calls += 1;
+        const error = behave(state.calls);
+        return error === undefined ? realReadFile(...args) : Promise.reject(error);
       }) as unknown as typeof fs.readFile);
-      const service = createIssueDraftService({
+      return state;
+    }
+
+    const withCode = (code: string | undefined): Error => {
+      const error = new Error('example-user private message');
+      return code === undefined ? error : Object.assign(error, { code });
+    };
+
+    function makeStorage(extra: FsIssueDraftStorageOptions = {}) {
+      const warn = vi.fn();
+      const waits: number[] = [];
+      const storage = createFsIssueDraftStorage(baseDir, {
+        warn,
+        readRetry: { sleep: async (ms) => { waits.push(ms); } },
+        ...extra,
+      });
+      return { storage, warn, waits };
+    }
+
+    function makeService(storage: IssueDraftStoragePort) {
+      let seq = 0;
+      return createIssueDraftService({
         storage,
         now: () => new Date('2026-10-04T12:00:00.000Z'),
-        newId: () => '1758812345999-d1b2c3d4e5f6a7b8',
+        newId: () => `${1758812346000 + (seq += 1)}-d1b2c3d4e5f6a7b8`,
       });
-      try {
-        await expect(storage.list()).rejects.toThrow(/transient failure/);
-        await expect(storage.get(ID_2)).rejects.toThrow(/transient failure/);
-        // 受け取りも失敗する。欠けた一覧を索引にして書き進めない。
-        await expect(service.receive({ kind: 'A', catalogSlug: `slug-${ID_2}` })).rejects.toThrow(/transient failure/);
+    }
+
+    async function seedTwoDrafts(storage: IssueDraftStoragePort): Promise<void> {
+      await storage.save(makeDraft(ID_1));
+      await storage.save(makeDraft(ID_2));
+    }
+
+    it('retries a transient error and reads the draft (default sleep, one real 20ms wait), with no warning', async () => {
+      const warn = vi.fn();
+      const storage = createFsIssueDraftStorage(baseDir, { warn });
+      await seedTwoDrafts(storage);
+      const reads = failReadingId2((call) => (call === 1 ? withCode('EMFILE') : undefined));
+
+      expect(await storage.get(ID_2)).toEqual(makeDraft(ID_2));
+      expect(reads.calls).toBe(2);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it.each(['EPERM', 'EACCES'])('win32: %s is retried like any retryable error', async (code) => {
+      const { storage, warn, waits } = makeStorage({ platform: 'win32' });
+      await seedTwoDrafts(storage);
+      const reads = failReadingId2((call) => (call <= 2 ? withCode(code) : undefined));
+
+      expect((await storage.list()).map((draft) => draft.id).sort()).toEqual([ID_1, ID_2]);
+      expect(reads.calls).toBe(3);
+      expect(waits).toEqual([20, 40]);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    // 本物の ACL の拒否は #859 までは飛ばしていた。投げると、読めない 1 件のせいで list() と全部の受け取りが 500 になる
+    // (クライアントは再送しない)。4 回読んでも駄目ならその 1 件だけを飛ばし、一覧は欠けた扱い (索引をキャッシュしない)。
+    it.each(['EPERM', 'EACCES'])(
+      'win32: %s that never clears skips that one draft after four reads (one warning, listing incomplete), like get()',
+      async (code) => {
+        const { storage, warn, waits } = makeStorage({ platform: 'win32' });
+        await seedTwoDrafts(storage);
+        const reads = failReadingId2(() => withCode(code));
+
+        expect(await storage.scan()).toEqual({ drafts: [makeDraft(ID_1)], complete: false });
+        expect(reads.calls).toBe(4);
+        expect(waits).toEqual([20, 40, 80]);
+        expect((await storage.list()).map((draft) => draft.id)).toEqual([ID_1]);
+        expect(await storage.get(ID_2)).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        const message = String(warn.mock.calls[0][0]);
+        expect(message).toContain(ID_2);
+        expect(message).toContain(`unreadable (${code})`);
+        expect(message).not.toContain('private message');
+        expect(message).not.toContain(baseDir);
+      },
+    );
+
+    // EBUSY: OneDrive などの同期クライアントがそのファイルを長く握る (ticket の例)。どの OS でも、4 回読んで駄目ならその 1 件だけを飛ばす。
+    it.each(['linux', 'win32'] as const)(
+      'EBUSY that never clears (%s) skips that one draft after four reads: list() returns the others, scan() is incomplete, get() is undefined',
+      async (platform) => {
+        const { storage, warn, waits } = makeStorage({ platform });
+        await seedTwoDrafts(storage);
+        const reads = failReadingId2(() => withCode('EBUSY'));
+
+        expect(await storage.scan()).toEqual({ drafts: [makeDraft(ID_1)], complete: false });
+        expect(reads.calls).toBe(4);
+        expect(waits).toEqual([20, 40, 80]);
+        expect((await storage.list()).map((draft) => draft.id)).toEqual([ID_1]);
+        expect(await storage.get(ID_2)).toBeUndefined();
+        expect(reads.calls).toBe(12);
+        expect(warn).toHaveBeenCalledTimes(1);
+        const message = String(warn.mock.calls[0][0]);
+        expect(message).toContain(ID_2);
+        expect(message).toContain('unreadable (EBUSY)');
+        expect(message).not.toContain('private message');
+        expect(message).not.toContain(baseDir);
+      },
+    );
+
+    it('EBUSY once, then success: the draft is read, with no warning and a complete listing', async () => {
+      const { storage, warn, waits } = makeStorage();
+      await seedTwoDrafts(storage);
+      const reads = failReadingId2((call) => (call === 1 ? withCode('EBUSY') : undefined));
+
+      expect(await storage.scan()).toMatchObject({ complete: true });
+      expect(reads.calls).toBe(2);
+      expect(waits).toEqual([20]);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it.each(['EPERM', 'EACCES'])('non-win32: %s is skipped at once with a warning and the listing stays complete', async (code) => {
+      const { storage, warn, waits } = makeStorage({ platform: 'linux' });
+      await seedTwoDrafts(storage);
+      const reads = failReadingId2(() => withCode(code));
+
+      expect(await storage.scan()).toMatchObject({ complete: true, drafts: [makeDraft(ID_1)] });
+      expect(reads.calls).toBe(1);
+      expect(waits).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain(code);
+    });
+
+    // プロセス全体の不足 (ファイルを開きすぎなど) はどの下書きを読んでも起きる。1 件ずつ飛ばすと一覧のほとんどが空になるので、
+    // 使い切ったら元のエラーを投げる (list()・scan()・get() が同じエラーオブジェクトで reject する)。
+    it.each(['EMFILE', 'ENFILE', 'EAGAIN'])(
+      'a process-wide error (%s) that never clears fails list(), scan() and get() with the same error: nothing skipped, nothing warned',
+      async (code) => {
+        const { storage, warn, waits } = makeStorage();
+        await seedTwoDrafts(storage);
+        const error = withCode(code);
+        const reads = failReadingId2(() => error);
+
+        await expect(storage.list()).rejects.toBe(error);
+        await expect(storage.scan()).rejects.toBe(error);
+        await expect(storage.get(ID_2)).rejects.toBe(error);
+        expect(reads.calls).toBe(12);
+        expect(waits).toEqual([20, 40, 80, 20, 40, 80, 20, 40, 80]);
         expect(warn).not.toHaveBeenCalled();
-      } finally {
-        failOnId2.mockRestore();
-      }
-      // 失敗が消えたあとの受け取りは完全な一覧から索引を作る: ID_2 の既知の指紋は新規ではなくマージ。
+      },
+    );
+
+    it('a failed receive (process-wide error that never clears) leaves no index behind: the next receive sees every draft', async () => {
+      const { storage } = makeStorage();
+      await seedTwoDrafts(storage);
+      const service = makeService(storage);
+      const error = withCode('EMFILE');
+      let failing = true;
+      failReadingId2(() => (failing ? error : undefined));
+
+      await expect(service.receive({ kind: 'A', catalogSlug: `slug-${ID_2}` })).rejects.toBe(error);
+      failing = false;
       expect(await service.receive({ kind: 'A', catalogSlug: `slug-${ID_2}` })).toMatchObject({
         ok: true,
         outcome: 'merged',
         draft: { id: ID_2 },
       });
-      expect((await storage.list()).map((draft) => draft.id).sort()).toEqual([ID_1, ID_2]);
+    });
+
+    // EIO・ELOOP・2GiB 超 (ERR_FS_FILE_TOO_LARGE)・code の無いエラーは「未列挙」。以前は list() と全部の受け取りが 500 になった。
+    it.each(['EIO', 'ELOOP', 'ERR_FS_FILE_TOO_LARGE', undefined])(
+      'an unlisted error (%s) skips that one draft: list() still returns the others, with one warning, and the listing is incomplete',
+      async (code) => {
+        const { storage, warn, waits } = makeStorage();
+        await seedTwoDrafts(storage);
+        const reads = failReadingId2(() => withCode(code));
+
+        expect((await storage.list()).map((draft) => draft.id)).toEqual([ID_1]);
+        expect(await storage.scan()).toEqual({ drafts: [makeDraft(ID_1)], complete: false });
+        expect(await storage.get(ID_2)).toBeUndefined();
+        expect(await storage.get(ID_1)).toEqual(makeDraft(ID_1));
+        expect(reads.calls).toBe(3); // 再試行しない: 読みごとに 1 回
+        expect(waits).toEqual([]);
+        // 警告は id と理由 (code) だけ。message もパスも出さない。同じ下書きの同じ理由は 1 回。
+        expect(warn).toHaveBeenCalledTimes(1);
+        const message = String(warn.mock.calls[0][0]);
+        expect(message).toContain(ID_2);
+        expect(message).toContain(`unreadable (${code ?? 'unknown'})`);
+        expect(message).not.toContain('private message');
+        expect(message).not.toContain('example-user');
+        expect(message).not.toContain(baseDir);
+      },
+    );
+
+    // 飛ばした理由が、未列挙 (EIO)・ファイル単位で使い切った (EBUSY、win32 の EPERM) のどれでも、受け取りは 500 にならず、
+    // 欠けた索引はキャッシュされない。
+    it.each([
+      ['EIO', 'linux'],
+      ['EBUSY', 'linux'],
+      ['EBUSY', 'win32'],
+      ['EPERM', 'win32'],
+      ['EACCES', 'win32'],
+    ] as const)(
+      '%s on %s: receive still works, but the gapped index is not cached; once it clears, the next receive reads every draft again',
+      async (code, platform) => {
+        const { storage } = makeStorage({ platform });
+        await seedTwoDrafts(storage);
+        const service = makeService(storage);
+        const scan = vi.spyOn(storage, 'scan');
+        let failing = true;
+        failReadingId2(() => (failing ? withCode(code) : undefined));
+
+        // 読めない 1 件があっても受け取りは 500 にならない。見えている下書きはマージされ、新しい指紋は作られる。
+        expect(await service.receive({ kind: 'A', catalogSlug: `slug-${ID_1}` })).toMatchObject({ outcome: 'merged', draft: { id: ID_1 } });
+        expect(scan).toHaveBeenCalledTimes(1);
+        const created = await service.receive({ kind: 'A', catalogSlug: 'new-one' });
+        expect(created).toMatchObject({ outcome: 'created' });
+        // 欠けた索引は捨てられ、受け取りのたびに全件を読み直す。
+        expect(scan).toHaveBeenCalledTimes(2);
+        expect(await service.receive({ kind: 'A', catalogSlug: 'new-two' })).toMatchObject({ outcome: 'created' });
+        expect(scan).toHaveBeenCalledTimes(3);
+
+        // 直ったあとの受け取りは完全な一覧から索引を作る: ID_2 の既知の指紋はマージ、欠けている間に作った下書きも見える。
+        failing = false;
+        expect(await service.receive({ kind: 'A', catalogSlug: `slug-${ID_2}` })).toMatchObject({ outcome: 'merged', draft: { id: ID_2 } });
+        expect(scan).toHaveBeenCalledTimes(4);
+        expect(await service.receive({ kind: 'A', catalogSlug: 'new-one' })).toMatchObject({
+          outcome: 'merged',
+          draft: { id: created.ok ? created.draft.id : undefined },
+        });
+        // 完全な索引になったので、もうキャッシュされる。
+        expect(scan).toHaveBeenCalledTimes(4);
+      },
+    );
+
+    it('a complete index is cached: a corrupt draft (permanent skip) does not make every receive re-read the directory', async () => {
+      const { storage } = makeStorage();
+      await seedTwoDrafts(storage);
+      await fs.writeFile(path.join(baseDir, NEW_ID), 'not a directory');
+      const service = makeService(storage);
+      const scan = vi.spyOn(storage, 'scan');
+
+      await service.receive({ kind: 'A', catalogSlug: 'first' });
+      await service.receive({ kind: 'A', catalogSlug: 'second' });
+      await service.receive({ kind: 'A', catalogSlug: `slug-${ID_1}` });
+      expect(scan).toHaveBeenCalledTimes(1);
+    });
+
+    // 完全な索引をキャッシュしたあとで、既知の下書きが握られて読めなくなったとき (N5 の「キャッシュ済みの完全な索引のあと」)。
+    // get() が undefined を返すので、サービスはそれを「消された」とみなして新しい下書きを作る。既知の id を使い回すと、
+    // 握りが解けたあとに、握られていた下書きを黙って上書きしてしまう。
+    it('a known draft that is busy after the complete index was cached is not overwritten: the receive creates a new draft instead', async () => {
+      const { storage } = makeStorage();
+      await seedTwoDrafts(storage);
+      const service = makeService(storage);
+      const scan = vi.spyOn(storage, 'scan');
+      const draftJson = path.join(baseDir, ID_2, 'draft.json');
+
+      // 最初の受け取りが完全な索引を作ってキャッシュする (ID_2 の指紋もこの索引にある)。
+      expect(await service.receive({ kind: 'A', catalogSlug: 'first' })).toMatchObject({ outcome: 'created' });
+      expect(scan).toHaveBeenCalledTimes(1);
+      const before = await fs.readFile(draftJson);
+
+      // ここから ID_2 の draft.json は読むたびに EBUSY (握られたまま)。
+      let busy = true;
+      const reads = failReadingId2(() => (busy ? withCode('EBUSY') : undefined));
+      const result = await service.receive({ kind: 'A', catalogSlug: `slug-${ID_2}` });
+
+      expect(reads.calls).toBe(4); // get(ID_2) が 4 回読んで諦めた
+      expect(scan).toHaveBeenCalledTimes(1); // 索引はキャッシュ済みなので読み直していない
+      expect(result).toMatchObject({ ok: true, outcome: 'created' });
+      const createdId = result.ok ? result.draft.id : undefined;
+      expect(createdId).toBeDefined();
+      expect(createdId).not.toBe(ID_2);
+
+      // 握りが解けたあとも、ID_2 の draft.json は 1 バイトも変わっていない。
+      busy = false;
+      expect(await fs.readFile(draftJson)).toEqual(before);
+      expect(await storage.get(ID_2)).toEqual(makeDraft(ID_2));
+      // キャッシュの索引はこの指紋を新しい下書きに向けた (再起動までそのまま。N5 に書いた割り切り)。
+      expect(await service.receive({ kind: 'A', catalogSlug: `slug-${ID_2}` })).toMatchObject({
+        outcome: 'merged',
+        draft: { id: createdId },
+      });
     });
   });
 
