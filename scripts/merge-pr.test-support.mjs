@@ -25,8 +25,8 @@ export const CONTEXT = 'bdboard/landed-verify';
 export const PR = 7;
 export const TITLE = 'feat(demo-1): add the thing';
 
-// bdboard-2twf: SIGINT テスト用の小さなヘルパー。pidAlive は finish.mjs の同名関数と同じ判定
-// (EPERM = 居るが触れない = alive、ESRCH = もう居ない)。
+// bdboard-2twf: SIGINT テスト用の小さなヘルパー。pidAlive は scripts/process-identity.mjs の isProcessAlive と
+// 同じ判定 (EPERM = 居るが触れない = alive、ESRCH = もう居ない)。テストの確認は本体と別の実装で行う。
 export function pidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) {
     return false;

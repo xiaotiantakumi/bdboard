@@ -370,8 +370,22 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   until it is actually empty and resends `SIGKILL` while anything in it is still alive, instead of
   trusting the direct child's exit as a proxy for the whole tree being gone.
 - **A second `finish` while one is running exits 75** (`verifyingPid` in the state file is alive). The
-  record is stamped with `verifyingAt`; once it is older than 2 hours (`VERIFYING_PID_MAX_AGE_MS`) the
-  PID is treated as reused/stale (bdboard-2hj4), ignored with a notice, and `finish` goes on.
+  record is stamped with `verifyingAt` and the process start time `verifyingStart` (`ps -p <pid> -o
+  lstart=`, bdboard-ky9l). If the live process was started at the recorded time it is the same `finish`:
+  it stays 75 however long it has been running (a verify past 2 hours, a laptop that slept). If it was
+  started at another time the PID was reused, the record is stale even when fresh, and `finish` ignores
+  it with a notice and goes on. When the start time cannot be compared (a record from before
+  bdboard-ky9l, no usable `ps`, **Windows** — no `ps`, so it is not read there), the old rule applies:
+  older than 2 hours (`VERIFYING_PID_MAX_AGE_MS`) means stale (bdboard-2hj4).
+- **A `finish` killed with SIGKILL leaves its verify running.** The verify is started `detached`
+  (its own process group), so SIGKILL of `finish` skips the cleanup above and the group survives. The
+  verify's group id is stamped in the state file (`verifyPgid`, with `verifyPgidStart` and
+  `verifyPgidAt`); a rerun of `finish` that finds that group still alive exits 75 with `pgrep -g <pgid>`
+  and `kill -TERM -<pgid>` hints instead of starting a second verify in the same worktree (bdboard-ky9l).
+  Kill the group (or wait for it), then rerun `finish`. A group whose leader has exited but which still
+  has members is the original group (POSIX does not reuse the number while the group exists); a live
+  leader is compared by start time like `verifyingPid`. There are no process groups on Windows, so
+  nothing is recorded or checked there.
 - **Never release someone else's slot.** If it stays held past `merge.slotWaitMinutes` (10),
   `gate` exits 75 and the agent reports the holder to the chair. A holder equal to
   `<id> / PR#<N>` (this PR's own interrupted gate) is taken over.

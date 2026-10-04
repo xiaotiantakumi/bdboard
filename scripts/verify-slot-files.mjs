@@ -3,6 +3,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+// bdboard-ky9l: 生存確認は scripts/process-identity.mjs に 1 つにまとめた (もとは merge-pr/finish.mjs の
+// pidAlive と同じ中身の複製)。そちらも古い Node でパースできる構文に保たれている。
+import { isProcessAlive } from './process-identity.mjs';
 import { HOLDER_FORMAT } from './verify-slot-queue.mjs';
 
 // 書きかけ (旧スクリプトの非原子的な書き込み) を壊れたファイルと取り違えて消さないための猶予。
@@ -30,17 +33,6 @@ const RENAME_RETRY_DELAYS_MS = [10, 20, 40, 80, 160, 320];
 const RENAME_RETRY_ERRNOS = new Set(['EPERM', 'EBUSY', 'EACCES']);
 
 const defaultWait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM = 存在するが権限がない (同一ユーザーの $TMPDIR 運用ではまず出ないが、
-    // 出た場合は「生きている」に倒す方が安全)。
-    return error.code === 'EPERM';
-  }
-}
 
 export function holderPath(dir, pid) {
   return path.join(dir, `holder-${pid}.json`);

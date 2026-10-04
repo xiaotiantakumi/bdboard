@@ -15,43 +15,11 @@ import { runLandedVerify } from './landed-verify.mjs';
 import { brokenMainSteps } from './messages.mjs';
 import { releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
+import { clearVerifyRecord, guardAgainstRunningVerify, recordVerifyGroup, verifyingStamp } from './verify-guard.mjs';
 import { forgetQueueSince } from './verify-queue.mjs';
 
-// bdboard-2hj4: verifyingPid の記録を「実行中」とみなす上限。状態ファイル (state.mjs) は finish が
-// 中断・クラッシュしても残るので、書いた PID が後で別プロセスに再利用される (pidAlive は EPERM も
-// alive 扱い) と、記録が永久に「二重に走らせません」(RETRY 75) になる。そこで verifyingAt (書いた時刻)
-// からこの時間を超えた記録は、PID が生きていても古い記録として無視する。
-// 値は、finish が正規に走っていられる時間より十分長く取る。verify スロットの待ちには上限が無い
-// (waitTimeoutMs 15 分が効くのは走っている holder の顔ぶれが 15 分変わらないときだけで、列が進んで
-// いる間は待ち続ける。verify-slot.mjs)。ほかに lockfile が変わったときの npm ci と、ネットワーク
-// 呼び出しのタイムアウト (各 120 秒、exec.mjs) も足される。実測では landed-verify のログ 133 件で
-// スロット待ちが最大 685 秒、vitest の合計が最大約 524 秒、finish から着地後検証の完了までは通常
-// 4〜5 分なので、2 時間は十分に長い。並んだ時刻の記録を捨てる SENIORITY_RESET_MS (verify-queue.mjs)
-// と同じ値にそろえた。短すぎると、本当に走っている finish と同じ worktree で 2 本目の verify が並走し、
-// 1 本目の restoreBranch (landed-verify.mjs) が 2 本目の途中で木を差し替えて誤った結果を台帳に書く
-// (長すぎる害は待つだけ)。
-export const VERIFYING_PID_MAX_AGE_MS = 2 * 60 * 60_000;
-
-function pidAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === 'EPERM';
-  }
-}
-
-/**
- * verifyingPid の記録からの経過ミリ秒。verifyingAt が無い・読めない記録は null
- * (bdboard-2hj4 より前に書かれた状態ファイル — 後方互換のため pid の生存だけで判定させる)。
- */
-function verifyingAgeMs(state, now = Date.now()) {
-  const writtenAt = typeof state.verifyingAt === 'string' ? Date.parse(state.verifyingAt) : Number.NaN;
-  return Number.isFinite(writtenAt) ? now - writtenAt : null;
-}
+// bdboard-2hj4: 古い verifyingPid の記録を捨てる上限。説明と bdboard-ky9l での位置づけは verify-guard.mjs。
+export { VERIFYING_PID_MAX_AGE_MS } from './verify-guard.mjs';
 
 function holdBrokenMain(ctx, id, sha) {
   // 設計 §3.6 手順 1: 壊れた main を見つけた者が枠を取り、修復まで握る (S0 の merger も止める)。
@@ -106,26 +74,7 @@ export async function finish(ctx, pr) {
   if (initial === null || !initial.gateAt) {
     fail(EXIT.PRECONDITION, `PR #${pr} を gate した記録がありません (枠を取っていない)。`);
   }
-  // 自分と同じ PID の記録は、死んだ finish の PID がたまたま自分に再利用されたもの (bdboard-2hj4)。
-  if (initial.verifyingPid && initial.verifyingPid !== process.pid && pidAlive(initial.verifyingPid)) {
-    const ageMs = verifyingAgeMs(initial);
-    if (ageMs === null || ageMs <= VERIFYING_PID_MAX_AGE_MS) {
-      const expiry =
-        ageMs === null
-          ? '記録に時刻が無い (旧形式) ので、PID が終わるまで古い記録とはみなしません。'
-          : `記録は ${initial.verifyingAt} で、あと ${Math.ceil((VERIFYING_PID_MAX_AGE_MS - ageMs) / 60_000)} 分で古い記録として扱います。`;
-      fail(
-        EXIT.RETRY,
-        `PR #${pr} の着地後検証は PID ${initial.verifyingPid} で実行中です。二重に走らせません。`,
-        `  ${expiry}`,
-        `  PID が本当に finish か確かめる: ps -p ${initial.verifyingPid} -o lstart=,command=`,
-      );
-    }
-    say(
-      `PR #${pr} の verifyingPid ${initial.verifyingPid} は ${initial.verifyingAt} (${Math.round(ageMs / 60_000)} 分前) の記録で、上限 ${Math.round(VERIFYING_PID_MAX_AGE_MS / 60_000)} 分を超えています。`,
-      'PID 再利用などの古い記録とみなして無視し、着地後検証を進めます。',
-    );
-  }
+  guardAgainstRunningVerify(pr, initial);
   const state = releaseFirst(ctx, pr, initial);
   const kept = `main は壊れたままなので枠 (${state.holder}) は保持しています。`;
   const pull = getPull(ctx, pr);
@@ -142,21 +91,25 @@ export async function finish(ctx, pr) {
   }
   const landed = pull.mergeCommitSha;
   forgetQueueSince(ctx.cwd, pr); // 着地予定ツリーの verify に並んだ時刻 (bdboard-ulxa.6) はもう要らない
-  writeState(ctx.cwd, pr, { ...state, newMain: landed, verifyingPid: process.pid, verifyingAt: new Date().toISOString() });
+  // bdboard-ky9l: 自分の PID と開始時刻を刻む (次の finish が PID 再利用か同一プロセスかを見分ける)。
+  writeState(ctx.cwd, pr, { ...state, newMain: landed, ...verifyingStamp() });
   refetchMain(ctx);
   const parent = run('git', ['rev-parse', `${landed}^`], { cwd: ctx.cwd });
   if (parent.status === 0 && parent.stdout.trim() !== state.predBase) {
     say(`注意: マージコミット ${landed.slice(0, 12)} の親が PRED_BASE (${state.predBase.slice(0, 12)}) ではありません。着地した木をそのまま検証します。`);
   }
   const predictedMatch = comparePredicted(ctx, pr, state, landed);
-  const verified = await runLandedVerify(ctx, landed, state.id, { retryHint: `BDBOARD_MERGER=chair npm run merge-pr -- finish ${pr}` });
+  const verified = await runLandedVerify(ctx, landed, state.id, {
+    retryHint: `BDBOARD_MERGER=chair npm run merge-pr -- finish ${pr}`,
+    onSpawn: (child) => recordVerifyGroup(ctx, pr, child),
+  });
   audit('landed-verify', { pr, id: state.id, new: landed, result: verified.result });
   const leftover = run('git', ['ls-remote', REMOTE, `refs/heads/${pull.headRef}`], { cwd: ctx.cwd });
   if (leftover.status === 0 && leftover.stdout.trim() !== '') {
     say(`remote にブランチ ${pull.headRef} が残っています: git push origin --delete ${pull.headRef}`);
   }
   if (verified.result === 'error') {
-    writeState(ctx.cwd, pr, { ...readState(ctx.cwd, pr), verifyingPid: null, verifyingAt: null });
+    clearVerifyRecord(ctx, pr);
     fail(
       EXIT.USAGE,
       `着地後検証を実行できませんでした。台帳 (${ctx.statusContext}) の ${landed.slice(0, 12)} には結果を書いていません。`,
