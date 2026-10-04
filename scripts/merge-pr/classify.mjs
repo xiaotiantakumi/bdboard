@@ -96,7 +96,7 @@ export function decideS2Class({ baseCount, merge, hot }) {
 /**
  * S2 の分類結果から S3 のクラスを決める純関数。F 以外 (N / R) はそのまま返す。F のうち重なりが無く、
  * main 側にも自分の側にも hot file (hotFiles) とマージ手順自身 (MERGE_PROCEDURE_FILES) が無く、
- * 軽量チェックが中身を見ないファイル (lightBlindFiles) に両側が当たっていないものだけを L にする。
+ * 軽量チェックが中身を見ないファイル (lightBlindFiles のどれか。同じ要素でなくてよい) に両側が当たっていないものだけを L にする。
  * 材料 (変更ファイルの一覧) が無い F も軽量にしない (安全側 = フル verify)。
  */
 export function decideS3Class(s2, hotFiles, lightBlindFiles = DEFAULT_LIGHT_BLIND_FILES) {
@@ -119,11 +119,16 @@ export function decideS3Class(s2, hotFiles, lightBlindFiles = DEFAULT_LIGHT_BLIN
   if (procedure.length > 0) {
     return full(`マージ手順自身 (merge-pr / check-drift) に触れている (フル verify): ${procedure.slice(0, 5).join(', ')}`);
   }
-  const blind = hotCollisions(s2.mainFiles, s2.mineFiles, lightBlindFiles);
-  if (blind.length > 0) {
-    const files = blind.map((hit) => `main ${hit.main.slice(0, 3).join(', ')} / 自分 ${hit.mine.slice(0, 3).join(', ')}`).join('; ');
-    const patterns = blind.map((hit) => hit.pattern).join(', ');
-    return full(`${patterns} を両側が変更 (軽量チェックは型・import を見ない。フル verify): ${files}`);
+  // 両側がどれかの要素に当たれば F (同じ要素でなくてよい — main が tools/、自分が scripts/ でも、片方がもう片方を
+  // import していれば軽量チェックは壊れ方を見ない)。
+  const blindMain = hotTouched(s2.mainFiles, lightBlindFiles);
+  const blindMine = hotTouched(s2.mineFiles, lightBlindFiles);
+  if (blindMain.length > 0 && blindMine.length > 0) {
+    const patterns = lightBlindFiles.filter((pattern) => hotTouched([...blindMain, ...blindMine], [pattern]).length > 0);
+    return full(
+      `軽量チェックが中身を見ないファイル (${patterns.join(', ')}) を両側が変更 (型・import を見ない。フル verify): ` +
+        `main ${blindMain.slice(0, 3).join(', ')} / 自分 ${blindMine.slice(0, 3).join(', ')}`,
+    );
   }
   return { ...s2, class: 'L', reason: '衝突なし・重なりなし・hot file なし (軽量チェック)' };
 }

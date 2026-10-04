@@ -480,7 +480,7 @@ main's changes and the PR's never touch the same file. Under S3, `prepare` split
 | Class | When | What `prepare` does |
 |---|---|---|
 | N / R | as in S2 | as in S2 (file overlap does not decide R either) |
-| F | S2's F **and** (main's changes and yours share a file, or either side touches a `merge.hotFiles` file or the merge procedure itself — one side is enough — or **both** sides touch `merge.lightBlindFiles`, default `scripts/**`) | as in S2: the full `verify` on the predicted tree |
+| F | S2's F **and** (main's changes and yours share a file, or either side touches a `merge.hotFiles` file or the merge procedure itself — one side is enough — or **both** sides touch `merge.lightBlindFiles` — any pattern on each side — default `scripts/**`) | as in S2: the full `verify` on the predicted tree |
 | L | S2's F, no shared file, no hot file and no merge-procedure file on either side, and not both sides in `merge.lightBlindFiles` | builds the same predicted commit and runs only `merge.lightCheck` (default `npm run verify -- --light` = `verify:light`: check:file-size, lint:verify, build, build:web, check:boundaries — no tests) on it, in the same slot queue (priority `merge`) with the same abandon-on-main-move. Green → records PRED_BASE and the light result; red → exit 3, like a failed predicted verify |
 
 File overlap still never decides whether to merge without a rebase; it only picks full (F) or light (L).
@@ -489,16 +489,23 @@ File overlap still never decides whether to merge without a rebase; it only pick
   inspects nothing in `scripts/`: tsc's projects include only `src/`, `vitest.config.ts` and
   `test/e2e`, depcruise only `src` and `web`, and the ESLint pass over `scripts/**/*.mjs` is untyped
   with no import-resolution rule — importing a missing export or module there exits 0 (measured).
-  If main renames an export in `scripts/process-identity.mjs` while a PR imports the old name from a
-  new `scripts/merge-pr/*.mjs`, an L merge lands a broken main, and every agent that pulls it gets a
-  `merge-pr` that dies on start — including the one that has to merge the repair. So a PR is F when
-  **both** sides touch the same `merge.lightBlindFiles` pattern (default `["scripts/**"]`; a contract
-  value replaces the list). It is a separate key from `merge.hotFiles` on purpose: a hot file also
-  makes S2 rebase (R), which these files do not need. One side only stays L — the other side does
-  not change those scripts, and the side that does has its own CI and the full landed verify. The
-  merge procedure itself (`scripts/merge-pr/**`, `scripts/merge-pr.mjs`, `scripts/check-drift/**`,
-  `scripts/check-drift.mjs`; `MERGE_PROCEDURE_FILES` in `scripts/merge-pr/hot-files.mjs`, not in the
-  contract) is F even when only one side touches it.
+  (`web/src` is not in the list: `build:web` runs `tsc --noEmit` over it, so the light check does
+  type-check its imports.) If main renames an export in `scripts/commit-message-guard.mjs` while a
+  PR imports the old name from a new `scripts/new-tool.mjs`, both PRs are green on their own, an L
+  merge passes the light check, and main lands broken — only the full landed verify finds it. So a
+  PR is F when **both** sides touch `merge.lightBlindFiles` (default `["scripts/**"]`; a contract
+  value replaces the list) — any pattern in the list on each side, not necessarily the same one. It
+  is a separate key from `merge.hotFiles` on purpose: a hot file also makes S2 rebase (R), which
+  these files do not need. One side only stays L — the other side does not change those scripts,
+  and the side that does has its own CI and the full landed verify. The merge procedure itself is F
+  even when only one side touches it, because a broken one is worse than a broken main: every agent
+  that pulls it gets a `merge-pr` that dies on start, including the one that has to merge the
+  repair. That list is `MERGE_PROCEDURE_FILES` in `scripts/merge-pr/hot-files.mjs` (not in the
+  contract): `scripts/merge-pr/**`, `scripts/merge-pr.mjs`, `scripts/check-drift/**`,
+  `scripts/check-drift.mjs`, and the `scripts/` modules `merge-pr` imports
+  (`scripts/process-identity.mjs`, `scripts/process-tree.mjs`, `scripts/verify-slot.mjs`,
+  `scripts/verify-slot-files.mjs`, `scripts/verify-slot-queue.mjs`; `scripts/merge-pr.s3.test.mjs`
+  walks the imports and fails when one is missing).
 
 - **The light result is never a verify result.** Class L records `lightTree` / `lightCommit` /
   `lightCheck` / `lightCheckedAt` / `lightCheckSecs` (class F keeps `predictedTree` /

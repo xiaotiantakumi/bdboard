@@ -42,8 +42,9 @@ export function removeState(root, pr) {
 }
 
 /**
- * 残っている状態ファイルを全部読む (読めない・壊れたものは飛ばす)。PR 番号を知らずに、着地コミット
- * (newMain) から finish の記録を引くとき用 (bdboard-ulxa.3: merge-pr verify / gate の自己修復がクラス L を見分ける)。
+ * 残っている状態ファイルを全部読む (読めない・壊れたもの、JSON でもオブジェクトでないもの — null / 数値 /
+ * 文字列 / 配列 — は飛ばす)。PR 番号を知らずに、着地コミット (newMain) から finish の記録を引くとき用
+ * (bdboard-ulxa.3: merge-pr verify / gate の自己修復がクラス L を見分ける)。
  */
 export function listStates(root) {
   const dir = stateDir(root);
@@ -56,7 +57,10 @@ export function listStates(root) {
   const states = [];
   for (const name of names.filter((entry) => /^pr-[0-9]+\.json$/.test(entry))) {
     try {
-      states.push(JSON.parse(readFileSync(path.join(dir, name), 'utf8')));
+      const parsed = JSON.parse(readFileSync(path.join(dir, name), 'utf8'));
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        states.push(parsed);
+      }
     } catch {
       // 書きかけ・壊れた記録は無いものとして扱う。
     }

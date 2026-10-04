@@ -4,9 +4,12 @@
 // 一時リポジトリ + 偽の gh / bd / npm の harness は merge-pr.test-support.mjs と共有する (merge-pr.test.mjs は
 // max-lines 1500 に近いので別ファイル)。軽量チェックは契約の merge.lightCheck = 'node verify.cjs --light' で、
 // 偽の検証コマンドはそのときだけ検証ログの行末に " --light" を付ける (フル verify と見分けるため)。
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+import { lightLandedState, reportLightLanded } from './merge-pr/light-landed.mjs';
 
 import {
   DEFAULT_HOT_FILES,
@@ -110,11 +113,11 @@ describe('merge-pr S3 pure helpers (bdboard-ulxa.3)', () => {
   it('decideS3Class: scripts/** on both sides is F (the light check sees no types or imports there); on one side it stays L', () => {
     const tree = 'b'.repeat(40);
     const f = { class: 'F', reason: '衝突なし・hot file なし', tree, mainFiles: ['src/a.ts'], mineFiles: ['src/b.ts'], overlap: [] };
-    // PR #854 レビューの例: main が scripts/process-identity.mjs の export を改名、こちらが別の scripts/*.mjs で旧名を import。
-    const both = decideS3Class({ ...f, mainFiles: ['scripts/process-identity.mjs'], mineFiles: ['scripts/new-tool.mjs'] }, DEFAULT_HOT_FILES);
+    // PR #854 レビューの例: main が scripts/commit-message-guard.mjs の export を改名、こちらが新しい scripts/new-tool.mjs で旧名を import。
+    const both = decideS3Class({ ...f, mainFiles: ['scripts/commit-message-guard.mjs'], mineFiles: ['scripts/new-tool.mjs'] }, DEFAULT_HOT_FILES);
     expect(both.class).toBe('F');
-    expect(both.reason).toContain('scripts/** を両側が変更 (軽量チェックは型・import を見ない');
-    expect(both.reason).toContain('main scripts/process-identity.mjs / 自分 scripts/new-tool.mjs');
+    expect(both.reason).toContain('軽量チェックが中身を見ないファイル (scripts/**) を両側が変更 (型・import を見ない。フル verify)');
+    expect(both.reason).toContain('main scripts/commit-message-guard.mjs / 自分 scripts/new-tool.mjs');
     // 既定の引数 (lightBlindFiles 省略) と明示の既定値は同じ。
     expect(decideS3Class({ ...f, mainFiles: ['scripts/x.mjs'], mineFiles: ['scripts/y.test.mjs'] }, DEFAULT_HOT_FILES, DEFAULT_LIGHT_BLIND_FILES).class).toBe('F');
     expect(decideS3Class({ ...f, mainFiles: ['scripts/x.mjs'] }, DEFAULT_HOT_FILES).class).toBe('L'); // main 側だけ
@@ -124,11 +127,35 @@ describe('merge-pr S3 pure helpers (bdboard-ulxa.3)', () => {
     expect(decideS3Class({ ...f, mainFiles: ['tools/a.mjs'], mineFiles: ['tools/b.mjs'] }, DEFAULT_HOT_FILES, ['tools/**']).class).toBe('F');
   });
 
+  it('decideS3Class: each side hitting any lightBlindFiles pattern is F, even when the two sides hit different patterns', () => {
+    const tree = 'b'.repeat(40);
+    const f = { class: 'F', reason: '衝突なし・hot file なし', tree, mainFiles: ['src/a.ts'], mineFiles: ['src/b.ts'], overlap: [] };
+    const blind = ['tools/**', 'scripts/**', 'docs/**'];
+    // main は tools/、自分は scripts/ (自分の scripts が main の tools を import していれば軽量チェックは見ない)。
+    const crossed = decideS3Class({ ...f, mainFiles: ['tools/a.mjs', 'src/x.ts'], mineFiles: ['src/y.ts', 'scripts/b.mjs'] }, DEFAULT_HOT_FILES, blind);
+    expect(crossed.class).toBe('F');
+    expect(crossed.reason).toContain('軽量チェックが中身を見ないファイル (tools/**, scripts/**) を両側が変更');
+    expect(crossed.reason).toContain('main tools/a.mjs / 自分 scripts/b.mjs');
+    expect(decideS3Class({ ...f, mainFiles: ['scripts/a.mjs'], mineFiles: ['tools/b.mjs'] }, DEFAULT_HOT_FILES, blind).class).toBe('F');
+    // 片側だけなら (要素が複数当たっても) L のまま。
+    expect(decideS3Class({ ...f, mainFiles: ['tools/a.mjs', 'scripts/a.mjs'] }, DEFAULT_HOT_FILES, blind).class).toBe('L');
+  });
+
   it('decideS3Class: the merge procedure itself (merge-pr / check-drift) on either side is F, whatever lightBlindFiles says', () => {
     const tree = 'b'.repeat(40);
     const f = { class: 'F', reason: '衝突なし・hot file なし', tree, mainFiles: ['src/a.ts'], mineFiles: ['src/b.ts'], overlap: [] };
-    expect(MERGE_PROCEDURE_FILES).toEqual(['scripts/merge-pr/**', 'scripts/merge-pr.mjs', 'scripts/check-drift/**', 'scripts/check-drift.mjs']);
-    for (const file of ['scripts/merge-pr/finish.mjs', 'scripts/merge-pr.mjs', 'scripts/check-drift/git.mjs', 'scripts/check-drift.mjs']) {
+    expect(MERGE_PROCEDURE_FILES).toEqual([
+      'scripts/merge-pr/**',
+      'scripts/merge-pr.mjs',
+      'scripts/check-drift/**',
+      'scripts/check-drift.mjs',
+      'scripts/process-identity.mjs',
+      'scripts/process-tree.mjs',
+      'scripts/verify-slot.mjs',
+      'scripts/verify-slot-files.mjs',
+      'scripts/verify-slot-queue.mjs',
+    ]);
+    for (const file of ['scripts/merge-pr/finish.mjs', 'scripts/merge-pr.mjs', 'scripts/check-drift/git.mjs', 'scripts/check-drift.mjs', 'scripts/process-identity.mjs']) {
       for (const side of ['mainFiles', 'mineFiles']) {
         const decided = decideS3Class({ ...f, [side]: [file] }, DEFAULT_HOT_FILES, []);
         expect(decided.class, `${side}: ${file}`).toBe('F');
@@ -137,6 +164,50 @@ describe('merge-pr S3 pure helpers (bdboard-ulxa.3)', () => {
     }
     // 似た名前でも手順の外なら対象外 (scripts/** の片側だけ = L)。
     expect(decideS3Class({ ...f, mineFiles: ['scripts/merge-pr.test.mjs', 'scripts/check-drift.test.mjs'] }, DEFAULT_HOT_FILES).class).toBe('L');
+  });
+
+  it('MERGE_PROCEDURE_FILES covers every scripts/ module that merge-pr and check-drift import (walked from their entry points)', () => {
+    // PR #854 再レビュー: merge-pr は scripts/merge-pr/ の外 (process-identity / process-tree / verify-slot*) も import する。
+    // そこが軽量チェックだけで壊れて着地しても merge-pr は起動時に落ちる。import が増えたらここで落ちる。
+    const specifier = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"](\.{1,2}\/[^'"]+)['"]/g;
+    const seen = new Set();
+    const queue = ['scripts/merge-pr.mjs', 'scripts/check-drift.mjs'];
+    while (queue.length > 0) {
+      const file = queue.shift();
+      if (seen.has(file)) {
+        continue;
+      }
+      seen.add(file);
+      for (const match of readFileSync(path.join(REPO_ROOT, file), 'utf8').matchAll(specifier)) {
+        const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), match[1]));
+        expect(existsSync(path.join(REPO_ROOT, target)), `${file} imports ${match[1]}`).toBe(true);
+        queue.push(target);
+      }
+    }
+    const walked = [...seen].filter((file) => file.startsWith('scripts/'));
+    expect(walked).toEqual(expect.arrayContaining(['scripts/merge-pr/finish.mjs', 'scripts/process-identity.mjs', 'scripts/verify-slot.mjs']));
+    expect(walked.filter((file) => hotTouched([file], MERGE_PROCEDURE_FILES).length === 0)).toEqual([]);
+  });
+
+  it('lightLandedState / reportLightLanded never throw (one warning line instead): they also run on S2 paths', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bdboard-light-landed-'));
+    vi.stubEnv('BDBOARD_MERGE_AUDIT_LOG', path.join(dir, 'audit.log'));
+    const written = [];
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => written.push(String(chunk)));
+    try {
+      // git リポジトリでない場所: 状態ディレクトリの場所 (git rev-parse) から失敗する。
+      expect(lightLandedState(dir, 'a'.repeat(40))).toBeNull();
+      // 報告の途中 (案内の組み立て) で投げても外へ出さない。
+      expect(reportLightLanded({ class: 'L', pr: 9, id: 'demo-9' }, undefined, 'failure', 'manual')).toBeNull();
+      expect(reportLightLanded(null, 'a'.repeat(40), 'failure', 'manual')).toBeNull(); // L でなければ何もしない
+    } finally {
+      spy.mockRestore();
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(written).toHaveLength(2);
+    expect(written[0]).toMatch(/^merge-pr: 警告: クラス L の記録 \(状態ファイル\) の読み出しに失敗しました \(マージ手順は続けます\): .+\n$/);
+    expect(written[1]).toMatch(/^merge-pr: 警告: クラス L の着地後検証の報告に失敗しました \(マージ手順は続けます\): .+\n$/);
   });
 
   it('recordProblem: which prepare records each mode lets through to gate (light and full results never stand in for each other)', () => {
@@ -254,12 +325,12 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
   });
 
   it('S3: scripts/** changed on both sides is F with the full verify; on one side only it stays L', () => {
-    setup({ merge: S3, branchFiles: { 'scripts/new-tool.mjs': "import { renamed } from './process-identity.mjs';\n" } });
-    advanceMain({ 'scripts/process-identity.mjs': 'export const renamedAgain = 1;\n' });
+    setup({ merge: S3, branchFiles: { 'scripts/new-tool.mjs': "import { renamed } from './commit-message-guard.mjs';\n" } });
+    advanceMain({ 'scripts/commit-message-guard.mjs': 'export const renamedAgain = 1;\n' });
     const both = run(['prepare', String(PR)]);
     expect(both.status).toBe(0);
     expect(both.stderr).toContain('クラス=F');
-    expect(both.stderr).toContain('scripts/** を両側が変更 (軽量チェックは型・import を見ない');
+    expect(both.stderr).toContain('軽量チェックが中身を見ないファイル (scripts/**) を両側が変更 (型・import を見ない');
     expect(readState().predictedVerifiedAt).toBeTruthy();
     expect(verified()).toEqual([readState().predictedCommit]); // --light ではない
 
@@ -269,6 +340,26 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     expect(mineOnly.status).toBe(0);
     expect(mineOnly.stderr).toContain('クラス=L');
     expect(verified()).toEqual([`${readState().lightCommit} --light`]);
+  });
+
+  it("S3: the contract's merge.lightBlindFiles is what prepare classifies with (replacing the default scripts/**)", () => {
+    const both = { 'scripts/new-tool.mjs': 'export const x = 1;\n' };
+    // 空のリスト: 既定なら F になる両側 scripts/** が L になる。
+    setup({ merge: { ...S3, lightBlindFiles: [] }, branchFiles: both });
+    advanceMain({ 'scripts/other-tool.mjs': 'export const y = 1;\n' });
+    const emptied = run(['prepare', String(PR)]);
+    expect(emptied.status).toBe(0);
+    expect(emptied.stderr).toContain('クラス=L');
+    expect(verified()).toEqual([`${readState().lightCommit} --light`]);
+
+    // 別のリスト: 既定なら L になる (scripts/** の外) 両側の変更が、要素が別々でも F になる。
+    setup({ merge: { ...S3, lightBlindFiles: ['tools/**', 'gen/**'] }, branchFiles: { 'gen/b.mjs': 'export const b = 1;\n' } });
+    advanceMain({ 'tools/a.mjs': 'export const a = 1;\n' });
+    const replaced = run(['prepare', String(PR)]);
+    expect(replaced.status).toBe(0);
+    expect(replaced.stderr).toContain('軽量チェックが中身を見ないファイル (tools/**, gen/**) を両側が変更');
+    expect(readState().class).toBe('F');
+    expect(verified()).toEqual([readState().predictedCommit]);
   });
 
   it('S3: the merge procedure (merge-pr / check-drift) changed on one side only is F, not L', () => {
@@ -381,6 +472,41 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     expect(auditText()).toMatch(new RegExp(`\tlight-landed\tpr=9\tid=demo-9\tnew=${base}\tresult=failure\tby=self-heal`));
     expect(calls('bd', 'acquire')).toEqual([]);
   });
+
+  // PR #854 再レビュー: listStates が JSON.parse の結果をそのまま返していたので、中身が null の状態ファイル 1 つで
+  // S2 の merge-pr verify / gate の自己修復が「想定外のエラー」(exit 1) になっていた。
+  for (const [label, content] of [
+    ['null', 'null'],
+    ['a non-object', '"not a record"'],
+  ]) {
+    it(`S2: a state file holding ${label} does not change the exit codes of merge-pr verify or the gate self-heal`, () => {
+      setup({ merge: { mode: 'S2' }, mainDate: '2026-01-01T00:00:00Z' });
+      writeFake({ statuses: {} });
+      expect(run(['prepare', String(PR)]).status).toBe(0);
+      const dir = path.dirname(stateFile());
+      writeFileSync(path.join(dir, 'pr-8.json'), content);
+      // 壊れた記録と並んだ正しい L の記録は今までどおり見分ける (飛ばすのは壊れた方だけ)。
+      writeFileSync(path.join(dir, 'pr-9.json'), JSON.stringify({ pr: 9, id: 'demo-9', class: 'L', newMain: base, verifyingPid: null }));
+
+      const manual = run(['verify', base], { FAKE_VERIFY_EXIT: '1' });
+      expect(manual.stderr).not.toContain('想定外');
+      expect(manual.status).toBe(6);
+      expect(manual.stderr).toContain('S3 のすり抜け');
+      expect(auditText()).toMatch(new RegExp(`\tlight-landed\tpr=9\tid=demo-9\tnew=${base}\tresult=failure\tby=manual`));
+
+      writeFake({ statuses: {} });
+      const gated = run(['gate', String(PR)], { FAKE_VERIFY_EXIT: '1' });
+      expect(gated.stderr).not.toContain('想定外');
+      expect(gated.status).toBe(4);
+      expect(auditText()).toMatch(new RegExp(`\tlight-landed\tpr=9\tid=demo-9\tnew=${base}\tresult=failure\tby=self-heal`));
+
+      // 壊れた記録しか無くても同じ (L とは見分けないだけ)。
+      writeFileSync(path.join(dir, 'pr-9.json'), content);
+      const alone = run(['verify', base]);
+      expect(alone.stderr).not.toContain('想定外');
+      expect(alone.status).toBe(0);
+    });
+  }
 
   it('gate: a class-L record goes back to prepare after a rollback to S2, when its light result is missing, or when it does not match its commit', () => {
     setup({ merge: { mode: 'S2' } });

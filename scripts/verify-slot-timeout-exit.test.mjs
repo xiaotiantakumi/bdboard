@@ -7,6 +7,10 @@
 // しまうため、node-version-guard.test.mjs と同じく verify.mjs と import 先を一時ディレクトリへ
 // コピーし、PATH 先頭の偽の npm (起動されたら marker を作り FAKE_NPM_EXIT で終わるだけ) で受ける。
 // win32 は偽の npm (sh スクリプト) を spawn できないので対象外 (定数と分岐は OS 非依存)。
+//
+// bdboard-ulxa.3 (PR #854 再レビュー): 偽の npm は自分の引数 (走らされた npm script) と親 (= グループリーダー
+// の node) のコマンドラインも書き残す。`--light` の配線 (verify:steps / verify:light の振り分けと、リーダーへの
+// --light の引き継ぎ) を verify.mjs の実プロセスで確かめるため — verify-steps.test.mjs は純関数しか見ない。
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -49,7 +53,7 @@ const collectLocalImports = (entry, seen = new Set()) => {
   return seen;
 };
 
-const runVerifyCopy = ({ npmExit = 0, slotEnv = {}, slotDir = makeTempDir('verify-exit-slots-') } = {}) => {
+const runVerifyCopy = ({ npmExit = 0, slotEnv = {}, slotDir = makeTempDir('verify-exit-slots-'), args = [] } = {}) => {
   const root = makeTempDir('verify-exit-');
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const file of collectLocalImports('verify.mjs')) {
@@ -59,23 +63,38 @@ const runVerifyCopy = ({ npmExit = 0, slotEnv = {}, slotDir = makeTempDir('verif
   const fakeBin = path.join(root, 'fake-bin');
   fs.mkdirSync(fakeBin);
   const marker = path.join(root, 'npm-was-spawned');
+  const npmArgsFile = path.join(root, 'npm-args');
+  const leaderFile = path.join(root, 'npm-parent');
   const fakeNpm = path.join(fakeBin, 'npm');
-  fs.writeFileSync(fakeNpm, '#!/bin/sh\n: > "$FAKE_NPM_MARKER"\nexit "$FAKE_NPM_EXIT"\n');
+  fs.writeFileSync(
+    fakeNpm,
+    [
+      '#!/bin/sh',
+      ': > "$FAKE_NPM_MARKER"',
+      'printf \'%s\\n\' "$*" > "$FAKE_NPM_ARGS"',
+      'ps -ww -o args= -p "$PPID" > "$FAKE_NPM_PARENT"',
+      'exit "$FAKE_NPM_EXIT"',
+      '',
+    ].join('\n'),
+  );
   fs.chmodSync(fakeNpm, 0o755);
-  const result = spawnSync(process.execPath, [path.join(root, 'scripts', 'verify.mjs')], {
+  const result = spawnSync(process.execPath, [path.join(root, 'scripts', 'verify.mjs'), ...args], {
     cwd: root,
     encoding: 'utf8',
     env: {
       ...process.env,
       PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ''}`,
       FAKE_NPM_MARKER: marker,
+      FAKE_NPM_ARGS: npmArgsFile,
+      FAKE_NPM_PARENT: leaderFile,
       FAKE_NPM_EXIT: String(npmExit),
       BDBOARD_VERIFY_SLOT_DIR: slotDir,
       ...slotEnv,
     },
     timeout: 20_000,
   });
-  return { result, npmSpawned: fs.existsSync(marker), slotDir };
+  const read = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : null);
+  return { result, npmSpawned: fs.existsSync(marker), slotDir, npmArgs: read(npmArgsFile), leaderCommand: read(leaderFile) };
 };
 
 describe('SLOT_WAIT_TIMEOUT_EXIT_CODE', () => {
@@ -111,6 +130,19 @@ describe.skipIf(process.platform === 'win32')('verify.mjs exit codes (real proce
     const failed = runVerifyCopy({ npmExit: 2 });
     expect(failed.result.status).toBe(2);
     expect(failed.npmSpawned).toBe(true);
+  });
+
+  it('runs verify:steps by default and verify:light with --light, handing --light to the group leader only then (bdboard-ulxa.3)', () => {
+    const plain = runVerifyCopy();
+    expect(plain.result.status).toBe(0);
+    expect(plain.npmArgs).toBe('run verify:steps');
+    expect(plain.leaderCommand).toMatch(/\/scripts\/verify\.mjs --group-leader$/);
+
+    const light = runVerifyCopy({ args: ['--light'] });
+    expect(light.result.status).toBe(0);
+    expect(light.result.stderr).toContain('verify: --light = verify:light');
+    expect(light.npmArgs).toBe('run verify:light');
+    expect(light.leaderCommand).toMatch(/\/scripts\/verify\.mjs --group-leader --light$/);
   });
 
   it('never returns the reserved 75 for a verify step that happens to exit 75 (reported as a plain failure, 1)', () => {

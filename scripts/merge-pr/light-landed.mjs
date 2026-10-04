@@ -7,12 +7,25 @@
 // verify と gate は PR 番号を知らないので、着地コミット (newMain) から状態ファイルを引く。finish は error のとき
 // 状態ファイルを消さない (verify-guard.mjs の clearVerifyRecord は実行中の印を外して書き戻すだけ。SIGINT 等の
 // 中断でも消さない) ので、newMain と class: 'L' が残っている。
+//
+// PR #854 再レビュー: ここは S2 でも通る (verify / gate の自己修復) 報告だけの経路なので、何があっても投げない
+// (警告 1 行を出して null を返す)。投げると本来の exit (6 / 4) が「想定外のエラー」(exit 1) に化ける。
 import { lightSlipSteps } from './messages.mjs';
 import { audit, listStates, say } from './state.mjs';
 
-/** 着地コミット sha をクラス L で着地させた finish の記録 (状態ファイル)。無ければ null。 */
+function warnLight(what, error) {
+  const message = error instanceof Error ? error.message : String(error);
+  say(`警告: クラス L の${what}に失敗しました (マージ手順は続けます): ${message.split('\n')[0]}`);
+  return null;
+}
+
+/** 着地コミット sha をクラス L で着地させた finish の記録 (状態ファイル)。無ければ (読めなくても) null。 */
 export function lightLandedState(root, sha) {
-  return listStates(root).find((state) => state.class === 'L' && state.newMain === sha) ?? null;
+  try {
+    return listStates(root).find((state) => state.class === 'L' && state.newMain === sha) ?? null;
+  } catch (error) {
+    return warnLight('記録 (状態ファイル) の読み出し', error);
+  }
 }
 
 /**
@@ -21,6 +34,15 @@ export function lightLandedState(root, sha) {
  * 数えるときは new ごとに最後の success / failure を採る。
  */
 export function reportLightLanded(state, landed, result, by) {
+  try {
+    reportOrThrow(state, landed, result, by);
+  } catch (error) {
+    warnLight('着地後検証の報告', error);
+  }
+  return null;
+}
+
+function reportOrThrow(state, landed, result, by) {
   if (state?.class !== 'L') {
     return;
   }
