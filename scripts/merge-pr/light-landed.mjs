@@ -32,21 +32,23 @@ export function lightLandedState(root, sha) {
  * state がクラス L の記録なら、着地後検証の結果を監査ログに残して案内する (L でなければ何もしない)。
  * by は誰の検証か (finish / manual / self-heal)。同じ着地コミットに複数の行が付きうる (error の後の再検証) ので、
  * 数えるときは new ごとに最後の success / failure を採る。
+ * retried は runLandedVerify の返り値のまま渡す (bdboard-xdk8: 負荷由来の失敗で 1 回だけ再実行したときだけ
+ * retried=1 を行末に足す。landed-verify の行と同じ規則で、しなければ項目ごと出さない)。
  */
-export function reportLightLanded(state, landed, result, by) {
+export function reportLightLanded(state, landed, result, by, retried = false) {
   try {
-    reportOrThrow(state, landed, result, by);
+    reportOrThrow(state, landed, result, by, retried);
   } catch (error) {
     warnLight('着地後検証の報告', error);
   }
   return null;
 }
 
-function reportOrThrow(state, landed, result, by) {
+function reportOrThrow(state, landed, result, by, retried) {
   if (state?.class !== 'L') {
     return;
   }
-  audit('light-landed', { pr: state.pr, id: state.id, new: landed, result, by });
+  audit('light-landed', { pr: state.pr, id: state.id, new: landed, result, by, retried: retried ? 1 : undefined });
   if (result === 'failure') {
     say(...lightSlipSteps(landed));
   }

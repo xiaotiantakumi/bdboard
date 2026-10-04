@@ -43,12 +43,19 @@ export function forgetQueueSince(root, pr) {
   rmSync(queueFile(root, pr), { force: true });
 }
 
-/** 契約の verify に渡す環境変数 (scripts/verify-slot.mjs の envSlotOptions が読む)。 */
-export function verifyEnv({ priority, queueSince }, base = process.env) {
+/**
+ * 契約の verify に渡す環境変数 (scripts/verify-slot.mjs の envSlotOptions が読む)。handoff は着地後検証の
+ * 再実行のときだけ渡す予約 holder の path (bdboard-xdk8、verify は自分の holder を書いた後でそれを消す)。
+ */
+export function verifyEnv({ priority, queueSince, handoff }, base = process.env) {
   const env = { ...base, BDBOARD_VERIFY_PRIORITY: priority };
   delete env.BDBOARD_VERIFY_QUEUE_SINCE;
+  delete env.BDBOARD_VERIFY_SLOT_HANDOFF;
   if (queueSince !== undefined) {
     env.BDBOARD_VERIFY_QUEUE_SINCE = String(queueSince);
+  }
+  if (handoff !== undefined) {
+    env.BDBOARD_VERIFY_SLOT_HANDOFF = handoff;
   }
   return env;
 }

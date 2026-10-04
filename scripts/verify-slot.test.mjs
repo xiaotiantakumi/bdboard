@@ -423,7 +423,7 @@ describe('envSlotOptions', () => {
         BDBOARD_VERIFY_SLOT_DIR: '/somewhere',
         BDBOARD_VERIFY_SLOT_WAIT_MS: '1000',
       }),
-    ).toEqual({ slots: 3, dir: '/somewhere', waitTimeoutMs: 1_000 });
+    ).toEqual({ slots: 3, dir: '/somewhere', waitTimeoutMs: 1_000, waitTimeoutFromEnv: true }); // 明示した待ちは延ばさない (bdboard-xdk8)
     expect(envSlotOptions({ BDBOARD_VERIFY_SLOTS: 'garbage', BDBOARD_VERIFY_SLOT_WAIT_MS: '' })).toEqual({});
     expect(envSlotOptions({ BDBOARD_VERIFY_SLOTS: '0' })).toEqual({ slots: 0 });
   });

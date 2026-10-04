@@ -154,6 +154,7 @@ describe('merge-pr S3 pure helpers (bdboard-ulxa.3)', () => {
       'scripts/verify-slot.mjs',
       'scripts/verify-slot-files.mjs',
       'scripts/verify-slot-queue.mjs',
+      'scripts/verify-slot-wait.mjs', // bdboard-xdk8: verify-slot.mjs が import する (待ちの打ち切りの延長と待ちの表示)
     ]);
     for (const file of ['scripts/merge-pr/finish.mjs', 'scripts/merge-pr.mjs', 'scripts/check-drift/git.mjs', 'scripts/check-drift.mjs', 'scripts/process-identity.mjs']) {
       for (const side of ['mainFiles', 'mineFiles']) {

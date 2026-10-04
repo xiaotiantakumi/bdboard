@@ -40,7 +40,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { npmRunSpawnSpec } from './npm-command.mjs';
 import { isOrphaned, killProcessTree } from './process-tree.mjs';
-import { acquireVerifySlot, envSlotOptions, SLOT_WAIT_TIMEOUT_EXIT_CODE, SlotWaitTimeoutError } from './verify-slot.mjs';
+import { acquireVerifySlot, envSlotOptions, SLOT_WAIT_TIMEOUT_EXIT_CODE, SlotWaitTimeoutError, withoutSlotIdentity } from './verify-slot.mjs';
 import { LIGHT_FLAG, leaderArgsFor, stepsScriptFor } from './verify-steps.mjs';
 
 const GRACE_MS = 5_000;
@@ -166,6 +166,9 @@ if (process.argv.includes('--group-leader')) {
       cwd: repoRoot,
       detached: true,
       stdio: 'inherit',
+      // bdboard-xdk8: スロットでの素性 (優先度・並んだ時刻・予約) はこの verify のもの。テストの中の verify.mjs や
+      // スロットのスクリプトに受け継がせない (verify-slot.mjs の SLOT_IDENTITY_ENV)。
+      env: withoutSlotIdentity(process.env),
     },
   );
 

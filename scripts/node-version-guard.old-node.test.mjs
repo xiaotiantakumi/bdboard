@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { parseMinimumRange, readEnginesNodeRange, satisfiesMinimum } from './node-version-guard.mjs';
+import { withoutSlotIdentity } from './verify-slot.mjs';
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(scriptsDir, '..');
@@ -34,7 +35,7 @@ const runOldNode = (args, options = {}) => {
     cwd: repoRoot,
     encoding: 'utf8',
     env: {
-      ...env,
+      ...withoutSlotIdentity(env), // 着地後検証の中で走っても外側のスロットの素性を受け継がない (bdboard-xdk8)
       // ガードが壊れて (呼び出しが消える・スロット獲得の後ろへ動く等) 本物の verify に進んでも、
       // マシン共有の verify スロット (bdboard-d48) を奪わず、すぐ諦めるようにしておく。
       BDBOARD_VERIFY_SLOT_DIR: makeTempDir('node-guard-old-node-slots-'),
