@@ -18,9 +18,10 @@ export interface StoredDraftImage {
 export interface DraftListing {
   readonly drafts: readonly IssueDraft[];
   /**
-   * false: 一覧が欠けているかもしれない。未列挙の理由 (EIO など、あとで読めるかもしれないもの) で
-   * 読めず飛ばした下書きがある。呼び出し側はこの一覧から作ったものをキャッシュしない (次の呼び出しで
-   * 読み直す)。恒久的な理由 (権限、ディレクトリでないもの、壊れた JSON など) で飛ばしただけなら true。
+   * false: 一覧が欠けているかもしれない。あとで読めるかもしれない理由 (未列挙の EIO など、再試行しても
+   * 直らなかった EBUSY、win32 の EPERM・EACCES) で読めず飛ばした下書きがある。呼び出し側はこの一覧から
+   * 作ったものをキャッシュしない (次の呼び出しで読み直す)。恒久的な理由 (ディレクトリでないもの、非 win32 の
+   * 権限、壊れた JSON など) で飛ばしただけなら true。
    */
   readonly complete: boolean;
 }
@@ -30,12 +31,18 @@ export interface IssueDraftStoragePort {
   scan(): Promise<DraftListing>;
   /**
    * 全下書き。読めない・壊れている下書き (権限、ディレクトリでないもの、不正な JSON、形や時刻の
-   * 不正、EIO のような未列挙のエラーなど) は警告を出して読み飛ばす (1件の破損で一覧や受け取り全体を
-   * 落とさない)。EMFILE のような一時的なエラーは実装が回数上限つきで再試行し、使い切ったときだけ
-   * 投げる。未列挙のエラーで飛ばした一覧は scan() が complete: false で知らせる。
+   * 不正、EIO のような未列挙のエラー、再試行しても直らない EBUSY など) は警告を出して読み飛ばす
+   * (1件の破損や、同期クライアントに握られた 1 件のせいで一覧や受け取り全体を落とさない)。プロセス全体の
+   * 一時的な失敗 (EMFILE・ENFILE・EAGAIN) は実装が回数上限つきで再試行し、使い切ったときだけ投げる
+   * (どの下書きも読めない状態なので、1 件ずつ飛ばさない)。あとで読めるかもしれない理由で飛ばした一覧は
+   * scan() が complete: false で知らせる。
    */
   list(): Promise<readonly IssueDraft[]>;
-  /** 1件取得。存在しない・読めない・壊れているときは undefined (読めない・壊れているときは警告)。 */
+  /**
+   * 1件取得。存在しない・読めない・壊れているときは undefined (読めない・壊れているときは警告)。list() と同じ扱いで、
+   * ファイル単位の失敗 (EBUSY など) を再試行しても読めなかったときも undefined。プロセス全体の失敗
+   * (EMFILE・ENFILE・EAGAIN) を再試行しても直らなかったときだけ reject する。
+   */
   get(id: string): Promise<IssueDraft | undefined>;
   /**
    * 新規作成または上書き。途中状態を読ませないよう原子的に書く。draft.json が 200KB

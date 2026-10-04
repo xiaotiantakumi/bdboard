@@ -111,6 +111,8 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
    * 読むのに失敗したとき、または未列挙のエラーで飛ばした下書きがあって一覧が欠けているとき
    * (complete: false) は、キャッシュしない。欠けた索引を使い続けると既知の指紋が新規として二重に
    * 作られるので、次の受け取りでもう一度全件を読み直す (その回の受け取りには欠けた索引を使う)。
+   * `indexPromise === loading` の照合は念のための保険: getIndex は receive の中でしか呼ばれず、receive は
+   * mutex で 1 本ずつ直列なので、読み込み中に別の読み込みが indexPromise を置き換えることは今は無い。
    */
   function getIndex(): Promise<DraftIndex> {
     if (indexPromise !== undefined) return indexPromise;

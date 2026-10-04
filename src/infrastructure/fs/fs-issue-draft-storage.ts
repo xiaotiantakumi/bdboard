@@ -39,7 +39,7 @@ function within(parent: string, target: string): boolean {
 export interface FsIssueDraftStorageOptions {
   /** 読めない下書きを飛ばしたときの警告 (既定は console.warn)。中身は渡さない: 理由と id だけ。 */
   readonly warn?: (message: string) => void;
-  /** 既定は process.platform。win32 でだけ EPERM/EACCES を一時的として再試行する (テストで分岐を通すために注入できる)。 */
+  /** 既定は process.platform。win32 でだけ EPERM/EACCES をファイル単位の一時的な失敗として再試行する (テストで分岐を通すために注入できる)。 */
   readonly platform?: NodeJS.Platform;
   /** draft.json の読み出しの再試行。待ち (ms) の並びと sleep を差し替えられる (テストは実時間を待たない)。 */
   readonly readRetry?: {
