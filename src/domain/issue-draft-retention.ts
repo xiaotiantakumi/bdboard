@@ -24,6 +24,14 @@ export const ISSUE_DRAFT_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 export const ISSUE_DRAFT_RESURVEY_GAP_MS = 60 * 1000;
 
 /**
+ * 上限に張り付いた (測り直しても終端の下書きを消して空けられない) あいだ、測り直しの間隔を倍々に伸ばす上限
+ * (bdboard-krvf)。1 GiB の最悪の形 (最大の draft.json 約 5,000 件) では棚卸し 1 回が 3〜8 秒かかり、その間
+ * 受け取りは mutex で待つ。毎分では受け取りが毎分それだけ止まるので、空けられないあいだは 1 分 → 2 分 → 4 分 …
+ * と伸ばし、この上限 (1 時間 = 掃除の間隔と同じ) で止める。空けられた・見送りがあった・掃除が空きを見つけたときは 1 分に戻す。
+ */
+export const ISSUE_DRAFT_RESURVEY_GAP_MAX_MS = 60 * 60 * 1000;
+
+/**
  * issue-drafts ディレクトリ全体の既定の上限 (draft.json と画像の合計)。
  *
  * 1 GiB の根拠: 画像の上限 (1 枚 10MB × 20 枚) で 1 下書きが最大 200MB、draft.json は最大 200KiB
