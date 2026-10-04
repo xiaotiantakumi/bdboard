@@ -162,6 +162,12 @@ describe('advice for a possibly-orphaned verify group', () => {
     const unknown = groupProceedLines(7, record, { running: false, unknown: true, identity: 'leaderless', ageMs: 3 * 60 * 60_000 }, '着地後検証を進めます').join('\n');
     expect(unknown).toContain('元の verify かは不明です');
     expect(unknown).toContain('止めずに、着地後検証を進めます');
+    // 根拠の説明 (レビュー指摘 3): npm が死ぬと verify.mjs は 1 秒ほどで終わるが、スロット待ちの間は終わらない。
+    // 起こした側が死ぬと verify が自分で畳む、とは言わない (SIGKILL された finish / prepare が孤児を残す前提と矛盾する)。
+    expect(unknown).toContain('リーダー (npm) が死ぬと verify.mjs が 1 秒ほどで自分で終わる');
+    expect(unknown).toContain('verify スロットを待っている間は終わらない');
+    expect(unknown).not.toContain('起こした側が死んだ時点で自分で畳む');
+    expect(unknown).toContain(`kill する前に、必ず pgrep -g ${OTHER} -l で中身を確かめてください`);
     expect(unknown.indexOf(`pgrep -g ${OTHER} -l`)).toBeGreaterThan(-1);
     expect(unknown.indexOf(`kill -TERM -${OTHER}`)).toBeGreaterThan(unknown.indexOf(`pgrep -g ${OTHER} -l`));
   });

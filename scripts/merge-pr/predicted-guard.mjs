@@ -50,8 +50,12 @@ function readPredictedGroup(ctx, pr) {
 /**
  * prepare の入口: 前回の prepare が残した着地予定ツリーの verify のグループがまだ動いていれば RETRY (75) で止める
  * (何も触らない)。古い記録・不明は通知して記録を消し、進む。判定は finish と同じ judgeVerifyGroup。
+ *
+ * readOnly (prepare --dry-run): 動いている間は同じ文面で RETRY (75) で止めるが、記録を消しも書きもせず、通知も出さない。
+ * dry-run は verify を起こさないので、止めなくてよい理由はない — 止めずに進むと、孤児が生きたまま assertLocalHead が
+ * 「HEAD が detach されたまま、git checkout で戻して」と案内してしまう (この関門が防ぎたい案内そのもの)。
  */
-export function guardAgainstOrphanedPredictedVerify(ctx, pr) {
+export function guardAgainstOrphanedPredictedVerify(ctx, pr, { readOnly = false } = {}) {
   const record = readPredictedGroup(ctx, pr);
   if (record === null || typeof record !== 'object') {
     return;
@@ -66,6 +70,9 @@ export function guardAgainstOrphanedPredictedVerify(ctx, pr) {
       ...(verdict.identity === 'leaderless' ? [leaderlessHeldLine(record.verifyPgid, verdict.ageMs)] : []),
       ...groupInspectLines(record.verifyPgid),
     );
+  }
+  if (readOnly) {
+    return; // 動いていない記録は、dry-run では読むだけ。消すのは本物の prepare
   }
   say(...groupProceedLines(pr, record, verdict, 'prepare を進めます'));
   forgetPredictedGroup(ctx, pr);

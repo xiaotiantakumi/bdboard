@@ -105,7 +105,9 @@ const minutes = (ms) => Math.round(ms / 60_000);
 /**
  * verify グループの記録について、止めずに進むときの通知 (古い記録・不明)。無ければ空。proceeding は進む先を言う文言 (「着地後検証を進めます」など)。
  * bdboard-h2fk の「不明」: リーダーの居ないグループが上限を超えて残っている。元の verify とは言い切れない
- * (親が死ぬと verify は自分で畳むので、番号を再利用した無関係のデーモンの可能性が高い) ので、案内だけを出す。
+ * (リーダーの npm が死ぬと verify.mjs は PPID=1 を見て 1 秒ほどで終わるので、長く残っていれば番号を再利用した無関係の
+ * デーモンの可能性が高い。ただし verify スロットを待っている間は見張りが始まっていないので、元の verify でも残りうる)
+ * ので、案内だけを出す。理由の詳しい説明は verifying-record.mjs の LEADERLESS_GROUP_MAX_AGE_MS。
  */
 export function groupProceedLines(pr, record, verdict, proceeding) {
   const pgid = record.verifyPgid;
@@ -115,8 +117,9 @@ export function groupProceedLines(pr, record, verdict, proceeding) {
   if (verdict.unknown) {
     return [
       `PR #${pr} の verify プロセスグループ ${pgid} は、リーダー (PID ${pgid}) が居ないままメンバーだけが残っていて、記録 (${record.verifyPgidAt}, ${minutes(verdict.ageMs)} 分前) は上限 ${minutes(LEADERLESS_GROUP_MAX_AGE_MS)} 分を超えています。`,
-      `  元の verify なら起こした側が死んだ時点で自分で畳むので、番号を再利用した無関係のグループの可能性が高く、元の verify かは不明です。止めずに、${proceeding}。`,
-      '  前回の verify の残りかもしれないと思うなら、先に中身を確かめてください (確かめずに kill しない):',
+      '  元の verify は、リーダー (npm) が死ぬと verify.mjs が 1 秒ほどで自分で終わるので、これほど長く残っているのは番号を再利用した無関係のグループの可能性が高いです。ただし verify スロットを待っている間は終わらないので、元の verify かは不明です。',
+      `  止めずに、${proceeding}。`,
+      `  kill する前に、必ず pgrep -g ${shellQuote(String(pgid))} -l で中身を確かめてください (確かめずに kill しない):`,
       ...groupInspectLines(pgid),
     ];
   }

@@ -19,8 +19,12 @@ import { compareStartTime, isProcessAlive, isProcessGroupAlive } from '../proces
 
 // bdboard-h2fk: リーダーが死んでメンバーだけが居る verify グループを「元の verify の孤児」とみなす、verifyPgidAt
 // からの上限。これを超えたグループは「不明」として案内だけを出し、止めない (finish を 75 で止め続けない)。
-// 根拠: verify は親 (finish) が死ぬと自分で畳むので、リーダーの居ないグループが長く生きているなら、元の verify では
-// なく、番号を再利用した無関係の二重 fork デーモン (setsid して子を残して親が終わった) である可能性が高い。
+// 根拠: bash が npm を exec するので、npm がこのグループのリーダーで、verify.mjs はその直接の子。起こした側
+// (finish / prepare) が SIGKILL されても、グループは孤児として残る (そのための記録)。npm が死ぬと verify.mjs は
+// PPID=1 を見て 1 秒ほどで終わる。だからリーダーの居ないグループが長く生きているなら、元の verify ではなく、
+// 番号を再利用した無関係の二重 fork デーモン (setsid して子を残して親が終わった) である可能性が高い。
+// 例外: verify.mjs が孤児を見張り始めるのは verify スロットを取った後。スロット待ちの間は、リーダー不在の元の
+// グループがその待ち時間だけ生き残りうる (待ちに上限が無いことは verify-guard.mjs の VERIFYING_PID_MAX_AGE_MS)。
 // それを元の verify と読み続けると 75 が永久に消えず、kill -TERM -<pgid> の案内が無関係のグループを指す。
 // 値は、verify が正規に走っていられる時間より十分長く取る。着地後検証の実測 (verify-guard.mjs の
 // VERIFYING_PID_MAX_AGE_MS のコメントと同じログ 133 件) は、通常 4〜5 分、スロット待ちが最大 685 秒、vitest が
@@ -29,7 +33,8 @@ import { compareStartTime, isProcessAlive, isProcessGroupAlive } from '../proces
 // restoreBranch が 2 本目の途中で木を差し替える)。長すぎる害は、孤児でないグループのために待つだけで、しかも
 // 案内に pgrep の確認が付く。害が非対称なので、短くするより長めに倒した。
 // 受け入れている穴: 孤児が居る間にマシンが 2 時間以上スリープすると、壁時計の経過は上限を超えるが verify は
-// 進んでいない。ただしその孤児は親が死んでいるので、起き次第自分で畳む。案内の pgrep が最後の確認になる。
+// 進んでいない。スロットを取った後の孤児なら、起き次第 PPID=1 を見て自分で畳む。スロット待ちの最中だった孤児は
+// 待ちが続く限り残る。どちらの場合も、案内の pgrep が最後の確認になる。
 export const LEADERLESS_GROUP_MAX_AGE_MS = 2 * 60 * 60_000;
 
 /** verifyingAt からの経過ミリ秒。時刻が無い・読めない記録は null (旧形式)。 */

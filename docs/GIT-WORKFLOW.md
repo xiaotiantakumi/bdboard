@@ -449,10 +449,14 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   has members is the original group (POSIX does not reuse the number while the group exists); a live
   leader is compared by start time like `verifyingPid`. There are no process groups on Windows, so
   nothing is recorded or checked there. A leaderless group is held only for 2 hours from `verifyPgidAt`
-  (`LEADERLESS_GROUP_MAX_AGE_MS`, bdboard-h2fk; a verify takes 10-20 minutes at worst, and it folds itself
-  when its parent dies). Past that it is reported as *unknown* — most likely an unrelated double-forked
-  daemon that took the number — and `finish` prints `pgrep -g <pgid> -l` (check first) and `kill -TERM
-  -<pgid>` (only if the check shows a leftover verify) as advice and goes on instead of exiting 75 forever.
+  (`LEADERLESS_GROUP_MAX_AGE_MS`, bdboard-h2fk; a verify takes 10-20 minutes at worst). `npm` leads the
+  group (bash execs it) and `verify.mjs` is its direct child; when `npm` dies `verify.mjs` sees PPID=1 and
+  exits within about a second. The exception is that `verify.mjs` only starts watching for that after it
+  holds a verify slot, so a leaderless original group can outlive its leader for as long as it waits in the
+  slot queue. Past the cap the group is reported as *unknown* — most likely an unrelated double-forked
+  daemon that took the number, but not provably — and `finish` prints `pgrep -g <pgid> -l` (always check
+  first, never kill without it) and `kill -TERM -<pgid>` (only if the check shows a leftover verify) as
+  advice and goes on instead of exiting 75 forever.
   When `verifyingPid` is judged stale but a live verify group still stops `finish`, the message says so
   rather than announcing that the stale record is ignored.
 - **A `prepare` killed with SIGKILL during S2's predicted-tree verify likewise leaves its verify running**
@@ -461,8 +465,13 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   `verifyPgidStart` fields and the same judgement as above) and deletes it when the verify returns. A rerun
   of `prepare` that finds the group alive exits 75 *before* the detached-HEAD advice (`git checkout bd/<id>`),
   because that checkout would swap the tree under the orphan; kill the group, `git checkout bd/<id>`, rerun.
-  `prepare --dry-run` starts no verify and is not stopped. A manual `merge-pr verify <sha>` records
-  nothing, so its orphan is still not detected.
+  `prepare --dry-run` starts no verify but runs the same check read-only: while the group is running it
+  exits 75 with the same message (otherwise it would end at the detached-HEAD advice above), and it never
+  writes or deletes the record and prints no notice for a stale or unknown one. If `pgrep -g <pgid> -l`
+  shows that the group named in the 75 is unrelated (the number was reused), delete
+  `<git-common-dir>/bdboard-merge/pr-<N>-predicted-verify.json` by hand (`git rev-parse --git-common-dir`
+  prints the directory) and rerun `prepare`. A manual `merge-pr verify <sha>` records nothing, so its
+  orphan is still not detected.
 - **Never release someone else's slot.** If it stays held past `merge.slotWaitMinutes` (10),
   `gate` exits 75 and the agent reports the holder to the chair. A holder equal to
   `<id> / PR#<N>` (this PR's own interrupted gate) is taken over.

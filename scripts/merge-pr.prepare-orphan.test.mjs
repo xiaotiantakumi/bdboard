@@ -142,6 +142,56 @@ describe.skipIf(process.platform === 'win32' || !hasPs)('merge-pr prepare: an or
     }
   });
 
+  // レビュー指摘 2 の再現: SIGKILL した prepare の worktree は detach したまま。そこで dry-run を打つと、以前は孤児を
+  // 見ずに assertLocalHead の「git checkout bd/<branch> で戻してください」(exit 2) に行き着いた。
+  it('prepare --dry-run with HEAD detached and the orphan alive stops with 75 ahead of the checkout advice; the record is untouched', async () => {
+    setupClassF();
+    const pidFile = path.join(tmp, 'predicted-verify.pid');
+    const child = spawn(process.execPath, [SCRIPT, 'prepare', String(PR)], {
+      cwd: work,
+      env: { ...env, FAKE_VERIFY_SLEEP_MS: '60000', FAKE_VERIFY_PID_FILE: pidFile },
+      stdio: 'ignore',
+    });
+    let pgid;
+    try {
+      await waitUntil(() => {
+        const record = tryReadRecord();
+        pgid = record?.verifyPgid;
+        return Number.isInteger(pgid) && typeof record.verifyPgidStart === 'string' && existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '';
+      });
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      child.kill('SIGKILL');
+      await exited;
+      expect(isProcessGroupAlive(pgid)).toBe(true);
+      expect(git(work, ['rev-parse', 'HEAD'])).not.toBe(head); // detach したまま
+      const written = readFileSync(recordFile(), 'utf8');
+
+      const dry = run(['prepare', String(PR), '--dry-run']);
+      expect(dry.status).toBe(75);
+      expect(dry.stderr).toContain(`プロセスグループ ${pgid}`);
+      expect(dry.stderr).toContain('git checkout で戻さないでください');
+      expect(dry.stderr).not.toContain('ローカル HEAD');
+      expect(dry.stderr).not.toContain('で戻してください'); // assertLocalHead の案内 (孤児の足元の木を変える)
+      expect(dry.stderr.indexOf(`kill -TERM -${pgid}`)).toBeGreaterThan(dry.stderr.indexOf(`pgrep -g ${pgid} -l`));
+      expect(readFileSync(recordFile(), 'utf8')).toBe(written); // 消さず、書き換えない
+      expect(verified()).toHaveLength(1);
+      expect(isProcessGroupAlive(pgid)).toBe(true);
+
+      // 孤児が居なくなれば、detach の案内が正しい案内になる (関門は過剰に止めない)。
+      killGroupQuietly(pgid);
+      await waitUntil(() => !isProcessGroupAlive(pgid), { timeoutMs: 5_000 });
+      const gone = run(['prepare', String(PR), '--dry-run']);
+      expect(gone.status).toBe(2);
+      expect(gone.stderr).toContain('ローカル HEAD');
+      expect(readFileSync(recordFile(), 'utf8')).toBe(written); // dry-run は消さない
+    } finally {
+      child.kill('SIGKILL');
+      if (Number.isInteger(pgid)) {
+        killGroupQuietly(pgid);
+      }
+    }
+  });
+
   it('a prepare that finishes leaves no record behind, whichever way the predicted verify ended', () => {
     setupClassF();
     const failed = run(['prepare', String(PR)], { FAKE_VERIFY_EXIT: '1' });
@@ -228,18 +278,36 @@ describe.skipIf(process.platform === 'win32' || !hasPs)('merge-pr prepare: an or
       expect(run(['prepare', String(PR)]).status).toBe(0);
     });
 
-    it('--dry-run starts no verify, so a live orphan does not stop it and the record is left alone', async () => {
+    // レビュー指摘 2: dry-run も、孤児が生きている間は同じ文面で 75。記録は読むだけで、消しも書きもしない。
+    it('--dry-run reads the record only: a running orphan stops it with 75, and nothing else about the record changes', async () => {
       setup({ merge: { mode: 'S2' } });
       const pgid = await spawnLeaderlessGroup();
       try {
         writeRecord({ verifyPgid: pgid, verifyPgidAt: ago(0), verifyPgidStart: null });
+        const written = readFileSync(recordFile(), 'utf8');
         const dry = run(['prepare', String(PR), '--dry-run']);
-        expect(dry.status).toBe(0);
-        expect(dry.stderr).not.toContain('二重に走らせません');
-        expect(existsSync(recordFile())).toBe(true);
+        expect(dry.status).toBe(75);
+        expect(dry.stderr).toContain(`プロセスグループ ${pgid}`);
+        expect(dry.stderr).toContain('二重に走らせません');
+        expect(readFileSync(recordFile(), 'utf8')).toBe(written);
+
+        // 上限を超えた「不明」は止めないが、dry-run は通知も出さず記録も消さない (消すのは本物の prepare)。
+        writeRecord({ verifyPgid: pgid, verifyPgidAt: ago(3 * 60 * 60_000), verifyPgidStart: null });
+        const unknown = readFileSync(recordFile(), 'utf8');
+        const unknownDry = run(['prepare', String(PR), '--dry-run']);
+        expect(unknownDry.status).toBe(0);
+        expect(unknownDry.stderr).not.toContain('pgrep');
+        expect(readFileSync(recordFile(), 'utf8')).toBe(unknown);
       } finally {
         killGroupQuietly(pgid);
       }
+      // グループが居なくなった記録も、dry-run は止まらず消さない。
+      await waitUntil(() => !isProcessGroupAlive(pgid), { timeoutMs: 5_000 });
+      const gone = readFileSync(recordFile(), 'utf8');
+      const goneDry = run(['prepare', String(PR), '--dry-run']);
+      expect(goneDry.status).toBe(0);
+      expect(goneDry.stderr).not.toContain('二重に走らせません');
+      expect(readFileSync(recordFile(), 'utf8')).toBe(gone);
     });
   });
 });

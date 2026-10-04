@@ -122,11 +122,9 @@ function refuseBrokenBase(ctx, pr, predBase) {
 }
 
 export async function prepare(ctx, pr, { dryRun = false } = {}) {
-  if (!dryRun) {
-    // bdboard-h2fk: SIGKILL された前回の prepare が残した着地予定ツリーの verify が生きていれば、HEAD の detach を
-    // 戻す案内 (assertLocalHead) より先に止める。dry-run は verify を起こさないので対象外。
-    guardAgainstOrphanedPredictedVerify(ctx, pr);
-  }
+  // bdboard-h2fk: SIGKILL された前回の prepare が残した着地予定ツリーの verify が生きていれば、HEAD の detach を
+  // 戻す案内 (assertLocalHead) より先に止める。dry-run も同じ案内に行き着くので止める (記録は読むだけ)。
+  guardAgainstOrphanedPredictedVerify(ctx, pr, { readOnly: dryRun });
   const mergeBase = run('git', ['merge-base', 'HEAD', ctx.mainRef], { cwd: ctx.cwd });
   if (mergeBase.status !== 0) {
     fail(
