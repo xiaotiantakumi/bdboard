@@ -115,6 +115,27 @@ describe('appendSentThread', () => {
     ]);
   });
 
+  it('空の題名を題名なしとして扱い、null 題名とピンを残して updatedAt を進める', () => {
+    const existing: ChatThreadDto = { ...thread('a', ''), title: null, pinned: true };
+    const sent: ChatThreadDto = { ...thread('a', ''), updatedAt: '2026-02-02T00:00:00Z' };
+    expect(appendSentThread([existing], sent, undefined)).toEqual([
+      { ...existing, updatedAt: '2026-02-02T00:00:00Z' },
+    ]);
+  });
+
+  it('既存行が無いとき空の題名は null にして足す', () => {
+    const sent: ChatThreadDto = { ...thread('a', ''), updatedAt: '2026-02-02T00:00:00Z' };
+    expect(appendSentThread([], sent, undefined)).toEqual([{ ...sent, title: null }]);
+  });
+
+  it('既存の題名付き行には空の題名で上書きしない', () => {
+    const existing = thread('a', 'Named thread');
+    const sent = { ...thread('a', ''), updatedAt: '2026-02-02T00:00:00Z' };
+    expect(appendSentThread([existing], sent, undefined)).toEqual([
+      { ...existing, updatedAt: '2026-02-02T00:00:00Z' },
+    ]);
+  });
+
   it('既存行が無いときは作った値をそのまま足す(題名 = 送った文・ピン留めなし)', () => {
     const sent: ChatThreadDto = { ...thread('a', 'first message'), updatedAt: '2026-02-02T00:00:00Z' };
     expect(appendSentThread([thread('c', 'C')], sent, undefined)).toEqual([thread('c', 'C'), sent]);
