@@ -20,6 +20,10 @@ logs/
 # Ticket attachment images (bdboard-qw26). Override with BDBOARD_ATTACHMENTS_DIR.
 /data/attachments/
 
+# Issue report drafts (bdboard-4y8q.1). Hold hand-only raw logs; never commit.
+# Override with BDBOARD_ISSUE_DRAFTS_DIR.
+/data/issue-drafts/
+
 # Local environment (contains auth credentials)
 .env
 .env.local
