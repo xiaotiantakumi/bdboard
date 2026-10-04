@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { computeDraftFingerprint } from './issue-draft.js';
 import {
   canonicalizeIdentifier,
+  findHomePathRanges,
   foldHomePaths,
   hasVisibleText,
   isSingleLineDisplayText,
@@ -145,6 +146,32 @@ describe('stripNonLineText', () => {
 });
 
 describe('foldHomePaths', () => {
+  it('reports the exact ranges that folding replaces', () => {
+    const input = 'x /Users/example-user/proj y C:\\Users\\example-user\\file';
+    const ranges = findHomePathRanges(input);
+    expect(ranges.map(({ start, end }) => input.slice(start, end))).toEqual([
+      '/Users/example-user/',
+      'C:\\Users\\example-user\\',
+    ]);
+    let rebuilt = '';
+    let offset = 0;
+    for (const range of ranges) {
+      rebuilt += input.slice(offset, range.start) + '~/';
+      offset = range.end;
+    }
+    expect(rebuilt + input.slice(offset)).toBe(foldHomePaths(input));
+  });
+
+  it.each([
+    ['/home/example-user/x', '/home/example-user/'],
+    ['C:\\Users\\example-user\\x', 'C:\\Users\\example-user\\'],
+    ['\\\\wsl$\\Ubuntu\\home\\example-user\\x', '\\\\wsl$\\Ubuntu\\home\\example-user\\'],
+  ])('finds the home-root portion of %s', (input, expected) => {
+    const [range] = findHomePathRanges(input);
+    expect(range).toBeDefined();
+    expect(input.slice(range?.start, range?.end)).toBe(expected);
+  });
+
   // 畳む形の一覧 (issue-draft-identifier.ts の foldHomePaths のコメントと docs/ISSUE-REPORTING.md と同じ)。
   it.each([
     // いまある形

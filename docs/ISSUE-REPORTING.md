@@ -567,48 +567,46 @@ function normalizeErrorText(text: string): string {
 
 ## 5. 公開本文の組み立てと置き換え(項目 e、bdboard-4y8q.2)
 
-`domain` 層の純粋関数。入力の型そのものに `localOnly`/`occurredProjects` オブジェクトを
-含めないことで、それらの**まるごとの混入**を型で塞ぐ(4y8q.2 の要求。1節末尾の注記も参照)。
-自由記述(`symptom`/`cause`/`prevention`/`errorTextRaw`)は意図して入力に含まれており、
-これらに残りうる固有名詞・秘密情報を実際に取り除くのは以下の置き換え規則の役目であって、
+`domain` 層の純粋関数(`src/domain/issue-public-*.ts`、入口は `issue-public-build.ts` の `buildPublicIssueBody`)。
+入力を**公開してよい固定欄だけの型 `PublicBuildInput`**と、**公開してはいけない手元だけの鍵 `LocalOnlyKeys`**
+の別々の引数に分ける。`PublicBuildInput` に `localOnly`/`occurredProjects`/チケットの ID や本文/注入先のコードなどの
+欄は無く、`IssueDraft` や `LocalOnlyContext` を丸ごと渡す形(変数に入れた値でも)は `NoExtraKeys` で型エラーにする
+(それらの**まるごとの混入**を型で塞ぐ。4y8q.2 の要求。1節末尾の注記も参照)。実行時にも、型の外から来た余分なキーは
+読まない(欄は名前で読み、欄の列挙やスプレッドはしない)。自由記述(`symptom`/`cause`/`prevention`/`errorText`/`agentNote`)は
+意図して入力に含まれており、これらに残りうる固有名詞・秘密情報を実際に取り除くのは以下の置き換え規則の役目であって、
 型そのものが担保するわけではない。
 
 ```ts
-type ProperNounCategory = 'project' | 'user' | 'host' | 'branch';
-interface LocalProperNoun {
-  readonly category: ProperNounCategory;
-  readonly value: string;                 // 4文字未満は対象外(呼び出し側でフィルタ済みを渡す)
-}
-
+// issue-public-types.ts
 interface PublicBuildInput {
   readonly kind: DraftKind;
   readonly catalogSlug?: string;          // A のみ
-  readonly ruleOrScriptName?: string;     // B/C の出どころ
-  readonly symptom: string;
-  readonly cause: string;
-  readonly prevention: string;
-  readonly errorTextRaw?: string;         // 切り詰め前の生ログ全文(4節)。置換はこの全文に対して行う
+  readonly source?: string;               // B/C の出どころ(hook・スクリプトの名前)
+  readonly symptom?: string;
+  readonly cause?: string;
+  readonly prevention?: string;
+  readonly errorText?: string;            // 切り詰め前の生ログ全文(保存側の errorTextRaw。4節)。置換はこの全文に対して行う
   readonly agentNote?: string;            // 「新しく報告」の説明文もここを通す(要求どおり)
-  readonly versions: {
-    bdboardVersion: string;
-    harnessVersion?: string;
-    os: string;
-    nodeVersion: string;
-    bdVersion?: string;
-    ghVersion?: string;
-  };
+  readonly versions: DraftEnvInfo;
   readonly occurrenceCount: number;
   readonly firstOccurredAt: string;
   readonly lastOccurredAt: string;
-  // 自動置換と置き換え漏れ検出の両方に使う、公開してはいけない固有名詞のリスト
-  readonly localProperNouns: readonly LocalProperNoun[];
-  // category='project' のうち、パスとして解決できるもの(occurredProjects[].path 由来)。
-  // パス丸ごとの置換に使う(下の置き換え規則1)。
-  readonly localProjectPaths: readonly string[];
 }
 
-interface RedactionMark { readonly kind: string; readonly start: number; readonly end: number; }
-interface SuspectedLeak { readonly term: string; readonly index: number; }
+type ProperNounCategory = 'project' | 'user' | 'host' | 'branch';
+interface LocalProperNoun { readonly category: ProperNounCategory; readonly value: string; }
+
+// 手元だけの鍵。「探す文字列」としてだけ使い、出力の材料にしない。
+interface LocalOnlyKeys {
+  readonly projectRoots: readonly string[];       // プロジェクトの根の絶対パス(/ \ \\ のどれでもよい)
+  readonly properNouns: readonly LocalProperNoun[]; // 長さの規則は下の「固有名詞の長さの規則」
+}
+
+// start/end は最終の title / body への UTF-16 コード単位のオフセット(半開区間)。範囲は出力に書いた印の
+// 文字列(`<redacted-token>`・`~/` など)を覆う。元の文字列の位置ではない。
+interface RedactionMark { readonly field: 'title' | 'body'; readonly kind: RedactionKind; readonly start: number; readonly end: number; }
+// 位置は RedactionMark と同じ。matched は最終文字列の切り出し。
+interface SuspectedLeak { readonly field: 'title' | 'body'; readonly kind: RedactionKind; readonly start: number; readonly end: number; readonly matched: string; }
 
 interface PublicBuildResult {
   readonly title: string;
@@ -617,49 +615,96 @@ interface PublicBuildResult {
   readonly suspectedLeaks: readonly SuspectedLeak[]; // 置き換え漏れの疑い
 }
 
-// 置換パスと検出パスを分離しておく(単体テストしやすくするため、4y8q.2 実装時はこの2つを
-// 別の内部関数として書き、buildPublicIssueBody はその合成にする)。
-function applyRedactions(text: string, input: PublicBuildInput): { text: string; marks: RedactionMark[] };
-function detectSuspectedLeaks(text: string, nouns: readonly LocalProperNoun[]): SuspectedLeak[];
-function buildPublicIssueBody(input: PublicBuildInput): PublicBuildResult;
+type NoExtraKeys<Shape, Actual extends Shape> = Actual & Record<Exclude<keyof Actual, keyof Shape>, never>;
+function buildPublicIssueBody<I extends PublicBuildInput>(input: NoExtraKeys<PublicBuildInput, I>, keys: LocalOnlyKeys): PublicBuildResult;
 ```
 
-### 置き換え規則(自動置換、この順序で適用する)
+内部は小さなモジュールに分ける(各ファイルに単体テスト): `issue-public-text`(孤立サロゲートの除去・整形・
+コードポイントでの切り出し)、`-secrets`(トークン/秘密鍵/メールの探索)、`-keys`(手元の鍵を探索用に準備)、
+`-redact`(探索結果の統合と置換、省略)、`-markdown`(コードスパン/ブロック)、`-leaks`(最後の網)、`-build`(合成)。
+パスの探索は既存の `issue-draft-identifier.ts` の `findHomePathRanges`(`foldHomePaths` と同じ規則の位置版)を使う。
 
-**エラー全文(`errorTextRaw`)に対しては、この置換をすべて適用してから1000文字の先頭/末尾へ
-切り詰める(4節参照)。先に切り詰めるとトークンが境界で分断され、正規表現にマッチしなくなる
-ため順序を守る。**
+### Markdown の無害化(動的な文字列はコードの中にだけ出す)
 
-1. `localProjectPaths` に含まれる絶対パス(プロジェクトルート)→ そのパス丸ごと `<project>`。
-   **他のどの置換よりも先に行う**(後述の2でホームディレクトリを先に `~` へ置換すると、
-   プロジェクトルートの絶対パスの文字列が変化してこの規則が一致しなくなり、
-   `~/path/to/<project名>` のような形でプロジェクト名だけが残ってしまうため)。
-2. ホームディレクトリの絶対パス(1で置換されず残っている分)→ `~`
-3. `localProperNouns` の各値(`project` を含む全カテゴリ、大小文字区別なしの部分一致)→
-   カテゴリに応じて `<project>`/`<user>`/`<host>`/`<branch>`。1・2はパスの形をした言及を
-   拾うためのもので、この3はプローズ中の言及(例: 文中に生の名前がそのまま書かれている場合)
-   を拾う。
-4. トークンらしい文字列 → `<redacted-token>`(以下は代表的なパターンであり、
-   **網羅的な一覧ではない** — 実装時に各サービスの最新の鍵書式を追加してよい。設計文書として
-   ここで確定させるのは「自動置換の仕組みを持つこと」と「最低限このカテゴリは拾うこと」まで)
+本文のうち**固定の雛形以外の文字列は、必ずインラインのコードスパン(1行の値)かフェンス付きコードブロック(複数行の値)
+の中にだけ出す**。リンク・`@メンション`・`#123`・`owner/repo#1`・`<img>`・HTML コメント・見出し・引用が有効な書式として
+働く道がなくなる(#859 のレビュー指摘)。区切りは中身の最長のバッククォートの連より1長くし(フェンスは3以上)、中身が
+バッククォートで始まる/終わるときはスペースを1つずつ足す。コードブロックの情報文字列は固定の `text`、閉じるフェンスの前に
+改行を1つ置く。孤立サロゲート(対になっていない上位/下位)は、どの欄でも整形の最初に取り除く(JSON や UTF-8 にしたとき壊れた文字になる)。
+1行の値(題名・名前・版・時刻)は改行・タブ・不可視文字を空白に畳んで長さの上限を付け、複数行の値(症状など)は8000
+コードポイント、エラー全文は先頭1000+末尾1000コードポイントで省略する(省略した件数は固定の文言+数字)。
+
+### 固有名詞の長さの規則
+
+- **4 コードポイント以上**: 大小文字を区別しない部分一致で、**置き換えも検出もする**。
+- **2〜3 コードポイント**: **置き換えない**(一般語を壊すと報告が読めなくなる)。単語として現れたとき(前後が文字・数字でない)
+  だけ**検出**して人に知らせる。
+- **1 文字・空・512 コードポイント超・ストップリスト**(`main` `master` `develop` `trunk` `head` `root` `localhost`、大小文字を
+  区別しない)は無視する。登録は最大 200 件。NFC と NFD の両方で探す(macOS のファイル名は分解形のことがある)。
+- プロジェクトの根のパスは、区切りの書き方の変種(`/`・`\`・JSON の `\\`)と NFC/NFD を並べて探す。直後が
+  文字・数字・`_`・`-` なら別の名前(`example-project2`)として一致させない。
+
+### 置き換え規則(自動置換)
+
+**処理の順序(動的な文字列1つごと)**: (0) 孤立サロゲートを除き整形 → (1) 置き換え → (2) 省略(コードポイント単位) →
+(3) コードスパン/ブロックで包んで組み立て(印の位置は組み立て時にずらす) → (4) 最終の題名・本文に最後の網をかける。
+**エラー全文(`errorText`)や自由記述(8000 コードポイント)は、置き換えをすべて適用してから省略する(4節参照)。
+先に切るとトークンや名前が境界で分断され、断片が残る。** 省略の切れ目が印(`<redacted-token>` など)の内側に落ちるときは
+印の境界へ動かすので、印が半分に割れず、断片も残らない(省略側に入った印は消える)。
+
+置き換えは**すべての探索を同じ(整形後の)文字列にかけて一致の範囲を集め、重なるものは和集合に統合してから、左から
+1 回の走査で印に替える**。先の規則の印の中に後の規則が一致することはない。統合した範囲の種別は次の優先順位で決める:
+project-path > home-path > project > user > host > branch > key-block > token > email。接しているだけの一致は別のまま。
+
+1. `projectRoots` の絶対パス(区切りの変種と NFC/NFD を含む)→ そのパス丸ごと `<project>`。
+   (ホームの下にあるプロジェクトの根は、2より優先してパスごと `<project>` になる。統合の優先順位で、
+   `~/path/to/<project名>` のような形でプロジェクト名だけが残らない。)
+2. ホームディレクトリの絶対パス(`/Users/<名前>`・`/home/<名前>`・`C:\Users\<名前>`・`/mnt/c/Users/<名前>` など。
+   `foldHomePaths` と同じ規則)→ `~/`
+3. `properNouns` の値(4 コードポイント以上のもの。大小文字区別なしの部分一致)→ カテゴリに応じて
+   `<project>`/`<user>`/`<host>`/`<branch>`。1・2はパスの形をした言及を拾うためのもので、この3は
+   プローズ中の言及を拾う。2〜3 コードポイントの値は置き換えず、最後の網で検出だけする。
+4. 秘密鍵ブロック → `<redacted-key-block>`: `-----BEGIN … PRIVATE KEY-----` から対応する `-----END …-----` まで丸ごと
+   (END が無ければ文字列の末尾まで)。線形の走査で探す(`[\s\S]*?` の正規表現は使わない)。
+5. トークンらしい文字列 → `<redacted-token>`。次の形を**自動置換**する(網羅的な一覧ではない。形を足すときは
+   `issue-public-secrets.ts` の表に1行足し、長い入力で線形に動くことを確かめる):
    - GitHub: `gh[pousr]_[A-Za-z0-9]{20,}` / `github_pat_[A-Za-z0-9_]{20,}`
-   - OpenAI: `sk-[A-Za-z0-9]{20,}`
-   - Anthropic: `sk-ant-[A-Za-z0-9_-]{20,}`
-   - AWS アクセスキー: `AKIA[0-9A-Z]{16}`
-   - Slack トークン: `xox[baprs]-[A-Za-z0-9-]{10,}`
-   - 秘密鍵ブロック: `-----BEGIN [A-Z ]*PRIVATE KEY-----` から対応する `-----END` 行までを
-     丸ごと `<redacted-key-block>` に置換
-   - 上記は自動置換。それ以外の「32文字以上の英数記号の塊」は誤検知(コミットハッシュ等)が
-     多いため自動置換せず、次項の「置き換え漏れの疑い」側で警告に留める。
-5. メールアドレス(`[\w.+-]+@[\w-]+\.[\w.-]+`)→ `<email>`
+   - `sk-` 系(OpenAI の旧形式・`sk-proj-`・`sk-svcacct-`・Anthropic の `sk-ant-`): `(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}`
+   - AWS アクセスキー ID: `(?:AKIA|ASIA)[0-9A-Z]{16}`
+   - Slack: `xox[abprs]-[A-Za-z0-9-]{10,}`
+   - Google API キー: `AIza[0-9A-Za-z_-]{35}` / npm: `npm_[A-Za-z0-9]{36}`
+   - Bearer: `\bBearer[ \t]{1,16}[A-Za-z0-9._~+/-]{16,}=*`(大小文字区別なし)
+   - JWT は形に入れていない(`eyJ` が繰り返す入力で正規表現が2乗になりうるため)。それ以外の「32文字以上の英数記号の塊」は
+     誤検知(コミットハッシュ等)が多いため自動置換しない。AWS のシークレットキー(40文字)も形がなく置き換えない。
+6. メールアドレス → `<email>`(ローカル部の連の先頭だけを開始位置にして線形に探す。`name@2x.png` のような名前も
+   消えるが、公開本文では過剰な除去を選ぶ)。
+
+すべての探索は 10 万文字の敵対的な入力(空白・改行・タブ・`eyJ`・`-----BEGIN ` などの繰り返し)でも線形に動くように
+書き、単体テストで時間を確かめる。
 
 ### 置き換え漏れの検出(疑いのフラグ、判断はしない)
 
-上の1〜5をすべて適用**後**の本文に対し、`localProperNouns` を大小文字区別なしの部分一致で
-再走査する。3の自動置換が正しく効いていれば通常はヒットしないはずだが、正規表現の
-エスケープ漏れや文字種の違いなど実装バグの検知にもなるため、独立した最後の網として残す。
-ヒットしたら `suspectedLeaks` に積む。これは best-effort であり、唯一の防御にはしない
-(エピック決定どおり「投稿の前に毎回人が見る」が本来の防御)。
+置き換えが効いたかではなく、**組み立て後の最終の題名・本文**(コードスパンの区切りなど固定の雛形を含む)に対し、
+置き換えで使った探索をすべて**独立にもう一度**かける(`detectSuspectedLeaks`)。印(`RedactionMark`)が覆っている範囲の
+一致は漏れではない(印の文字列が名前の一部と偶然一致するだけ)ので除く。それ以外が `suspectedLeaks`
+(`field`・`kind`・`start`・`end`・`matched`)に残る。検出するもの:
+
+- 4 コードポイント以上の固有名詞(置き換え済みのはずなので、ヒットは実装の取りこぼしを示す)。
+- 2〜3 コードポイントの固有名詞(**置き換えない代わりに、ここで人に知らせる**。単語として現れたときだけ)。
+- プロジェクトの根のパス・ホームのパス・トークン・秘密鍵ブロック・メール。
+- 固定の雛形の語が固有名詞と一致した場合も報告する(過剰に検出する側。たとえば名前が `hook` のとき)。
+
+これは best-effort であり、唯一の防御にはしない(エピック決定どおり「投稿の前に毎回人が見る」が本来の防御)。
+カバーしないもの: JWT・未知の秘密の形式・全角/ホモグリフの変種・AWS のシークレットキー。
+
+### 4y8q.2 の範囲外(後続で扱う)
+
+- **配線**: `LocalOnlyKeys` のうち、ユーザー名・ホスト名・ブランチ名は、今の受け取りパイプライン(`finalize` /
+  `buildProvisionalDraftText`)の入力に無い。このチケットでは関数だけを作り、`finalize`/`buildProvisionalDraftText` は
+  変更しない。配線するときに、これらの値を呼び出し側(サーバー)で集める入力を足す必要がある。
+- **保存側の UTF-16 の切り出し**: 保存時の `cutTextFrom`/`capFreeText`/`summarizeErrorText` は UTF-16 コード単位で切る
+  ため、サロゲートの対を割りうる。公開本文の側はコードポイント単位で切り、孤立サロゲートを取り除く(上記)ので、
+  公開される文字列は壊れないが、保存側の切り出しは別チケットで揃える。
 
 ### プレビュー表示時の注意(画像・リンクの自動読み込み)
 
@@ -681,10 +726,18 @@ markdown→HTML 変換して画像を自動読み込みすると、**人間が�
 ### 実例での確認(4y8q.2 の受け入れ基準)
 
 PicRill-fbs の本文(作業フォルダ名・ポート番号・プロジェクト名入りのエラー文)を材料に、
-`buildPublicIssueBody` を通した結果に固有名詞が残らないことをテストで確認する。実例の文面そのものは
-テストに書き込まない(公開リポジトリに注入先の固有名詞を残さないため)。テストに置く値は
-CLAUDE.md の example-user 規約どおり明らかに偽の形にする(こちらは GitGuardian の検出器が
-値ではなく形で発火するのを避けるための規約で、理由が別である)。
+`buildPublicIssueBody` を通した結果に固有名詞が残らないことを**実物で**確認する。実例の文面そのものは
+テストにもリポジトリにもログにも書き込まない(公開リポジトリに注入先の固有名詞を残さないため)。確認は
+リポジトリの外の使い捨てスクリプトで行う: チケットを読み取り専用(`bd -C <PicRill のパス> show <id> --json`)で読み、
+プロジェクト名・ユーザー名・ホスト名・作業フォルダ名・ブランチ名から機械的に `LocalOnlyKeys` を作って通し、
+**真偽値だけ**(固有名詞が残ったか・ホームのパスが残ったか・`suspectedLeaks` が空か)を表示する。
+リポジトリのテストに置く値は CLAUDE.md の example-user 規約どおり明らかに偽の形にする(こちらは GitGuardian の
+検出器が値ではなく形で発火するのを避けるための規約で、理由が別である)。トークンの形のテスト値は
+`'ghp_' + 'x'.repeat(36)` のように実行時に組み立て、秘密のスキャナーに引っかからないようにする。
+
+2026-10-04 の実行結果(4y8q.2): 完全な名前(プロジェクト名・作業フォルダ名・ユーザー名・ホスト名・ブランチ名)を鍵にした
+場合、固有名詞もホームのパスも残らず、`suspectedLeaks` は空だった。ブランチ名を `/` で割った2〜3文字の部品
+(一般語を含みうる)まで鍵に入れると、それらは置き換えない規則(上記)のとおり、検出だけが13件報告された。
 
 ## 6. 投稿(項目 f、bdboard-4y8q.4)
 

@@ -92,6 +92,15 @@ const HOME_PATH_PATTERN = new RegExp(
   'g',
 );
 
+export function findHomePathRanges(
+  value: string,
+): readonly { readonly start: number; readonly end: number }[] {
+  return [...value.matchAll(HOME_PATH_PATTERN)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+}
+
 /**
  * 文字列の中の、利用者のホーム配下の絶対パスを "~/" に畳む (前後の空白は触らない。題名・本文用)。
  * 畳む形は次のとおりで、これ以外は見つけない:
