@@ -11,12 +11,17 @@ export function buildThreadById(threads: readonly ChatThreadDto[]): Map<string, 
 // 送信成功で一覧へ足すエントリ(useChatSendCommits の commitSuccess)。同じ sessionId の既存行と、
 // 置き換えられて死んだスレッド(goneSessionId)の行を落として、末尾へ足す。
 // bdboard-z9mn: useChatSendCommits.ts の max-lines のため、挙動を変えずに setThreadLists の中身を移した。
+// bdboard-b1rz: 同じ sessionId の既存行があるときは、足す行の題名とピン留めを既存行のものにして、
+// updatedAt だけ entry の値(送信時刻)へ進める。entry の題名(今送った文)と pinned=false は新しい
+// セッションのための仮の値で、既存スレッドへ送るたびに使うと、付けた名前が送った文に変わり、ピンが外れた。
 export function appendSentThread(
   list: readonly ChatThreadDto[],
   entry: ChatThreadDto,
   goneSessionId: string | undefined,
 ): ChatThreadDto[] {
-  return [...list.filter((thread) => thread.sessionId !== entry.sessionId && thread.sessionId !== goneSessionId), entry];
+  const existing = list.find((thread) => thread.sessionId === entry.sessionId);
+  const added: ChatThreadDto = existing === undefined ? entry : { ...existing, updatedAt: entry.updatedAt };
+  return [...list.filter((thread) => thread.sessionId !== entry.sessionId && thread.sessionId !== goneSessionId), added];
 }
 
 export function summarizeTitle(content: string): string {

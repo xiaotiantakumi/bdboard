@@ -167,6 +167,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       // 既存スレッドへの送信(convKey === result.sessionId)は記録しない。そのスレッドは送信前からサーバーの
       // 一覧に載っている。このエントリはタイトルを今回の送信文・pinned を false にした仮の値なので、記録すると
       // 古い一覧が持つ正しいタイトル(リネーム済みなら付けた名前、未設定なら最初の発言)とピン留めを潰す。
+      // bdboard-b1rz: 一覧(threadLists)に載せる行も同じ規則で、既存行があれば appendSentThread が題名とピンを残す。
       const listEntry: ChatThreadDto = {
         sessionId: result.sessionId, agentId: result.agentId, title: summarizeTitle(sentText), pinned: false,
         updatedAt: new Date().toISOString(),

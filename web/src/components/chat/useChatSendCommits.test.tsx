@@ -399,6 +399,59 @@ describe('commitSuccess', () => {
     });
   });
 
+  describe('bdboard-b1rz: sending into an existing thread keeps its title and pin in the list', () => {
+    const OLD_AT = '2026-01-01T00:00:00Z';
+    const renamedPinned: ChatThreadDto = {
+      sessionId: 'sess-new', agentId: 'claude', title: 'My Renamed', pinned: true, updatedAt: OLD_AT,
+    };
+
+    it('keeps the renamed title and the pin, and only advances updatedAt', () => {
+      const { hook, store } = setup();
+      store.threadLists = { 'proj-a': [renamedPinned] };
+      act(() => hook.result.current.commitSuccess('sess-new', 'second message', RESULT));
+      expect(store.threadLists['proj-a']).toEqual([
+        { ...renamedPinned, updatedAt: expect.not.stringMatching(OLD_AT) },
+      ]);
+    });
+
+    it('keeps an unset title (null) instead of replacing it with the sent text', () => {
+      const { hook, store } = setup();
+      store.threadLists = { 'proj-a': [{ ...renamedPinned, title: null, pinned: false }] };
+      act(() => hook.result.current.commitSuccess('sess-new', 'second message', RESULT));
+      expect(store.threadLists['proj-a']).toMatchObject([{ sessionId: 'sess-new', title: null, pinned: false }]);
+    });
+
+    it('a list fetched before the send, arriving after it, still yields the renamed title and the pin (the rename record wins)', () => {
+      const { hook, params, store } = setup();
+      const order = params.threadListOrder;
+      store.threadLists = { 'proj-a': [renamedPinned] };
+      // 一覧 fetch がリネームより前に始まっていて、リネーム → 送信 の順で書き込みが起きたあとに届く。
+      const seq = order.begin('proj-a');
+      order.noteEntryWrite('proj-a', renamedPinned, 'replace');
+      act(() => hook.result.current.commitSuccess('sess-new', 'second message', RESULT));
+      const stale: ChatThreadDto = { ...renamedPinned, title: 'first message', pinned: false };
+      expect(order.admit('proj-a', seq, [stale])).toEqual([renamedPinned]);
+    });
+
+    it('a list fetched before the send does not make the sent text the title of the listed thread', () => {
+      const { hook, params, store } = setup();
+      const order = params.threadListOrder;
+      store.threadLists = { 'proj-a': [renamedPinned] };
+      const seq = order.begin('proj-a');
+      act(() => hook.result.current.commitSuccess('sess-new', 'second message', RESULT));
+      expect(order.admit('proj-a', seq, [renamedPinned])).toEqual([renamedPinned]);
+    });
+
+    it('the first send of a draft still lays a row titled with the sent text and unpinned over an older list', () => {
+      const { hook, params, store } = setup();
+      const order = params.threadListOrder;
+      const seq = order.begin('proj-a');
+      act(() => hook.result.current.commitSuccess('new:proj-a:0', 'first message', RESULT));
+      expect(store.threadLists['proj-a']).toMatchObject([{ sessionId: 'sess-new', title: 'first message', pinned: false }]);
+      expect(order.admit('proj-a', seq, [])).toMatchObject([{ sessionId: 'sess-new', title: 'first message', pinned: false }]);
+    });
+  });
+
   it('records the sent model only when the model select is shown with a model', () => {
     const shown = setup({ showModelSelect: true, effectiveModelId: 'sonnet' });
     act(() => shown.hook.result.current.commitSuccess('sess-new', 'hi', RESULT));
