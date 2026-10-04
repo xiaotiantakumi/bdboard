@@ -20,7 +20,7 @@ export function buildThreadById(threads: readonly ChatThreadDto[]): Map<string, 
 // 次のサーバー一覧ではこの文がそのスレッドの題名になる。null のまま残すと次の一覧取得まで (無題) が続く。
 // bdboard-qd78: 空の題名も「題名なし」と同じ扱いにし、null に正規化して (無題) を表示する。
 // サーバーは画像だけの送信を IMAGE_ONLY_CHAT_MESSAGE で保存するため、通常の UI 経路の sentText は空にならない。
-// 空文字の正規化は、呼び出し元にかかわらず一覧の題名を空白にしないための防御。
+// 呼び出し元 (useChatSendCommits) も送信時のエントリを作る時点で空の題名を null にしており、これは同じ防御の二重化。
 export function appendSentThread(
   list: readonly ChatThreadDto[],
   entry: ChatThreadDto,
