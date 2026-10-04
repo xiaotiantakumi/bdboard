@@ -8,6 +8,17 @@ export interface PersistedChatThread {
 export interface PersistedChatThreadState {
   readonly activeSessionIds: readonly string[];
   readonly selectedSessionId?: string;
+  /**
+   * bdboard-521p: このエントリが「仮のエントリ」(bdboard-rt6i。chat/provisionalEntry.ts)か。未復元のプロジェクトで
+   * 最初の永続化エントリとして書かれた、利用者の開き閉じの記録ではない暫定値のとき true。メモリ上の印は
+   * リロードやチャットパネルを閉じる(ChatPanel のアンマウント)で消えるので、同じ印をここにも持たせて次の訪問へ運ぶ。
+   * 旧形式のエントリには無い(= 利用者の記録)。下ろすときはキーごと消す(false は書かない)。
+   * 書き込み側は渡さなくてよい: writePersistedChatThreadState が既存エントリのこの 2 つを引き継ぎ、
+   * 立てる・下ろす・閉じた id を更新するのは下の writePersistedProvisional* だけ。
+   */
+  readonly provisional?: true;
+  /** bdboard-521p: 仮のエントリの間に利用者が閉じた(削除した)スレッドの id(provisionalEntries.closedIds の保存版)。空のときはキーごと無い。 */
+  readonly provisionalClosedSessionIds?: readonly string[];
 }
 
 export type PersistedChatThreads = Record<string, PersistedChatThreadState>;
@@ -18,12 +29,31 @@ function getStorage(): Storage | null {
   } catch { return null; }
 }
 
+function isSessionIdList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((id) => typeof id === 'string' && id !== '');
+}
+
 function isState(value: unknown): value is PersistedChatThreadState {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return Array.isArray(record.activeSessionIds) &&
-    record.activeSessionIds.every((id) => typeof id === 'string' && id !== '') &&
-    (record.selectedSessionId === undefined || typeof record.selectedSessionId === 'string');
+  return isSessionIdList(record.activeSessionIds) &&
+    (record.selectedSessionId === undefined || typeof record.selectedSessionId === 'string') &&
+    (record.provisional === undefined || record.provisional === true) &&
+    (record.provisionalClosedSessionIds === undefined || isSessionIdList(record.provisionalClosedSessionIds));
+}
+
+/** bdboard-521p: 仮のエントリの印と閉じた id を除いた、開いているスレッドと選択だけの値。 */
+function withoutProvisionalFields(state: PersistedChatThreadState): PersistedChatThreadState {
+  return state.selectedSessionId === undefined
+    ? { activeSessionIds: state.activeSessionIds }
+    : { activeSessionIds: state.activeSessionIds, selectedSessionId: state.selectedSessionId };
+}
+
+/** bdboard-521p: 仮のエントリの印と閉じた id だけを取り出す(印が無ければ空)。引き継ぎと書き直しに使う。 */
+function provisionalFieldsOf(state: PersistedChatThreadState | undefined): Pick<PersistedChatThreadState, 'provisional' | 'provisionalClosedSessionIds'> {
+  if (state?.provisional !== true) return {};
+  const closed = state.provisionalClosedSessionIds ?? [];
+  return closed.length === 0 ? { provisional: true } : { provisional: true, provisionalClosedSessionIds: closed };
 }
 
 export function readPersistedChatThreads(): PersistedChatThreads {
@@ -44,6 +74,15 @@ export function writePersistedChatThreadState(
   projectId: string,
   state: PersistedChatThreadState | undefined,
 ): void {
+  putPersistedChatThreadState(projectId, state, true);
+}
+
+/** carryProvisional が false のときだけ、書く値の仮のエントリの印を既存のエントリから引き継がない(clearPersistedProvisionalMark 用)。 */
+function putPersistedChatThreadState(
+  projectId: string,
+  state: PersistedChatThreadState | undefined,
+  carryProvisional: boolean,
+): void {
   try {
     const storage = getStorage();
     if (storage === null) return;
@@ -61,8 +100,49 @@ export function writePersistedChatThreadState(
       storage.setItem(CHAT_THREAD_STORAGE_KEY, JSON.stringify(rest));
       return;
     }
-    storage.setItem(CHAT_THREAD_STORAGE_KEY, JSON.stringify({ ...current, [projectId]: state }));
+    // bdboard-521p: 仮のエントリの印と閉じた id は、呼び出し側が指定しなければ既存のエントリのものを引き継ぐ。
+    // 書き込み元(送信成功・閉じる・選択・採用・履歴ロードなど十数か所)が個別に印を持ち回ると書き漏らしてリロードで
+    // 印が落ちる。印を下ろすのは settle(clearPersistedProvisionalMark)だけ。
+    const next = carryProvisional && state.provisional === undefined
+      ? { ...state, ...provisionalFieldsOf(current[projectId]) }
+      : state;
+    storage.setItem(CHAT_THREAD_STORAGE_KEY, JSON.stringify({ ...current, [projectId]: next }));
   } catch { /* localStorage unavailable */ }
+}
+
+/**
+ * bdboard-521p: 仮のエントリの印を保存エントリに立てる(chat/provisionalEntry.ts の markIfFirstEntry から)。
+ * 印を立てるのは「このプロジェクトに保存エントリがまだ無い」ときの最初の書き込みの直前なので、エントリが無ければ
+ * 空の仮のエントリを作る — 直後の writePersistedChatThread*(中身を埋める)が印を引き継ぐ。エントリが既にあれば何もしない
+ * (それは利用者の記録か、すでに仮のエントリ)。
+ */
+export function writePersistedProvisionalMark(projectId: string): void {
+  if (readPersistedChatThreads()[projectId] !== undefined) return;
+  writePersistedChatThreadState(projectId, { activeSessionIds: [], provisional: true });
+}
+
+/**
+ * bdboard-521p: 仮のエントリの間に利用者が閉じた id を保存エントリに書く(noteClosed / noteReopened から)。
+ * 仮のエントリでないエントリ・エントリが無いプロジェクトには何も書かない。
+ */
+export function writePersistedProvisionalClosed(projectId: string, closedSessionIds: readonly string[]): void {
+  const current = readPersistedChatThreads()[projectId];
+  if (current?.provisional !== true) return;
+  const base = withoutProvisionalFields(current);
+  writePersistedChatThreadState(projectId, closedSessionIds.length === 0
+    ? { ...base, provisional: true }
+    : { ...base, provisional: true, provisionalClosedSessionIds: [...closedSessionIds] });
+}
+
+/**
+ * bdboard-521p: 仮のエントリの印と閉じた id を保存エントリから下ろす(settle から)。開いているスレッド・選択はそのまま。
+ * 印が無い・エントリが無いときは何も書かない。
+ */
+export function clearPersistedProvisionalMark(projectId: string): void {
+  const current = readPersistedChatThreads()[projectId];
+  if (current === undefined || (current.provisional === undefined && current.provisionalClosedSessionIds === undefined)) return;
+  // 通常の書き込みは既存の印を引き継ぐので、下ろすときだけ引き継ぎを切って印の無い値で置く。
+  putPersistedChatThreadState(projectId, withoutProvisionalFields(current), false);
 }
 
 /**

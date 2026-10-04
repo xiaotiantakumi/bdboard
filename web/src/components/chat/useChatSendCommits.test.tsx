@@ -198,6 +198,50 @@ describe('commitSuccess', () => {
       params.provisionalEntries.noteClosed('proj-a', 'sess-other');
       act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
       expect(Array.from(params.provisionalEntries.closedIds('proj-a'))).toEqual(['sess-other']);
+      // bdboard-521p: 保存エントリの閉じた id からも外れる(リロードしても引かれない)。
+      expect(readPersistedChatThreads()['proj-a']?.provisionalClosedSessionIds).toEqual(['sess-other']);
+    });
+
+    it('stores the mark on the first entry it writes, and keeps it on a second send (bdboard-521p)', () => {
+      const { hook } = setup();
+      act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new', provisional: true,
+      });
+      act(() =>
+        hook.result.current.commitSuccess('new:proj-a:1', 'again', { reply: 'AI reply', sessionId: 'sess-two', agentId: 'claude' }),
+      );
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-new', 'sess-two'], selectedSessionId: 'sess-two', provisional: true,
+      });
+    });
+
+    it('stores no mark for a revisit or for a restored project (bdboard-521p)', () => {
+      writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-a'], selectedSessionId: 'sess-a' });
+      const revisit = setup();
+      act(() => revisit.hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-new'], selectedSessionId: 'sess-new',
+      });
+
+      localStorage.clear();
+      const restored = setup();
+      restored.params.restoredProjectsRef.current.add('proj-a');
+      restored.params.openThreadIdsRef.current = { 'proj-a': [] };
+      act(() => restored.hook.result.current.commitSuccess('new:proj-a:1', 'hello', RESULT));
+      expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+    });
+
+    it('marks the first entry written after the first list failed (the failed list left the project restored) (bdboard-521p)', () => {
+      const { hook, params } = setup();
+      // 失敗した E7 は「復元済み」を立てるが、サーバー一覧とは合わせていない(useThreadListSync の catch)。
+      params.restoredProjectsRef.current.add('proj-a');
+      params.openThreadIdsRef.current = { 'proj-a': [] };
+      params.provisionalEntries.noteListUnavailable('proj-a');
+      act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new', provisional: true,
+      });
     });
 
     it('does not mark a revisit: an entry already existed, so it is the user\'s own record', () => {

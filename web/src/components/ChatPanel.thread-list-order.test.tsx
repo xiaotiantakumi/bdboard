@@ -443,7 +443,11 @@ describe('ChatPanel: the provisional first entry is told apart from the user\'s 
     await user.type(screen.getByLabelText('メッセージ'), 'hello from draft');
     await user.click(screen.getByRole('button', { name: '送信' }));
     await screen.findByText('AI reply 1');
-    expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['sess-new'],
+      selectedSessionId: 'sess-new',
+      provisional: true,
+    });
 
     // そのあと turn-status 回収の hydrate が走る(E7 の応答より先)。
     await act(async () => {

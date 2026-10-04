@@ -1,10 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatThreadDto } from './api';
 import {
+  clearPersistedProvisionalMark,
   readPersistedChatThreads,
   resolvePersistedSelectionAfterClose,
   writePersistedChatThread,
   writePersistedChatThreadState,
+  writePersistedProvisionalClosed,
+  writePersistedProvisionalMark,
 } from './chatThreadStorage';
 import { restoreThreadView } from './components/chat/threadViewRestore';
 
@@ -131,5 +134,164 @@ describe('writePersistedChatThread (bdboard-7feq)', () => {
     const liveOpen = ['s1', 's2'];
     writePersistedChatThread('project-a', threadD, liveOpen);
     expect(liveOpen).toEqual(['s1', 's2']);
+  });
+});
+
+describe('provisional entry fields (bdboard-521p)', () => {
+  const KEY = 'bdboard.chat.thread.v2';
+  beforeEach(() => localStorage.clear());
+  afterEach(() => {
+    vi.resetAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  describe('the validator', () => {
+    it('reads an old-format entry (no provisional fields) unchanged: it is the user record', () => {
+      // bdboard-521p 以前に書かれた形のリテラル。フィールドが増えても同じ値で読めること。
+      localStorage.setItem(
+        KEY,
+        '{"project-a":{"activeSessionIds":["s1","s2"],"selectedSessionId":"s2"},"project-b":{"activeSessionIds":[]}}',
+      );
+      const read = readPersistedChatThreads();
+      expect(read).toEqual({
+        'project-a': { activeSessionIds: ['s1', 's2'], selectedSessionId: 's2' },
+        'project-b': { activeSessionIds: [] },
+      });
+      expect(read['project-a']).not.toHaveProperty('provisional');
+      expect(read['project-a']).not.toHaveProperty('provisionalClosedSessionIds');
+    });
+
+    it('accepts provisional: true and the closed ids, and keeps them on read', () => {
+      localStorage.setItem(
+        KEY,
+        '{"project-a":{"activeSessionIds":["s1"],"selectedSessionId":"s1","provisional":true,"provisionalClosedSessionIds":["s0"]}}',
+      );
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['s1'],
+        selectedSessionId: 's1',
+        provisional: true,
+        provisionalClosedSessionIds: ['s0'],
+      });
+    });
+
+    it.each([
+      ['provisional: false', '{"activeSessionIds":["s1"],"provisional":false}'],
+      ['provisional: a string', '{"activeSessionIds":["s1"],"provisional":"yes"}'],
+      ['closed ids that are not an array', '{"activeSessionIds":["s1"],"provisional":true,"provisionalClosedSessionIds":"s0"}'],
+      ['a non-string closed id', '{"activeSessionIds":["s1"],"provisional":true,"provisionalClosedSessionIds":[1]}'],
+      ['an empty closed id', '{"activeSessionIds":["s1"],"provisional":true,"provisionalClosedSessionIds":[""]}'],
+    ])('drops an entry with %s, like any other malformed entry', (_name, entry) => {
+      localStorage.setItem(KEY, `{"project-a":${entry},"project-b":{"activeSessionIds":["ok"]}}`);
+      expect(readPersistedChatThreads()).toEqual({ 'project-b': { activeSessionIds: ['ok'] } });
+    });
+  });
+
+  describe('writePersistedProvisionalMark', () => {
+    it('creates an empty provisional entry when the project has none', () => {
+      writePersistedProvisionalMark('project-a');
+      expect(readPersistedChatThreads()).toEqual({ 'project-a': { activeSessionIds: [], provisional: true } });
+    });
+
+    it('leaves an existing entry alone: it is the user record or already provisional', () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['s1'], selectedSessionId: 's1' });
+      writePersistedProvisionalMark('project-a');
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['s1'], selectedSessionId: 's1' });
+    });
+  });
+
+  describe("carry-over: the writers do not pass the fields, and the existing entry's mark survives their write", () => {
+    beforeEach(() => {
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['s1'], selectedSessionId: 's1', provisional: true, provisionalClosedSessionIds: ['s0'],
+      });
+    });
+    const MARKED = { provisional: true, provisionalClosedSessionIds: ['s0'] };
+
+    it('writePersistedChatThreadState keeps the mark and the closed ids', () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['s1', 's2'], selectedSessionId: 's2' });
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['s1', 's2'], selectedSessionId: 's2', ...MARKED });
+    });
+
+    it('keeps the mark when the write empties the open set', () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: [], selectedSessionId: undefined });
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: [], ...MARKED });
+    });
+
+    it('writePersistedChatThread keeps the mark, with and without liveOpen', () => {
+      writePersistedChatThread('project-a', { sessionId: 's2', agentId: 'claude' });
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['s1', 's2'], selectedSessionId: 's2', ...MARKED });
+      writePersistedChatThread('project-a', { sessionId: 's3', agentId: 'claude' }, ['s1', 's2']);
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['s1', 's2', 's3'], selectedSessionId: 's3', ...MARKED });
+    });
+
+    it('does not put a mark on a plain entry', () => {
+      writePersistedChatThreadState('project-b', { activeSessionIds: ['s1'] });
+      writePersistedChatThreadState('project-b', { activeSessionIds: ['s1', 's2'] });
+      expect(readPersistedChatThreads()['project-b']).toEqual({ activeSessionIds: ['s1', 's2'] });
+    });
+
+    it('clearing the project (undefined) removes the mark with the entry', () => {
+      writePersistedChatThreadState('project-a', undefined);
+      expect(readPersistedChatThreads()['project-a']).toBeUndefined();
+    });
+  });
+
+  describe('writePersistedProvisionalClosed', () => {
+    it('writes the closed ids onto a provisional entry and drops the key when the set is empty', () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['s1'], selectedSessionId: 's1', provisional: true });
+      writePersistedProvisionalClosed('project-a', ['s0', 's9']);
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['s1'], selectedSessionId: 's1', provisional: true, provisionalClosedSessionIds: ['s0', 's9'],
+      });
+      writePersistedProvisionalClosed('project-a', []);
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['s1'], selectedSessionId: 's1', provisional: true });
+      expect(readPersistedChatThreads()['project-a']).not.toHaveProperty('provisionalClosedSessionIds');
+    });
+
+    it('writes nothing for an entry that is not provisional, or for a project with no entry', () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['s1'] });
+      writePersistedProvisionalClosed('project-a', ['s0']);
+      writePersistedProvisionalClosed('project-b', ['s0']);
+      expect(readPersistedChatThreads()).toEqual({ 'project-a': { activeSessionIds: ['s1'] } });
+    });
+  });
+
+  describe('clearPersistedProvisionalMark', () => {
+    it('removes the mark and the closed ids and keeps the open set and the selection', () => {
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['s1', 's2'], selectedSessionId: 's2', provisional: true, provisionalClosedSessionIds: ['s0'],
+      });
+      clearPersistedProvisionalMark('project-a');
+      const entry = readPersistedChatThreads()['project-a'];
+      expect(entry).toEqual({ activeSessionIds: ['s1', 's2'], selectedSessionId: 's2' });
+      expect(entry).not.toHaveProperty('provisional');
+      expect(entry).not.toHaveProperty('provisionalClosedSessionIds');
+      expect(JSON.parse(localStorage.getItem(KEY) ?? '{}')).toEqual({
+        'project-a': { activeSessionIds: ['s1', 's2'], selectedSessionId: 's2' },
+      });
+    });
+
+    it('keeps an empty entry as an entry (it is the explicit empty, not a first visit)', () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: [], provisional: true });
+      clearPersistedProvisionalMark('project-a');
+      expect(readPersistedChatThreads()).toEqual({ 'project-a': { activeSessionIds: [] } });
+    });
+
+    it('does not write when there is nothing to clear', () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['s1'] });
+      const setItem = vi.spyOn(Storage.prototype, 'setItem');
+      clearPersistedProvisionalMark('project-a');
+      clearPersistedProvisionalMark('project-none');
+      expect(setItem).not.toHaveBeenCalled();
+    });
+  });
+
+  it('does not throw when the storage is unavailable (it stays wrapped like the other writers)', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    expect(() => writePersistedProvisionalMark('project-a')).not.toThrow();
+    expect(() => writePersistedProvisionalClosed('project-a', ['s0'])).not.toThrow();
+    expect(() => clearPersistedProvisionalMark('project-a')).not.toThrow();
   });
 });

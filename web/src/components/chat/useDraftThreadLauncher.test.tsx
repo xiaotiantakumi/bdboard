@@ -114,6 +114,13 @@ describe('useDraftThreadLauncher', () => {
     // 切替が書いた空のエントリ([])は、印が下りているので仮のエントリではなく、利用者の明示的な記録。
     expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: [], selectedSessionId: undefined });
     expect(marks.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(false);
+    // bdboard-521p: 保存エントリの印と閉じた id も下りている(リロードしても、切替が書いた空は利用者の記録)。
+    expect(readPersistedChatThreads()['proj-a']).not.toHaveProperty('provisional');
+    expect(readPersistedChatThreads()['proj-a']).not.toHaveProperty('provisionalClosedSessionIds');
+    // ほかのプロジェクトの保存エントリの印と閉じた id には触れない。
+    expect(readPersistedChatThreads()['proj-other']).toEqual({
+      activeSessionIds: [], provisional: true, provisionalClosedSessionIds: ['sess-closed'],
+    });
     // 切替のあとに別経路が非空のエントリを書いても、印は下りているので仮のエントリではない。
     expect(marks.isProvisional('proj-a', { activeSessionIds: ['sess-new'] })).toBe(false);
     expect(marks.closedIds('proj-a').size).toBe(0);

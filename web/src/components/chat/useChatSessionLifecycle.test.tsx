@@ -602,6 +602,9 @@ describe('useChatSessionLifecycle', () => {
       });
       // 回収の復元でマーカーは下りる(永続化は一覧と合わせた記録になった)。
       expect(provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(false);
+      // bdboard-521p: 保存エントリの印も下りている(下りていなければ次の訪問でまた広げる)。
+      expect(readPersistedChatThreads()['project-a']).not.toHaveProperty('provisional');
+      expect(readPersistedChatThreads()['project-a']).not.toHaveProperty('provisionalClosedSessionIds');
       expect(params.restoredProjectsRef.current.has('project-a')).toBe(true);
     });
 
@@ -728,9 +731,11 @@ describe('useChatSessionLifecycle', () => {
       const { result, params } = setup();
       act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
       expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(true);
+      // bdboard-521p: 印は保存エントリにも立つ(リロード・パネルを閉じても残る)。
       expect(readPersistedChatThreads()['project-a']).toEqual({
         activeSessionIds: ['sess-new'],
         selectedSessionId: 'sess-new',
+        provisional: true,
       });
     });
 
@@ -740,6 +745,10 @@ describe('useChatSessionLifecycle', () => {
       params.provisionalEntries.noteClosed('project-a', 'sess-new');
       act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
       expect(params.provisionalEntries.closedIds('project-a').has('sess-new')).toBe(false);
+      // bdboard-521p: 保存エントリの閉じた id からも外れ、印は残る。
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new', provisional: true,
+      });
     });
 
     it('does not mark an adoption on a revisit (an entry already existed)', () => {
@@ -761,7 +770,7 @@ describe('useChatSessionLifecycle', () => {
         openThreadIdsRef: { current: { 'project-a': ['sess-live', 'sess-dead'] } },
       });
       act(() => result.current.handleHistorySessionGone('sess-dead'));
-      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['sess-live'] });
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['sess-live'], provisional: true });
       expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(true);
     });
 
@@ -771,7 +780,7 @@ describe('useChatSessionLifecycle', () => {
         openThreadIdsRef: { current: { 'project-a': ['sess-dead'] } },
       });
       act(() => result.current.handleHistorySessionGone('sess-dead'));
-      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: [] });
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: [], provisional: true });
       expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(true);
     });
 
@@ -807,7 +816,8 @@ describe('useChatSessionLifecycle', () => {
       );
       const unchanged = { 'project-a': 'sess-other' };
       expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, unchanged)).toBe(unchanged);
-      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['sess-live'] });
+      // 未復元で最初のエントリなので仮のエントリ(bdboard-521p: 保存エントリにも印が付く)。
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['sess-live'], provisional: true });
       expect(params.advanceDraftNonceAfterSessionGone).toHaveBeenCalledWith('project-a');
     });
 

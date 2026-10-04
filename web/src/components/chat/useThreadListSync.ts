@@ -323,6 +323,10 @@ export function useThreadListSync({
         // bdboard-rt6i: ただし provisionalEntries は下ろさない。サーバー一覧と合わせていない仮のエントリは
         // 仮のままで、次の訪問の復元が(一覧を取れれば)広げる。
         restoredProjectsRef.current.add(selectedProjectId);
+        // bdboard-521p: 「復元済み」を立てても、サーバー一覧とは合わせていない。このあとの送信・採用が最初の永続化エントリを
+        // 書くなら、それも仮のエントリ(でないと markIfFirstEntry が復元済みと読んで印を立てず、次の訪問で [N] が
+        // 利用者の記録になる)。印はエージェント切替と、一覧と合わせた復元が settle で下ろす。
+        provisionalEntries.noteListUnavailable(selectedProjectId);
         if (consumePendingTicketDraft()) {
           return;
         }
