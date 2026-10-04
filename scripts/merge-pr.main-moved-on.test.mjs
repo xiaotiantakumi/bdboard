@@ -125,10 +125,11 @@ describe.skipIf(process.platform === 'win32')('merge-pr: landed failure after ma
       lacks: ['この上にマージしません'],
     },
     {
+      // R2: pending = どこかの finish が先頭を検証している最中。手で verify を重ねない。
       ledger: 'pending',
       row: status('pending'),
-      has: (tip) => [`台帳: pending`, `BDBOARD_MERGER=chair npm run merge-pr -- verify ${tip}`],
-      lacks: ['この上にマージしません'],
+      has: (tip) => [`先頭 ${short(tip)} の着地後検証は pending です`, '手で verify を重ねないでください', '次の gate の層 3'],
+      lacks: ['この上にマージしません', 'npm run merge-pr -- verify'],
     },
     {
       ledger: 'failure',
@@ -136,7 +137,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr: landed failure after ma
       has: (tip) => [`先頭 ${short(tip)} の着地後検証も failure`, `main ${short(tip)} の着地後検証`, 'この上にマージしません'],
       lacks: ['台帳:'],
     },
-  ])('F1: a moved tip whose ledger is $ledger still takes no old-SHA slot; only the advice differs', ({ row, has, lacks }) => {
+  ])('F1: a moved tip whose ledger is $ledger still takes no old-SHA slot; only the advice differs', ({ ledger, row, has, lacks }) => {
     const landed = failedLandingAfterError();
     const acquires = calls('bd', 'acquire').length;
     const repair = landOnTop(landed, 'fix(demo-2): repair');
@@ -153,6 +154,66 @@ describe.skipIf(process.platform === 'win32')('merge-pr: landed failure after ma
     for (const text of lacks) {
       expect(retried.stderr).not.toContain(text);
     }
+    if (ledger === 'failure') {
+      // R3: 起票 (bd create) の前に、重複の確認 (bd search / bd merge-slot check / gh pr list) を先に言う。
+      const search = retried.stderr.indexOf(`bd search "main 破損: ${short(repair)}" --status open`);
+      expect(search).toBeGreaterThan(-1);
+      expect(retried.stderr).toContain('gh pr list --state open');
+      expect(search).toBeLessThan(retried.stderr.indexOf('bd create --type bug'));
+    }
+    expect(auditText()).toMatch(new RegExp(`\\tfinish-main-moved-on\\tpr=7\\tid=demo-1\\tlanded=${landed}\\ttip=${repair}`)); // R4
+  });
+
+  // R1 (Opus review): 手元の origin/main が stale (fetch が stale lock で ref を動かせない・remote に届かない) でも、それを
+  // 「main が先へ進んだ」と読んではいけない。マージ前の PRED_BASE は着地コミットの祖先であって子孫ではない。
+  function makeLocalOriginMainStale() {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = simulateMerge();
+    git(work, ['update-ref', 'refs/remotes/origin/main', base]); // push が進めた手元の ref を PRED_BASE に戻す
+    return landed;
+  }
+  function expectHeldForLanded(finished, landed) {
+    expect(finished.status).toBe(6);
+    expect(readFake().slot.holder).toBe(`demo-1 / main-broken ${short(landed)}`);
+    expect(finished.stderr).toContain('この上にマージしません');
+    expect(finished.stderr).not.toContain('既に');
+    expect(finished.stderr).not.toContain('main は壊れていません');
+    expect(auditText()).not.toContain('finish-main-moved-on');
+  }
+
+  it('R1: a stale origin/main.lock keeps the local origin/main at PRED_BASE; finish still takes main-broken (the tip is read with ls-remote)', () => {
+    const landed = makeLocalOriginMainStale();
+    const lock = path.join(mainCheckout, '.git', 'refs', 'remotes', 'origin', 'main.lock');
+    writeFileSync(lock, '');
+    const finished = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' });
+    expectHeldForLanded(finished, landed);
+    expect(finished.stderr).toContain('main.lock'); // 手元の origin/main で続けます、の案内
+    expect(existsSync(lock)).toBe(true); // lock は消さない
+    expect(git(work, ['rev-parse', 'origin/main'])).toBe(base); // ref は本当に動いていなかった
+  });
+
+  it('R1: under the stale lock, a tip that really moved on is still seen through ls-remote (moved on, no old-SHA slot)', () => {
+    const landed = makeLocalOriginMainStale();
+    const repair = landOnTop(landed, 'fix(demo-2): repair'); // origin へ push すると手元の ref も repair へ動くので、下で PRED_BASE に戻す
+    green(repair);
+    git(work, ['update-ref', 'refs/remotes/origin/main', base]);
+    writeFileSync(path.join(mainCheckout, '.git', 'refs', 'remotes', 'origin', 'main.lock'), '');
+    const finished = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' });
+    expect(finished.status).toBe(6);
+    expect(calls('bd', 'acquire')).toHaveLength(1); // gate の 1 回だけ
+    expect(readFake().slot.holder).toBeNull();
+    expect(finished.stderr).toContain(`origin/main は既に ${short(repair)} まで進んでいます`);
+    expect(git(work, ['rev-parse', 'origin/main'])).toBe(base); // 手元の ref は lock で動いていない
+  });
+
+  it('R1: when the remote is unreachable too, a stale local tip that is an ancestor of landed is not "moved on" (the descendant check)', () => {
+    const landed = makeLocalOriginMainStale();
+    git(work, ['remote', 'set-url', 'origin', path.join(tmp, 'does-not-exist.git')]); // fetch も ls-remote も届かない
+    const finished = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' });
+    expectHeldForLanded(finished, landed);
+    expect(finished.stderr).toContain('手元の origin/main で続けます');
   });
 
   it('F1 late recovery finish: after the merger crashed and others landed on top, a failing verify of the old SHA takes no slot', () => {

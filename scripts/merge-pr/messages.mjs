@@ -78,7 +78,16 @@ export function mainMovedOnSteps(landed, tip, ledger, repo, context) {
     return [
       ...head,
       `先頭 ${tipShort} の着地後検証も failure です — main は壊れています。先頭に対して次の手順を取ってください。`,
+      `  先に、起票と修復 PR の前に既に誰かが対応していないか確かめる: bd search "main 破損: ${tipShort}" --status open、bd merge-slot check (枠の holder が "… / main-broken ${tipShort}")、gh pr list --state open。していれば重ねて作らない`,
       ...brokenMainSteps(tip, repo, context),
+    ];
+  }
+  if (ledger === 'pending') {
+    return [
+      ...head,
+      `先頭 ${tipShort} の着地後検証は pending です — その finish (または自己修復) がいま検証しているので、手で verify を重ねないでください (verify スロットを余計に 1 つ使います)。`,
+      '  - 次の gate の層 3 が先頭の台帳を読んで待ち、LEASE を過ぎても記録が無ければ自己修復します。',
+      '  - 修復 PR を開くのは、先頭の台帳が failure になったときだけ。',
     ];
   }
   return [

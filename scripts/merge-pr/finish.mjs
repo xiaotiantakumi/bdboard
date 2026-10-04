@@ -12,8 +12,8 @@
 // (light-landed) に残し、failure は S3 のすり抜け (S2 に戻す合図) として知らせる (light-landed.mjs。error の
 // ときも L であることを残し、後の merge-pr verify が同じ扱いをする)。木の突き合わせは F が predicted-tree、
 // L が light-tree (S2 の指標・戻し規則が数える predicted-tree に L を混ぜない)。
-import { git, run, shellQuote } from './exec.mjs';
-import { EXIT, REMOTE, fail, refetchMain } from './context.mjs';
+import { git, gitOk, run, shellQuote } from './exec.mjs';
+import { EXIT, REMOTE, fail, fetchedMain, liveMain, refetchMain } from './context.mjs';
 import { getLandedStatus, getPull } from './github.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { forgetLightFailure, lightLandedState, reportLightLanded } from './light-landed.mjs';
@@ -38,16 +38,23 @@ function holdBrokenMain(ctx, id, sha) {
 }
 
 /**
- * bdboard-89jv: 着地後検証が failure のときの締め。着地コミットがまだ origin/main の先頭なら main-broken の枠を取る (設計 §3.6)。
- * 先頭が先へ進んでいれば取らない — 修復が先に着地した後に古い SHA の枠を取ると、誰も返さないまま全 gate を止める。
+ * bdboard-89jv: 着地後検証が failure のときの締め。「main は先へ進んだ」と言えるのは、先頭が着地コミットの厳密な子孫と
+ * 確かめられたときだけ。そのときは main-broken の枠を取らない — 修復が先に着地した後に古い SHA の枠を取ると、誰も返さないまま
+ * 全 gate を止める。それ以外 (先頭 == 着地コミット・祖先・無関係・読めない) は従来どおり枠を取る (設計 §3.6)。
+ *
+ * 先頭は ls-remote (liveMain) で読む。fetch に使う手元の origin/main は、stale な ref lock が残っていると fetch がオブジェクトは
+ * 落としても ref を動かせず、マージ前の PRED_BASE (着地コミットの祖先) のままになる (bdboard-1syo、finish は allowOffline で続ける)。
+ * それを「先へ進んだ」と読むと、壊れた main に枠を取らず、先頭の台帳 success の案内まで出してしまう。ls-remote は lock の影響を受けない。
+ * refetchMain は祖先判定のためにオブジェクトを手元に落とす目的でも呼ぶ。
  */
-function failedLanding(ctx, id, landed) {
-  const tip = refetchMain(ctx);
-  if (tip === landed) {
+function failedLanding(ctx, pr, id, landed) {
+  refetchMain(ctx);
+  const tip = liveMain(ctx) ?? fetchedMain(ctx);
+  if (tip === landed || !gitOk(['merge-base', '--is-ancestor', landed, tip], { cwd: ctx.cwd })) {
     holdBrokenMain(ctx, id, landed);
     return brokenMainSteps(landed, ctx.repo, ctx.statusContext);
   }
-  audit('finish-main-moved-on', { id, landed, tip });
+  audit('finish-main-moved-on', { pr, id, landed, tip });
   return mainMovedOnSteps(landed, tip, tipLedger(ctx, tip), ctx.repo, ctx.statusContext);
 }
 
@@ -179,7 +186,7 @@ export async function finish(ctx, pr) {
       say(`修復後も failure です。${kept}`);
       fail(EXIT.LANDED_FAILED, ...brokenMainSteps(landed, ctx.repo, ctx.statusContext));
     }
-    fail(EXIT.LANDED_FAILED, ...failedLanding(ctx, state.id, landed));
+    fail(EXIT.LANDED_FAILED, ...failedLanding(ctx, pr, state.id, landed));
   }
   if (state.repair) {
     releaseSlot(ctx.cwd, state.holder);

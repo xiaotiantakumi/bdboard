@@ -29,7 +29,10 @@ export function readSlot(cwd) {
   }
 }
 
-/** sha の main-broken の枠 (`… / main-broken <sha12>`) を今握っている holder。握っていなければ (読めなくても) null。 */
+/**
+ * sha の main-broken の枠 (`… / main-broken <sha12>`) の確認。枠を読めたら { ok: true, holder } (その枠を今握っている holder、
+ * 握っていなければ null)。bd merge-slot check 自体が失敗したら { ok: false, error } (枠の有無は言えない。bdboard-89jv)。
+ */
 export function mainBrokenSlot(cwd, sha) {
   const slot = readSlot(cwd);
   if (!slot.ok) return slot;

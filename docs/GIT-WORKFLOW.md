@@ -383,11 +383,21 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   deterministic regression (including a hang that always times out) fails the retry and is still
   recorded.
 - **`finish` takes `main-broken` only for the tip (bdboard-89jv).** On a landed-verify
-  `failure`, `finish` fetches `origin/main` again and takes `<id> / main-broken <sha12>` only
-  while the landed commit is still the tip. If the tip has moved, it takes no slot, exits 6, and
-  writes a `finish-main-moved-on` audit row. Its advice uses the tip ledger only to choose wording:
-  `success` → main is healthy, no repair PR; `failure` / `error` → follow the broken-main steps for
-  the tip; unconfirmed → run `BDBOARD_MERGER=chair npm run merge-pr -- verify <tip>`. This covers
+  `failure`, `finish` fetches `origin/main` again, reads the tip with `git ls-remote`, and takes
+  `<id> / main-broken <sha12>` unless the tip is **proven a strict descendant** of the landed commit
+  (`git merge-base --is-ancestor`). Only then has main moved on: it takes no slot, exits 6, and
+  writes a `finish-main-moved-on` audit row (with `pr=`). Anything else - the tip is the landed commit,
+  an ancestor or unrelated commit, or unreadable - takes the slot as before. The `ls-remote` read and
+  the descendant check matter because a stale `refs/remotes/origin/main.lock` (bdboard-1syo; `finish`
+  carries on from the local ref) leaves the fetched `origin/main` at the pre-merge PRED_BASE, an
+  *ancestor* of the landed commit, which must not be read as "moved on" (it would skip the slot on a
+  broken main and report the old tip healthy). Its advice uses the tip ledger only to choose wording:
+  `success` → main is healthy, no repair PR; `failure` / `error` → first check that nobody has already
+  filed or opened a repair (`bd search`, `bd merge-slot check`, `gh pr list`), then the broken-main
+  steps for the tip; `pending` → that tip's `finish` (or a self-heal) is verifying it right now, so do
+  not duplicate it with a manual `verify` (it would use a machine verify slot) - the next gate's layer
+  3 waits on it and self-heals after the LEASE; none / unreadable → run
+  `BDBOARD_MERGER=chair npm run merge-pr -- verify <tip>`. This covers
   `finish` error → a manual `verify` or another merger's self-heal finds failure (neither stamps nor
   takes a slot) → repair lands → rerun `finish <N>`, and late recovery `finish` after manually
   releasing a crashed merger's slot.
