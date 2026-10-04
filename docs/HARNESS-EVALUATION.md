@@ -260,6 +260,8 @@ bd-ticket-writer への委譲時に `--deps discovered-from:<親>` を既定に�
 harness ラベルの起票率、重複解消/やり直しチケットの比率、verify 失敗回数。公式が
 `/insights` `/doctor` で促す「測って削る」を bdboard 自身の上で行う入口が無い。
 
+transcript から取れる分 (Bash の 10 分タイムアウト、サブエージェントの稼働時間・トークン、`permissions.deny` の拒否、`bdboard-worker` の続行) は `scripts/harness-eval/transcript-metrics.py` が出す (評価手順 B、bdboard-eydu)。
+
 ---
 
 ## 5. 改善提案 (優先順)
