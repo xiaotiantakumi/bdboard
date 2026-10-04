@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { fetchChatThreads } from '../../api';
-import { readPersistedChatThreads } from '../../chatThreadStorage';
+import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { keepOpenThreadEntries } from './keepOpenThreadEntries';
-import { restoreThreadView } from './threadViewRestore';
+import { isFirstVisitWritten, restoreThreadView, widenOpenToServerList } from './threadViewRestore';
 import type { UseChatConversationsStateResult } from './useChatConversationsState';
 import type { UseChatNotificationsResult } from './useChatNotifications';
 import type { UseChatThreadListsResult } from './useChatThreadLists';
@@ -121,6 +121,12 @@ export function useThreadListSync({
     // 確立していない」状態から始める。in-flight 中に他経路が確立すればこのサイクルの
     // 中で再び立つので、下のガードは元の意図(同一サイクル内のレース)どおりに働く。
     restoredProjectsRef.current.delete(selectedProjectId);
+    // bdboard-0206: この fetch サイクルを始めた時点で、このプロジェクトの永続化エントリが無かった(初回訪問)か。
+    // 応答が届いた時点でエントリが現れていても、開始時に無かったなら、それは fetch の in-flight 中に送信成功・
+    // 採用が書いた最初のエントリで、利用者の開き閉じの記録ではない(chat/threadViewRestore.ts の
+    // isFirstVisitWritten)。永続化を正本として復元すると、サーバー一覧の他のスレッドが開かれない。
+    // 復元に使う永続化そのものは、下のとおり応答が届いた時点で読む。
+    const startedWithoutEntry = readPersistedChatThreads()[selectedProjectId] === undefined;
     // bdboard-4w2d: persisted はここ(effect 開始時)で1回だけ読むのではなく、
     // 下の .then()/.catch() の中で「応答が届いた時点」に読む(fetch の
     // in-flight 中に他経路(useChatSendCommits.ts の送信成功、
@@ -227,13 +233,36 @@ export function useThreadListSync({
         // CLI セッションの採用(handleResumeDiscoveredSession。bdboard-oaak 以降マーカーを
         // 立てる)。pending なチケット起動ドラフトの消化だけは、この応答でしか
         // 担えないので続ける。
+        // bdboard-4w2d: 応答が届いた時点の永続化を読む(効果開始時のスナップショットではない)。
+        const persistedNow = readPersistedChatThreads()[selectedProjectId];
+        // bdboard-0206: 初回訪問で、fetch の in-flight 中に最初の永続化エントリが現れた(isFirstVisitWritten)。
+        const firstVisitWritten = isFirstVisitWritten(startedWithoutEntry, persistedNow);
         if (establishedByOtherPath) {
+          // bdboard-0206: 確立したのが採用なら、open はその 1 件(と永続化の基点)だけで、サーバー一覧の他の
+          // スレッドが開かれない。初回訪問のときだけ、採用が確立した open にサーバー一覧を足し、永続化も揃える
+          // (でないとリロードで閉じられる)。選択は採用が確立したまま触らない。open が分からない(undefined)なら
+          // 足さない。エージェント切替の「空に確定」はエントリの activeSessionIds が空なので当たらず、そのまま残る。
+          if (firstVisitWritten && openIdsNow !== undefined) {
+            const widened = widenOpenToServerList(admitted ?? threads, openIdsNow);
+            setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: widened }));
+            writePersistedChatThreadState(selectedProjectId, {
+              activeSessionIds: widened,
+              selectedSessionId: persistedNow?.selectedSessionId,
+            });
+          }
           consumePendingTicketDraft();
           return;
         }
-        // bdboard-4w2d: 応答が届いた時点の永続化を読む(効果開始時のスナップショットではない)。
-        const { open, selected } = restoreThreadView(admitted ?? threads, readPersistedChatThreads()[selectedProjectId]);
+        const { open, selected } = restoreThreadView(admitted ?? threads, persistedNow, firstVisitWritten);
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: open }));
+        // bdboard-0206: 送信成功が書いた最初のエントリは送信した会話 1 件だけなので、メモリの open に揃える
+        // (でないとリロードでサーバー一覧のスレッドが閉じられる)。選択の永続化は送信が書いたまま。
+        if (firstVisitWritten) {
+          writePersistedChatThreadState(selectedProjectId, {
+            activeSessionIds: open,
+            selectedSessionId: persistedNow?.selectedSessionId,
+          });
+        }
         // bdboard-4w2d: 「このプロジェクトの一覧・open は復元済み」を明示的に立てる。
         // applyRecoveredTurn(chat/useChatSessionLifecycle.ts)はこれを見て、既に
         // 復元済みなら自分では restoreThreadView を呼び直さず、openThreadIds の

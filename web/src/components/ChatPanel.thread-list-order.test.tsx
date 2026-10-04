@@ -312,11 +312,65 @@ describe('ChatPanel: thread-list writers are ordered by fetch start (bdboard-z9m
 
     // 送信した会話は open と一覧に残り、選択も外れない。
     expect(switcherTitle(container)).toHaveTextContent('hello from draft');
-    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toContain('sess-new');
     openThreadDrawer(container);
     const drawer = getThreadDrawer(container);
     expect(within(drawer).getByRole('button', { name: 'hello from draft' })).toBeInTheDocument();
     // 一覧は応答のエントリも取り込む。
     expect(within(drawer).getByRole('button', { name: 'server thread a' })).toBeInTheDocument();
+    // bdboard-0206: open は永続化の [sess-new] だけに潰れず、サーバー一覧 [A,B] と送信した会話の和になる。
+    // 永続化もメモリと揃う(でないとリロードで A/B が黙って閉じられる)。
+    expect(switcherCount(container)).toHaveTextContent('スレッド 3');
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['sess-a', 'sess-b', 'sess-new'],
+      selectedSessionId: 'sess-new',
+    });
+  });
+
+  it('opens the server list together with a session resumed before the first list lands (bdboard-0206)', async () => {
+    const user = userEvent.setup();
+    const firstList = createDeferred<ChatThreadDto[]>();
+    // 1 回目 = E7(保留。採用より前に始まる)、2 回目 = 採用の取り直し(すぐ届く。採用したセッションも含む)。
+    scriptThreadLists([firstList, [thread('sess-a', 'server thread a'), thread('sess-b', 'server thread b'), ADOPTED_1]]);
+
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+    // 永続化エントリの無い初回訪問。初回の一覧が in-flight のまま、CLI セッションを採用する(最初の永続化エントリを書く)。
+    await resumeDiscoveredSession(container, user, 'discovered-1');
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(switcherTitle(container)).toHaveTextContent('resumed title 1'));
+    expect(switcherCount(container)).toHaveTextContent('スレッド 1');
+
+    // 採用より前に始まった初回の一覧(採用したセッションを含まない)が、採用の取り直しより後に届く。
+    await resolveDeferred(firstList, [thread('sess-a', 'server thread a'), thread('sess-b', 'server thread b')]);
+
+    // 採用したタブは選択されたまま (無題) に戻らず、サーバー一覧のスレッドも開く。
+    expect(switcherTitle(container)).toHaveTextContent('resumed title 1');
+    expect(switcherCount(container)).toHaveTextContent('スレッド 3');
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['sess-a', 'sess-b', 'discovered-1'],
+      selectedSessionId: 'discovered-1',
+    });
+  });
+
+  it('opens the server list together with a session resumed when the first list lands before the resume refresh (bdboard-0206)', async () => {
+    const user = userEvent.setup();
+    const firstList = createDeferred<ChatThreadDto[]>();
+    const refresh = createDeferred<ChatThreadDto[]>();
+    scriptThreadLists([firstList, refresh]);
+
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+    await resumeDiscoveredSession(container, user, 'discovered-1');
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(2));
+
+    // 採用の取り直しが届く前に、初回の一覧が届く。
+    await resolveDeferred(firstList, [thread('sess-a', 'server thread a'), thread('sess-b', 'server thread b')]);
+    expect(switcherCount(container)).toHaveTextContent('スレッド 3');
+
+    // そのあと取り直しが届いても、開いたスレッドは減らない。
+    await resolveDeferred(refresh, [thread('sess-a', 'server thread a'), thread('sess-b', 'server thread b'), ADOPTED_1]);
+    expect(switcherTitle(container)).toHaveTextContent('resumed title 1');
+    expect(switcherCount(container)).toHaveTextContent('スレッド 3');
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'discovered-1']);
   });
 });
