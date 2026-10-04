@@ -42,7 +42,25 @@ afterEach(() => {
 
 describe('judgePredictedFailure', () => {
   it('reads a timeouts-only log as load-induced, and a first time when nothing is recorded', () => {
-    expect(judgePredictedFailure(root, PR, HEAD, logWith(TIMEOUTS_ONLY))).toEqual({ loadInduced: true, timeouts: 2, repeated: false });
+    expect(judgePredictedFailure(root, PR, HEAD, logWith(TIMEOUTS_ONLY))).toEqual({ loadInduced: true, timeouts: 2, etimedout: 0, repeated: false });
+  });
+
+  // bdboard-7qhq: 子プロセスの時間切れ (spawnSync ETIMEDOUT) の件数は、時間切れだけの失敗でも、他の失敗が混ざっていても数える。
+  it('counts the spawnSync ETIMEDOUT headlines, also when the failure is not only timeouts', () => {
+    const killed = ' FAIL  a.test.mjs > one\nError: spawnSync /bin/sh ETIMEDOUT\n\n FAIL  b.test.mjs > two\nError: spawnSync git ETIMEDOUT\n\n FAIL  c.test.ts > three\nError: Test timed out in 5000ms.\n';
+    expect(judgePredictedFailure(root, PR, HEAD, logWith(vitestLog(killed, '3 failed | 1 passed (4)')))).toEqual({
+      loadInduced: true,
+      timeouts: 3,
+      etimedout: 2,
+      repeated: false,
+    });
+    const mixed = `${killed}\n FAIL  d.test.ts > four\nAssertionError: expected 1 to be 2\n`;
+    expect(judgePredictedFailure(root, PR, HEAD, logWith(vitestLog(mixed, '4 failed | 1 passed (5)')))).toEqual({
+      loadInduced: false,
+      timeouts: 0,
+      etimedout: 2,
+      repeated: false,
+    });
   });
 
   it('marks it repeated only for the recorded PR head of the same PR', () => {
@@ -55,7 +73,7 @@ describe('judgePredictedFailure', () => {
   it('is never repeated for a failure that is not only timeouts, even with a record, and never writes', () => {
     rememberLoadInduced(root, PR, HEAD);
     const before = readFileSync(recordPath(), 'utf8');
-    expect(judgePredictedFailure(root, PR, HEAD, logWith(ASSERTION))).toEqual({ loadInduced: false, timeouts: 0, repeated: false });
+    expect(judgePredictedFailure(root, PR, HEAD, logWith(ASSERTION))).toEqual({ loadInduced: false, timeouts: 0, etimedout: 0, repeated: false });
     expect(judgePredictedFailure(root, PR, HEAD, path.join(root, 'missing.log'))).toMatchObject({ loadInduced: false, repeated: false });
     expect(readFileSync(recordPath(), 'utf8')).toBe(before);
   });

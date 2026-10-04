@@ -32,11 +32,17 @@ function recordedHead(root, pr) {
 
 /**
  * 落ちた verify のログを読んで判定する。loadInduced = 失敗が全部時間切れの形 (classifyVerifyFailure)、timeouts = その件数、
+ * etimedout = そのうち子プロセスの時間切れ (spawnSync ETIMEDOUT) の件数 (bdboard-7qhq。負荷由来でない失敗が混ざっていても数える)、
  * repeated = この PR head が前にも時間切れだけで落ちている (exit 3 に倒す側)。読むだけで、何も書かない。
  */
 export function judgePredictedFailure(root, pr, head, logPath) {
   const verdict = classifyVerifyFailure(readLogQuietly(logPath));
-  return { loadInduced: verdict.loadInduced, timeouts: verdict.timeouts, repeated: verdict.loadInduced && recordedHead(root, pr) === head };
+  return {
+    loadInduced: verdict.loadInduced,
+    timeouts: verdict.timeouts,
+    etimedout: verdict.etimedout,
+    repeated: verdict.loadInduced && recordedHead(root, pr) === head,
+  };
 }
 
 /**
