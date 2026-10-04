@@ -288,6 +288,73 @@ describe('ChatPanel: the provisional-entry mark is stored, so reload and closing
       });
     });
 
+    it('opens the server list on the next visit when the first list failed with no entry and no send, then a turn-status recovery landed', async () => {
+      // 初回の一覧(E7)が失敗する(エントリは無いまま。「復元済み」は立つが、サーバー一覧とは合わせていない)。
+      // 送信は無い。そのあと turn-status 回収が届く(サーバーの一覧は A/B と回収したセッションを持つ)。
+      scriptThreadLists([new Error('list down'), [SERVER_A, SERVER_B, thread('sess-rec', 'recovered thread')]]);
+      const statusGate = createDeferred<void>();
+      let recoveredAcked = false;
+      acknowledgeChatTurnMock.mockImplementation((_projectId, sessionId) => {
+        if (sessionId === 'sess-rec') recoveredAcked = true;
+        return Promise.resolve();
+      });
+      fetchChatTurnStatusMock.mockImplementation(async () => {
+        await statusGate.promise;
+        return recoveredAcked
+          ? { state: 'idle' }
+          : { state: 'completed', sessionId: 'sess-rec', agentId: 'claude', completedAt: '2026-08-18T12:00:00.000Z' };
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string, init?: RequestInit) => {
+          if (url.startsWith('/api/chat/sessions/sess-rec/messages')) {
+            return Promise.resolve(
+              jsonResponse({
+                sessionId: 'sess-rec',
+                agentId: 'claude',
+                messages: [
+                  { role: 'user', content: 'recovered question', createdAt: '2026-08-18T11:59:00.000Z' },
+                  { role: 'assistant', content: 'recovered reply', createdAt: '2026-08-18T12:00:00.000Z' },
+                ],
+              }),
+            );
+          }
+          return Promise.reject(new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`));
+        }),
+      );
+
+      const first = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+      await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+      await settleEffects();
+      expect(readPersistedChatThreads()['proj-a']).toBeUndefined();
+
+      await act(async () => {
+        statusGate.resolve();
+        await statusGate.promise;
+      });
+      await waitFor(() => expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-rec'));
+      await settleEffects();
+
+      // 回収は「復元済み」を鵜呑みにせず、一覧から復元する: 回収したセッション 1 つだけを利用者の記録として保存しない。
+      expect(switcherCount(first.container)).toHaveTextContent('スレッド 3');
+      // 選択は初回訪問の規則(永続化に選択が無ければ一覧の先頭)のまま。
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-rec'], selectedSessionId: 'sess-a',
+      });
+      expect(localStorage.getItem(KEY)).not.toContain('provisional');
+
+      // 次の訪問: サーバー一覧が開く(保存が [sess-rec] だけなら、ここは 1 件になる)。
+      cleanup();
+      scriptThreadLists([[SERVER_A, SERVER_B, thread('sess-rec', 'recovered thread')]]);
+      fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
+      const next = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+      await waitFor(() => expect(switcherCount(next.container)).toHaveTextContent('スレッド 3'));
+      await settleEffects();
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-rec'], selectedSessionId: 'sess-a',
+      });
+    });
+
     it('does not open the server list over the explicit empty an agent change wrote after a provisional send', async () => {
       const user = userEvent.setup();
       scriptThreadLists([createDeferred<ChatThreadDto[]>()]);

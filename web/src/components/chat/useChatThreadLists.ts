@@ -64,7 +64,9 @@ export interface UseChatThreadListsResult {
    * スレッドの選択/再オープン・選択中スレッドの死亡)が markIfFirstEntry で立て、復元する側(E7 = chat/useThreadListSync.ts、
    * turn-status 回収 = applyRecoveredTurn)が isProvisional で読んで、永続化を正本にせずサーバー一覧を足して開く。
    * 閉じる・削除は印を下ろさず閉じた id を覚え(noteClosed)、エージェント切替と復元は settle で下ろす。
-   * どこにも永続化しない: チャットパネルを閉じる(AppChatOverlay が ChatPanel をアンマウントする)かリロードで消える。
+   * bdboard-521p: 印と閉じた id は保存エントリにも持たせる(chatThreadStorage.ts の provisional / provisionalClosedSessionIds)ので、
+   * チャットパネルを閉じる(AppChatOverlay が ChatPanel をアンマウントする)やリロードを越えて残る。メモリが正で、最初に触れたときに
+   * 保存エントリから読み込む(詳細は chat/provisionalEntry.ts)。永続化しないのは、一覧が取れなかった印(noteListUnavailable)だけ。
    */
   provisionalEntries: ProvisionalEntryMarks;
   /**

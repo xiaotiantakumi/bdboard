@@ -100,7 +100,11 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       // knownOpen が undefined のうちはマーカーだけでは「復元済み」と判定しない
       // 安全弁は変更コストが無いのでそのまま残している。
       const knownOpen = openThreadIdsRef.current[selectedProjectId];
-      const alreadyRestored = restoredProjectsRef.current.has(selectedProjectId) && knownOpen !== undefined;
+      // bdboard-521p: 初回の一覧 fetch が失敗した E7 は restoredProjectsRef を立てるが、サーバー一覧とは合わせていない
+      // (knownOpen は永続化のフォールバック = エントリが無ければ [])。それを「復元済み」と読むと、ここが回収したセッション 1 つだけを
+      // 利用者の記録として保存して settle し、次の訪問ではそれしか開かれない。一覧が取れなかった印のあるプロジェクトは未復元として扱う。
+      const alreadyRestored = restoredProjectsRef.current.has(selectedProjectId) && knownOpen !== undefined &&
+        !provisionalEntries.isListUnavailable(selectedProjectId);
       restoredProjectsRef.current.add(selectedProjectId);
       // bdboard-cemi: チケット起動のドラフト表示中(draftNonces[projectId] > 0 かつ
       // selectedThreadIds[projectId] が未設定。判定式は

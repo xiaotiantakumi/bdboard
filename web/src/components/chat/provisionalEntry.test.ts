@@ -331,6 +331,18 @@ describe('createProvisionalEntryMarks: noteListUnavailable, a list fetch that fa
     expect(marks.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(false);
   });
 
+  it('isListUnavailable reads the same note: set by noteListUnavailable, lowered by settle, per project, memory only', () => {
+    const marks = mount();
+    expect(marks.isListUnavailable('proj-a')).toBe(false);
+    marks.noteListUnavailable('proj-a');
+    expect(marks.isListUnavailable('proj-a')).toBe(true);
+    expect(marks.isListUnavailable('proj-b')).toBe(false);
+    // 別マウント(リロード・パネルを閉じる)では消える: E7 が最初からやり直す。
+    expect(mount().isListUnavailable('proj-a')).toBe(false);
+    marks.settle('proj-a');
+    expect(marks.isListUnavailable('proj-a')).toBe(false);
+  });
+
   it('is lowered by settle: after an agent change or a restore from the list, a first entry is not provisional', () => {
     const marks = mount();
     restored.add('proj-a');

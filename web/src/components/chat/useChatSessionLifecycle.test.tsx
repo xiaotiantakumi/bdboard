@@ -608,6 +608,41 @@ describe('useChatSessionLifecycle', () => {
       expect(params.restoredProjectsRef.current.has('project-a')).toBe(true);
     });
 
+    it('restores from the server list on a recovery when the first list failed with no entry and no send (bdboard-521p)', () => {
+      // E7 が失敗した: 「復元済み」が立ち、open は永続化のフォールバック = エントリが無いので []。サーバー一覧とは合わせていない。
+      const restoredProjectsRef = { current: new Set<string>(['project-a']) };
+      const provisionalEntries = createProvisionalEntryMarks((id) => restoredProjectsRef.current.has(id));
+      provisionalEntries.noteListUnavailable('project-a');
+      const { result, params } = setup({
+        restoredProjectsRef,
+        provisionalEntries,
+        openThreadIdsRef: { current: { 'project-a': [] } },
+      });
+      act(() => result.current.applyRecoveredTurn(SERVER, RECOVERED));
+
+      // 回収したセッション 1 つだけを利用者の記録として保存せず、サーバー一覧で復元する。
+      expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-a', 'sess-b', 'sess-new', 'sess-rec'] });
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-new', 'sess-rec'],
+        selectedSessionId: 'sess-a',
+      });
+      // 一覧と合わせたので、一覧が取れなかった印は下りる。
+      expect(provisionalEntries.isListUnavailable('project-a')).toBe(false);
+    });
+
+    it('keeps a restored project whose list did not fail as restored on a recovery (open is not rebuilt from the list)', () => {
+      const restoredProjectsRef = { current: new Set<string>(['project-a']) };
+      const provisionalEntries = createProvisionalEntryMarks((id) => restoredProjectsRef.current.has(id));
+      const { result, params } = setup({
+        restoredProjectsRef,
+        provisionalEntries,
+        openThreadIdsRef: { current: { 'project-a': ['sess-a'] } },
+      });
+      act(() => result.current.applyRecoveredTurn(SERVER, RECOVERED));
+
+      expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-a', 'sess-rec'] });
+    });
+
     it('still reads a persisted entry as the source of truth on a recovery when no provisional mark is set', () => {
       // 再訪(開始時にエントリがある)や、閉じる・削除で書いた利用者の記録: マーカーは無い。
       writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });

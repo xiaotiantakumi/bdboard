@@ -51,6 +51,9 @@ export function withoutClosed(threads: readonly ChatThreadDto[], closed: Readonl
  *   サーバー一覧とは合わせていない。その後に最初の永続化エントリを書く送信・採用も、未復元と同じく仮のエントリになる
  *   (でないと、一覧が取れなかった訪問で書いた [N] が次の訪問で利用者の記録として読まれ、サーバーのスレッドが開かれない)。
  *   settle で下りる。メモリだけ: restoredProjectsRef 自体がメモリだけで、チャットパネルを閉じれば E7 が最初からやり直す。
+ * - isListUnavailable: 同じ印を読む。turn-status 回収の hydrate(applyRecoveredTurn)は、一覧が取れなかった E7 が立てた
+ *   「復元済み」を復元済みと読まず、未復元として一覧から復元する(でないと、エントリの無いプロジェクトで回収したセッション 1 つだけが
+ *   利用者の記録として保存され、次の訪問ではそれしか開かれない)。
  *
  * bdboard-521p: 印と閉じた id は保存エントリにも持たせる(chatThreadStorage.ts の provisional / provisionalClosedSessionIds)。
  * メモリだけだとリロードやチャットパネルを閉じる(AppChatOverlay が ChatPanel をアンマウントする)で消え、E7 が着地しないまま
@@ -69,6 +72,7 @@ export interface ProvisionalEntryMarks {
   noteReopened(projectId: string, sessionId: string): void;
   closedIds(projectId: string): ReadonlySet<string>;
   noteListUnavailable(projectId: string): void;
+  isListUnavailable(projectId: string): boolean;
   settle(projectId: string): void;
 }
 
@@ -124,6 +128,7 @@ export function createProvisionalEntryMarks(isRestored: (projectId: string) => b
       return closed.get(projectId) ?? NO_CLOSED;
     },
     noteListUnavailable: (projectId) => void listUnavailable.add(projectId),
+    isListUnavailable: (projectId) => listUnavailable.has(projectId),
     settle(projectId) {
       hydrated.add(projectId);
       marked.delete(projectId);
