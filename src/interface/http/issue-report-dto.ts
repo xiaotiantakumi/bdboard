@@ -29,13 +29,18 @@ export interface IssueDraftImageDto {
   readonly createdAt: string;
 }
 
+/** 指紋の頭の「種別の印」。A:<slug> / B:<source>:<hash> / C:<source>:<hash> / mass-occurrence:<kind>:<バケツ>。 */
+const FINGERPRINT_KIND_MARKER = /^(?:[ABC]|mass-occurrence):/;
+
 /**
- * 指紋 ("B:<source>:<hash>" の形) は、種別の印 ("B:") を残して後ろだけ畳む。"B:/Users/…" の "B:" を
- * Windows のドライブ文字として読んでしまわないため (畳むと印ごと消える)。
+ * 指紋は、種別の印 ("B:") があればそれを残して後ろだけ畳み、そのあと全体をもう一度畳む。
+ * 印を残すのは、"B:/Users/…" の "B:" を Windows のドライブ文字として読んで印ごと消さないため。
+ * 全体をもう一度畳むのは、印の形に見える文字列が実はドライブ文字のパス ("C:\Users\u\x:abcd") だった場合のため。
+ * 印が無い指紋 ("/Users/u/x:abcd") は、最初の ":" で切らず全体を畳む。
  */
 function foldFingerprint(fingerprint: string): string {
-  const colon = fingerprint.indexOf(':');
-  return colon < 0 ? foldHomePaths(fingerprint) : fingerprint.slice(0, colon + 1) + foldHomePaths(fingerprint.slice(colon + 1));
+  const marker = FINGERPRINT_KIND_MARKER.exec(fingerprint)?.[0] ?? '';
+  return foldHomePaths(marker + foldHomePaths(fingerprint.slice(marker.length)));
 }
 
 /**

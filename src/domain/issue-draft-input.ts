@@ -24,7 +24,7 @@ export interface ReceiveDraftInput {
  * 対象は source・catalogSlug・版の文字列 (envInfo の各文字列)・プロジェクト名で、題名・本文・指紋・
  * harnessVersionAtOccurrence・トンネル向けの応答に出る欄。指紋・下書きの欄はすべてこの後の値から作るので、
  * 受け取りの最初に 1 回かける (かけ直しても同じ結果)。プロジェクト名はさらに、1 行の検査で弾く文字を
- * 取り除く (表示用の欄なので拒否はしない)。プロジェクトのパス (project.path) は手元限定で、触らない。
+ * 整える (改行・タブなどは空白に替えてから畳み、ほかの不可視の文字は取り除く。表示用の欄なので拒否はしない)。プロジェクトのパス (project.path) は手元限定で、触らない。
  */
 export function canonicalizeReceiveInput(input: ReceiveDraftInput): ReceiveDraftInput {
   return {

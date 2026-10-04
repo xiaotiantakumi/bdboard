@@ -8,6 +8,7 @@ import {
   isDraftId,
 } from '../../domain/issue-draft.js';
 import {
+  hasVisibleText,
   isSingleLineDisplayText,
   isSingleLineText,
   sanitizeProjectName,
@@ -66,7 +67,8 @@ const versionString = singleLine(100);
 
 /**
  * プロジェクト名 (表示用): 絵文字の連結 (👩‍💻-tools) などで 400 にしないよう、弾く文字は取り除いて受け、
- * ホーム配下のパスは "~/" に畳む (sanitizeProjectName)。取り除いた結果が空なら 400。
+ * ホーム配下のパスは "~/" に畳む (sanitizeProjectName)。改行・タブなどパスの区切りにもなる文字は、
+ * 取り除かず空白に替えてから畳む (つなげるとパスが前の語に貼り付いて畳めないため)。結果が空なら 400。
  */
 const projectNameSchema = z
   .string()
@@ -105,11 +107,13 @@ const receiveBodySchema = z.object({
 
 // 一言 (1 行)。貼り付けで混ざるゼロ幅スペースと BOM は落とし、前後の空白も落とす。絵文字の連結 (ZWJ・ZWNJ) は
 // 許す。改行・制御文字・そのほかの不可視の書式文字が途中にあれば 400 (末尾の改行も含めて、整える前の値で見る)。
+// 整えたあとに見える文字が残らない (空白と ZWJ・ZWNJ だけ) ものも 400。
 const dismissBodySchema = z.object({
   reason: z
     .string()
     .transform(stripPasteArtifacts)
     .refine(isSingleLineDisplayText, SINGLE_LINE_MESSAGE)
+    .refine(hasVisibleText, 'must contain visible text')
     .pipe(z.string().trim().min(1).max(ISSUE_DRAFT_DISMISS_REASON_MAX_CHARS)),
 });
 
@@ -140,8 +144,9 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
   const localOnlyGuard = createPrivilegedApiGuardMiddleware({});
 
   app.post(ISSUE_DRAFTS_PATH, localOnlyGuard, limitBody(ISSUE_REPORT_BODY_MAX_BYTES), async (c) => {
-    // 400 の理由 (どの欄が、1 行・不可視の文字・空のどれで落ちたか) を details で返す。入力の値は返さない。
-    const parsed = await parseJsonBody(c, receiveBodySchema, { includeValidationDetails: true });
+    // 400 の本文は固定の文言だけ。理由 (details) は返さない: zod の既定の文言は入力の値をそのまま含む
+    // (z.enum の invalid_enum_value は "received '<値>'") ので、トンネル越しにも値が戻ってしまう。
+    const parsed = await parseJsonBody(c, receiveBodySchema);
     if (!parsed.ok) return parsed.response;
 
     const result = await service.receive(parsed.data);
@@ -179,7 +184,7 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
   app.patch(`${ISSUE_DRAFTS_PATH}/:id/dismiss`, limitBody(DISMISS_BODY_MAX_BYTES), async (c) => {
     const id = c.req.param('id');
     if (!isDraftId(id)) return c.json({ error: 'invalid draft id' }, 400);
-    const parsed = await parseJsonBody(c, dismissBodySchema, { includeValidationDetails: true });
+    const parsed = await parseJsonBody(c, dismissBodySchema);
     if (!parsed.ok) return parsed.response;
 
     const result = await service.dismiss(id, parsed.data.reason);

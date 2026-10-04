@@ -3,6 +3,7 @@ import { computeDraftFingerprint } from './issue-draft.js';
 import {
   canonicalizeIdentifier,
   foldHomePaths,
+  hasVisibleText,
   isSingleLineDisplayText,
   isSingleLineText,
   sanitizeProjectName,
@@ -98,6 +99,15 @@ describe('isSingleLineDisplayText and stripPasteArtifacts (the dismiss reason)',
   });
 });
 
+describe('hasVisibleText', () => {
+  it('is false when only whitespace and joiners are left, true as soon as one visible character is', () => {
+    for (const empty of ['', ' ', '\u200d', '\u200c\u200d', ' \u200d ', '\t\u200c\n']) {
+      expect(hasVisibleText(empty)).toBe(false);
+    }
+    for (const shown of ['a', '👩\u200d💻', ' \u200d.', '\u3000x']) expect(hasVisibleText(shown)).toBe(true);
+  });
+});
+
 describe('stripNonLineText', () => {
   it('removes every character isSingleLineText rejects, newlines included, and keeps the rest', () => {
     expect(stripNonLineText('a\nb\r\nc\u200dd\u202ee\u3164f\u{e0061}g')).toBe('abcdefg');
@@ -152,6 +162,12 @@ describe('foldHomePaths', () => {
     ['{/Users/example-user/x.sh}', '{~/x.sh}'],
     ['(/Users/example-user/x.sh)', '(~/x.sh)'],
     ['PATH=/usr/bin:/Users/example-user/bin:/bin', 'PATH=/usr/bin:~/bin:/bin'],
+    // 名前は区切りで止まる: 一覧の区切りをまたいで、次のパスまで巻き込まない
+    ['/home/example-user:/home/example-user/.local/bin', '~/:~/.local/bin'],
+    ['x=/Users/example-user;y=/Users/example-user/z', 'x=~/;y=~/z'],
+    ['C:\\Users\\example-user;C:\\Users\\example-user\\bin', '~/;~/bin'],
+    ['C:\\Users\\example-user,D:\\Users\\example-other\\x', '~/,~/x'],
+    ['/Users/example-user|/home/example-other/x', '~/|~/x'],
     // \\?\ と file:///C:/ の前置き
     ['\\\\?\\C:\\Users\\example-user\\x.sh', '\\\\?\\~/x.sh'],
     ['file:///C:/Users/example-user/x.sh', 'file:///~/x.sh'],
@@ -186,6 +202,35 @@ describe('foldHomePaths', () => {
     'jq-missing',
   ])('leaves %s alone', (value) => {
     expect(foldHomePaths(value)).toBe(value);
+  });
+
+  // 名前の終わりの記号。どの形の「ホームの根」でも、名前だけを畳んで記号とそのあとは残す。
+  it.each(['`', ':', ';', ',', '|', '<', '>', ')', ']', '}', '=', '"', "'", '\n', '\r', '\r\n'])(
+    'stops a bare home root at %j and keeps what follows',
+    (delimiter) => {
+      for (const root of ['/Users/example-user', 'C:\\Users\\example-user', '\\\\wsl$\\Ubuntu\\home\\example-user']) {
+        expect(foldHomePaths(`${root}${delimiter}rest`)).toBe(`~/${delimiter}rest`);
+      }
+    },
+  );
+
+  it('keeps every other line of a multi-line body when one line holds a raw Windows home root', () => {
+    const lines = Array.from({ length: 11 }, (_, i) => `line${i}`);
+    for (const raw of ['C:\\Users\\example-user', 'C:\\Users\\example-user\\bin', '/Users/example-user']) {
+      for (const eol of ['\n', '\r\n']) {
+        const folded = foldHomePaths(lines.map((line, i) => (i === 5 ? `${line} ${raw}` : line)).join(eol));
+        expect(folded.split(/\r?\n/)).toHaveLength(11);
+        for (const [i, line] of lines.entries()) {
+          if (i !== 5) expect(folded).toContain(line);
+        }
+        expect(folded).not.toContain('example-user');
+      }
+    }
+  });
+
+  it('still reads a Windows user name with a space, and stops at the first delimiter after it', () => {
+    expect(foldHomePaths('C:\\Users\\John Smith\\x')).toBe('~/x');
+    expect(foldHomePaths('C:\\Users\\John Smith;rest')).toBe('~/;rest');
   });
 
   it('is linear on long hostile input', () => {
@@ -225,14 +270,27 @@ describe('sanitizeProjectName', () => {
   it.each([
     ['proj', 'proj'],
     ['  proj  ', 'proj'],
-    ['my\nproj', 'myproj'],
-    ['my\r\nproj\u2028', 'myproj'],
+    // 行の区切りと空白は、取り除かず空白に替える (つなげるとパスが前の語に貼り付く)
+    ['my\nproj', 'my proj'],
+    ['my\r\nproj\u2028', 'my proj'],
+    ['a\t\tb', 'a b'],
+    ['proj\u200b\u200b', 'proj'],
     ['👩\u200d💻-tools', '👩💻-tools'],
     ['葛\u{e0100}-tools', '葛\u{e0100}-tools'],
     ['/Users/example-user/proj', '~/proj'],
-    ['/Users/example-user\n/proj', '~/proj'],
+    ['/Users/example-user\n/proj', '~/ /proj'],
     // 見えない文字でパスの形を崩した値も、取り除いた後の見た目で畳む
     ['/Us\u200bers/example-user/proj', '~/proj'],
+    // パスの手前の区切りになる文字 (タブ・改行・BOM・行区切り) は、前の語にパスを貼り付けない
+    ['proj\t/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\n/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\r/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\v/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\f/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\ufeff/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\u2028/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\u2029/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\t/Us\u200bers/example-user/proj', 'proj ~/proj'],
     ['\u200b\n\u202e', ''],
     ['   ', ''],
   ])('%j -> %j', (input, expected) => {

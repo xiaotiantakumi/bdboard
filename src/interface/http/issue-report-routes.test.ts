@@ -222,14 +222,25 @@ describe('POST /api/issue-reports/drafts — fields that reach the public title 
     },
   );
 
-  it('says why: the 400 names the field and mentions invisible or format characters (never the value)', async () => {
-    const { app } = setup();
-    const res = await app.request(DRAFTS, json({ kind: 'B', source: 'secret-\u200Bvalue.sh' }), LOCAL_ENV);
+  // zod の既定の文言は入力の値をそのまま含む (z.enum の invalid_enum_value は "received '<値>'")。400 の本文に
+  // 理由 (details) を載せると、トンネルの書き込み側にも値が戻る。だから固定の文言だけを返す。
+  it.each([
+    ['a bad kind that looks like a path', { kind: '/Users/example-user/secret-token-abc123' }],
+    ['a bad kind', { kind: 'secret-token-abc123' }],
+    ['a source with an invisible character', { kind: 'B', source: 'secret-token-abc123-\u200Bvalue.sh' }],
+    ['a bad source type', { kind: 'B', source: { secret: 'secret-token-abc123' } }],
+    ['a bad sourceTicketRef', { kind: 'B', source: 's', sourceTicketRef: '/Users/example-user/secret-token-abc123' }],
+    ['a project name that is empty once cleaned', { kind: 'B', source: 's', project: { name: '\u200B', path: '/p' } }],
+    ['an envInfo string with a newline', { kind: 'B', source: 's', envInfo: { os: 'secret-token-abc123\nx' } }],
+  ])('400s %s with the fixed message only: no details, and never the submitted value', async (_label, body) => {
+    const { app, storage } = setup();
+    const res = await app.request(DRAFTS, json(body), LOCAL_ENV);
     expect(res.status).toBe(400);
     const text = await res.text();
-    const payload = JSON.parse(text) as { error: string; details: { fieldErrors: Record<string, string[]> } };
-    expect(payload.details.fieldErrors.source?.[0]).toMatch(/invisible or format characters/);
-    expect(text).not.toContain('secret-');
+    expect(JSON.parse(text)).toEqual({ error: 'invalid request body' });
+    expect(text).not.toContain('secret-token');
+    expect(text).not.toContain('example-user');
+    expect(storage.drafts.size).toBe(0);
   });
 
   it('still 400s an empty or too-long source / catalogSlug', async () => {
@@ -251,12 +262,18 @@ describe('POST /api/issue-reports/drafts — project.name is a display field (cl
   });
 
   it.each([
-    ['a newline', 'proj\n## injected', 'proj## injected'],
-    ['a carriage return and a line separator', 'a\r\nb\u2028c', 'abc'],
+    ['a newline (a space, so the words stay apart)', 'proj\n## injected', 'proj ## injected'],
+    ['a carriage return and a line separator', 'a\r\nb\u2028c', 'a b c'],
     ['a bidi override', 'proj\u202Eevil', 'projevil'],
     ['a BOM and a zero-width space', '\uFEFFproj\u200B', 'proj'],
     ['a Hangul filler', 'pro\u3164j', 'proj'],
     ['surrounding spaces', '  proj  ', 'proj'],
+    // パスの手前の区切りになる文字は、取り除かず空白にしてから畳む: つなげると前の語にパスが貼り付いて畳めない
+    ['a tab before a home path', 'proj\t/Users/example-user/proj', 'proj ~/proj'],
+    ['a newline before a home path', 'proj\n/Users/example-user/proj', 'proj ~/proj'],
+    ['a BOM before a home path', 'proj\uFEFF/Users/example-user/proj', 'proj ~/proj'],
+    ['a line separator before a Windows home path', 'proj\u2028C:\\Users\\example-user\\proj', 'proj ~/proj'],
+    ['a tab and a zero-width space inside the path word', 'proj\t/Us\u200Bers/example-user/proj', 'proj ~/proj'],
   ])('strips %s from the name instead of rejecting it', async (_label, name, expected) => {
     const { app, storage } = setup();
     const res = await app.request(DRAFTS, json(withProject(name)), LOCAL_ENV);
@@ -264,6 +281,7 @@ describe('POST /api/issue-reports/drafts — project.name is a display field (cl
     const stored = [...storage.drafts.values()][0].occurredProjects[0].name;
     expect(stored).toBe(expected);
     expect(stored).not.toContain('\n');
+    expect(stored).not.toContain('example-user');
   });
 
   it.each([
@@ -275,8 +293,7 @@ describe('POST /api/issue-reports/drafts — project.name is a display field (cl
     const { app, storage } = setup();
     const res = await app.request(DRAFTS, json(withProject(name)), LOCAL_ENV);
     expect(res.status).toBe(400);
-    const payload = (await res.json()) as { details: { fieldErrors: Record<string, string[]> } };
-    expect(JSON.stringify(payload.details)).toContain('must not be empty');
+    expect(await res.json()).toEqual({ error: 'invalid request body' });
     expect(storage.drafts.size).toBe(0);
   });
 
@@ -681,6 +698,36 @@ describe('GET /api/issue-reports/drafts and /:id — screen API', () => {
       expect(draft.harnessVersionAtOccurrence).toBe('~/harness');
     });
 
+    // 指紋の頭の印 (A: B: C: mass-occurrence:) は残して後ろを畳む。印の形に見えるドライブ文字のパスや、
+    // 印の無い指紋は、最初の ":" で切らず全体を畳む。ローカルの一覧でも畳む (一覧・受け取り・見送りの応答は全員同じ)。
+    it.each([
+      ['a B fingerprint keeps its marker', 'B:/Users/example-user/x.sh:abcd', 'B:~/x.sh:abcd'],
+      ['a C fingerprint keeps its marker', 'C:/Users/example-user/x.sh:abcd', 'C:~/x.sh:abcd'],
+      ['a marker-like text later in the string is not a marker', '/Users/example-user/proj-C:abcd', '~/proj-C:abcd'],
+      ['an A fingerprint keeps its marker', 'A:/Users/example-user/slug', 'A:~/slug'],
+      ['a Windows path that looks like a marker is folded as a whole', 'C:\\Users\\example-user\\x:abcd', '~/x:abcd'],
+      ['a fingerprint with no marker is folded as a whole', '/Users/example-user/x:abcd', '~/x:abcd'],
+      ['a drive letter that is not a marker is folded as a whole', 'D:/Users/example-user/x:abcd', '~/x:abcd'],
+      ['a marker followed by a Windows path', 'B:C:\\Users\\example-user\\x:abcd', 'B:~/x:abcd'],
+      ['a mass-occurrence fingerprint is left as it is', 'mass-occurrence:B:2026-10-04T12', 'mass-occurrence:B:2026-10-04T12'],
+      ['an A fingerprint with a plain slug is left as it is', 'A:jq-missing', 'A:jq-missing'],
+    ])('folds the fingerprint in the list and the tunnel detail: %s', async (_label, fingerprint, expected) => {
+      const { app, storage } = setup();
+      storage.drafts.set(RAW_ID, { ...rawDraft, fingerprint });
+      const tunnelList = (await (await app.request(DRAFTS, { headers: { ...CF_HEADERS } }, TUNNEL_ENV)).json()) as {
+        drafts: Array<{ fingerprint: string }>;
+      };
+      const localList = (await (await app.request(DRAFTS, localGet(), LOCAL_ENV)).json()) as {
+        drafts: Array<{ fingerprint: string }>;
+      };
+      const tunnelDetail = (await (await app.request(`${DRAFTS}/${RAW_ID}`, { headers: { ...CF_HEADERS } }, TUNNEL_ENV)).json()) as {
+        draft: { fingerprint: string };
+      };
+      expect(tunnelList.drafts[0].fingerprint).toBe(expected);
+      expect(localList.drafts[0].fingerprint).toBe(expected);
+      expect(tunnelDetail.draft.fingerprint).toBe(expected);
+    });
+
     it('is not rewritten for the local reader (the stored value is shown as it is) and is not changed in the store', async () => {
       const { app, storage } = setup();
       storage.drafts.set(RAW_ID, rawDraft);
@@ -771,8 +818,35 @@ describe('PATCH /api/issue-reports/drafts/:id/dismiss', () => {
       expect(res.status, JSON.stringify(reason)).toBe(400);
     }
     const detail = await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason: 'a\u202Eb' }), LOCAL_ENV);
-    expect(JSON.stringify(await detail.json())).toContain('invisible or format characters');
+    expect(await detail.json()).toEqual({ error: 'invalid request body' });
     expect(storage.drafts.get(id)?.status).toBe('pending');
+  });
+
+  it('400s a reason with nothing visible left: only joiners / non-joiners and whitespace (after dropping the pasted zero-width characters)', async () => {
+    const { app, storage } = setup();
+    const { id } = await createDraft(app);
+    for (const reason of ['\u200D', '\u200C', '\u200C\u200D', ' \u200D ', '\u200D\u200B\u200D', '\uFEFF\u200D', '\u3000\u200D']) {
+      const res = await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason }), LOCAL_ENV);
+      expect(res.status, JSON.stringify(reason)).toBe(400);
+    }
+    expect(storage.drafts.get(id)?.status).toBe('pending');
+    expect(storage.drafts.get(id)?.dismissReason).toBeUndefined();
+    // 見える文字が一つでもあれば通る (絵文字の連結もそのまま)
+    const ok = await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason: '\u200D\u{1F469}\u200D\u{1F4BB}' }), LOCAL_ENV);
+    expect(ok.status).toBe(200);
+  });
+
+  it('does not echo the submitted reason in a 400', async () => {
+    const { app } = setup();
+    const { id } = await createDraft(app);
+    for (const body of [{ reason: 'secret-token-abc123\n/Users/example-user/x' }, { reason: 42 }, { reason: { secret: 'secret-token-abc123' } }]) {
+      const res = await app.request(`${DRAFTS}/${id}/dismiss`, patchJson(body), LOCAL_ENV);
+      expect(res.status).toBe(400);
+      const text = await res.text();
+      expect(JSON.parse(text)).toEqual({ error: 'invalid request body' });
+      expect(text).not.toContain('secret-token');
+      expect(text).not.toContain('example-user');
+    }
   });
 
   it('follows the ordinary write-guard: a tunnel is refused by default, allowed with a strong-password session', async () => {

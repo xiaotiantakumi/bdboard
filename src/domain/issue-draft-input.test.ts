@@ -37,9 +37,13 @@ describe('canonicalizeReceiveInput', () => {
     expect(out.errorText).toBe(RAW.errorText);
   });
 
-  it('cleans project.name of invisible characters and newlines first, then folds', () => {
-    expect(canonicalizeReceiveInput({ kind: 'B', source: 's', project: { name: '/Us​ers/example-user\n/proj', path: '/p' } }).project?.name).toBe('~/proj');
-    expect(canonicalizeReceiveInput({ kind: 'B', source: 's', project: { name: ' my\nproj‮ ', path: '/p' } }).project?.name).toBe('myproj');
+  it('cleans project.name: line breaks and tabs become spaces, invisible characters go, then home paths fold', () => {
+    const nameOf = (name: string) => canonicalizeReceiveInput({ kind: 'B', source: 's', project: { name, path: '/p' } }).project?.name;
+    expect(nameOf('/Us​ers/example-user\n/proj')).toBe('~/ /proj');
+    expect(nameOf(' my\nproj‮ ')).toBe('my proj');
+    // タブ・改行・BOM はパスの手前の区切りなので、取り除かず空白にして、前の語にパスを貼り付けない
+    expect(nameOf('proj\t/Users/example-user/proj')).toBe('proj ~/proj');
+    expect(nameOf('proj﻿/Users/example-user/proj')).toBe('proj ~/proj');
   });
 
   it('does not add fields that were absent, does not mutate the input, and is idempotent', () => {

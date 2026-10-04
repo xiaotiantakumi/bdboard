@@ -56,20 +56,28 @@ export function stripNonLineText(value: string): string {
 
 /** 直前が、行頭・空白・区切り記号・"file://"・"\\?\" のどれか (パスの先頭として読める位置)。 */
 const PATH_START = /(?<=^|[\s'"`=:(,;|<>[{]|file:\/\/\/?|\\\\\?\\)/;
-/** 末尾の区切りの連なり、または名前がそこで終わる (空白・引用符・文字列の終わりの手前)。 */
-const PATH_END = /(?:[\\/]+|(?=[\s'"]|$))/;
+/**
+ * 名前が止まる文字は、区切り (/ \)・空白・引用符のほか、リストの区切りと括りの閉じ (` : ; , | < > ) [ ] { } =)。
+ * 名前の欄はこれらを含まないので、"/home/u:/home/u/bin" や "x=/Users/u;y=/Users/u/z" は名前ごとに畳まれ、
+ * 区切りの先の文字は残る。次の PATH_END は、名前の後ろが区切りの連なりか、これらの止まる文字か、文字列の終わりであることを求める。
+ */
+const PATH_END = /(?:[\\/]+|(?=[\s'"`:;,|<>)[\]{}=]|$))/;
 
-/** Windows: C:\Users\<名前>、C:/Users/<名前>。大文字小文字は区別しない。名前には空白を許す (John Smith)。 */
-const WINDOWS_HOME = /[A-Za-z]:[\\/]+[Uu][Ss][Ee][Rr][Ss][\\/]+[^\\/'"]+/;
+/**
+ * Windows: C:\Users\<名前>、C:/Users/<名前>。大文字小文字は区別しない。名前には半角スペースだけ許す
+ * (John Smith)。改行・タブなどの空白は名前に入れないので、複数行の本文でも次の行を巻き込まない。
+ */
+const WINDOWS_HOME = /[A-Za-z]:[\\/]+[Uu][Ss][Ee][Rr][Ss][\\/]+(?:[^\\/\s'"`:;,|<>)[\]{}=]| )+/;
 /** WSL から Windows 側を見たパス: \\wsl$\<distro>\home\<名前>、\\wsl.localhost\<distro>\home\<名前>。 */
-const WSL_UNC_HOME = /\\\\wsl(?:\$|\.localhost)[\\/]+[^\\/\s'"]+[\\/]+home[\\/]+[^\\/\s'"]+/;
+const WSL_UNC_HOME =
+  /\\\\wsl(?:\$|\.localhost)[\\/]+[^\\/\s'"]+[\\/]+home[\\/]+[^\\/\s'"`:;,|<>)[\]{}=]+/;
 /**
  * POSIX: /Users/<名前> (macOS。マウント先と大文字小文字違いも)、/home/<名前> (Linux)。
  * 前に付く形: /mnt/c (WSL)、/c (Git Bash)、/cygdrive/c、/System/Volumes/Data、/Volumes/<ディスク名>
  * (macOS)、/var と /usr (/var/home・/usr/home)。macOS は大文字小文字を区別しないので /users/ も畳む。
  */
 const POSIX_HOME =
-  /(?:\/(?:mnt\/|cygdrive\/)?[A-Za-z](?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/System\/Volumes\/Data(?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/Volumes\/[^/'"]+(?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/(?:var|usr)(?=\/home\/))?\/(?:[Uu][Ss][Ee][Rr][Ss]|home)[\\/]+[^\\/\s'"]+/;
+  /(?:\/(?:mnt\/|cygdrive\/)?[A-Za-z](?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/System\/Volumes\/Data(?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/Volumes\/(?:[^/\s'"]| )+(?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/(?:var|usr)(?=\/home\/))?\/(?:[Uu][Ss][Ee][Rr][Ss]|home)[\\/]+[^\\/\s'"`:;,|<>)[\]{}=]+/;
 
 const HOME_PATH_PATTERN = new RegExp(
   `${PATH_START.source}(?:${WINDOWS_HOME.source}|${WSL_UNC_HOME.source}|${POSIX_HOME.source})${PATH_END.source}`,
@@ -86,8 +94,10 @@ const HOME_PATH_PATTERN = new RegExp(
  *   \\wsl$\<distro>\home\<名前>、\\wsl.localhost\<distro>\home\<名前>
  * パスとして読むのは、直前が行頭・空白・' " ` = : ( , ; | < > [ {・"file://"・"\\?\" のときだけ。
  * だから "GET /api/home/x" や "POST /api/Users/42" のように途中に現れるものは触らない
- * (行頭や空白の直後の "/Users/42" と "/home/x" は畳む)。Windows の名前は空白を含みうるので、
- * 区切りか引用符か文字列の終わりまで名前として読む: "bash C:\Users\u --flag" は "bash ~/" になる
+ * (行頭や空白の直後の "/Users/42" と "/home/x" は畳む)。名前は、区切り (/ \)・空白・引用符・
+ * ` : ; , | < > ) [ ] { } = のどれかか文字列の終わりで終わる (PATH 風の "/home/u:/home/u/bin" や
+ * "x=/Users/u;y=/Users/u/z" は名前ごとに畳み、区切りの先は残す)。Windows の名前だけは半角スペースを含みうるので、
+ * 上の止まる文字か行の終わりまで名前として読む: "bash C:\Users\u --flag" は "bash ~/" になる
  * (引数を残すより、ユーザー名を残さないことを優先する)。"/Users/Shared"・"C:\Users\Public"・
  * "/home/linuxbrew" のような共有の場所も同じ形なので畳まれる。パス以外の秘密 (引数のトークンなど) と、
  * "~name/" の形は見つけない。
@@ -111,12 +121,23 @@ export function canonicalizeIdentifier(value: string): string {
   return foldHomePaths(value.trim());
 }
 
+/** パスの先頭の境界としても読める、1 行の検査で弾く文字 (改行・タブ・行区切り・BOM など)。取り除くと前の語に繋がるので空白にする。 */
+const BOUNDARY_LIKE_DISALLOWED = /[\p{Cc}\p{Zl}\p{Zp}\uFEFF]/gu;
+
 /**
- * プロジェクト名 (表示用) の整形: 1 行の検査で弾く文字を取り除き (改行も消えるので結果は 1 行)、
- * ホーム配下のパスを畳み、前後の空白を落とす。取り除いてから畳むのは、"/Us<ゼロ幅>ers/name" の
- * ように見えない文字でパスの形を崩した値が、表示の上では /Users/name になってしまうのを防ぐため。
- * 拒否はしない (空になったら呼び出し側が 400 にする)。
+ * プロジェクト名 (表示用) の整形。拒否はしない (空になったら呼び出し側が 400 にする)。
+ *   1. 改行・タブ・そのほかの制御文字・行区切り・BOM は空白に置き換える。取り除くと前の語に繋がり、
+ *      "proj<TAB>/Users/u/proj" の "/Users/u/proj" が行頭でも空白の直後でもなくなって畳まれない。
+ *   2. 1 行の検査で弾くそれ以外の文字 (ゼロ幅・双方向制御など) は取り除く。
+ *   3. ホーム配下のパスを畳む。2 の後なので、"/Us<ゼロ幅>ers/name" のように見えない文字で形を崩した値も畳まれる。
+ *   4. 空白の連なりを 1 つにし、前後を落とす。
  */
 export function sanitizeProjectName(value: string): string {
-  return foldHomePaths(stripNonLineText(value)).trim();
+  const spaced = value.replace(BOUNDARY_LIKE_DISALLOWED, ' ');
+  return foldHomePaths(stripNonLineText(spaced)).replace(/ {2,}/g, ' ').trim();
+}
+
+/** 空白と ZWJ・ZWNJ を除いて、目に見える文字が 1 つでも残るか。見送りの理由が空に見える値でないことの確認に使う。 */
+export function hasVisibleText(value: string): boolean {
+  return value.replace(/[\s\u200C\u200D]/g, '').length > 0;
 }
