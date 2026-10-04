@@ -23,7 +23,8 @@
 //   走り出すときに holder file へ acquiredAt を書く (書き込みは一時ファイル + rename で原子的に)。
 // - bdboard-xdk8: landed (着地後検証) は pr (PR 前の手元 verify) と同時に走らない (merge とは枠を分け合い、
 //   止まった先頭を飛ばせるのも merge だけ)。負荷で着地後検証が偽の failure を出し、main-broken の枠で全マージが
-//   止まったため。規則と根拠は verify-slot-queue.mjs の EXCLUDED_BESIDE。この規則で止まっている待ちは、相手が
+//   止まったため。規則と根拠は verify-slot-queue.mjs の EXCLUDED_BESIDE。landed の待ちと、空き枠があるのに
+//   この規則で止められている待ち手 (空き枠が無くて待つだけの待ち手は含まない) は、相手が
 //   stale になるまで打ち切りを延ばす (verify-slot-wait.mjs の slotWaitLimitMs。明示した
 //   BDBOARD_VERIFY_SLOT_WAIT_MS が優先)。走っている landed を待つ側の表示は「正常、kill しない」にする (旧表示の
 //   「hung verify?」は kill を誘っていた)。merge-pr が着地後検証を 1 回だけ再実行するときの隙間は予約 holder で
@@ -70,7 +71,9 @@ export const DEFAULT_SLOT_OPTIONS = Object.freeze({
 // リーダー (verify:steps → vitest のワーカー) に渡す env からこれを外す: 受け継ぐと、テストの中で起こす verify.mjs や
 // スロットのスクリプトが外側の landed の優先度・並んだ時刻・予約を名乗ってしまう (landed の待ちの延長で、
 // スロット待ちの打ち切りのテストが 32 分待って落ちた。PR #855 のレビュー)。
-export const SLOT_IDENTITY_ENV = Object.freeze(['BDBOARD_VERIFY_PRIORITY', 'BDBOARD_VERIFY_QUEUE_SINCE', 'BDBOARD_VERIFY_SLOT_HANDOFF']);
+// bdboard-wea0.1: BDBOARD_WORKTREE_HELD_BY (merge-pr が自分の契約 verify に「この worktree の lock の持ち主は私」と渡す。
+// verify-worktree-claim.mjs) も同じ扱い: テストの中の verify.mjs が受け継ぐと、merge-pr 所有の worktree で通ってしまう。
+export const SLOT_IDENTITY_ENV = Object.freeze(['BDBOARD_VERIFY_PRIORITY', 'BDBOARD_VERIFY_QUEUE_SINCE', 'BDBOARD_VERIFY_SLOT_HANDOFF', 'BDBOARD_WORKTREE_HELD_BY']);
 
 export function withoutSlotIdentity(env = process.env) {
   const copy = { ...env };
@@ -266,13 +269,14 @@ export function isHandoffPath(handoffPath, dir, selfPath) {
 }
 
 // 予約を消し、その pid を返す (自分の順番の計算から外す)。既に無い (ENOENT) のは正常。消せないときは黙らずに書く:
-// 予約は merge-pr が再実行の後で消すまで残り、その間ほかの待ち手からは landed の待ち手に見える。
+// 予約は merge-pr が消すまで残り (再実行の holder が見えた時点か、遅くとも再実行が戻るとき。merge-pr/reservation-watch.mjs)、
+// その間ほかの待ち手からは landed の待ち手に見える。
 function releaseHandoff(handoffPath, options, log) {
   try {
     (options.io || fs).unlinkSync(handoffPath);
   } catch (error) {
     if (error.code !== 'ENOENT') {
-      log(`verify: warning: could not remove the landed retry reservation ${handoffPath} (${error.code || error.message}); going on without waiting behind it — merge-pr removes it when the retry ends`);
+      log(`verify: warning: could not remove the landed retry reservation ${handoffPath} (${error.code || error.message}); going on without waiting behind it — merge-pr removes it as soon as it sees this holder, and at the latest when the retry ends`);
     }
   }
   return Number(/^holder-(\d+)\.json$/.exec(path.basename(handoffPath))[1]);

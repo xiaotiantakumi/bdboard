@@ -401,7 +401,7 @@ fi
 
 if [ -n "$DO_VERIFY" ]; then
   printf '== npm run verify (in %s)\n' "$MAIN"
-  (cd "$MAIN" && npm run verify) || { vrc=$?; audit "$CURRENT_PIDS" '' 'verify-failed'; die 2 "main checkout の npm run verify が通りませんでした (exit ${vrc}。75 は verify スロット待ちのタイムアウトで verify 自体が走っていない — 赤ではないので、スロットが空いてから再実行。それ以外は赤)。サーバーは触っていません (旧プロセスのまま)。"; }
+  (cd "$MAIN" && npm run verify) || { vrc=$?; audit "$CURRENT_PIDS" '' 'verify-failed'; die 2 "main checkout の npm run verify が通りませんでした (exit ${vrc}。75 は verify 自体が走っていない — verify スロット待ちのタイムアウトか worktree lock の共有待ちの打ち切りで、赤ではないので、空いてから再実行。それ以外は赤)。サーバーは触っていません (旧プロセスのまま)。"; }
 fi
 
 # deploy: 再起動が必要な範囲 (deploy-changed.sh の DEPLOY_RESTART_PATHSPEC) に変更がなければ

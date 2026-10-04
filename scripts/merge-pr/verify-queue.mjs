@@ -74,7 +74,7 @@ export function liveMainAsync(cwd, remote, branch, { signal, timeoutMs = 60_000 
   });
 }
 
-function pollMs() {
+export function pollMs() {
   const raw = Number(process.env.BDBOARD_MERGE_POLL_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
 }

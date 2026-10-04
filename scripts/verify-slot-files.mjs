@@ -12,7 +12,7 @@ import { HOLDER_FORMAT } from './verify-slot-queue.mjs';
 // 中身がパースできないファイルだけに使う。読み取り自体が失敗したファイルには使わない (下の readOthers)。
 const CORRUPT_GRACE_MS = 5_000;
 
-const HOLDER_NAME = /^holder-(\d+)\.json$/;
+export const HOLDER_NAME = /^holder-(\d+)\.json$/; // merge-pr/reservation-watch.mjs も holder の名前の判定に使う
 // writeHolderAtomically の一時ファイル (holder-<pid>.json.<書いた pid>.tmp)。HOLDER_NAME には一致しない。
 const HOLDER_TEMPORARY_NAME = /^holder-\d+\.json\.(\d+)\.tmp$/;
 const GONE = 'gone';
@@ -86,6 +86,13 @@ function isOlderThan(io, filePath, ms, now) {
 // 一瞬だけ)。代わりの holder は旧形式の待ち手の barrier (verify-slot-queue.mjs) にはならない: 旧スクリプトは
 // holder を一度 'wx' で書くだけで rename しないので、旧形式が読めなくなるのはウイルス対策ソフトの
 // ロックなどの稀な場合に限られ、そのときも数としては「走っている」側に倒している。
+// bdboard-e8jj: 読めない holder は中身が分からないので priority を持たず、normalizePriority で pr として扱う。これが
+// 効くのは、Windows で相手が holder を書き換えている最中 (置き換えの rename と競合した読み取りの失敗) の一過性だけで、
+// その 1 周の間、landed の待ち手は相手を pr とみなして待つことがある (相手が本当は merge でも待つ向きの誤り)。逆に
+// pr の待ち手は、読めない landed を pr とみなして同居の規則を 1 周だけ見落としうる (枠の数は数えるので上限は超えない)。
+// 次の周に読めれば本当の priority で判定し直すが、その 1 周の間に pr が枠を取ると、その結果は 1 周では終わらない:
+// その pr は走り終わるまで landed と並んで走る (規則は始める時にだけ見て、走り出した後の相手は追い出さない)。
+// 起きるのは、稀な一過性が landed の置き換えと pr の判定の周に重なったときだけ。
 function unreadableHolder(io, filePath, pid, now, unreadableSince) {
   if (!unreadableSince.has(filePath)) {
     unreadableSince.set(filePath, now);

@@ -289,8 +289,9 @@ What this means operationally:
   before propagating, and any verify that reads the slot directory reclaims a
   temporary file whose writer pid (the second one) is dead (a SIGKILL between write and
   rename); one whose writer is alive is left alone (bdboard-l3dh). If
-  the set of running holders does not change for 15 min (32 min in the
-  landed/pr cases under "Wait limits under this rule" below), the waiter exits
+  the set of running holders does not change for 15 min (32 min for a `landed`
+  waiter or a waiter with a blocked free slot, see "Wait limits under this
+  rule" below), the waiter exits
   **75** (`EX_TEMPFAIL`, `SLOT_WAIT_TIMEOUT_EXIT_CODE` in
   `scripts/verify-slot.mjs`) naming those pids — investigate them (hung
   verify?) rather than disabling the slot. (The timeout counts time without
@@ -298,17 +299,21 @@ What this means operationally:
   wait longer than 15 min while the queue keeps moving.)
 - **Exit 75 means "no verify ran", not "verify failed" (bdboard-wj9m).** A
   verify that failed exits non-zero as before (mostly 1); 75 is reserved for
-  the slot wait timing out, so a caller that records verdicts can tell the two
-  apart. `merge-pr`'s landed verify treats 75 as "could not run" (exit 1,
-  retry once the slot is free) and posts nothing but `pending` — before this,
+  "verify gave up before running anything" — the slot wait timing out, or
+  (bdboard-wea0.1) the worktree-lock share wait giving up (see "Worktree lock"
+  below; verify's own stderr line says which) — so a caller that records
+  verdicts can tell the two apart. `merge-pr`'s landed verify treats 75 as
+  "could not run" (exit 1, retry once the slot or the worktree is free) and
+  posts nothing but `pending` — before this,
   the timeout exited 1, was recorded as `failure` on
   `bdboard/landed-verify`, and a healthy main looked broken (and could be held
   by `holdBrokenMain`). To keep the value unambiguous, `scripts/verify.mjs`
   maps a verify *step* that happens to exit 75 (e.g. `depcruise`, which exits
   with its violation count) to 1. Callers that only test "non-zero" still
   stop on it: CI fails the job, and `scripts/always-on-server.sh --verify`
-  leaves the server alone (exit 2) and prints the exit code, saying 75 is
-  the slot timeout rather than a red verify. `merge-pr` reads 75 from
+  leaves the server alone (exit 2) and prints the exit code, saying 75 means
+  verify did not run (slot or worktree-lock wait) rather than a red verify.
+  `merge-pr` reads 75 from
   whatever command the contract's `verify` is, so a contract that replaces
   `npm run verify` must not exit 75 for a failed check (it would be reported
   as "could not run", not recorded as `failure`).
@@ -440,12 +445,19 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
 - **Wait limits under this rule.** A `landed` waiter waits for a `pr` run to
   leave, and a `pr` waiter held up by a `landed` run or by a retry reservation
   (below) waits for that landed verify. A run slowed by load can take longer
-  than 15 min, so for `landed` and for any waiter held up by this rule the
+  than 15 min, so for `landed` and for a waiter with a blocked free slot the
   no-progress limit is `max(15 min, stale limit + 2 min)` = 32 min
   (`slotWaitLimitMs` in `scripts/verify-slot-wait.mjs`). By then the other run,
-  if it still holds the slot, has gone stale and stopped counting. Waiters
-  that only wait for a free slot keep 15 min and end with exit 75 as before.
-  An explicit `BDBOARD_VERIFY_SLOT_WAIT_MS` wins and is never extended. When
+  if it still holds the slot, has gone stale and stopped counting. "A waiter
+  with a blocked free slot" means a slot is free but this rule keeps the
+  waiter (or the blocked head it waits behind) off it (`plan.blocked` from
+  `pickStarters`). A `pr` waiter with no free slot at all, for example while
+  a `landed` and a `merge` verify fill both slots, is not blocked in that
+  sense: it only waits for a slot, keeps 15 min and ends with exit 75 as
+  before. That leaves a `pr` waiting behind a `landed` + `merge` pair at the
+  short limit even though the `landed` is the cause; the message still names
+  the running `landed` and calls it normal. An explicit
+  `BDBOARD_VERIFY_SLOT_WAIT_MS` wins and is never extended. When
   a `pr` waiter times out while a `landed` verify is running, or behind a
   retry reservation, the message says so and calls it normal: do not kill it
   (or merge-pr), retry after the landed verify finishes. It does not show the
@@ -477,10 +489,26 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   32 min limit above. The re-run still never runs beside it.
   merge-pr deletes the reservation on every path that does not re-run, and on
   exit. One left by a SIGKILL is reaped like any holder whose pid is dead. If
-  the re-run cannot delete it, the re-run logs a warning and goes on without
-  waiting behind it, and merge-pr deletes it when the re-run ends. The
+  the re-run cannot delete it (EPERM or the like, a Windows-style transient),
+  the re-run logs a warning and goes on without waiting behind it, and merge-pr
+  deletes it itself: as soon as it sees the re-run's holder (`retry: true`,
+  same `since`; merge-pr looks about every `BDBOARD_MERGE_POLL_MS`, 30 s by
+  default), and in any case, in a `finally`, when the re-run returns. The
   variable is internal: only another `holder-<pid>.json` in the same slot
   directory is ever deleted, never the verify's own holder.
+  Residual cost of a failed delete (bdboard-e8jj): until merge-pr removes it,
+  the reservation is still a waiting `landed` holder that never runs but takes
+  the second slot in other waiters' plans, so a `merge` or `pr` waiter usually
+  cannot take that slot. Normally that is at most one poll interval after the
+  re-run's holder appears, not the whole re-run. merge-pr's own delete can hit
+  the same transient, so it tries again on every poll until the file is gone;
+  if it keeps failing, the reservation stays until the re-run returns, where
+  the `finally` is the last attempt (the bound of the watch). If merge-pr
+  itself is stuck while alive (its pid does not die, so nothing reaps the file), the
+  reservation stays until it counts as stale 30 min after it was written
+  (`staleTtlMs` from its `joinedAt`). A `merge` waiter held up that way has
+  no free slot to be "blocked" on, keeps the 15 min limit, and can exit 75
+  before the reservation goes stale.
 - **Holder format.** New holders carry `v: 2`, `priority`, `queuedAt`, an
   optional `since`, and `acquiredAt` once running, and are written atomically
   (temp file + rename). A file that fails to parse is deleted only after 5 s (an
@@ -513,6 +541,70 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   | not adopted (bdboard-xdk8, first draft): ulxa.6 + `landed` runs alone (`after`) | 28.4 | 1.2 | 2.3 / 15 | 43 / 263 | 27.8 | 2 |
 
   "Abandon" is on the merge-pr side: see docs/GIT-WORKFLOW.md, S2.
+
+## Worktree lock (bdboard-wea0)
+
+The verify slot limits machine load; it knows nothing about worktrees. The **worktree lock**
+says "a verify is using this checked-out tree", so that an operation that switches the tree
+(merge-pr's detached checkout and branch restore — wired in by bdboard-wea0.2) cannot run
+under a live verify. It is a kernel `flock(2)` on `$(git rev-parse --absolute-git-dir)/bdboard-worktree.lock`
+(`.git/worktrees/<name>/` for a linked worktree): the kernel releases it when the last holder
+dies, so no PID, start time or age is ever guessed. Design and measurements: `bd show bdboard-wea0`.
+
+- **What `npm run verify` does** (`scripts/verify-worktree-claim.mjs`, lock object in
+  `scripts/worktree-lock.mjs`): before the slot wait, it takes the lock **shared** and keeps it
+  for its whole life, so a queued verify already claims the tree. On a free tree it holds the lock
+  exclusively only long enough to write its owner line (`by: "npm run verify"`), then downgrades.
+  The descriptor is handed to the group leader as fd 3 (only the leader holds it; the steps under
+  it do not), so if the outer `verify.mjs` is SIGKILLed the lock stays held until the leader
+  exits. Two manual verifies in one worktree share it.
+- **Waiting to share.** If someone holds the lock exclusively and is *not* a merge-pr — normally
+  another verify between writing its owner line and downgrading — verify re-reads the owner and
+  retries for up to **30 s**, then gives up with exit **75** ("did not run", the same reserved
+  code as the slot-wait timeout; merge-pr does not read it as a test failure). While it waits it
+  prints `verify: waiting to share the worktree lock (… waited Ns of 30s) — not a hang` about 2 s
+  in and every 10 s after, like the slot wait. The give-up line says "something has held the
+  worktree lock exclusively"; the owner line it quotes is the *last* one written and may be stale
+  (the holder may not have written yet), so `lsof -t <lockfile>` on the next line is what names
+  the holder.
+- **Refusal (comes with bdboard-wea0.2).** merge-pr does not take the lock yet; once wea0.2 lands
+  it will write the advisory owner line `{by: "merge-pr …", pid, phase, sha, cwd, at}` while it
+  holds the tree. When such a line is present and its `phase` is not `done`, a manual verify exits
+  **1** at once — without waiting — and prints the owner, one sentence on why merge-pr's tree
+  must not be shared (only for such an active merge-pr line) and `lsof -t <lockfile>`, the
+  inference-free way to see who holds it now. The owner is re-read after every acquisition, so a
+  merge-pr that takes the tree between the read and verify's shared lock is still refused.
+  merge-pr's own contract verify will pass `BDBOARD_WORKTREE_HELD_BY=<merge-pr pid>` and share;
+  that variable is already in `SLOT_IDENTITY_ENV`, so the steps (and the tests that spawn
+  `verify.mjs`) never inherit it.
+- **Stale merge-pr line.** The owner line is only overwritten by the next exclusive holder. A
+  merge-pr that crashed (wea0.2, before it wrote `phase: done`) leaves a line that refuses
+  verifies while some other verify keeps the tree shared; once nobody holds the lock, the next
+  verify takes it exclusively and overwrites the line. Check with `lsof -t <lockfile>`.
+- **Never delete the lock file.** The content is only advice; the flock is the truth. Deleting the
+  file lets a second exclusive holder lock a new inode (the lock object re-checks `dev`+`ino`
+  after every acquisition, but do not rely on it). A stale file on disk is harmless. If the owner
+  line cannot be written, verify prints one stderr line and continues (the lock is still held).
+- **Helper.** Node cannot call `flock`, so a one-line `perl` (fallback `python3`) locks the
+  descriptor Node holds. `BDBOARD_FLOCK_HELPER='["/abs/helper", "arg"]'` (JSON argv prefix)
+  replaces both. Contract: the helper gets the descriptor as fd 3 and the `flock` op number as
+  its last argument (`LOCK_SH`=1, `LOCK_EX`=2, `LOCK_NB`=4, `LOCK_UN`=8), and exits **0** =
+  locked, **1** = busy (`EWOULDBLOCK`), anything else = error. A helper that runs longer than
+  10 s is killed and counts as an error.
+- **Runs unlocked, with one stderr line** (`verify: worktree lock: <cause> — running WITHOUT the
+  worktree lock …`), when there is no working helper, outside a git worktree, when a helper call
+  errors (on the first exclusive try, the downgrade or while waiting), when a second descriptor
+  is not blocked after the lock is taken (a filesystem that does not keep `flock` locks, such as
+  some NFS setups), or on any unexpected error while claiming — the lock must never block CI or
+  another developer. The only other lines on a run that goes ahead are the owner-line write
+  failure above and, when another holder slips in between verify's exclusive lock and its
+  downgrade, `the EX->SH conversion was refused (busy): another holder took the lock in the gap`
+  (verify then re-reads the owner and shares or waits as above). Closing the lock when the
+  leader exits never changes verify's exit code.
+- **Emergency hatch: `BDBOARD_WORKTREE_LOCK=off`.** Runs verify without the lock and warns on
+  every use. While it is set, nothing stops a merge-pr from switching the tree under the run.
+- **Windows:** no-op (no `flock`); verify spawns nothing for it (design §5). Protection there
+  stays "none", as it was before the lock.
 
 ## vitest worker RPC タイムアウトの既知 flake 判別 (撤去済み)
 
