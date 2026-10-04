@@ -104,6 +104,8 @@ function postQuietly(ctx, sha, state, description) {
  * SIGINT/SIGTERM を受けると detach したまま何もできず終わってしまうため)。retryHint は
  * 中断時の案内 (見送り分 3) に使う「次にやり直すコマンド」の文字列。
  *
+ * bdboard-ulxa.3: command は回す検証コマンド (既定は契約の verify。S3 のクラス L は merge.lightCheck を渡す)。
+ *
  * bdboard-ulxa.6: priority / queueSince は verify スロットの並び順 (verify-queue.mjs)。既定の
  * 'landed' は着地後検証 (finish・gate の自己修復・手動 verify)。abandonWhen を渡すと verify の
  * 間それを定期的に聞き、true になったら子を終了して result 'abandoned' を返す (台帳には書かない。
@@ -116,7 +118,12 @@ function postQuietly(ctx, sha, state, description) {
  * ブランチを戻すおそれがあった)。中断時の後始末は interrupt.mjs の onCleanup/settle が
  * プロセスグループが実際に空になったことを確認してから一元的に行い、最後に process.exit する。
  */
-export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, retryHint, priority = 'landed', queueSince, abandonWhen, onSpawn } = {}) {
+export async function runLandedVerify(
+  ctx,
+  sha,
+  by,
+  { ledger = true, logName, retryHint, priority = 'landed', queueSince, abandonWhen, onSpawn, command = ctx.config.verify } = {},
+) {
   const root = ctx.cwd;
   const label = ledger ? '着地後検証' : '着地予定ツリーの verify';
   if (!isLinkedWorktree(root)) {
@@ -184,7 +191,7 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, re
         installedAny = true;
       };
       const queue = { priority, queueSince, abandonWhen };
-      result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild, queue, onSpawn });
+      result = await installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, onSpawn });
     }
   } finally {
     // activeChild.interrupted の間は installAndVerify がここへ戻ってこない (待つだけで
@@ -201,7 +208,7 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, re
   return { result, logPath };
 }
 
-async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild, queue, onSpawn }) {
+async function installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, onSpawn }) {
   const installedFor = readInstalledFor(root) ?? originalHead;
   for (const lock of LOCKFILES) {
     if (lockfileChanged(root, installedFor, sha, lock.file)) {
@@ -220,12 +227,12 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
   if (ledger && !postQuietly(ctx, sha, 'pending', running)) {
     return 'error';
   }
-  say(`${ctx.config.verify} を ${sha.slice(0, 8)} で実行します (ログ: ${logPath})`);
+  say(`${command} を ${sha.slice(0, 8)} で実行します (ログ: ${logPath})`);
   const fd = openSync(logPath, 'w');
   const stopWatch = watchForAbandon({ activeChild, abandonWhen: queue.abandonWhen });
   let code;
   try {
-    code = await runShellToLog(ctx.config.verify, {
+    code = await runShellToLog(command, {
       cwd: root,
       logFd: fd,
       env: verifyEnv(queue),

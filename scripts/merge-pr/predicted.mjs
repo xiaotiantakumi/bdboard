@@ -78,9 +78,8 @@ export async function verifyPredicted(ctx, pr, id, { predBase, head, tree }, { k
   const command = spec.command(ctx);
   const commit = predictedCommit(ctx, pr, { predBase, head, tree });
   const startedAt = Date.now();
-  // runLandedVerify は ctx.config.verify を回すので、軽量チェックは verify だけを差し替えた ctx で呼ぶ。
-  const runCtx = { ...ctx, config: { ...ctx.config, verify: command } };
-  const verified = await runLandedVerify(runCtx, commit, `${id} ${spec.by}`, {
+  const verified = await runLandedVerify(ctx, commit, `${id} ${spec.by}`, {
+    command,
     ledger: false,
     logName: `${spec.logPrefix}-pr${pr}-${tree.slice(0, 12)}.log`,
     retryHint: `npm run merge-pr -- prepare ${pr}`,

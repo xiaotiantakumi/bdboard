@@ -9,7 +9,8 @@
 //        (merge-tree) を作って verify し、テキスト衝突 / hot file (hotFiles) のときだけ rebase
 //   S3 = S2 + main 側の変更と自分の変更が重ならず、どちらも hot file に触れていない PR (クラス L) は
 //        着地予定ツリーで軽量チェック (lightCheck: build + lint + check:boundaries) だけを回す
-//        (bdboard-ulxa.3)。着地後検証 (finish) はフル verify のまま
+//        (bdboard-ulxa.3)。着地後検証 (finish) はフル verify のまま。軽量チェックが中身を見ない
+//        ファイル (lightBlindFiles、既定 scripts/**) に両側が当たる PR は L にしない (hot-files.mjs)
 //
 // 知らないモードは受け付けない (exit 1)。main の契約がこのスクリプトより新しい段階を指している
 // = このブランチの merge-pr が古いので、推測で近い段階に読み替えず止める (安全側)。S3 より前に切った
@@ -23,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { run } from './exec.mjs';
-import { DEFAULT_HOT_FILES, globToRegExp } from './hot-files.mjs';
+import { DEFAULT_HOT_FILES, DEFAULT_LIGHT_BLIND_FILES, globToRegExp } from './hot-files.mjs';
 
 export const CONTRACT_RELATIVE_PATH = '.claude/bdboard-harness.json';
 export const MERGE_MODES = ['S0', 'S1', 'S2', 'S3'];
@@ -44,6 +45,7 @@ export const MERGE_DEFAULTS = Object.freeze({
   statusContext: 'bdboard/landed-verify',
   hotFiles: DEFAULT_HOT_FILES,
   lightCheck: DEFAULT_LIGHT_CHECK,
+  lightBlindFiles: DEFAULT_LIGHT_BLIND_FILES,
 });
 
 function validHotFiles(value) {
@@ -110,11 +112,13 @@ export function parseMergeConfig(contract) {
     }
     config.statusContext = merge.statusContext;
   }
-  if (merge.hotFiles !== undefined) {
-    if (!validHotFiles(merge.hotFiles)) {
-      return { ok: false, message: 'merge.hotFiles はグロブ文字列の配列です (scripts/merge-pr/hot-files.mjs の文法)' };
+  for (const key of ['hotFiles', 'lightBlindFiles']) {
+    if (merge[key] !== undefined) {
+      if (!validHotFiles(merge[key])) {
+        return { ok: false, message: `merge.${key} はグロブ文字列の配列です (scripts/merge-pr/hot-files.mjs の文法)` };
+      }
+      config[key] = [...merge[key]];
     }
-    config.hotFiles = [...merge.hotFiles];
   }
   if (merge.lightCheck !== undefined) {
     if (typeof merge.lightCheck !== 'string' || merge.lightCheck.trim() === '') {

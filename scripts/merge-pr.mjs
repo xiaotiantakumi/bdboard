@@ -16,7 +16,14 @@ import { main } from './merge-pr/cli.mjs';
 
 export { decideS2Class, decideS3Class, readMergeTree } from './merge-pr/classify.mjs';
 export { bodyReferencesIssue, issueNumberFromExternalRef, stripCodeSpans } from './merge-pr/external-ref.mjs';
-export { DEFAULT_HOT_FILES, globToRegExp, hotCollisions, hotTouched } from './merge-pr/hot-files.mjs';
+export {
+  DEFAULT_HOT_FILES,
+  DEFAULT_LIGHT_BLIND_FILES,
+  globToRegExp,
+  hotCollisions,
+  hotTouched,
+  MERGE_PROCEDURE_FILES,
+} from './merge-pr/hot-files.mjs';
 export { evaluateLandedStatus } from './merge-pr/landed.mjs';
 export { DEFAULT_LIGHT_CHECK, parseGitHubSlug, parseMergeConfig } from './merge-pr/config.mjs';
 export { recordProblem } from './merge-pr/record.mjs';

@@ -18,7 +18,7 @@ export function classifyForMode(ctx, pull, predBase, head, { dryRun }) {
     // GitHub が衝突と判定している (ort と GitHub の判定が食い違う)。gh pr merge が 405 で落ちるので R。
     s2 = { ...s2, class: 'R', reason: 'GitHub が PR を mergeable=false と判定しています' };
   }
-  const s3 = s2 === null ? null : decideS3Class(s2, ctx.config.hotFiles);
+  const s3 = s2 === null ? null : decideS3Class(s2, ctx.config.hotFiles, ctx.config.lightBlindFiles);
   if (mode === 'S3') {
     return { cls: s3.class, s2, s3 };
   }

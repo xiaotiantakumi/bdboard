@@ -480,10 +480,25 @@ main's changes and the PR's never touch the same file. Under S3, `prepare` split
 | Class | When | What `prepare` does |
 |---|---|---|
 | N / R | as in S2 | as in S2 (file overlap does not decide R either) |
-| F | S2's F **and** (main's changes and yours share a file, or either side touches a `merge.hotFiles` file — one side is enough) | as in S2: the full `verify` on the predicted tree |
-| L | S2's F, no shared file, no hot file on either side | builds the same predicted commit and runs only `merge.lightCheck` (default `npm run verify -- --light` = `verify:light`: check:file-size, lint:verify, build, build:web, check:boundaries — no tests) on it, in the same slot queue (priority `merge`) with the same abandon-on-main-move. Green → records PRED_BASE and the light result; red → exit 3, like a failed predicted verify |
+| F | S2's F **and** (main's changes and yours share a file, or either side touches a `merge.hotFiles` file or the merge procedure itself — one side is enough — or **both** sides touch `merge.lightBlindFiles`, default `scripts/**`) | as in S2: the full `verify` on the predicted tree |
+| L | S2's F, no shared file, no hot file and no merge-procedure file on either side, and not both sides in `merge.lightBlindFiles` | builds the same predicted commit and runs only `merge.lightCheck` (default `npm run verify -- --light` = `verify:light`: check:file-size, lint:verify, build, build:web, check:boundaries — no tests) on it, in the same slot queue (priority `merge`) with the same abandon-on-main-move. Green → records PRED_BASE and the light result; red → exit 3, like a failed predicted verify |
 
 File overlap still never decides whether to merge without a rebase; it only picks full (F) or light (L).
+
+- **What the light check cannot see (`merge.lightBlindFiles`, PR #854 review).** The light check
+  inspects nothing in `scripts/`: tsc's projects include only `src/`, `vitest.config.ts` and
+  `test/e2e`, depcruise only `src` and `web`, and the ESLint pass over `scripts/**/*.mjs` is untyped
+  with no import-resolution rule — importing a missing export or module there exits 0 (measured).
+  If main renames an export in `scripts/process-identity.mjs` while a PR imports the old name from a
+  new `scripts/merge-pr/*.mjs`, an L merge lands a broken main, and every agent that pulls it gets a
+  `merge-pr` that dies on start — including the one that has to merge the repair. So a PR is F when
+  **both** sides touch the same `merge.lightBlindFiles` pattern (default `["scripts/**"]`; a contract
+  value replaces the list). It is a separate key from `merge.hotFiles` on purpose: a hot file also
+  makes S2 rebase (R), which these files do not need. One side only stays L — the other side does
+  not change those scripts, and the side that does has its own CI and the full landed verify. The
+  merge procedure itself (`scripts/merge-pr/**`, `scripts/merge-pr.mjs`, `scripts/check-drift/**`,
+  `scripts/check-drift.mjs`; `MERGE_PROCEDURE_FILES` in `scripts/merge-pr/hot-files.mjs`, not in the
+  contract) is F even when only one side touches it.
 
 - **The light result is never a verify result.** Class L records `lightTree` / `lightCommit` /
   `lightCheck` / `lightCheckedAt` / `lightCheckSecs` (class F keeps `predictedTree` /
@@ -496,12 +511,27 @@ File overlap still never decides whether to merge without a rebase; it only pick
   → `prepare` again.
 - **The landed verify stays the full `npm run verify`.** `finish` runs it on what lands exactly as in
   S1/S2, so what the light check cannot see (tests, e2e excepted as always) is still caught and
-  recorded in the ledger. `finish` also compares the landed tree with `lightTree`
-  (`predicted-tree … class=L`) and audits `light-landed … result=success|failure`.
+  recorded in the ledger. `finish` also compares the landed tree with `lightTree` and audits it as
+  `light-tree … match=true|false|unknown` — a separate event from F's `predicted-tree`, so S2's
+  measurements and its rollback rule keep counting class F only (a `light-tree … match=false` means
+  the same thing, GitHub's merge and git's disagree, and is reported the same way) — and audits the
+  landed verify as `light-landed … result=success|failure|error by=finish|manual|self-heal`. One
+  landed SHA can get several `light-landed` lines (an `error` and then a re-verify); count the last
+  `success` / `failure` per `new=`.
+- **An L whose landed verify could not run stays L.** If `finish`'s landed verify ends in `error`
+  (a verify-slot timeout, a failed `npm ci`, …), `finish` prints the slip rule, audits
+  `light-landed … result=error` and keeps its record (`class: "L"`, `newMain` = the landed SHA) in
+  `<git common dir>/bdboard-merge/` as it always does on `error`. The later `merge-pr verify <sha>`,
+  or the next merger's `gate` self-healing that SHA as its PRED_BASE, finds the record by the landed
+  SHA and treats a `failure` as the slip, exactly like `finish`.
 - **A slip sends us back to S2.** A class-L merge whose landed verify fails is a slip of the light
-  check (`light-landed … result=failure`; `finish` says "S3 のすり抜け"). It is handled as a broken main
-  (below: `finish` holds the slot as `main-broken`, P0 bug, fix-forward or revert), **and** one slip is
-  enough to roll back (design §6 decision 7): a one-line PR setting `merge.mode` back to `"S2"`.
+  check (`light-landed … result=failure`; `finish` / `verify` / `gate` say "S3 のすり抜け"). First rule
+  out a known flake (bdboard-241s, …) or a load-induced failure (a parallel verify timing out) in the
+  log: then main is not broken and it is not a slip — `merge-pr verify <sha>` again. Otherwise it is
+  handled as a broken main (below: `finish` holds the slot as `main-broken`, P0 bug, fix-forward or
+  revert), **and** one slip is enough to roll back (design §6 decision 7): the repair PR also carries
+  the one-line change setting `merge.mode` back to `"S2"` (so no other L lands while the light check is
+  known to miss something; the contract is a hot file, so the repair PR itself is never L).
   Rollback needs nothing else — under S2 no PR is classified L, and a class-L record still waiting for
   `gate` is sent back to `prepare` (exit 75), where it becomes F and gets the full verify. A PR already
   gated finishes normally.

@@ -10,9 +10,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_HOT_FILES,
+  DEFAULT_LIGHT_BLIND_FILES,
   DEFAULT_LIGHT_CHECK,
   decideS3Class,
   hotTouched,
+  MERGE_PROCEDURE_FILES,
   parseMergeConfig,
   recordProblem,
 } from './merge-pr.mjs';
@@ -58,6 +60,21 @@ describe('merge-pr S3 pure helpers (bdboard-ulxa.3)', () => {
     expect(unknown.message).toContain('git merge origin/main');
   });
 
+  it('parseMergeConfig: lightBlindFiles defaults to scripts/** and is a separate key from hotFiles', () => {
+    const parsed = parseMergeConfig({ ...contract, merge: { mode: 'S3' } }).config;
+    expect(parsed.lightBlindFiles).toEqual(['scripts/**']);
+    expect(DEFAULT_LIGHT_BLIND_FILES).toEqual(['scripts/**']);
+    expect(parsed.hotFiles).not.toContain('scripts/**'); // S2 の R を増やさない
+    expect(parseMergeConfig({ ...contract, merge: { lightBlindFiles: ['tools/**'] } }).config).toMatchObject({
+      lightBlindFiles: ['tools/**'],
+      hotFiles: DEFAULT_HOT_FILES,
+    });
+    expect(parseMergeConfig({ ...contract, merge: { lightBlindFiles: 'scripts/**' } }).ok).toBe(false);
+    const bad = parseMergeConfig({ ...contract, merge: { lightBlindFiles: ['{a,b'] } });
+    expect(bad.ok).toBe(false);
+    expect(bad.message).toContain('merge.lightBlindFiles');
+  });
+
   it("this repo's contract switches S2 <-> S3 by the mode line alone (rollback is one line)", () => {
     const own = JSON.parse(readFileSync(path.join(REPO_ROOT, '.claude', 'bdboard-harness.json'), 'utf8'));
     const as = (mode) => parseMergeConfig({ ...own, merge: { ...own.merge, mode } });
@@ -88,6 +105,38 @@ describe('merge-pr S3 pure helpers (bdboard-ulxa.3)', () => {
     expect(decideS3Class(r, DEFAULT_HOT_FILES)).toBe(r);
     const n = { class: 'N', reason: 'main 不動', overlap: [], mainFiles: [] };
     expect(decideS3Class(n, DEFAULT_HOT_FILES)).toBe(n);
+  });
+
+  it('decideS3Class: scripts/** on both sides is F (the light check sees no types or imports there); on one side it stays L', () => {
+    const tree = 'b'.repeat(40);
+    const f = { class: 'F', reason: '衝突なし・hot file なし', tree, mainFiles: ['src/a.ts'], mineFiles: ['src/b.ts'], overlap: [] };
+    // PR #854 レビューの例: main が scripts/process-identity.mjs の export を改名、こちらが別の scripts/*.mjs で旧名を import。
+    const both = decideS3Class({ ...f, mainFiles: ['scripts/process-identity.mjs'], mineFiles: ['scripts/new-tool.mjs'] }, DEFAULT_HOT_FILES);
+    expect(both.class).toBe('F');
+    expect(both.reason).toContain('scripts/** を両側が変更 (軽量チェックは型・import を見ない');
+    expect(both.reason).toContain('main scripts/process-identity.mjs / 自分 scripts/new-tool.mjs');
+    // 既定の引数 (lightBlindFiles 省略) と明示の既定値は同じ。
+    expect(decideS3Class({ ...f, mainFiles: ['scripts/x.mjs'], mineFiles: ['scripts/y.test.mjs'] }, DEFAULT_HOT_FILES, DEFAULT_LIGHT_BLIND_FILES).class).toBe('F');
+    expect(decideS3Class({ ...f, mainFiles: ['scripts/x.mjs'] }, DEFAULT_HOT_FILES).class).toBe('L'); // main 側だけ
+    expect(decideS3Class({ ...f, mineFiles: ['scripts/y.mjs'] }, DEFAULT_HOT_FILES).class).toBe('L'); // 自分の側だけ
+    // 契約で置き換えた lightBlindFiles が効く (空なら両側 scripts/** でも L)。
+    expect(decideS3Class({ ...f, mainFiles: ['scripts/x.mjs'], mineFiles: ['scripts/y.mjs'] }, DEFAULT_HOT_FILES, []).class).toBe('L');
+    expect(decideS3Class({ ...f, mainFiles: ['tools/a.mjs'], mineFiles: ['tools/b.mjs'] }, DEFAULT_HOT_FILES, ['tools/**']).class).toBe('F');
+  });
+
+  it('decideS3Class: the merge procedure itself (merge-pr / check-drift) on either side is F, whatever lightBlindFiles says', () => {
+    const tree = 'b'.repeat(40);
+    const f = { class: 'F', reason: '衝突なし・hot file なし', tree, mainFiles: ['src/a.ts'], mineFiles: ['src/b.ts'], overlap: [] };
+    expect(MERGE_PROCEDURE_FILES).toEqual(['scripts/merge-pr/**', 'scripts/merge-pr.mjs', 'scripts/check-drift/**', 'scripts/check-drift.mjs']);
+    for (const file of ['scripts/merge-pr/finish.mjs', 'scripts/merge-pr.mjs', 'scripts/check-drift/git.mjs', 'scripts/check-drift.mjs']) {
+      for (const side of ['mainFiles', 'mineFiles']) {
+        const decided = decideS3Class({ ...f, [side]: [file] }, DEFAULT_HOT_FILES, []);
+        expect(decided.class, `${side}: ${file}`).toBe('F');
+        expect(decided.reason).toContain(`マージ手順自身 (merge-pr / check-drift) に触れている (フル verify): ${file}`);
+      }
+    }
+    // 似た名前でも手順の外なら対象外 (scripts/** の片側だけ = L)。
+    expect(decideS3Class({ ...f, mineFiles: ['scripts/merge-pr.test.mjs', 'scripts/check-drift.test.mjs'] }, DEFAULT_HOT_FILES).class).toBe('L');
   });
 
   it('recordProblem: which prepare records each mode lets through to gate (light and full results never stand in for each other)', () => {
@@ -160,8 +209,10 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
       [landed, 'pending'],
       [landed, 'success'],
     ]);
-    expect(auditText()).toMatch(/\tpredicted-tree\tpr=7\tid=demo-1\tmatch=true.*class=L/);
-    expect(auditText()).toMatch(/\tlight-landed\t.*result=success/);
+    // L の木の突き合わせは light-tree (S2 の指標・戻し規則が数える predicted-tree には出さない)。
+    expect(auditText()).toMatch(/\tlight-tree\tpr=7\tid=demo-1\tmatch=true.*class=L/);
+    expect(auditText()).not.toMatch(/\tpredicted-tree\t/);
+    expect(auditText()).toMatch(/\tlight-landed\t.*result=success\tby=finish/);
     expect(readFake().slot.holder).toBeNull();
   });
 
@@ -202,6 +253,56 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     expect(verified()).toEqual([readState().predictedCommit]);
   });
 
+  it('S3: scripts/** changed on both sides is F with the full verify; on one side only it stays L', () => {
+    setup({ merge: S3, branchFiles: { 'scripts/new-tool.mjs': "import { renamed } from './process-identity.mjs';\n" } });
+    advanceMain({ 'scripts/process-identity.mjs': 'export const renamedAgain = 1;\n' });
+    const both = run(['prepare', String(PR)]);
+    expect(both.status).toBe(0);
+    expect(both.stderr).toContain('クラス=F');
+    expect(both.stderr).toContain('scripts/** を両側が変更 (軽量チェックは型・import を見ない');
+    expect(readState().predictedVerifiedAt).toBeTruthy();
+    expect(verified()).toEqual([readState().predictedCommit]); // --light ではない
+
+    setup({ merge: S3, branchFiles: { 'scripts/new-tool.mjs': 'export const x = 1;\n' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    const mineOnly = run(['prepare', String(PR)]);
+    expect(mineOnly.status).toBe(0);
+    expect(mineOnly.stderr).toContain('クラス=L');
+    expect(verified()).toEqual([`${readState().lightCommit} --light`]);
+  });
+
+  it('S3: the merge procedure (merge-pr / check-drift) changed on one side only is F, not L', () => {
+    setup({ merge: S3, branchFiles: { 'scripts/merge-pr/new-step.mjs': 'export const step = 1;\n' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    const mine = run(['prepare', String(PR)]);
+    expect(mine.status).toBe(0);
+    expect(mine.stderr).toContain('マージ手順自身 (merge-pr / check-drift) に触れている (フル verify): scripts/merge-pr/new-step.mjs');
+    expect(readState().class).toBe('F');
+
+    // main 側の merge-pr の変更は prepare の入口で止まる (取り込みが先) ので、main 側は check-drift で確かめる。
+    setup({ merge: S3 });
+    advanceMain({ 'scripts/check-drift/git.mjs': 'export const x = 1;\n' });
+    const mainSide = run(['prepare', String(PR)]);
+    expect(mainSide.status).toBe(0);
+    expect(mainSide.stderr).toContain('マージ手順自身 (merge-pr / check-drift) に触れている (フル verify): scripts/check-drift/git.mjs');
+    expect(readState().class).toBe('F');
+    expect(verified()).toEqual([readState().predictedCommit]);
+  });
+
+  it('S3: a broken PRED_BASE (ledger failure) is refused before the light check runs', () => {
+    setup({ merge: S3 });
+    const moved = advanceMain({ 'peer.txt': 'peer\n' });
+    writeFake({ statuses: { [moved]: [status('failure')] } });
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(4);
+    expect(prepared.stderr).toContain('クラス=L');
+    expect(prepared.stderr).toContain(`main ${moved.slice(0, 12)} の着地後検証 (bdboard/landed-verify) が failure です`);
+    expect(verified()).toEqual([]); // 壊れた main の上で軽量チェックを回さない
+    expect(existsSync(stateFile())).toBe(false);
+    expect(auditText()).toMatch(/\tprepare-main-broken\t/);
+    expect(auditText()).not.toMatch(/\tlight-check\t/);
+  });
+
   it('S3: a failing light check is exit 3 (rebase) with no state, no ledger and no slot', () => {
     setup({ merge: S3 });
     advanceMain({ 'peer.txt': 'peer\n' });
@@ -226,13 +327,59 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     const finished = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' });
     expect(finished.status).toBe(6);
     expect(finished.stderr).toContain('S3 のすり抜け');
-    expect(finished.stderr).toContain('merge.mode を "S2"');
+    expect(finished.stderr).toContain('既知のフレーク');
+    expect(finished.stderr).toContain('修復 PR (fix-forward / revert) に .claude/bdboard-harness.json の merge.mode を "S2" にする 1 行を含め');
     expect(posted().map(({ sha, state }) => [sha, state])).toEqual([
       [landed, 'pending'],
       [landed, 'failure'],
     ]);
     expect(readFake().slot.holder).toBe(`demo-1 / main-broken ${landed.slice(0, 12)}`);
     expect(auditText()).toMatch(/\tlight-landed\t.*result=failure/);
+  });
+
+  it('S3 slip after an error: finish keeps the L record when the landed verify cannot run, and merge-pr verify <sha> reports a failure as the slip', () => {
+    setup({ merge: S3 });
+    const moved = advanceMain({ 'peer.txt': 'peer\n' });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    writeFake({ statuses: { [moved]: [status('success')] } });
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = landSquash();
+    // 75 = verify スロット待ちの打ち切り (verify は走っていない) → 着地後検証は error。
+    const errored = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '75' });
+    expect(errored.status).toBe(1);
+    expect(errored.stderr).toContain('はクラス L (軽量チェックだけで着地) ですが、着地後検証を実行できませんでした');
+    expect(errored.stderr).toContain(`npm run merge-pr -- verify ${landed}`);
+    expect(errored.stderr).not.toContain('着地後検証が failure です'); // 結果が無いのですり抜けとはまだ言わない
+    expect(auditText()).toMatch(new RegExp(`\tlight-landed\tpr=7\tid=demo-1\tnew=${landed}\tresult=error\tby=finish`));
+    // 状態ファイルは error でも残る (class と着地コミット) — verify がこれで L を見分ける。
+    expect(readState()).toMatchObject({ class: 'L', newMain: landed, verifyingPid: null });
+
+    const failed = run(['verify', landed], { FAKE_VERIFY_EXIT: '1' });
+    expect(failed.status).toBe(6);
+    expect(failed.stderr).toContain(`${landed.slice(0, 12)} はクラス L (着地予定ツリーの軽量チェックだけで着地) で、その着地後検証が failure です — S3 のすり抜け`);
+    expect(failed.stderr).toContain('既知のフレーク');
+    expect(failed.stderr).toContain('merge.mode を "S2" にする 1 行を含め');
+    expect(auditText()).toMatch(new RegExp(`\tlight-landed\tpr=7\tid=demo-1\tnew=${landed}\tresult=failure\tby=manual`));
+
+    // 対照: L の記録が無い SHA (PRED_BASE) の verify はすり抜けを言わない。
+    const other = run(['verify', moved], { FAKE_VERIFY_EXIT: '1' });
+    expect(other.status).toBe(6);
+    expect(other.stderr).not.toContain('S3 のすり抜け');
+    expect(auditText()).not.toMatch(new RegExp(`\tlight-landed\t.*new=${moved}`));
+  });
+
+  it('S3 slip found by gate: a self-heal verify of a PRED_BASE left unverified by a class-L finish reports the slip', () => {
+    setup({ merge: S3, mainDate: '2026-01-01T00:00:00Z' });
+    writeFake({ statuses: {} }); // PRED_BASE の着地後検証が LEASE を過ぎても無い = 自己修復の対象
+    // PRED_BASE (base) をクラス L で着地させた別の PR の finish が error で終わり、記録だけが残っている。
+    const leftover = { pr: 9, id: 'demo-9', class: 'L', newMain: base, gateAt: 'x', releasedAt: 'x', verifyingPid: null };
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    writeFileSync(path.join(path.dirname(stateFile()), 'pr-9.json'), JSON.stringify(leftover));
+    const gated = run(['gate', String(PR)], { FAKE_VERIFY_EXIT: '1' });
+    expect(gated.status).toBe(4);
+    expect(gated.stderr).toContain(`${base.slice(0, 12)} はクラス L (着地予定ツリーの軽量チェックだけで着地) で、その着地後検証が failure です — S3 のすり抜け`);
+    expect(auditText()).toMatch(new RegExp(`\tlight-landed\tpr=9\tid=demo-9\tnew=${base}\tresult=failure\tby=self-heal`));
+    expect(calls('bd', 'acquire')).toEqual([]);
   });
 
   it('gate: a class-L record goes back to prepare after a rollback to S2, when its light result is missing, or when it does not match its commit', () => {

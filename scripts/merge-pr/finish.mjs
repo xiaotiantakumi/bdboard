@@ -9,11 +9,14 @@
 // bdboard-ulxa.2: S2 のクラス F (rebase なし) は、着地した木が prepare で verify した着地予定ツリーと
 // 同じかを突き合わせて表示・監査ログに残す。違っても着地後検証の結果が正 (台帳はいつもどおり)。
 // bdboard-ulxa.3: S3 のクラス L (軽量チェックだけ) も着地後検証はフル verify のまま。結果を監査ログ
-// (light-landed) に残し、failure は S3 のすり抜け (S2 に戻す合図) として知らせる。
+// (light-landed) に残し、failure は S3 のすり抜け (S2 に戻す合図) として知らせる (light-landed.mjs。error の
+// ときも L であることを残し、後の merge-pr verify が同じ扱いをする)。木の突き合わせは F が predicted-tree、
+// L が light-tree (S2 の指標・戻し規則が数える predicted-tree に L を混ぜない)。
 import { git, run } from './exec.mjs';
 import { EXIT, REMOTE, fail, refetchMain } from './context.mjs';
 import { getPull } from './github.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
+import { lightLandedState, reportLightLanded } from './light-landed.mjs';
 import { brokenMainSteps } from './messages.mjs';
 import { releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
@@ -34,13 +37,13 @@ function holdBrokenMain(ctx, id, sha) {
   );
 }
 
-/** prepare が着地予定ツリーで検証した記録 (F = フル verify、L = 軽量チェック)。無ければ null。 */
+/** prepare が着地予定ツリーで検証した記録 (F = フル verify、L = 軽量チェック) と、突き合わせの監査イベント名。無ければ null。 */
 function predictedRecord(state) {
   if (state.class === 'F' && state.predictedTree) {
-    return { tree: state.predictedTree, commit: state.predictedCommit, how: 'verify' };
+    return { tree: state.predictedTree, commit: state.predictedCommit, how: 'verify', event: 'predicted-tree' };
   }
   if (state.class === 'L' && state.lightTree) {
-    return { tree: state.lightTree, commit: state.lightCommit, how: '軽量チェック' };
+    return { tree: state.lightTree, commit: state.lightCommit, how: '軽量チェック', event: 'light-tree' };
   }
   return null;
 }
@@ -55,12 +58,12 @@ function comparePredicted(ctx, pr, state, landed) {
   const landedTree = tree.status === 0 ? tree.stdout.trim() : '';
   if (landedTree === '') {
     // オフラインの finish 等で着地コミットを読めない。不一致と数えない (S2 の受け入れ指標を汚さない)。
-    audit('predicted-tree', { pr, id: state.id, match: 'unknown', predicted: predicted.tree, landed: 'unknown', class: state.class });
+    audit(predicted.event, { pr, id: state.id, match: 'unknown', predicted: predicted.tree, landed: 'unknown', class: state.class });
     say(`着地した木を読めないので着地予定ツリー (${predicted.tree.slice(0, 12)}) と比べていません。`);
     return null;
   }
   const match = landedTree === predicted.tree;
-  audit('predicted-tree', { pr, id: state.id, match, predicted: predicted.tree, landed: landedTree, class: state.class });
+  audit(predicted.event, { pr, id: state.id, match, predicted: predicted.tree, landed: landedTree, class: state.class });
   if (!match) {
     say(
       `注意: 着地した木 (${landedTree.slice(0, 12) || '読めない'}) が prepare で ${predicted.how} した着地予定ツリー (${predicted.tree.slice(0, 12)}) と違います。`,
@@ -68,20 +71,6 @@ function comparePredicted(ctx, pr, state, landed) {
     );
   }
   return match;
-}
-
-/** bdboard-ulxa.3: クラス L (軽量チェックだけで着地) の着地後検証の結果を監査ログに残し、failure なら S3 のすり抜けとして知らせる。 */
-function reportLightLanded(state, pr, landed, result) {
-  if (state.class !== 'L') {
-    return;
-  }
-  audit('light-landed', { pr, id: state.id, new: landed, result });
-  if (result === 'failure') {
-    say(
-      `クラス L (着地予定ツリーの軽量チェックだけで着地) の着地後検証が failure です — S3 のすり抜け (軽量チェックが見ない test 等で壊れた)。`,
-      '設計 bdboard-ulxa §5 / §6 裁定 7: すり抜け 1 件で S2 に戻す。.claude/bdboard-harness.json の merge.mode を "S2" にする 1 行の PR を (修復と別に) 出し、議長に報告してください。',
-    );
-  }
 }
 
 /** 通常の PR は最初に枠を返す (二度目の finish では返さない)。 */
@@ -132,6 +121,7 @@ export async function finish(ctx, pr) {
     onSpawn: (child) => recordVerifyGroup(ctx, pr, child),
   });
   audit('landed-verify', { pr, id: state.id, new: landed, result: verified.result });
+  reportLightLanded(state, landed, verified.result, 'finish'); // error でも L であることを残す
   const leftover = run('git', ['ls-remote', REMOTE, `refs/heads/${pull.headRef}`], { cwd: ctx.cwd });
   if (leftover.status === 0 && leftover.stdout.trim() !== '') {
     say(`remote にブランチ ${pull.headRef} が残っています: git push origin --delete ${pull.headRef}`);
@@ -146,7 +136,6 @@ export async function finish(ctx, pr) {
     );
   }
   removeState(ctx.cwd, pr);
-  reportLightLanded(state, pr, landed, verified.result);
   if (verified.result === 'failure') {
     if (state.repair) {
       say(`修復後も failure です。${kept}`);
@@ -175,6 +164,8 @@ export async function verifyLanded(ctx, sha) {
   const by = `manual ${git(['config', '--default', 'unknown', 'user.name'], { cwd: ctx.cwd })}`;
   const verified = await runLandedVerify(ctx, full, by, { retryHint: `npm run merge-pr -- verify ${full}` });
   audit('landed-verify', { new: full, result: verified.result, by: 'manual' });
+  // finish が error で終わったクラス L の着地なら、その記録 (状態ファイル) から L を見分ける。
+  reportLightLanded(lightLandedState(ctx.cwd, full), full, verified.result, 'manual');
   if (verified.result === 'error') {
     fail(EXIT.USAGE, '着地後検証を実行できませんでした (上のメッセージ参照)。');
   }

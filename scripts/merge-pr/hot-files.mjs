@@ -24,6 +24,23 @@ export const DEFAULT_HOT_FILES = Object.freeze([
   '{harness/packs/bdboard-harness/SKILL.md,.claude/skills/bdboard-harness/SKILL.md}',
 ]);
 
+// bdboard-ulxa.3 (PR #854 レビュー): S3 の軽量チェック (build + lint + check:boundaries) が中身を検査しない
+// ファイル。tsc の include は src / vitest.config.ts / test/e2e だけ、depcruise は src と web だけ、scripts の
+// ESLint は型情報なしで import の検査も無いので、存在しない export / モジュールを import しても軽量チェックは
+// exit 0 になる (実測)。main 側と自分の両方が同じ要素に当たったらクラス L にしない (片側だけなら L のまま)。
+// hot file ではない (hotFiles に足すと S2 の R まで増える) ので、契約の別キー merge.lightBlindFiles で丸ごと置き換える。
+export const DEFAULT_LIGHT_BLIND_FILES = Object.freeze(['scripts/**']);
+
+// マージ手順自身 (merge-pr と、その前段の drift)。片側だけの変更でもクラス L にしない — 軽量チェックが見落とした
+// 壊れ方で着地すると、取り込んだ全エージェントの merge-pr が起動時に落ち、修復 PR もこの手順で入れられない。
+// 契約では変えられない。
+export const MERGE_PROCEDURE_FILES = Object.freeze([
+  'scripts/merge-pr/**',
+  'scripts/merge-pr.mjs',
+  'scripts/check-drift/**',
+  'scripts/check-drift.mjs',
+]);
+
 const LITERAL = /[.+^$()|[\]\\]/g;
 
 function compile(glob) {

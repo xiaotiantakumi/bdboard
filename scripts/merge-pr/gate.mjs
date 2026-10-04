@@ -13,6 +13,7 @@ import { EXIT, fail, fetchedMain, liveMain, refetchMain } from './context.mjs';
 import { getPull } from './github.mjs';
 import { waitForLanded } from './landed.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
+import { lightLandedState, reportLightLanded } from './light-landed.mjs';
 import { brokenMainSteps, mergeInstructions } from './messages.mjs';
 import { assertOpenPull } from './prepare.mjs';
 import { recordProblem } from './record.mjs';
@@ -60,6 +61,8 @@ async function landedGate(ctx, pr, state) {
     );
     audit('gate-self-heal', { pr, id, base: predBase });
     const healed = await runLandedVerify(ctx, predBase, `${id} self-heal`);
+    // PRED_BASE がクラス L の着地で、その finish が error で終わっていたなら、ここがすり抜けを見つける場所。
+    reportLightLanded(lightLandedState(ctx.cwd, predBase), predBase, healed.result, 'self-heal');
     if (healed.result === 'error') {
       fail(EXIT.USAGE, '自己修復の検証を実行できませんでした (上のメッセージ参照)。');
     }

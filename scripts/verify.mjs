@@ -41,6 +41,7 @@ import path from 'node:path';
 import { npmRunSpawnSpec } from './npm-command.mjs';
 import { isOrphaned, killProcessTree } from './process-tree.mjs';
 import { acquireVerifySlot, envSlotOptions, SLOT_WAIT_TIMEOUT_EXIT_CODE, SlotWaitTimeoutError } from './verify-slot.mjs';
+import { LIGHT_FLAG, leaderArgsFor, stepsScriptFor } from './verify-steps.mjs';
 
 const GRACE_MS = 5_000;
 const ORPHAN_POLL_MS = 1_000;
@@ -54,9 +55,9 @@ const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGKILL: 137, SIGTERM: 143
 
 // bdboard-ulxa.3: `npm run verify -- --light` は merge-pr (merge.mode S3) のクラス L 専用の軽量チェック。
 // スロット・プロセスグループの扱いは同じで、走らせる本体だけが verify:light (verify:steps からテストを
-// 抜いたもの) になる。PR を開く前の検証には使わない (テストが走らない)。
-const LIGHT = process.argv.includes('--light');
-const STEPS_SCRIPT = LIGHT ? 'verify:light' : 'verify:steps';
+// 抜いたもの) になる。PR を開く前の検証には使わない (テストが走らない)。振り分けは verify-steps.mjs (テストあり)。
+const LIGHT = process.argv.includes(LIGHT_FLAG);
+const STEPS_SCRIPT = stepsScriptFor(process.argv);
 
 if (process.argv.includes('--group-leader')) {
   // ---- リーダーモード: 新プロセスグループの先頭。verify 本体を同グループで走らせる ----
@@ -160,7 +161,7 @@ if (process.argv.includes('--group-leader')) {
   }
   const leader = spawn(
     process.execPath,
-    [fileURLToPath(import.meta.url), '--group-leader'].concat(LIGHT ? ['--light'] : []),
+    [fileURLToPath(import.meta.url)].concat(leaderArgsFor(process.argv)),
     {
       cwd: repoRoot,
       detached: true,

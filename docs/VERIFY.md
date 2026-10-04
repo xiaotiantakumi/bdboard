@@ -252,7 +252,10 @@ What this means operationally:
   class-L PR under `merge.mode: "S3"` (the contract's `merge.lightCheck`; see
   GIT-WORKFLOW.md "S3"). It runs no tests, so it never replaces the full
   `npm run verify` before opening a PR; like `verify:steps`, never run
-  `npm run verify:light` directly.
+  `npm run verify:light` directly. Which script `verify.mjs` runs is
+  `scripts/verify-steps.mjs`; `scripts/verify-steps.test.mjs` fails if
+  `verify:light` stops being exactly `verify:steps` minus the two test steps
+  (a step added to one and not the other).
 - **Queue waits are normal, not hangs.** While waiting, verify prints
   `verify: waiting for a verify slot (queue position N/M, priority X, holders: pid …)`
   every 10s on stderr. Leave it queued — the wait is bounded (see

@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_HOT_FILES,
+  DEFAULT_LIGHT_BLIND_FILES,
   bodyReferencesIssue,
   decideS2Class,
   evaluateLandedStatus,
@@ -137,6 +138,7 @@ describe('merge-pr pure helpers', () => {
         statusContext: CONTEXT,
         hotFiles: DEFAULT_HOT_FILES,
         lightCheck: 'npm run verify -- --light',
+        lightBlindFiles: DEFAULT_LIGHT_BLIND_FILES,
         verify: 'npm run verify',
         mainBranch: 'main',
         repo: null,
