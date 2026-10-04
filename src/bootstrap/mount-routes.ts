@@ -45,6 +45,8 @@ export interface MountRoutesDeps {
   readonly agentRunRouter: Hono;
   readonly tunnelRouter: Hono;
   readonly updateCheckRouter: Hono;
+  /** 不具合報告の下書き API (bdboard-4y8q.1)。受け取りはローカル直アクセスのみ。 */
+  readonly issueReportsRouter: Hono;
   /** BDBOARD_AI_QUOTA_DISABLED のとき未登録 (undefined)。 */
   readonly aiQuotaRouter: Hono | undefined;
   /** BDBOARD_CHAT_DISABLED のとき未登録 (undefined)。 */
@@ -84,6 +86,7 @@ export function mountRoutes(app: Hono, deps: MountRoutesDeps): void {
   app.route('/', deps.agentRunRouter);
   app.route('/', deps.tunnelRouter);
   app.route('/', deps.updateCheckRouter);
+  app.route('/', deps.issueReportsRouter);
 
   if (deps.aiQuotaRouter !== undefined) {
     app.route('/', deps.aiQuotaRouter);

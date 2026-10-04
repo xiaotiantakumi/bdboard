@@ -19,7 +19,8 @@ export interface UseChatSendCommitsParams
   extends Pick<UseChatConversationsStateResult, 'setConversations' | 'setHistoryLoadedFor' | 'setThreadModelIds'>,
     Pick<
       UseChatThreadListsResult,
-      'setThreadLists' | 'setOpenThreadIds' | 'openThreadIdsRef' | 'restoredProjectsRef' | 'threadListOrder'
+      'setThreadLists' | 'setOpenThreadIds' | 'openThreadIdsRef' | 'restoredProjectsRef' | 'provisionalEntries'
+      | 'threadListOrder'
     >,
     Pick<UseConversationKeyResult, 'setSelectedThreadIds' | 'selectedThreadIdsRef'>,
     Pick<
@@ -67,6 +68,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
     setOpenThreadIds,
     openThreadIdsRef,
     restoredProjectsRef,
+    provisionalEntries,
     threadListOrder,
     setSelectedThreadIds,
     selectedThreadIdsRef,
@@ -148,11 +150,13 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
         restored: restoredProjectsRef.current.has(selectedProjectId), liveOpen, plan, newSessionId: result.sessionId,
         readPersistedOpen: () => readPersistedChatThreads()[selectedProjectId]?.activeSessionIds ?? [],
       });
-      writePersistedChatThread(
-        selectedProjectId,
-        { sessionId: result.sessionId, agentId: result.agentId },
-        persistedOpenBase,
-      );
+      // bdboard-rt6i: 未復元のプロジェクトで最初の永続化エントリ(それまでエントリが無い)を書くなら、それは利用者が
+      // 開き閉じした記録ではなく仮のエントリ。印を立てる(chat/provisionalEntry.ts)。復元済み(エージェント切替で
+      // 空に確定した後など)・エントリがあった再訪では立たない。2 回目以降の送信でも下ろさない。
+      provisionalEntries.markIfFirstEntry(selectedProjectId);
+      // 印の間に閉じていたスレッドへの送信は、開き直しと同じ: 復元で閉じた id として引かれないようにする。
+      provisionalEntries.noteReopened(selectedProjectId, result.sessionId);
+      writePersistedChatThread(selectedProjectId, { sessionId: result.sessionId, agentId: result.agentId }, persistedOpenBase);
       if (showModelSelect && effectiveModelId !== '') {
         // 送信で実際に使われたモデルは常に確定値として勝つべきなので、ここだけは
         // 無条件で上書きする(履歴解決側の「未設定キーにだけ書く」ガードとは非対称)。
@@ -177,10 +181,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       };
       if (convKey !== result.sessionId) threadListOrder.noteEntryWrite(selectedProjectId, listEntry, 'upsert');
       if (plan.goneSessionId !== undefined) threadListOrder.forgetEntry(selectedProjectId, plan.goneSessionId);
-      setThreadLists((prev) => ({
-        ...prev,
-        [selectedProjectId]: appendSentThread(prev[selectedProjectId] ?? [], listEntry, plan.goneSessionId),
-      }));
+      setThreadLists((prev) => ({ ...prev, [selectedProjectId]: appendSentThread(prev[selectedProjectId] ?? [], listEntry, plan.goneSessionId) }));
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: plan.nextOpen }));
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: result.sessionId }));
       // ここでは未回収の印を外さない (PR#135 レビュー minor-1)。
@@ -204,6 +205,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       setOpenThreadIds,
       openThreadIdsRef,
       restoredProjectsRef,
+      provisionalEntries,
       threadListOrder,
       setSelectedThreadIds,
       selectedThreadIdsRef,

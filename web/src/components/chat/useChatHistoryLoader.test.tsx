@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSessionMessagesDto } from '../../api';
 import { ApiError } from '../../api';
 import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
+import { createProvisionalEntryMarks } from './provisionalEntry';
 import { useChatHistoryLoader } from './useChatHistoryLoader';
 import type { ChatConversationEntry } from './useChatConversationsState';
 
@@ -25,6 +26,15 @@ function payload(overrides: Partial<ChatSessionMessagesDto>): ChatSessionMessage
 }
 
 function baseParams(overrides: Partial<Parameters<typeof useChatHistoryLoader>[0]> = {}) {
+  const params = baseParamsWithoutMarks(overrides);
+  // bdboard-rt6i: 仮のエントリの印は、(上書きされた場合も含め)このテストの restoredProjectsRef を読む。
+  return {
+    provisionalEntries: createProvisionalEntryMarks((id) => params.restoredProjectsRef.current.has(id)),
+    ...params,
+  };
+}
+
+function baseParamsWithoutMarks(overrides: Partial<Parameters<typeof useChatHistoryLoader>[0]> = {}) {
   return {
     selectedProjectId: 'project-a',
     currentConversationKey: 'sess-1',
@@ -189,6 +199,37 @@ describe('useChatHistoryLoader: history fetch effect', () => {
         activeSessionIds: ['sess-x', 'sess-a'],
         selectedSessionId: 'sess-a',
       });
+    });
+  });
+
+  describe('bdboard-rt6i: a load that writes the first entry of an unrestored project is a provisional entry', () => {
+    async function runLoad(overrides: Partial<Parameters<typeof useChatHistoryLoader>[0]>) {
+      fetchChatSessionMessagesMock.mockResolvedValue(payload({ sessionId: 'sess-a' }));
+      const setHistoryLoadedFor = vi.fn();
+      const params = baseParams({ currentConversationKey: 'sess-a', currentSessionId: 'sess-a', setHistoryLoadedFor, ...overrides });
+      renderHook(() => useChatHistoryLoader(params));
+      await waitFor(() => expect(setHistoryLoadedFor).toHaveBeenCalled());
+      return params;
+    }
+
+    it('marks the project before writing the first persisted entry', async () => {
+      const params = await runLoad({});
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['sess-a'], selectedSessionId: 'sess-a' });
+      expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(true);
+    });
+
+    it('does not mark a restored project: its entry follows the live open, which is the user record', async () => {
+      const params = await runLoad({
+        restoredProjectsRef: { current: new Set(['project-a']) },
+        openThreadIdsRef: { current: { 'project-a': ['sess-a', 'sess-b'] } },
+      });
+      expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(false);
+    });
+
+    it('does not mark a project that already has a persisted entry', async () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-x'], selectedSessionId: 'sess-x' });
+      const params = await runLoad({});
+      expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(false);
     });
   });
 

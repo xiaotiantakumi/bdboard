@@ -1,6 +1,7 @@
 import type { ChatThreadDto } from '../../api';
 import type { PersistedChatThreadState } from '../../chatThreadStorage';
 import { planReplacedThread } from './replacedThread';
+import { withoutClosed } from './provisionalEntry';
 import { restoreThreadView } from './threadViewRestore';
 
 export interface RecoveredTurnPlanInput {
@@ -15,6 +16,18 @@ export interface RecoveredTurnPlanInput {
   knownOpen: readonly string[] | undefined;
   /** 永続化済みのエントリ。 */
   persisted: PersistedChatThreadState | undefined;
+  /**
+   * このプロジェクトの永続化済みエントリが仮のエントリか(bdboard-rt6i。chat/provisionalEntry.ts の
+   * isProvisional = 印が立っていて、エントリが存在する。印のある [] も仮。エージェント切替の空は、handleAgentChange が
+   * 同じハンドラで settle して印を下ろすので仮にならない)。仮のエントリは
+   * 利用者が開き閉じした記録ではないので、永続化を正本にせず、サーバー一覧を足して開く。
+   */
+  provisionalEntry: boolean;
+  /**
+   * 仮のエントリの間に利用者が閉じた(削除した)スレッドの id(provisionalEntries.closedIds)。provisionalEntry のとき、
+   * サーバー一覧から外して開かない。省略は空。
+   */
+  closedIds?: ReadonlySet<string>;
   /** live の選択(selectedThreadIdsRef)。 */
   knownSelected: string | undefined;
   /** チケット起動のドラフトを表示中で、回収の選択切り替えを抑止するか(bdboard-cemi)。 */
@@ -40,16 +53,24 @@ export interface RecoveredTurnPlan {
  * そのスレッドを open から外し、選択やドラフト表示中の永続化済みの選択が origin を指していたら
  * 回収したセッションへ移す。回収したセッションが既に open に居るなら新しく始まったセッション
  * ではないので、origin が残っていても置き換えとして扱わない。
+ *
+ * bdboard-rt6i: provisionalEntry のとき(初回訪問で、E7 の一覧 fetch が in-flight の間に送信成功・採用が
+ * 最初の永続化エントリを書いたあとの回収)は、永続化の仮の [N] を再訪の記録として扱わず、
+ * restoreThreadView の provisional と同じく全スレッド(利用者が閉じた id を除く)を開く。復元済み(採用が確立した open)でも
+ * サーバー一覧を足す(E7 の同じ場合の widenOpenToServerList と同じ結果。回収が E7 の応答を打ち切るので、
+ * ここで足さないと誰も足さない)。
  */
 export function planRecoveredTurn(input: RecoveredTurnPlanInput): RecoveredTurnPlan {
-  const { threads, sessionId, origin, alreadyRestored, knownOpen, persisted, knownSelected } = input;
-  const restored = alreadyRestored ? undefined : restoreThreadView(threads, persisted);
+  const { sessionId, origin, alreadyRestored, knownOpen, persisted, knownSelected, provisionalEntry } = input;
+  const threads = provisionalEntry ? withoutClosed(input.threads, input.closedIds ?? new Set()) : input.threads;
+  const restoresFromList = provisionalEntry || !alreadyRestored;
+  const restored = restoresFromList ? restoreThreadView(threads, persisted, provisionalEntry) : undefined;
   // bdboard-4w2d: 復元を行う場合、永続化からの open と、この fetch の in-flight 中に別経路が先に
   // openThreadIds へ書いていた分の両方を残す(和集合)。復元を「永続化からの完全な置き換え」にすると、
   // その racing write を握りつぶしてしまう。
-  const currentOpen = alreadyRestored
-    ? (knownOpen ?? [])
-    : Array.from(new Set([...(restored?.open ?? []), ...(knownOpen ?? [])]));
+  const currentOpen = restoresFromList
+    ? Array.from(new Set([...(restored?.open ?? []), ...(knownOpen ?? [])]))
+    : (knownOpen ?? []);
   const { replacedKey, nextOpen } = planReplacedThread({
     convKey: currentOpen.includes(sessionId) ? undefined : origin,
     newSessionId: sessionId,
