@@ -7,7 +7,13 @@
 //        commit status (statusContext) に記録する
 //   S2 = S1 + main が動いていても rebase しない (bdboard-ulxa.2)。prepare が着地予定ツリー
 //        (merge-tree) を作って verify し、テキスト衝突 / hot file (hotFiles) のときだけ rebase
-// S3 (重なりなしの PR の軽量チェック) は後続チケット (bdboard-ulxa.3)。
+//   S3 = S2 + main 側の変更と自分の変更が重ならず、どちらも hot file に触れていない PR (クラス L) は
+//        着地予定ツリーで軽量チェック (lightCheck: build + lint + check:boundaries) だけを回す
+//        (bdboard-ulxa.3)。着地後検証 (finish) はフル verify のまま
+//
+// 知らないモードは受け付けない (exit 1)。main の契約がこのスクリプトより新しい段階を指している
+// = このブランチの merge-pr が古いので、推測で近い段階に読み替えず止める (安全側)。S3 より前に切った
+// ブランチは "S3" をこの形で拒否する。
 //
 // 方針 (どちらの契約を読むか): 手順の切り替えは「main に入った設定」で決まる。PR ブランチは
 // 切った時点の設定を持っているので、ブランチ側を読むと議長が main で S1 に切り替えても
@@ -20,15 +26,24 @@ import { run } from './exec.mjs';
 import { DEFAULT_HOT_FILES, globToRegExp } from './hot-files.mjs';
 
 export const CONTRACT_RELATIVE_PATH = '.claude/bdboard-harness.json';
-export const MERGE_MODES = ['S0', 'S1', 'S2'];
+export const MERGE_MODES = ['S0', 'S1', 'S2', 'S3'];
 /** gate / finish が動く段階 (S0 は prepare の表示だけ)。 */
-export const SLOT_MODES = ['S1', 'S2'];
+export const SLOT_MODES = ['S1', 'S2', 'S3'];
+/** main が動いていても rebase せず着地予定ツリーで検証する段階 (クラス F。S3 はさらに L)。 */
+export const PREDICTED_MODES = ['S2', 'S3'];
+/**
+ * クラス L の軽量チェックの既定。scripts/verify.mjs の --light は verify スロットに並んでから
+ * verify:light (check:file-size + lint:verify + build + build:web + check:boundaries。テストは回さない)
+ * を走らせる。契約の merge.lightCheck で置き換えられる。
+ */
+export const DEFAULT_LIGHT_CHECK = 'npm run verify -- --light';
 export const MERGE_DEFAULTS = Object.freeze({
   mode: 'S0',
   leaseMinutes: 8,
   slotWaitMinutes: 10,
   statusContext: 'bdboard/landed-verify',
   hotFiles: DEFAULT_HOT_FILES,
+  lightCheck: DEFAULT_LIGHT_CHECK,
 });
 
 function validHotFiles(value) {
@@ -72,7 +87,12 @@ export function parseMergeConfig(contract) {
   const config = { ...MERGE_DEFAULTS, verify: contract.verify.trim(), mainBranch, repo: null };
   if (merge.mode !== undefined) {
     if (!MERGE_MODES.includes(merge.mode)) {
-      return { ok: false, message: `merge.mode は ${MERGE_MODES.join(' / ')} のいずれかです (受領: ${JSON.stringify(merge.mode)})` };
+      return {
+        ok: false,
+        message:
+          `merge.mode は ${MERGE_MODES.join(' / ')} のいずれかです (受領: ${JSON.stringify(merge.mode)})。` +
+          'main の契約がこの merge-pr より新しい段階なら、git merge origin/main で merge-pr を取り込んでから実行してください',
+      };
     }
     config.mode = merge.mode;
   }
@@ -95,6 +115,12 @@ export function parseMergeConfig(contract) {
       return { ok: false, message: 'merge.hotFiles はグロブ文字列の配列です (scripts/merge-pr/hot-files.mjs の文法)' };
     }
     config.hotFiles = [...merge.hotFiles];
+  }
+  if (merge.lightCheck !== undefined) {
+    if (typeof merge.lightCheck !== 'string' || merge.lightCheck.trim() === '') {
+      return { ok: false, message: 'merge.lightCheck は空でないコマンド文字列です' };
+    }
+    config.lightCheck = merge.lightCheck.trim();
   }
   if (merge.repo !== undefined) {
     if (typeof merge.repo !== 'string' || !SLUG.test(merge.repo)) {

@@ -8,6 +8,8 @@
 // success になるまで返さない (設計 §3.6)。
 // bdboard-ulxa.2: S2 のクラス F (rebase なし) は、着地した木が prepare で verify した着地予定ツリーと
 // 同じかを突き合わせて表示・監査ログに残す。違っても着地後検証の結果が正 (台帳はいつもどおり)。
+// bdboard-ulxa.3: S3 のクラス L (軽量チェックだけ) も着地後検証はフル verify のまま。結果を監査ログ
+// (light-landed) に残し、failure は S3 のすり抜け (S2 に戻す合図) として知らせる。
 import { git, run } from './exec.mjs';
 import { EXIT, REMOTE, fail, refetchMain } from './context.mjs';
 import { getPull } from './github.mjs';
@@ -32,28 +34,54 @@ function holdBrokenMain(ctx, id, sha) {
   );
 }
 
-/** クラス F: 着地した木と着地予定ツリーの一致を確かめる。一致なら true、確かめられなければ null。 */
+/** prepare が着地予定ツリーで検証した記録 (F = フル verify、L = 軽量チェック)。無ければ null。 */
+function predictedRecord(state) {
+  if (state.class === 'F' && state.predictedTree) {
+    return { tree: state.predictedTree, commit: state.predictedCommit, how: 'verify' };
+  }
+  if (state.class === 'L' && state.lightTree) {
+    return { tree: state.lightTree, commit: state.lightCommit, how: '軽量チェック' };
+  }
+  return null;
+}
+
+/** クラス F / L: 着地した木と着地予定ツリーの一致を確かめる。一致なら true、確かめられなければ null。 */
 function comparePredicted(ctx, pr, state, landed) {
-  if (state.class !== 'F' || !state.predictedTree) {
+  const predicted = predictedRecord(state);
+  if (predicted === null) {
     return null;
   }
   const tree = run('git', ['rev-parse', `${landed}^{tree}`], { cwd: ctx.cwd });
   const landedTree = tree.status === 0 ? tree.stdout.trim() : '';
   if (landedTree === '') {
     // オフラインの finish 等で着地コミットを読めない。不一致と数えない (S2 の受け入れ指標を汚さない)。
-    audit('predicted-tree', { pr, id: state.id, match: 'unknown', predicted: state.predictedTree, landed: 'unknown' });
-    say(`着地した木を読めないので着地予定ツリー (${state.predictedTree.slice(0, 12)}) と比べていません。`);
+    audit('predicted-tree', { pr, id: state.id, match: 'unknown', predicted: predicted.tree, landed: 'unknown', class: state.class });
+    say(`着地した木を読めないので着地予定ツリー (${predicted.tree.slice(0, 12)}) と比べていません。`);
     return null;
   }
-  const match = landedTree === state.predictedTree;
-  audit('predicted-tree', { pr, id: state.id, match, predicted: state.predictedTree, landed: landedTree });
+  const match = landedTree === predicted.tree;
+  audit('predicted-tree', { pr, id: state.id, match, predicted: predicted.tree, landed: landedTree, class: state.class });
   if (!match) {
     say(
-      `注意: 着地した木 (${landedTree.slice(0, 12) || '読めない'}) が prepare で verify した着地予定ツリー (${state.predictedTree.slice(0, 12)}) と違います。`,
-      `着地後検証の結果を正とします。差分: git diff ${state.predictedCommit ?? state.predictedTree} ${landed} (bdboard-ulxa.2 に報告)`,
+      `注意: 着地した木 (${landedTree.slice(0, 12) || '読めない'}) が prepare で ${predicted.how} した着地予定ツリー (${predicted.tree.slice(0, 12)}) と違います。`,
+      `着地後検証の結果を正とします。差分: git diff ${predicted.commit ?? predicted.tree} ${landed} (bdboard-ulxa.2 に報告)`,
     );
   }
   return match;
+}
+
+/** bdboard-ulxa.3: クラス L (軽量チェックだけで着地) の着地後検証の結果を監査ログに残し、failure なら S3 のすり抜けとして知らせる。 */
+function reportLightLanded(state, pr, landed, result) {
+  if (state.class !== 'L') {
+    return;
+  }
+  audit('light-landed', { pr, id: state.id, new: landed, result });
+  if (result === 'failure') {
+    say(
+      `クラス L (着地予定ツリーの軽量チェックだけで着地) の着地後検証が failure です — S3 のすり抜け (軽量チェックが見ない test 等で壊れた)。`,
+      '設計 bdboard-ulxa §5 / §6 裁定 7: すり抜け 1 件で S2 に戻す。.claude/bdboard-harness.json の merge.mode を "S2" にする 1 行の PR を (修復と別に) 出し、議長に報告してください。',
+    );
+  }
 }
 
 /** 通常の PR は最初に枠を返す (二度目の finish では返さない)。 */
@@ -118,6 +146,7 @@ export async function finish(ctx, pr) {
     );
   }
   removeState(ctx.cwd, pr);
+  reportLightLanded(state, pr, landed, verified.result);
   if (verified.result === 'failure') {
     if (state.repair) {
       say(`修復後も failure です。${kept}`);
@@ -135,7 +164,7 @@ export async function finish(ctx, pr) {
   const compared =
     predictedMatch === null
       ? `着地した木と PR head ${state.head.slice(0, 12)} の木は${sameTree ? '同一' : '異なります (git diff --stat で確認)'}。`
-      : `クラス F: 着地した木は prepare で verify した着地予定ツリーと${predictedMatch ? '同一' : '異なります (上の注意を参照)'}。`;
+      : `クラス ${state.class}: 着地した木は prepare で ${predictedRecord(state).how} した着地予定ツリーと${predictedMatch ? '同一' : '異なります (上の注意を参照)'}。`;
   say(`着地後検証 success: ${landed.slice(0, 12)} (${ctx.statusContext})。`, `${compared}次は close と掃除 (worktree-pr-flow.md §6)。`);
   return EXIT.OK;
 }

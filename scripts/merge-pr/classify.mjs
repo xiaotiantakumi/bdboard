@@ -9,13 +9,19 @@
 // 衝突は着地する木を build / lint / test しないと分からない)。重なりの件数は監査ログにだけ残す
 // (S3 の軽量チェックを選ぶときの材料)。
 //
+// bdboard-ulxa.3: S3 は F をさらに分ける (decideS3Class)。重なりは F / L の選択にだけ使い、
+// rebase するか (R) の判定は S2 と同じ:
+//   L = F のうち、main 側と自分の変更ファイルに重なりが無く、どちらの側も hot file に触れていない。
+//       着地予定ツリーで軽量チェック (build + lint + check:boundaries) だけを回す
+//   F = それ以外 (重なりあり / 片側でも hot file)。S2 と同じフル verify
+//
 // 着地予定ツリーは `git merge-tree --write-tree <origin/main> <PR head>` (--merge-base を渡さない
 // = 自然な merge-base)。GitHub の squash マージが作る木 = その時点の main に head を 3-way マージした
 // 木なので、gate の CAS (main == PRED_BASE) と --match-head-commit (head == PR head) が成り立てば
 // 着地する木はこの木と同じになる。finish が着地後に木の SHA を突き合わせて確かめる。
 import { parseMergeTreeConflictFiles } from '../check-drift/git.mjs';
 import { run } from './exec.mjs';
-import { hotCollisions } from './hot-files.mjs';
+import { hotCollisions, hotTouched } from './hot-files.mjs';
 
 const OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
@@ -83,6 +89,28 @@ export function decideS2Class({ baseCount, merge, hot }) {
     return { class: 'R', reason: `hot file: ${describeHot(hot)}` };
   }
   return { class: 'F', reason: '衝突なし・hot file なし', tree: merge.tree };
+}
+
+/**
+ * S2 の分類結果から S3 のクラスを決める純関数。F 以外 (N / R) はそのまま返す。F のうち重なりが無く、
+ * main 側にも自分の側にも hot file が無いものだけを L にする。材料 (変更ファイルの一覧) が無い F も
+ * 軽量にしない (安全側 = フル verify)。
+ */
+export function decideS3Class(s2, patterns) {
+  if (s2.class !== 'F') {
+    return s2;
+  }
+  if (!Array.isArray(s2.mainFiles) || !Array.isArray(s2.mineFiles) || !Array.isArray(s2.overlap)) {
+    return { ...s2, reason: `${s2.reason}・変更ファイルの一覧が無い (フル verify)` };
+  }
+  if (s2.overlap.length > 0) {
+    return { ...s2, reason: `${s2.reason}・重なり ${s2.overlap.length} 件 (フル verify): ${s2.overlap.slice(0, 5).join(', ')}` };
+  }
+  const hot = hotTouched([...s2.mainFiles, ...s2.mineFiles], patterns);
+  if (hot.length > 0) {
+    return { ...s2, reason: `${s2.reason}・hot file に触れている (フル verify): ${hot.slice(0, 5).join(', ')}` };
+  }
+  return { ...s2, class: 'L', reason: '衝突なし・重なりなし・hot file なし (軽量チェック)' };
 }
 
 /**

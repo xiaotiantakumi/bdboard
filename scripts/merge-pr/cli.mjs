@@ -5,11 +5,13 @@ import { gate } from './gate.mjs';
 import { prepare } from './prepare.mjs';
 import { audit, say } from './state.mjs';
 
-export const USAGE = `merge-pr — マージ手順 S1 / S2 (枠は CAS とマージの一瞬だけ握る。設計 bdboard-ulxa)
+export const USAGE = `merge-pr — マージ手順 S1 / S2 / S3 (枠は CAS とマージの一瞬だけ握る。設計 bdboard-ulxa)
 
   npm run merge-pr -- prepare <PR> [--dry-run]   枠の外: PR / 必須チェック / main を確かめ PRED_BASE を記録
-                                                 (S2: main が動いていれば着地予定ツリーを verify。--dry-run は
-                                                  どの段階でも S2 の分類を参考表示し、verify はしない)
+                                                 (S2: main が動いていれば着地予定ツリーを verify。S3: 重なりも
+                                                  hot file も無ければ (クラス L) 軽量チェックだけ。軽量チェックの
+                                                  失敗も exit 3。--dry-run はどの段階でも S2 / S3 の分類を参考表示し、
+                                                  verify はしない)
   BDBOARD_MERGER=chair npm run merge-pr -- gate <PR> [--repair] 層3 ゲート → bd merge-slot acquire → CAS → マージ行を stdout に印字
                                                  (--repair: main 破損の修復 PR 専用。main-broken の枠を引き継ぐ)
   <印字された gh pr merge ... --match-head-commit ... を 1 回だけ実行>

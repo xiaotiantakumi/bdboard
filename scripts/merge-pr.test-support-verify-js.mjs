@@ -6,7 +6,8 @@ export const VERIFY_JS = `
 const fs = require('node:fs');
 const { execFileSync, execSync } = require('node:child_process');
 const head = execSync('git rev-parse HEAD').toString().trim();
-fs.appendFileSync(process.env.FAKE_VERIFY_LOG, head + '\\n');
+// bdboard-ulxa.3: 軽量チェック (merge.lightCheck = 'node verify.cjs --light') は行末に --light を付けて区別する。
+fs.appendFileSync(process.env.FAKE_VERIFY_LOG, head + (process.argv.includes('--light') ? ' --light' : '') + '\\n');
 // SIGINT/SIGTERM のテスト用: 自分の (実際に検証を実行している) pid を書いておく。中断後に
 // この pid が本当に死んでいるかで「子プロセスが孤児にならない」ことを確かめる。
 if (process.env.FAKE_VERIFY_PID_FILE) fs.writeFileSync(process.env.FAKE_VERIFY_PID_FILE, String(process.pid));

@@ -1,5 +1,6 @@
 // bdboard-ulxa.1: マージ手順 S1 の入口 (`npm run merge-pr -- prepare|gate|finish|verify ...`)。
 // bdboard-ulxa.2: S2 (merge.mode "S2") では prepare が着地予定ツリーを verify して rebase を省く。
+// bdboard-ulxa.3: S3 (merge.mode "S3") では、重なりも hot file も無い PR (クラス L) の着地予定ツリーは軽量チェックだけ。
 //
 // 背景 (設計 bdboard-ulxa、計測 bdboard-iaqg 2026-09-23): 段階1までの手順は merge-slot を
 // 握ったまま rebase → CI 待ち → verify をしていたため、11 時間中 7.6 時間 (約 70%) 枠が
@@ -13,11 +14,12 @@ import { pathToFileURL } from 'node:url';
 
 import { main } from './merge-pr/cli.mjs';
 
-export { decideS2Class, readMergeTree } from './merge-pr/classify.mjs';
+export { decideS2Class, decideS3Class, readMergeTree } from './merge-pr/classify.mjs';
 export { bodyReferencesIssue, issueNumberFromExternalRef, stripCodeSpans } from './merge-pr/external-ref.mjs';
-export { DEFAULT_HOT_FILES, globToRegExp, hotCollisions } from './merge-pr/hot-files.mjs';
+export { DEFAULT_HOT_FILES, globToRegExp, hotCollisions, hotTouched } from './merge-pr/hot-files.mjs';
 export { evaluateLandedStatus } from './merge-pr/landed.mjs';
-export { parseGitHubSlug, parseMergeConfig } from './merge-pr/config.mjs';
+export { DEFAULT_LIGHT_CHECK, parseGitHubSlug, parseMergeConfig } from './merge-pr/config.mjs';
+export { recordProblem } from './merge-pr/record.mjs';
 export { mergeCommand } from './merge-pr/gate.mjs';
 export { hasApprovedReview, isReleasePleasePull } from './merge-pr/prepare.mjs';
 export { VERIFYING_PID_MAX_AGE_MS } from './merge-pr/finish.mjs';

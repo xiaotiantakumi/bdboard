@@ -68,6 +68,16 @@ export function globToRegExp(glob) {
 }
 
 /**
+ * どれかの hot パターンに当たるファイルを返す (bdboard-ulxa.3: S3 のクラス L は、片側だけの hot file
+ * でも軽量チェックにしない)。
+ * @returns {string[]}
+ */
+export function hotTouched(files, patterns) {
+  const res = patterns.map(globToRegExp);
+  return files.filter((file) => res.some((re) => re.test(file)));
+}
+
+/**
  * main 側の変更ファイルと自分の変更ファイルが同じ hot パターンに当たるものを返す。
  * @returns {{ pattern: string, main: string[], mine: string[] }[]} 空なら hot の衝突なし
  */
