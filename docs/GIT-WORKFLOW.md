@@ -350,7 +350,36 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   `pending`, runs the contract's `verify` while re-posting `pending` every `leaseMinutes / 3` (so a
   verify queued behind the machine-wide verify slots does not look abandoned), posts `success` /
   `failure`, and checks the branch out again. It never touches the main checkout. The verify log
-  is `<git common dir>/bdboard-merge/landed-verify-<sha>.log`.
+  is `<git common dir>/bdboard-merge/landed-verify-<sha>.log`. The landed verify never runs beside a
+  `pr` verify in the machine-wide verify slots (it still shares them with `merge`, and a `merge`
+  waiter may take a free slot while a `landed` waits for a `pr` to leave; docs/VERIFY.md
+  "Priorities", bdboard-xdk8).
+- **One retry for a load-induced landed failure** (bdboard-xdk8; `finish`, manual `verify`, and the
+  gate self-heal — not S2's predicted-tree verify). On 2026-10-04 a docs-only PR's landed verify
+  failed twice under machine load and the main-broken slot stopped every merge. When the landed
+  verify fails, `scripts/merge-pr/load-retry.mjs` reads its log: only if the failing step is a
+  vitest run and *every* error headline is a timeout (`Test/Hook timed out in Nms`, vitest's pool
+  start/terminate timeouts, `spawnSync … ETIMEDOUT`; matched at the start of the message, so an
+  assertion that merely quotes one is not a timeout) does it rename the first
+  log to `landed-verify-<sha>.first-attempt-<UTC time>.log`, append `landed-verify-retry` (exit,
+  timeout count, 1-min load average, CPU count, kept log) to the audit log, post `pending`
+  ("retrying after load-induced failure"), and run the verify once more. The retry tries to keep
+  its place in the verify slots. Right after it sees the first run exit, merge-pr writes a `landed`
+  reservation holder (docs/VERIFY.md "Priorities"). Waiting `pr` verifies do not take the freed
+  slot while the reservation is there. The retry queues with `since` = the first run's queue time
+  (for the reservation and the retry, without the usual 10 min cap) and removes the reservation
+  once its own holder is written. A `pr` that starts in the short gap before the reservation is
+  written only makes the retry wait for it; they never run side by side. The
+  second result is recorded as usual, with `(retried after load-induced failure: N timeouts)` in the
+  status description and `retried=1` on the `landed-verify` audit line; a second failure is a
+  `failure` (main-broken) as before, and a slot-wait timeout on
+  the retry is "could not run" (exit 75, nothing but `pending` recorded). Any other failure — an
+  assertion, a type error, a failing non-vitest step, an unrecognized headline, a test whose
+  `spawnSync` child was killed and so compares `null` to an exit code — is recorded right away, as
+  before. The decision uses the failure's shape only, not the load average: under high load a
+  real race can also fail with an assertion, and a load threshold would retry it too, while a
+  deterministic regression (including a hang that always times out) fails the retry and is still
+  recorded.
 - **The next merger's gate** reads that ledger for its PRED_BASE: `success` → go on; `failure` →
   do not merge; `pending` / none → wait (30 s polls) until `merge.leaseMinutes` (8) after the last
   update (or the commit time), then verify that SHA itself and post the result (self-heal —
@@ -504,8 +533,8 @@ File overlap still never decides whether to merge without a rebase; it only pick
   contract): `scripts/merge-pr/**`, `scripts/merge-pr.mjs`, `scripts/check-drift/**`,
   `scripts/check-drift.mjs`, and the `scripts/` modules `merge-pr` imports
   (`scripts/process-identity.mjs`, `scripts/process-tree.mjs`, `scripts/verify-slot.mjs`,
-  `scripts/verify-slot-files.mjs`, `scripts/verify-slot-queue.mjs`; `scripts/merge-pr.s3.test.mjs`
-  walks the imports and fails when one is missing).
+  `scripts/verify-slot-files.mjs`, `scripts/verify-slot-queue.mjs`, `scripts/verify-slot-wait.mjs`;
+  `scripts/merge-pr.s3.test.mjs` walks the imports and fails when one is missing).
 
 - **The light result is never a verify result.** Class L records `lightTree` / `lightCommit` /
   `lightCheck` / `lightCheckedAt` / `lightCheckSecs` (class F keeps `predictedTree` /
@@ -522,9 +551,10 @@ File overlap still never decides whether to merge without a rebase; it only pick
   `light-tree … match=true|false|unknown` — a separate event from F's `predicted-tree`, so S2's
   measurements and its rollback rule keep counting class F only (a `light-tree … match=false` means
   the same thing, GitHub's merge and git's disagree, and is reported the same way) — and audits the
-  landed verify as `light-landed … result=success|failure|error by=finish|manual|self-heal`. One
-  landed SHA can get several `light-landed` lines (an `error` and then a re-verify); count the last
-  `success` / `failure` per `new=`.
+  landed verify as `light-landed … result=success|failure|error by=finish|manual|self-heal`, with
+  `retried=1` at the end when the landed verify was re-run once after a load-induced failure (the
+  same rule as the `landed-verify` line). One landed SHA can get several `light-landed` lines (an
+  `error` and then a re-verify); count the last `success` / `failure` per `new=`.
 - **An L whose landed verify could not run stays L.** If `finish`'s landed verify ends in `error`
   (a verify-slot timeout, a failed `npm ci`, …), `finish` prints the slip rule, audits
   `light-landed … result=error` and keeps its record (`class: "L"`, `newMain` = the landed SHA) in

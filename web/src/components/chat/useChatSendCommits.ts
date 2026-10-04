@@ -172,8 +172,9 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       // bdboard-b1rz: 一覧(threadLists)に載せる行は、上の order の記録とは別の条件で決まる。order に記録するかは
       // セッションが新しいか(convKey !== result.sessionId)で決まり、行に載せる値は既存行があるかで決まる。
       // 既存行があれば appendSentThread が題名とピンを残し(題名が null の行だけは送った文で埋める)、updatedAt だけ進める。
+      // bdboard-qd78: 空の題名はここで null にする。order の記録(古い一覧の admit で足される)も同じ値を持つため。
       const listEntry: ChatThreadDto = {
-        sessionId: result.sessionId, agentId: result.agentId, title: summarizeTitle(sentText), pinned: false,
+        sessionId: result.sessionId, agentId: result.agentId, title: summarizeTitle(sentText) || null, pinned: false,
         updatedAt: new Date().toISOString(),
       };
       if (convKey !== result.sessionId) threadListOrder.noteEntryWrite(selectedProjectId, listEntry, 'upsert');

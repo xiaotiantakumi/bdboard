@@ -42,5 +42,16 @@ if (process.env.FAKE_VERIFY_MOVE_MAIN) {
 }
 const sleepMs = Number(process.env.FAKE_VERIFY_SLEEP_MS || 0);
 if (sleepMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs);
-process.exit(Number(process.env.FAKE_VERIFY_EXIT || 0));
+// bdboard-xdk8: 負荷由来の失敗の再実行のテスト用。FAKE_VERIFY_OUTPUT_FILE の中身を verify のログとして出し、
+// FAKE_VERIFY_EXIT_SEQUENCE (例 "1,0") の n 回目の値で終わる (回数は FAKE_VERIFY_SEQUENCE_FILE に数える)。
+if (process.env.FAKE_VERIFY_OUTPUT_FILE) process.stdout.write(fs.readFileSync(process.env.FAKE_VERIFY_OUTPUT_FILE, 'utf8'));
+let exitCode = Number(process.env.FAKE_VERIFY_EXIT || 0);
+if (process.env.FAKE_VERIFY_EXIT_SEQUENCE) {
+  const seqFile = process.env.FAKE_VERIFY_SEQUENCE_FILE;
+  const count = fs.existsSync(seqFile) ? Number(fs.readFileSync(seqFile, 'utf8')) : 0;
+  fs.writeFileSync(seqFile, String(count + 1));
+  const exits = process.env.FAKE_VERIFY_EXIT_SEQUENCE.split(',');
+  exitCode = Number(exits[Math.min(count, exits.length - 1)]);
+}
+process.exit(exitCode);
 `;

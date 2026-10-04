@@ -18,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { SLOT_WAIT_TIMEOUT_EXIT_CODE } from './verify-slot.mjs';
+import { SLOT_IDENTITY_ENV, SLOT_WAIT_TIMEOUT_EXIT_CODE, withoutSlotIdentity } from './verify-slot.mjs';
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const tempDirs = [];
@@ -66,11 +66,15 @@ const runVerifyCopy = ({ npmExit = 0, slotEnv = {}, slotDir = makeTempDir('verif
   const npmArgsFile = path.join(root, 'npm-args');
   const leaderFile = path.join(root, 'npm-parent');
   const fakeNpm = path.join(fakeBin, 'npm');
+  // marker には、リーダー経由で本体ステップに渡ったスロットの素性 (bdboard-xdk8) を 1 行ずつ書く (無ければ -)。
+  const identity = SLOT_IDENTITY_ENV.map((name) => `echo "${name}=\${${name}:--}"`);
   fs.writeFileSync(
     fakeNpm,
     [
       '#!/bin/sh',
-      ': > "$FAKE_NPM_MARKER"',
+      '{',
+      ...identity,
+      '} > "$FAKE_NPM_MARKER"',
       'printf \'%s\\n\' "$*" > "$FAKE_NPM_ARGS"',
       'ps -ww -o args= -p "$PPID" > "$FAKE_NPM_PARENT"',
       'exit "$FAKE_NPM_EXIT"',
@@ -82,7 +86,8 @@ const runVerifyCopy = ({ npmExit = 0, slotEnv = {}, slotDir = makeTempDir('verif
     cwd: root,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      // landed の着地後検証の中でこのテストが走っても、外側の素性を受け継がない (bdboard-xdk8)。
+      ...withoutSlotIdentity(process.env),
       PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ''}`,
       FAKE_NPM_MARKER: marker,
       FAKE_NPM_ARGS: npmArgsFile,
@@ -94,7 +99,22 @@ const runVerifyCopy = ({ npmExit = 0, slotEnv = {}, slotDir = makeTempDir('verif
     timeout: 20_000,
   });
   const read = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : null);
-  return { result, npmSpawned: fs.existsSync(marker), slotDir, npmArgs: read(npmArgsFile), leaderCommand: read(leaderFile) };
+  return {
+    result,
+    npmSpawned: fs.existsSync(marker),
+    stepEnv: fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : null,
+    slotDir,
+    npmArgs: read(npmArgsFile),
+    leaderCommand: read(leaderFile),
+  };
+};
+
+// 枠 (1 つだけ) を握ったまま生きている別プロセスの holder を置く。走っている holder の顔ぶれが変わらないので待ちが打ち切られる。
+const occupyOnlySlot = (slotDir) => {
+  const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+  liveProcesses.push(holder);
+  fs.writeFileSync(path.join(slotDir, `holder-${holder.pid}.json`), JSON.stringify({ pid: holder.pid, joinedAt: Date.now() - 1_000, cwd: '/fake' }));
+  return holder;
 };
 
 describe('SLOT_WAIT_TIMEOUT_EXIT_CODE', () => {
@@ -109,10 +129,7 @@ describe('SLOT_WAIT_TIMEOUT_EXIT_CODE', () => {
 describe.skipIf(process.platform === 'win32')('verify.mjs exit codes (real process, copied scripts + fake npm)', { timeout: 30_000 }, () => {
   it('exits 75 without starting any verify step when the slot wait times out', () => {
     const slotDir = makeTempDir('verify-exit-slots-');
-    // 枠 (1 つだけ) を握ったまま生きている別プロセス。走っている holder の顔ぶれが変わらないので待ちが打ち切られる。
-    const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
-    liveProcesses.push(holder);
-    fs.writeFileSync(path.join(slotDir, `holder-${holder.pid}.json`), JSON.stringify({ pid: holder.pid, joinedAt: Date.now() - 1_000, cwd: '/fake' }));
+    const holder = occupyOnlySlot(slotDir);
     const { result, npmSpawned } = runVerifyCopy({
       slotDir,
       slotEnv: { BDBOARD_VERIFY_SLOTS: '1', BDBOARD_VERIFY_SLOT_WAIT_MS: '1000' },
@@ -123,6 +140,40 @@ describe.skipIf(process.platform === 'win32')('verify.mjs exit codes (real proce
     expect(npmSpawned).toBe(false);
     // 自分の holder file は片付けてある (先客のものだけが残る)。
     expect(fs.readdirSync(slotDir)).toEqual([`holder-${holder.pid}.json`]);
+  });
+
+  // PR #855 のレビュー (B1): merge-pr は着地後検証に BDBOARD_VERIFY_PRIORITY=landed を渡す。それがテストの中の verify.mjs まで
+  // 届くと landed の待ちの延長 (32 分) が効き、上のテストが 20 秒で kill されて (143) 着地後検証が failure になっていた。
+  it('still exits 75 within the short wait when it inherits a landed identity (an explicit BDBOARD_VERIFY_SLOT_WAIT_MS wins)', () => {
+    const slotDir = makeTempDir('verify-exit-slots-');
+    const holder = occupyOnlySlot(slotDir);
+    const elsewhere = makeTempDir('verify-exit-reservation-');
+    const foreignReservation = path.join(elsewhere, `holder-${holder.pid}.json`);
+    fs.writeFileSync(foreignReservation, '{}');
+    const started = Date.now();
+    const { result, npmSpawned } = runVerifyCopy({
+      slotDir,
+      slotEnv: {
+        BDBOARD_VERIFY_SLOTS: '1',
+        BDBOARD_VERIFY_SLOT_WAIT_MS: '1000',
+        BDBOARD_VERIFY_PRIORITY: 'landed',
+        BDBOARD_VERIFY_QUEUE_SINCE: String(Date.now() - 20 * 60_000),
+        BDBOARD_VERIFY_SLOT_HANDOFF: foreignReservation,
+      },
+    });
+    expect(result.status, result.stderr).toBe(SLOT_WAIT_TIMEOUT_EXIT_CODE);
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(result.stderr).toContain('priority landed');
+    expect(npmSpawned).toBe(false);
+    expect(fs.existsSync(foreignReservation)).toBe(true); // 別の置き場の holder は予約として消さない
+  });
+
+  it('does not pass its slot identity (priority, queue time, reservation) on to the verify steps', () => {
+    const { result, stepEnv } = runVerifyCopy({
+      slotEnv: { BDBOARD_VERIFY_PRIORITY: 'landed', BDBOARD_VERIFY_QUEUE_SINCE: String(Date.now()), BDBOARD_VERIFY_SLOT_HANDOFF: '/nowhere/holder-1.json' },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(stepEnv.trim().split('\n')).toEqual(SLOT_IDENTITY_ENV.map((name) => `${name}=-`));
   });
 
   it('passes the verify steps exit code through unchanged (0 and a plain failure)', () => {

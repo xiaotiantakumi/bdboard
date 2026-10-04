@@ -123,6 +123,9 @@ export function setup({ merge = {}, mainDate, branchFiles = {} } = {}) {
     BDBOARD_MERGE_POLL_MS: '50',
     BDBOARD_MERGER: 'chair',
     FAKE_VERIFY_LOG: path.join(tmp, 'verified.log'),
+    // bdboard-xdk8: 着地後検証の再実行は merge-pr 自身が verify スロットに予約 holder を置く。マシンの本物の置き場
+    // (os.tmpdir() 配下) に書いて手元の verify を止めないよう、テストごとの置き場に向ける。
+    BDBOARD_VERIFY_SLOT_DIR: path.join(tmp, 'verify-slots'),
   };
   git(tmp, ['init', '-q', '--bare', '-b', 'main', origin]);
   git(tmp, ['init', '-q', '-b', 'main', mainCheckout]);

@@ -46,6 +46,7 @@ export const MERGE_PROCEDURE_FILES = Object.freeze([
   'scripts/verify-slot.mjs',
   'scripts/verify-slot-files.mjs',
   'scripts/verify-slot-queue.mjs',
+  'scripts/verify-slot-wait.mjs',
 ]);
 
 const LITERAL = /[.+^$()|[\]\\]/g;

@@ -289,7 +289,8 @@ What this means operationally:
   before propagating, and any verify that reads the slot directory reclaims a
   temporary file whose writer pid (the second one) is dead (a SIGKILL between write and
   rename); one whose writer is alive is left alone (bdboard-l3dh). If
-  the set of running holders does not change for 15 min, the waiter exits
+  the set of running holders does not change for 15 min (32 min in the
+  landed/pr cases under "Wait limits under this rule" below), the waiter exits
   **75** (`EX_TEMPFAIL`, `SLOT_WAIT_TIMEOUT_EXIT_CODE` in
   `scripts/verify-slot.mjs`) naming those pids — investigate them (hung
   verify?) rather than disabling the slot. (The timeout counts time without
@@ -313,9 +314,19 @@ What this means operationally:
   as "could not run", not recorded as `failure`).
 - **Env knobs are for tests and emergencies only**: `BDBOARD_VERIFY_SLOTS`
   (default 2; `0` disables gating), `BDBOARD_VERIFY_SLOT_DIR`,
-  `BDBOARD_VERIFY_SLOT_WAIT_MS`. Do not raise or disable them just to run
+  `BDBOARD_VERIFY_SLOT_WAIT_MS` (used as is, never extended by the landed/pr
+  wait limits below). Do not raise or disable them just to run
   more verifies in parallel — that recreates the incident. CI needs no
   special casing (one verify per runner; the slot is acquired instantly).
+- **Slot identity is not inherited (bdboard-xdk8).** `BDBOARD_VERIFY_PRIORITY`,
+  `BDBOARD_VERIFY_QUEUE_SINCE` and `BDBOARD_VERIFY_SLOT_HANDOFF` describe one
+  verify run's place in the queue. `scripts/verify.mjs` reads them for its own
+  holder and removes them from the environment of the steps it runs
+  (`SLOT_IDENTITY_ENV` / `withoutSlotIdentity` in `scripts/verify-slot.mjs`).
+  Before this, the tests in a landed verify that spawn `verify.mjs` copies
+  (`scripts/verify-slot-timeout-exit.test.mjs`) inherited `landed` and waited
+  32 min instead of a few seconds. The tests that spawn `verify.mjs` or the slot
+  scripts strip them as well, for a run started by hand with them exported.
 
 ### Priorities (bdboard-ulxa.6)
 
@@ -349,6 +360,96 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   the same simulation results, and the cap bounds how far a long-retrying
   `merge` run can jump the critical-path `landed` runs: it passes only those
   that queued less than 6 min before it.
+- **`landed` does not run beside `pr` (bdboard-xdk8).** On 2026-10-04 two landed
+  verifies of a docs-only PR failed in a row under load average 48–111 on 10
+  cores (`pr` verifies in the other slot plus agents' one-off vitest runs
+  outside the slot): web tests hit `Test timed out in 5000ms`, a vitest worker
+  failed to start, and the `failure` on the ledger held the main-broken slot
+  and stopped every merge (the same SHA was green on GitHub CI and on a quiet
+  re-run). So a `landed` holder and a `pr` holder never run at the same time
+  (`EXCLUDED_BESIDE` in `scripts/verify-slot-queue.mjs`; the relation is
+  symmetric): a `landed` waiter whose turn comes waits for running `pr`
+  holders to leave, and a `pr` waiter does not start while a `landed` holder
+  runs or starts in the same round. `landed` and `merge` still share the two
+  slots. Why not let `landed` run alone:
+  1. In the incident only `pr` verifies shared the slots with the failing
+     landed verifies; no `merge` verify was involved.
+  2. The merge-pr audit log shows about 12 landed verifies that ran beside a
+     `merge` verify, all `success`.
+  3. The simulation below (which models neither load-induced slowdowns nor
+     false failures, so it shows only the waiting): running `landed` alone
+     (`after`) means the next PR's predicted-tree verify can no longer overlap
+     the previous landed verify. Against ulxa.6 (`sharedLanded`), merges per
+     8 h drop from 45.8 to 28.4, the max merge latency rises from 75 to 263 min
+     and the max redo count from 6 to 15. Keeping only `pr` out and letting
+     `merge` waiters skip a blocked head (`mergeSkip`, adopted, next
+     paragraph) gives 45.8 merges, max latency 53 min and max redo 5. It also
+     takes the time a landed verify runs beside a `pr` verify from 181 min
+     per 8 h to 0.
+
+  Only `merge` skips. A waiter that cannot start because of this rule is the
+  *blocked head*. The `pr` and `landed` waiters behind it wait too: both are
+  part of the rule, and letting them pass could starve the head (`pr` runs
+  starting one after another while a `landed` waits). A `merge` waiter
+  conflicts with nobody, so it may take a free slot past the blocked head
+  (`isNeutral` / `pickStarters` in `scripts/verify-slot-queue.mjs`). Without
+  that, a `merge` waiter behind a `landed` that waits for a running `pr`
+  leaves a slot idle (`prOnly` in the simulation: 44.3 merges, max latency
+  89 min, max redo 7). The head keeps first claim on the slot its blocker
+  frees: once the blocker leaves, the head is first in order again and takes
+  that slot before any waiter behind it. So a skipping `merge` only uses a
+  slot the head could not use yet, and the virtual-arrival bound above still
+  holds for `pr` and `landed` waiters.
+  The status line says why a waiter waits (`landed verify does not run beside
+  pr verify pid N, waiting for it to finish`; for a `pr` waiter, `landed
+  verify pid N is running and pr verifies do not run beside it — normal, do
+  not kill it`). Holders written by a script from before this change (a
+  worktree not yet rebased) do not know the rule and may start beside a
+  `landed` run — no worse than before.
+- **Wait limits under this rule.** A `landed` waiter waits for a `pr` run to
+  leave, and a `pr` waiter held up by a `landed` run or by a retry reservation
+  (below) waits for that landed verify. A run slowed by load can take longer
+  than 15 min, so for `landed` and for any waiter held up by this rule the
+  no-progress limit is `max(15 min, stale limit + 2 min)` = 32 min
+  (`slotWaitLimitMs` in `scripts/verify-slot-wait.mjs`). By then the other run,
+  if it still holds the slot, has gone stale and stopped counting. Waiters
+  that only wait for a free slot keep 15 min and end with exit 75 as before.
+  An explicit `BDBOARD_VERIFY_SLOT_WAIT_MS` wins and is never extended. When
+  a `pr` waiter times out while a `landed` verify is running, or behind a
+  retry reservation, the message says so and calls it normal: do not kill it
+  (or merge-pr), retry after the landed verify finishes. It does not show the
+  generic "investigate those pids (hung verify?)" or an empty holder list.
+- **Stale limit under extreme load.** The 30 min stale limit counts from
+  `acquiredAt`. A verify normally takes about 5.5 min, but at the incident's
+  load one run can take 30–40 min; past 30 min it stops counting, so a waiter
+  may start beside it (a `landed` beside a slow `pr`, or a third run) for the
+  rest of that run. A longer limit would make a really hung run block
+  everyone longer, so this worst case is accepted, not handled.
+- **Retry reservation.** When `merge-pr` re-runs a landed verify after a
+  load-induced failure (docs/GIT-WORKFLOW.md, Layer 3 ledger), it writes a
+  reservation holder (its own pid, priority `landed`, `reserved: true`,
+  `since` = when the first run queued) right after the first run exits, and
+  passes its path to the re-run in `BDBOARD_VERIFY_SLOT_HANDOFF`. The re-run's
+  `npm run verify` deletes it once its own holder is written, before its first
+  look at the queue. The re-run's holder is marked `retry: true`. The
+  reservation and the re-run both keep `since` without the 10 min seniority
+  cap, so a `pr` that has waited longer than 10 min does not pass them. The
+  reservation is a waiting `landed` holder, so it narrows the window in which
+  a `pr` waiter can take the freed slot. It does not close that window. It
+  covers the few seconds between merge-pr writing it and the re-run queueing
+  (log rename, audit, `pending` post, npm start-up). `merge` waiters may still
+  share the slots.
+  Known limit (latency only): the gap between the first run's `verify.mjs`
+  deleting its own holder and merge-pr writing the reservation is not
+  covered, because merge-pr must first see the first run exit. A `pr` waiter
+  that starts in that gap makes the re-run wait for it to finish, within the
+  32 min limit above. The re-run still never runs beside it.
+  merge-pr deletes the reservation on every path that does not re-run, and on
+  exit. One left by a SIGKILL is reaped like any holder whose pid is dead. If
+  the re-run cannot delete it, the re-run logs a warning and goes on without
+  waiting behind it, and merge-pr deletes it when the re-run ends. The
+  variable is internal: only another `holder-<pid>.json` in the same slot
+  directory is ever deleted, never the verify's own holder.
 - **Holder format.** New holders carry `v: 2`, `priority`, `queuedAt`, an
   optional `since`, and `acquiredAt` once running, and are written atomically
   (temp file + rename). A file that fails to parse is deleted only after 5 s (an
@@ -375,7 +476,10 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   | priority only, landed last | 24.5 | 1.6 | 2.1 / 14 | 50 / 285 | 17.6 | 2 |
   | priority only, landed first | 27.9 | 2.9 | 2.5 / 16 | 53 / 269 | 20.3 | 2 |
   | abandon only (FIFO) | 47.4 | 1.5 | 1.8 / 13 | 23 / 130 | 10.8 | 2 |
-  | **adopted**: priority + abandon + seniority | 45.8 | **1.2** | **1.4 / 6** | **21 / 75** | 19.0 | 2 |
+  | ulxa.6 adopted: priority + abandon + seniority (`sharedLanded`) | 45.8 | 1.2 | 1.4 / 6 | 21 / 75 | 19.0 | 2 |
+  | **adopted** (bdboard-xdk8): the above + `landed` never beside `pr`, `merge` may skip a blocked head (`mergeSkip`) | 45.8 | **0.7** | **1.0** / **5** | **17** / **53** | 19.7 | 2 |
+  | not adopted (bdboard-xdk8, second draft): the same without the `merge` skip (`prOnly`) | 44.3 | 0.8 | 1.3 / 7 | 19 / 89 | 21.3 | 2 |
+  | not adopted (bdboard-xdk8, first draft): ulxa.6 + `landed` runs alone (`after`) | 28.4 | 1.2 | 2.3 / 15 | 43 / 263 | 27.8 | 2 |
 
   "Abandon" is on the merge-pr side: see docs/GIT-WORKFLOW.md, S2.
 
@@ -399,7 +503,11 @@ birpc の外には固定のタイムアウトが残っている (worker の起�
 `[vitest-pool-runner]: Timeout waiting for worker to respond`、ランナー起動待ちの
 `[vitest-pool]: Timeout starting … runner.` など)。これらや teardown 時の
 `[vitest-worker]: Closing rpc while "…" was pending` で verify が落ちた場合は既知 flake と
-みなさず、実失敗として原因を調べる。Vitest を上げて `createRuntimeRpc` / PoolRunner が birpc に
+みなさず、実失敗として原因を調べる。例外は merge-pr の着地後検証だけで、落ちたステップが vitest で、
+エラーの見出しが全部時間切れの形 (`Test timed out in Nms`・`Hook timed out in Nms`・
+`[vitest-pool]: Timeout starting … runner.` 等。`scripts/merge-pr/load-retry.mjs` の `TIMEOUT_SHAPES`) の
+ときに限り 1 回だけ再実行してから台帳に書く (bdboard-xdk8。docs/GIT-WORKFLOW.md の Layer 3 ledger)。
+再実行でも落ちれば failure として記録されるので、そこから先は同じく実失敗として調べる。Vitest を上げて `createRuntimeRpc` / PoolRunner が birpc に
 渡す `timeout: -1` が変わったら、この節の前提を見直す。
 
 ## ローカル起動コマンドの違い

@@ -8,7 +8,9 @@ import { legacyRank, MAX_SENIORITY_MS, normalizePriority, planSlots, queueKey, T
 
 const MIN = 60_000;
 const T0 = 1_000_000_000;
-const OPTIONS = { slots: 2, staleTtlMs: 30 * MIN, tierStepMs: TIER_STEP_MS, maxSeniorityMs: MAX_SENIORITY_MS };
+// 並び順 (ulxa.6) と旧形式・stale の扱いを固定するテストなので、landed と pr を同居させない規則 (bdboard-xdk8) は
+// 外して見る (excludedBeside: {} = どの組も同居してよい。規則は verify-slot-exclusive.test.mjs)。
+const OPTIONS = { slots: 2, staleTtlMs: 30 * MIN, tierStepMs: TIER_STEP_MS, maxSeniorityMs: MAX_SENIORITY_MS, excludedBeside: {} };
 
 const v2 = (pid, joinedAt, priority = 'pr', extra = {}) => ({ v: 2, pid, joinedAt, cwd: '/fake', priority, ...extra });
 const legacy = (pid, joinedAt) => ({ pid, joinedAt, cwd: '/fake' });
