@@ -225,6 +225,8 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
         // 見送りは利用者の操作なので、容量の上限では断らない (見送ると、あとで容量を空けられる下書きが増える)。
         await deps.storage.save(dismissed);
         retention.recordWrite(draftJsonBytes(dismissed) - draftJsonBytes(draft));
+        // 空けられる (終端の) 下書きが増えた: 上限に張り付いて伸びた測り直しの間隔を戻す (bdboard-krvf)。
+        retention.noteFreeableDraft();
         return { ok: true, draft: dismissed };
       }),
 

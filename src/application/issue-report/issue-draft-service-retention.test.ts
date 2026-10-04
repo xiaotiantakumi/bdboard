@@ -360,6 +360,30 @@ describe('total size cap: terminal drafts are pruned oldest first, then a receiv
     expect(survey).toHaveBeenCalledTimes(2);
   });
 
+  it('backs the re-survey off while stuck at the cap, and a dismissal brings the next one back to a minute (bdboard-krvf)', async () => {
+    const base = createHarness();
+    const open = await createdId(base.service, 'a');
+    await createdId(base.service, 'b');
+    const h = createHarness({ maxTotalBytes: totalBytes(base.storage) }, base);
+    const survey = vi.spyOn(h.storage, 'survey');
+
+    expect(await receive(h.service, 'c')).toEqual({ ok: false, reason: 'storage-full' }); // 掃除の棚卸し 1 回 (ensureRoom は測らない)
+    h.advance(MINUTE_MS);
+    expect(await receive(h.service, 'd')).toEqual({ ok: false, reason: 'storage-full' }); // 張り付いたまま測り直す: 2 回目
+    expect(survey).toHaveBeenCalledTimes(2);
+
+    h.advance(MINUTE_MS); // 前回の測定から 1 分: 以前はここでも測り直した。いまは 2 分に伸びている
+    expect(await receive(h.service, 'e')).toEqual({ ok: false, reason: 'storage-full' });
+    expect(survey).toHaveBeenCalledTimes(2);
+
+    // 見送ると空けられる下書きが増える: 間隔が 1 分に戻り、次の確認で測り直して、見送った下書きを消して受け取る。
+    expect((await h.service.dismiss(open, 'not a bug')).ok).toBe(true);
+    const result = await receive(h.service, 'f');
+    expect(result.ok && result.outcome).toBe('created');
+    expect(survey).toHaveBeenCalledTimes(3);
+    expect(h.storage.drafts.has(open)).toBe(false);
+  });
+
   it('accepts (fail-open) when the size cannot be measured, instead of losing the report', async () => {
     const base = createHarness();
     await createdId(base.service, 'a');

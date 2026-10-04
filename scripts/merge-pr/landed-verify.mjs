@@ -16,7 +16,7 @@ import path from 'node:path';
 
 import { git, gitOk, run } from './exec.mjs';
 import { installInterruptHandler } from './interrupt.mjs';
-import { retryLoadInduced } from './load-retry.mjs';
+import { childTimeoutLines, classifyVerifyFailure, readLogQuietly, retryLoadInduced } from './load-retry.mjs';
 import { audit, readInstalledFor, say, stateDir, writeInstalledFor } from './state.mjs';
 import { postQuietly, runContractVerify, stoppedEarly, tail } from './verify-run.mjs';
 import { downgradeForVerify, holdWorktree, isLinkedWorktree, lockFds, setPhase } from './worktree-hold.mjs';
@@ -62,6 +62,8 @@ function untrackedFiles(root) {
  * description に「retried after load-induced failure」、監査ログに landed-verify-retry と 1 回目のログの
  * パスを残す。再実行が落ちれば failure、スロット待ちの打ち切りなら error (記録しない)。再実行したかは
  * 返り値の retried (呼び出し元が landed-verify の監査行に retried=1 を足す)。
+ * bdboard-7qhq: ledger: true の verify が failure で終わったとき、最後のログにある子プロセスの時間切れ
+ * (spawnSync ETIMEDOUT) の件数を返り値の etimedout に入れる (呼び出し元が監査行に etimedout=N を足す。0 件は出さない)。
  *
  * bdboard-2twf: 未追跡ファイルがあれば (ignore 済みを除く) verify を始めずに 'error' を返す。
  * verify 実行中に SIGINT/SIGTERM を受けたら、子プロセスを終了して restoreTo に戻ってから
@@ -149,6 +151,7 @@ export async function runLandedVerify(
   // だけ」という docs/GIT-WORKFLOW.md の前提が崩れる)。
   let result;
   let retried = false;
+  let etimedout = 0;
   let installedAny = false;
   try {
     // detach した後 (= sha のツリーの .gitignore) で判定する。checkout 前のままだと違う木の
@@ -171,7 +174,7 @@ export async function runLandedVerify(
       };
       const queue = { priority, queueSince, abandonWhen };
       downgradeForVerify(hold); // 持ち主の行 (phase verify) を書いてから SH へ。拒否なら 75 で、木は戻さない
-      ({ result, retried } = await installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, hold }));
+      ({ result, retried, etimedout } = await installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, hold }));
     }
   } finally {
     // activeChild.interrupted の間は installAndVerify がここへ戻ってこない (待つだけで
@@ -186,7 +189,7 @@ export async function runLandedVerify(
       say(`注意: この worktree の node_modules は ${sha.slice(0, 12)} 用に入れ直しました。ブランチで作業を続けるなら npm ci し直してください。`);
     }
   }
-  return { result, logPath, retried: retried === true };
+  return { result, logPath, retried: retried === true, etimedout: etimedout ?? 0 };
 }
 
 async function installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, hold }) {
@@ -228,13 +231,17 @@ async function installAndVerify(ctx, { root, sha, by, command, originalHead, log
     code = again.code;
   }
   const result = code === 0 ? 'success' : 'failure';
+  // bdboard-7qhq: 台帳に書く着地後検証の failure は、最後のログ (再実行したなら 2 回目) に子プロセスの時間切れ (ETIMEDOUT)
+  // が何件あるかを見出しとして出し、呼び出し元の監査行 (landed-verify) にも残す。着地予定ツリーの verify は
+  // predicted.mjs が自分の分類 (judgePredictedFailure) で同じ件数を出すので、ここでは読まない。
+  const etimedout = result === 'failure' && ledger ? classifyVerifyFailure(readLogQuietly(logPath)).etimedout : 0;
   if (result === 'failure') {
-    say(`verify が失敗しました (exit ${code})。ログの末尾:`, tail(logPath, 40));
+    say(`verify が失敗しました (exit ${code})。`, ...childTimeoutLines(etimedout), 'ログの末尾:', tail(logPath, 40));
   }
   if (!ledger) {
     return { result };
   }
   const why = result === 'success' ? 'npm run verify passed' : `npm run verify failed (exit ${code})`;
   const note = retried === null ? '' : ` (retried after load-induced failure: ${retried.timeouts} timeouts)`;
-  return { result: postQuietly(ctx, sha, result, `${why}${note} (by ${by})`) ? result : 'error', retried: retried !== null };
+  return { result: postQuietly(ctx, sha, result, `${why}${note} (by ${by})`) ? result : 'error', retried: retried !== null, etimedout };
 }

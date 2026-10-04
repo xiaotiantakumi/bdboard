@@ -154,7 +154,8 @@ export async function finish(ctx, pr) {
     retryHint: `BDBOARD_MERGER=chair npm run merge-pr -- finish ${pr}`,
   });
   // bdboard-xdk8: 負荷由来の失敗で 1 回だけ再実行したときだけ retried=1 を足す (しなければ項目ごと出さない)。
-  audit('landed-verify', { pr, id: state.id, new: landed, result: verified.result, retried: verified.retried ? 1 : undefined });
+  // bdboard-7qhq: failure のログに子プロセスの時間切れ (spawnSync ETIMEDOUT) があれば etimedout=N も足す (0 件は出さない)。
+  audit('landed-verify', { pr, id: state.id, new: landed, result: verified.result, retried: verified.retried ? 1 : undefined, etimedout: verified.etimedout || undefined });
   reportLightLanded(state, landed, verified.result, 'finish', verified.retried); // error でも L であることを残す
   const leftover = run('git', ['ls-remote', REMOTE, `refs/heads/${pull.headRef}`], { cwd: ctx.cwd });
   if (leftover.status === 0 && leftover.stdout.trim() !== '') {
@@ -205,7 +206,7 @@ export async function verifyLanded(ctx, sha) {
   const full = git(['rev-parse', `${sha}^{commit}`], { cwd: ctx.cwd });
   const by = `manual ${git(['config', '--default', 'unknown', 'user.name'], { cwd: ctx.cwd })}`;
   const verified = await runLandedVerify(ctx, full, by, { retryHint: `BDBOARD_MERGER=chair npm run merge-pr -- verify ${full}` });
-  audit('landed-verify', { new: full, result: verified.result, by: 'manual', retried: verified.retried ? 1 : undefined });
+  audit('landed-verify', { new: full, result: verified.result, by: 'manual', retried: verified.retried ? 1 : undefined, etimedout: verified.etimedout || undefined });
   // finish が error / failure で終わったクラス L の着地、finish が走らなかった L の着地なら、その記録 (状態ファイル) から L を見分ける。
   const light = lightLandedState(ctx.cwd, full);
   const recorded = reportLightLanded(light, full, verified.result, 'manual', verified.retried) === true;

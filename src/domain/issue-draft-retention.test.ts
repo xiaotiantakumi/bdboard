@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ISSUE_DRAFT_DIR_MAX_BYTES,
   ISSUE_DRAFT_PRUNE_INTERVAL_MS,
+  ISSUE_DRAFT_RESURVEY_GAP_MAX_MS,
   ISSUE_DRAFT_RESURVEY_GAP_MS,
   ISSUE_DRAFT_RETENTION_MS,
   isTerminalDraftStatus,
@@ -25,6 +26,7 @@ describe('the pinned limits (bdboard-00qh)', () => {
     expect(ISSUE_DRAFT_RETENTION_MS).toBe(30 * DAY_MS);
     expect(ISSUE_DRAFT_PRUNE_INTERVAL_MS).toBe(3_600_000);
     expect(ISSUE_DRAFT_RESURVEY_GAP_MS).toBe(60_000);
+    expect(ISSUE_DRAFT_RESURVEY_GAP_MAX_MS).toBe(3_600_000); // 張り付いたあとの測り直しの間隔の上限 (bdboard-krvf)
     expect(ISSUE_DRAFT_DIR_MAX_BYTES).toBe(1_073_741_824);
   });
 });
