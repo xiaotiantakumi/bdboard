@@ -9,7 +9,7 @@ import {
   type DraftStatus,
   type IssueDraft,
 } from '../../domain/issue-draft.js';
-import { fitDraftToByteLimit } from '../../domain/issue-draft-size.js';
+import { draftJsonBytes, fitDraftToByteLimit } from '../../domain/issue-draft-size.js';
 import {
   addOccurrence,
   canonicalizeReceiveInput,
@@ -18,6 +18,7 @@ import {
   type ReceiveDraftInput,
 } from '../../domain/issue-draft-build.js';
 import type { IssueDraftStoragePort, StoredDraftImage } from '../ports/issue-draft-storage.js';
+import { createDraftRetention, type DraftRetentionOptions } from './issue-draft-retention.js';
 
 export type { ReceiveDraftInput } from '../../domain/issue-draft-build.js';
 
@@ -30,7 +31,9 @@ export type { ReceiveDraftInput } from '../../domain/issue-draft-build.js';
 
 export type ReceiveDraftResult =
   | { readonly ok: true; readonly outcome: 'created' | 'merged' | 'folded'; readonly draft: IssueDraft }
-  | { readonly ok: false; readonly reason: 'missing-identifier' };
+  | { readonly ok: false; readonly reason: 'missing-identifier' }
+  /** issue-drafts の合計容量の上限に収まらない (終端の下書きを消しても足りない)。bdboard-00qh。 */
+  | { readonly ok: false; readonly reason: 'storage-full' };
 
 export type DismissDraftResult =
   | { readonly ok: true; readonly draft: IssueDraft }
@@ -39,7 +42,9 @@ export type DismissDraftResult =
 
 export type AddDraftImageResult =
   | { readonly ok: true; readonly image: StoredDraftImage }
-  | { readonly ok: false; readonly reason: 'not-found' | 'limit-reached' };
+  | { readonly ok: false; readonly reason: 'not-found' | 'limit-reached' | 'storage-full' }
+  /** 画像を足せるのは pending の下書きだけ (見送り・投稿済みには足さない)。bdboard-00qh。 */
+  | { readonly ok: false; readonly reason: 'not-pending'; readonly status: DraftStatus };
 
 export interface IssueDraftService {
   receive(input: ReceiveDraftInput): Promise<ReceiveDraftResult>;
@@ -51,13 +56,21 @@ export interface IssueDraftService {
   /** 下書きが無ければ undefined。 */
   listImages(id: string): Promise<readonly StoredDraftImage[] | undefined>;
   readImage(id: string, fileName: string): Promise<Buffer | undefined>;
+  /**
+   * 起動時の掃除: 見送り・投稿済みで保持期限を過ぎた下書きを画像ごと消す (bdboard-00qh)。受け取りのついでの
+   * 掃除 (1 時間に 1 回まで) と同じ処理で、こちらは間隔を待たない。失敗しても投げない (警告だけ)。
+   */
+  pruneOnStart(): Promise<void>;
 }
 
 export interface IssueDraftServiceDeps {
   readonly storage: IssueDraftStoragePort;
+  /** 受け取りの時刻、保持期限、掃除の間隔の時計。 */
   readonly now: () => Date;
   /** `<epochMs>-<16桁hex>` の形 (domain の isDraftId)。 */
   readonly newId: () => string;
+  /** 保持期限・掃除の間隔・合計容量の上限・警告の出力。省略時は domain の既定値 (30 日・1 時間・1 GiB)。 */
+  readonly retention?: DraftRetentionOptions;
 }
 
 interface DraftIndex {
@@ -87,7 +100,22 @@ function compareNewestFirst(a: IssueDraft, b: IssueDraft): number {
 
 export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraftService {
   const exclusive = createMutex();
+  const retention = createDraftRetention({ ...deps.retention, storage: deps.storage, now: deps.now });
+  const storageFull = { ok: false, reason: 'storage-full' } as const;
   let indexPromise: Promise<DraftIndex> | undefined;
+
+  /**
+   * 合計容量の上限に収まるときだけ書く (収まらなければ false で、何も書かない)。previous は上書きされる前の
+   * 下書きで、差分 (新しい大きさ - 古い大きさ) だけを数える。上書きする下書き自身は、容量を空けるために
+   * 消す候補から外す (消すと画像まで失い、draft.json だけが書き戻る)。
+   */
+  async function saveWithinCap(draft: IssueDraft, previous: IssueDraft | undefined): Promise<boolean> {
+    const delta = draftJsonBytes(draft) - (previous === undefined ? 0 : draftJsonBytes(previous));
+    if (!(await retention.ensureRoom(delta, previous?.id))) return false;
+    await deps.storage.save(draft);
+    retention.recordWrite(delta);
+    return true;
+  }
 
   async function loadIndex(): Promise<{ readonly index: DraftIndex; readonly complete: boolean }> {
     const listing = await deps.storage.scan();
@@ -137,6 +165,8 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
     const fingerprint = computeDraftFingerprint(input);
     if (fingerprint === undefined) return { ok: false, reason: 'missing-identifier' };
 
+    // 期限切れの掃除 (1 時間に 1 回まで。失敗しても受け取りは続ける)。索引を読む前に済ませる。
+    await retention.pruneIfDue();
     const index = await getIndex();
     const now = deps.now();
     const nowIso = now.toISOString();
@@ -145,7 +175,7 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
     const known = knownId === undefined ? undefined : await deps.storage.get(knownId);
     if (known !== undefined) {
       const merged = addOccurrence(known, input, nowIso);
-      await deps.storage.save(merged);
+      if (!(await saveWithinCap(merged, known))) return storageFull;
       return { ok: true, outcome: 'merged', draft: merged };
     }
     // 索引にあるのにディスクに無いのは、手で消されたとき。新しい下書きとして作り直す。
@@ -162,13 +192,13 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
         foldedFingerprint: fingerprint,
         nowIso,
       });
-      await deps.storage.save(folded);
+      if (!(await saveWithinCap(folded, existingMass))) return storageFull;
       index.idByFingerprint.set(massFingerprint, folded.id);
       return { ok: true, outcome: 'folded', draft: folded };
     }
 
     const draft = createDraftFromReport(input, { id: deps.newId(), fingerprint, nowIso });
-    await deps.storage.save(draft);
+    if (!(await saveWithinCap(draft, undefined))) return storageFull;
     index.idByFingerprint.set(fingerprint, draft.id);
     index.newDraftsByHour.set(bucket, (index.newDraftsByHour.get(bucket) ?? 0) + 1);
     return { ok: true, outcome: 'created', draft };
@@ -192,20 +222,28 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
         if (draft.status !== 'pending') return { ok: false, reason: 'not-pending', status: draft.status };
         // 理由のぶんだけ大きくなるので、200KB の上限はここでもかける。
         const dismissed = fitDraftToByteLimit({ ...draft, status: 'dismissed', dismissReason: reason });
+        // 見送りは利用者の操作なので、容量の上限では断らない (見送ると、あとで容量を空けられる下書きが増える)。
         await deps.storage.save(dismissed);
+        retention.recordWrite(draftJsonBytes(dismissed) - draftJsonBytes(draft));
         return { ok: true, draft: dismissed };
       }),
 
     addImage: (id, extension, data) =>
       exclusive(async (): Promise<AddDraftImageResult> => {
-        if (!isDraftId(id) || (await deps.storage.get(id)) === undefined) {
-          return { ok: false, reason: 'not-found' };
-        }
+        const draft = isDraftId(id) ? await deps.storage.get(id) : undefined;
+        if (draft === undefined) return { ok: false, reason: 'not-found' };
+        // 見送り・投稿済みの下書きには足さない (期限が来れば画像ごと消える下書きに、画像だけ増やさせない)。
+        if (draft.status !== 'pending') return { ok: false, reason: 'not-pending', status: draft.status };
         if ((await deps.storage.countImages(id)) >= ISSUE_DRAFT_MAX_IMAGES) {
           return { ok: false, reason: 'limit-reached' };
         }
-        return { ok: true, image: await deps.storage.saveImage(id, extension, data) };
+        if (!(await retention.ensureRoom(data.byteLength, id))) return storageFull;
+        const image = await deps.storage.saveImage(id, extension, data);
+        retention.recordWrite(image.byteLength);
+        return { ok: true, image };
       }),
+
+    pruneOnStart: () => exclusive(() => retention.pruneNow()),
 
     async listImages(id) {
       if (!isDraftId(id) || (await deps.storage.get(id)) === undefined) return undefined;
