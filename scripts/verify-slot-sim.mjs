@@ -35,8 +35,16 @@ export const POLICIES = Object.freeze({
    * verify が遅くなることも偽の failure も表さないので、同居させない得 (負荷) は映らず損 (待ち) だけが映る。
    */
   after: { abandon: true, seniority: true, excludedBeside: { landed: ['landed', 'merge', 'pr'] } },
-  /** 採用案 (bdboard-xdk8): sharedLanded に加えて landed と pr だけを同居させない (verify-slot-queue.mjs の EXCLUDED_BESIDE)。 */
-  prOnly: { abandon: true, seniority: true },
+  /**
+   * 比較用 (bdboard-xdk8 の 2 番目の案): sharedLanded に加えて landed と pr だけを同居させない (EXCLUDED_BESIDE) が、
+   * 止まった先頭の後ろは merge も飛ばさない。pr が走っている間に待つ landed の後ろで merge まで止まり、枠が遊ぶ。
+   */
+  prOnly: { abandon: true, seniority: true, skipPastBlocked: false },
+  /**
+   * 採用案 (bdboard-xdk8): prOnly に加えて、同居の規則に関わらない merge だけは止まった先頭を飛ばして空き枠に入る
+   * (verify-slot-queue.mjs の pickStarters)。止まった先頭は相手が抜けた周に空いた枠を真っ先に取る。
+   */
+  mergeSkip: { abandon: true, seniority: true },
 });
 
 function mulberry32(seed) {
@@ -57,7 +65,10 @@ export function simulate(policy, { seed = 1, agents = 7, hours = 8, slots = 2, v
   const order = policy.order ?? { merge: 'merge', pr: 'pr', landed: 'landed' };
   const queueOptions = { ...QUEUE_OPTIONS, slots };
   const stats = { merges: 0, predictedRuns: 0, wastedRuns: 0, abandonedInQueue: 0, redo: [], latency: [], prWait: [], maxRunning: 0, landedSharedMs: 0, landedBesidePrMs: 0 };
-  const exclusion = policy.excludedBeside ? { excludedBeside: policy.excludedBeside } : {};
+  const exclusion = {
+    ...(policy.excludedBeside ? { excludedBeside: policy.excludedBeside } : {}),
+    ...(policy.skipPastBlocked === undefined ? {} : { skipPastBlocked: policy.skipPastBlocked }),
+  };
   let now = 0;
   let main = 0;
   let nextPid = 1;

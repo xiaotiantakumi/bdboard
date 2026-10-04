@@ -17,9 +17,10 @@
 // `expected null to be +0` と比べて落ちる形 (事故の 2 回目) も、メッセージが時間切れと言っていないので対象外。
 //
 // 再実行の手順 (retryLoadInduced) もここに置く。1 回目の verify が抜けてから再実行の verify が verify スロットに
-// 並ぶまでの数秒〜十数秒 (ログの退避・監査・pending の投稿・npm の起動) に、待っていた pr が枠を取って再実行の
-// 隣で走らないよう、1 回目が終わった直後に予約 holder を置き (scripts/verify-slot.mjs の reserveVerifySlot)、
-// 再実行の verify に BDBOARD_VERIFY_SLOT_HANDOFF で渡す。再実行しない経路でも finally で消す (中断で process.exit
+// 並ぶまでの数秒〜十数秒 (ログの退避・監査・pending の投稿・npm の起動) に、待っていた pr が先に枠を取って再実行を
+// 待たせないよう、1 回目が終わった直後に予約 holder を置き (scripts/verify-slot.mjs の reserveVerifySlot)、
+// 再実行の verify に BDBOARD_VERIFY_SLOT_HANDOFF で渡す。1 回目の verify.mjs が自分の holder を消してから予約を
+// 置くまでの短い隙間は覆えない (そこで pr が始めると再実行はその終わりを待つ。遅れるだけで、隣では走らない)。再実行しない経路でも finally で消す (中断で process.exit
 // する経路は reserveVerifySlot の 'exit' フック、SIGKILL で残った予約は pid が死んでいれば次の参加者が回収する)。
 import { copyFileSync, readFileSync, renameSync } from 'node:fs';
 import { cpus, loadavg } from 'node:os';
@@ -158,7 +159,7 @@ async function reserveQuietly(priority, queueSince) {
  */
 export async function retryLoadInduced({ attempt, queue, code, by, firstQueuedAt }) {
   const { ctx, sha, logPath, activeChild } = attempt;
-  // 並び直しでも最初に並んだ時刻を引き継ぐ (verify-slot-queue.mjs の seniority、最大 10 分)。
+  // 並び直しでも最初に並んだ時刻を引き継ぐ (予約と再実行は 10 分で頭打ちにしない。verify-slot-queue.mjs の holdsRetryPlace)。
   const queueSince = queue.queueSince ?? firstQueuedAt;
   const reservation = await reserveQuietly(queue.priority, queueSince);
   try {

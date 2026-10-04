@@ -41,8 +41,15 @@
 // 同居していたのは pr だけで、merge (着地予定ツリー) は 1 本も無かった。監査ログでは landed と merge の同居が
 // 約 12 回あり全部 success だったので、merge とは今までどおり枠を分け合う (landed の完全な独占は、7 エージェントの
 // シミュレーションでマージ数が 44.3 → 28.4、最大待ちが 88.5 → 263 分になる。docs/VERIFY.md「Priorities」)。
-// 並び順 (仮想到着時刻) は変えず、飛ばしもしない: 先頭から順に始め、同居させない相手 (走っている holder か、
-// この周に先に始める待ち手) が居る待ち手で止まる。その後ろは merge でも始めない (飛ばすと landed が飢える)。
+// 並び順 (仮想到着時刻) は変えない。先頭から順に始め、同居させない相手 (走っている holder か、この周に先に始める
+// 待ち手) が居る待ち手で止まる (止まった先頭)。その後ろの pr と landed は飛ばさない (どれも同居の規則に関わるので、
+// 飛ばすと先頭が飢えうる)。規則に関わらない merge だけは、空き枠があれば止まった先頭を飛ばして始めてよい: landed と
+// merge は同居させてよい (上の監査ログ) ので、pr が走っている間に待つ landed の後ろで merge まで止めると枠が遊ぶ。
+// 先頭は相手が抜けた周に空いた枠を真っ先に取るので飢えない (シミュレーションで飛ばさない場合に比べてマージ数
+// 44.3 → 45.8、最大待ち 88.5 → 53.4 分、やり直しの最大 7 → 5。docs/VERIFY.md「Priorities」)。skipPastBlocked: false は飛ばさない比較用 (verify-slot-sim.mjs)。
+// 予約 (reserved) と再実行 (retry) の landed holder は since を頭打ちにしない (queueKey、bdboard-xdk8): merge-pr が
+// 負荷由来の失敗を 1 回だけ再実行するとき、1 回目に並んだ時刻のまま並び直すため (10 分で頭打ちにすると、それより
+// 長く待っていた pr に抜かれ、再実行がその pr の後ろで待つ)。
 // 旧形式・この変更より前の新形式 (同居の規則を知らないスクリプト = rebase していない worktree) は landed を 1 本と
 // 数えて隣で走りうる。その分は今日までと同じ (悪くはならない) ので、移行の手当てはしない。
 // verify.mjs の import graph に入るので、古い Node でもパースできる構文に保つこと (bdboard-eu2k)。
@@ -70,6 +77,17 @@ export function excludesOthers(priority, excludedBeside = EXCLUDED_BESIDE) {
   return (excludedBeside[normalizePriority(priority)] ?? []).length > 0;
 }
 
+/** 同居の規則にどちら側でも関わらない優先度か (merge)。止まった先頭を飛ばしてよいのはこれだけ (pickStarters)。 */
+export function isNeutral(priority, excludedBeside = EXCLUDED_BESIDE) {
+  const own = normalizePriority(priority);
+  return !Object.keys(excludedBeside).some((key) => key === own || excludedBeside[key].includes(own));
+}
+
+/** merge-pr の再実行の席を持つ landed holder か (予約 = reserved、予約を引き継いだ再実行 = retry)。since を頭打ちにしない。 */
+export function holdsRetryPlace(holder) {
+  return (holder.reserved === true || holder.retry === true) && normalizePriority(holder.priority) === 'landed';
+}
+
 function isCurrentFormat(holder) {
   return holder.v === HOLDER_FORMAT;
 }
@@ -95,7 +113,7 @@ export function queueKey(holder, { tierStepMs, maxSeniorityMs }) {
   const queuedAt = isFiniteNumber(holder.queuedAt) ? Math.min(holder.queuedAt, holder.joinedAt) : holder.joinedAt;
   let since = queuedAt;
   if (isFiniteNumber(holder.since)) {
-    since = Math.min(queuedAt, Math.max(holder.since, queuedAt - maxSeniorityMs));
+    since = Math.min(queuedAt, holdsRetryPlace(holder) ? holder.since : Math.max(holder.since, queuedAt - maxSeniorityMs));
   }
   return since + rank * tierStepMs;
 }
@@ -109,10 +127,14 @@ function isFiniteNumber(value) {
  * @returns {{ acquire: boolean, running: object[], queue: object[], position: number, stale: object[], blocked: object | null }}
  *   running = 枠を使っているとみなす holder、queue = 待ち手の並び (先頭が次)、position = 自分の
  *   queue 内の順位 (1 始まり)、stale = staleTtlMs を超えて数から外した holder、blocked = 自分 (または
- *   自分より前の待ち手) が同居させない相手のせいで始められないとき、その組 { waiter, other, otherRunning }
- *   (other = 走っている holder か、この周に先に始める待ち手。bdboard-xdk8。表示用)。無ければ null
+ *   自分より前の止まった先頭) が同居させない相手のせいで始められないとき、その組 { waiter, other, otherRunning }
+ *   (other = 走っている holder か、この周に先に始める待ち手。bdboard-xdk8。表示と待ちの打ち切りの延長に使う)。
+ *   無ければ null (飛ばしてよい merge は、空き枠を待っているだけなので null)
  */
-export function planSlots(holders, { selfPid, slots, now, staleTtlMs, tierStepMs, maxSeniorityMs, excludedBeside = EXCLUDED_BESIDE }) {
+export function planSlots(
+  holders,
+  { selfPid, slots, now, staleTtlMs, tierStepMs, maxSeniorityMs, excludedBeside = EXCLUDED_BESIDE, skipPastBlocked = true },
+) {
   const running = [];
   const waiting = [];
   const legacyWaiting = [];
@@ -140,9 +162,11 @@ export function planSlots(holders, { selfPid, slots, now, staleTtlMs, tierStepMs
   const queue = [...eligible, ...[...waiting.filter(blockedByLegacy), ...legacyWaiting].sort(byArrival)];
   // 他の holder から stale と見なされる年齢の待ち手は取らない (並び直してから)。
   const selfVisible = eligible.some((holder) => holder.pid === selfPid && now - holder.joinedAt <= staleTtlMs);
-  const picked = pickStarters(eligible, running, slots, (a, b) => conflict(a, b, excludedBeside));
+  const canSkip = (holder) => skipPastBlocked && isNeutral(holder.priority, excludedBeside);
+  const picked = pickStarters(eligible, running, slots, (a, b) => conflict(a, b, excludedBeside), canSkip);
   const selfIndex = eligible.findIndex((holder) => holder.pid === selfPid);
-  const blocked = picked.blocked !== null && selfIndex >= picked.blocked.index ? picked.blocked : null;
+  const heldBack = picked.blocked !== null && selfIndex >= picked.blocked.index && !canSkip(eligible[selfIndex]);
+  const blocked = heldBack ? picked.blocked : null;
   return {
     acquire: selfVisible && picked.starters.some((holder) => holder.pid === selfPid),
     running,
@@ -155,20 +179,26 @@ export function planSlots(holders, { selfPid, slots, now, staleTtlMs, tierStepMs
 
 /**
  * 並び順 (eligible) の先頭から「今始めてよい待ち手」を選ぶ (bdboard-xdk8)。空き枠 = slots - 走っている数。
- * 順に見て、空き枠が尽きたら止まり、走っている holder かこの周に選んだ待ち手と同居させない待ち手でも止まる
- * (順番は飛ばさない)。blocked = 後者で止まったときの { index, waiter, other, otherRunning }。
+ * 順に見て、空き枠が尽きたら止まる。走っている holder かこの周に選んだ待ち手と同居させない待ち手は始めず、
+ * そこが止まった先頭になる。その後ろは canSkip (同居の規則に関わらない merge) の待ち手だけを空き枠に入れ、
+ * pr と landed は飛ばさない。blocked = 止まった先頭の { index, waiter, other, otherRunning }。
  */
-function pickStarters(eligible, running, slots, conflicts) {
+function pickStarters(eligible, running, slots, conflicts, canSkip) {
   let free = slots - running.length;
   const starters = [];
+  let blocked = null;
   for (let index = 0; index < eligible.length && free > 0; index += 1) {
     const waiter = eligible[index];
+    if (blocked !== null && !canSkip(waiter)) {
+      continue;
+    }
     const other = running.find((holder) => conflicts(waiter, holder)) ?? starters.find((holder) => conflicts(waiter, holder));
     if (other !== undefined) {
-      return { starters, blocked: { index, waiter, other, otherRunning: running.includes(other) } };
+      blocked = { index, waiter, other, otherRunning: running.includes(other) };
+      continue;
     }
     starters.push(waiter);
     free -= 1;
   }
-  return { starters, blocked: null };
+  return { starters, blocked };
 }

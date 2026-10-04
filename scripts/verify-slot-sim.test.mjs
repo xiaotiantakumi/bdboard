@@ -1,7 +1,8 @@
 // bdboard-ulxa.6: 「並列 7 本で着地予定ツリーの verify のやり直しが減る」をシミュレーションで固定する。
 // 実際の verify も CPU 負荷も使わない (verify-slot-sim.mjs の離散時間モデル + 本物の順番決め関数)。
-// bdboard-xdk8: landed と pr を同居させない規則 (prOnly、採用) で、着地後検証が pr と同時に走る時間が 0 に
+// bdboard-xdk8: landed と pr を同居させない規則 (mergeSkip、採用) で、着地後検証が pr と同時に走る時間が 0 に
 // なり、それでも landed の完全独占 (after、比較用) よりマージ数・最大待ち・やり直しの最大が良いことも固定する。
+// 止まった先頭の後ろを merge だけ飛ばす (mergeSkip) と、飛ばさない prOnly (比較用) より良いことも固定する。
 // このモデルは負荷で verify が遅くなることも偽の failure も表さないので、同居させない損 (待ち) だけが映る —
 // ulxa.6 の並び順の効果は、landed も枠を分け合う sharedLanded で見る。
 import { describe, expect, it } from 'vitest';
@@ -14,7 +15,8 @@ describe('verify slot simulation (7 agents, 2 slots)', () => {
   const before = simulateSeeds(POLICIES.before, SEEDS);
   const ordered = simulateSeeds(POLICIES.sharedLanded, SEEDS);
   const after = simulateSeeds(POLICIES.after, SEEDS);
-  const adopted = simulateSeeds(POLICIES.prOnly, SEEDS);
+  const noSkip = simulateSeeds(POLICIES.prOnly, SEEDS);
+  const adopted = simulateSeeds(POLICIES.mergeSkip, SEEDS);
 
   it('cuts wasted predicted-verify runs per merge and the worst-case redo count (ulxa.6 ordering)', () => {
     expect(ordered.wastedPerMerge).toBeLessThanOrEqual(before.wastedPerMerge * 0.6);
@@ -43,6 +45,15 @@ describe('verify slot simulation (7 agents, 2 slots)', () => {
     expect(adopted.merges).toBeGreaterThan(after.merges * 1.3);
     expect(adopted.latencyMaxMin).toBeLessThan(after.latencyMaxMin / 2);
     expect(adopted.redoMax).toBeLessThan(after.redoMax);
+  });
+
+  it('lets a merge waiter use a slot a blocked head leaves free: more merges and a shorter worst wait than never skipping', () => {
+    expect(noSkip.landedBesidePrMin).toBe(0);
+    expect(adopted.merges).toBeGreaterThan(noSkip.merges);
+    expect(adopted.latencyMaxMin).toBeLessThan(noSkip.latencyMaxMin * 0.75);
+    expect(adopted.redoMax).toBeLessThanOrEqual(noSkip.redoMax);
+    // 飛ばすのは merge だけなので、pr の待ちは延びない (止まった先頭は相手が抜けた周に枠を取る)。
+    expect(adopted.prWaitMaxMin).toBeLessThanOrEqual(noSkip.prWaitMaxMin);
   });
 
   it('never runs more than the slot limit under any policy', () => {

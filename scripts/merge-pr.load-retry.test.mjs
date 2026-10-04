@@ -1,11 +1,12 @@
 // bdboard-xdk8: 着地後検証の failure が全部時間切れの形 (負荷由来) なら 1 回だけ再実行してから記録する。
 // 分類器 (scripts/merge-pr/load-retry.mjs) の単体と、偽の gh / bd / npm を使った merge-pr の通しの確認。
 // 偽の検証コマンドは FAKE_VERIFY_OUTPUT_FILE の中身をログに出し、FAKE_VERIFY_EXIT_SEQUENCE の順に終了する。
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { classifyVerifyFailure } from './merge-pr/load-retry.mjs';
+import { classifyVerifyFailure, retryLoadInduced } from './merge-pr/load-retry.mjs';
 import {
   advanceMain,
   auditText,
@@ -74,6 +75,47 @@ describe('classifyVerifyFailure (bdboard-xdk8)', () => {
     // vitest 4 は birpc のタイマーを張らない (load-retry.mjs の TIMEOUT_SHAPES) ので、出たら想定外として再実行しない。
     const birpc = ` FAIL  src/a.test.ts > b\nError: [birpc] timeout on calling "onTaskUpdate"\n`;
     expect(classifyVerifyFailure(vitestLog(birpc, '1 failed | 1 passed (2)')).loadInduced).toBe(false);
+  });
+
+  it('counts a spawnSync child killed by its timeout (ETIMEDOUT) only as the headline, not mid-line or quoted', () => {
+    const killed = ` FAIL  scripts/a.test.mjs > b\nError: spawnSync /bin/sh ETIMEDOUT\n ❯ scripts/a.test.mjs:10:3\n`;
+    expect(classifyVerifyFailure(vitestLog(killed, '1 failed | 1 passed (2)'))).toMatchObject({ loadInduced: true, timeouts: 1 });
+    const midLine = ` FAIL  scripts/a.test.mjs > b\nError: git failed: spawnSync /bin/sh ETIMEDOUT\n`;
+    expect(classifyVerifyFailure(vitestLog(midLine, '1 failed | 1 passed (2)')).loadInduced).toBe(false);
+    const quoted = ` FAIL  scripts/a.test.mjs > b\nAssertionError: expected 'spawnSync /bin/sh ETIMEDOUT' to be undefined\n`;
+    expect(classifyVerifyFailure(vitestLog(quoted, '1 failed | 1 passed (2)')).loadInduced).toBe(false);
+    const otherCode = ` FAIL  scripts/a.test.mjs > b\nError: spawnSync /bin/sh ENOENT\n`;
+    expect(classifyVerifyFailure(vitestLog(otherCode, '1 failed | 1 passed (2)')).loadInduced).toBe(false);
+  });
+});
+
+describe('retryLoadInduced: the retry reservation never outlives the call (bdboard-xdk8)', () => {
+  it('removes the reservation in finally on the path that does not retry, and leaves no exit hook behind', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'load-retry-reservation-'));
+    const saved = { dir: process.env.BDBOARD_VERIFY_SLOT_DIR, slots: process.env.BDBOARD_VERIFY_SLOTS };
+    const exitHooks = process.listenerCount('exit');
+    try {
+      const slotDir = path.join(dir, 'slots'); // まだ無い: 予約を置いたなら reserveVerifySlot が作る
+      process.env.BDBOARD_VERIFY_SLOT_DIR = slotDir;
+      process.env.BDBOARD_VERIFY_SLOTS = '2';
+      const logPath = path.join(dir, 'landed-verify.log');
+      writeFileSync(logPath, vitestLog(' FAIL  a.test.ts > b\nAssertionError: expected 1 to be 2\n', '1 failed | 1 passed (2)'));
+      const attempt = { ctx: {}, sha: 'abc123', logPath, activeChild: {} };
+      const result = await retryLoadInduced({ attempt, queue: { priority: 'landed' }, code: 1, by: 'test', firstQueuedAt: Date.now() - 60_000 });
+      expect(result).toEqual({ code: 1, retried: null });
+      expect(existsSync(slotDir)).toBe(true);
+      expect(readdirSync(slotDir)).toEqual([]);
+      expect(process.listenerCount('exit')).toBe(exitHooks);
+    } finally {
+      for (const [name, value] of [['BDBOARD_VERIFY_SLOT_DIR', saved.dir], ['BDBOARD_VERIFY_SLOTS', saved.slots]]) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('does not retry when the failing step is not vitest, or vitest shows no failure summary', () => {

@@ -15,6 +15,7 @@ import {
   readEnginesNodeRange,
   satisfiesMinimum,
 } from './node-version-guard.mjs';
+import { withoutSlotIdentity } from './verify-slot.mjs';
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -210,7 +211,7 @@ describe.skipIf(process.platform === 'win32')('verify.mjs node guard (real proce
       cwd: root,
       encoding: 'utf8',
       env: {
-        ...process.env,
+        ...withoutSlotIdentity(process.env), // 着地後検証の中で走っても外側のスロットの素性を受け継がない (bdboard-xdk8)
         PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ''}`,
         FAKE_NPM_MARKER: marker,
         BDBOARD_VERIFY_SLOT_DIR: slotDir,
