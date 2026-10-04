@@ -1,5 +1,6 @@
 // bdboard-4dqo: scripts/merge-pr.test.mjs から切り出した finish 系のテスト (finish の拒否・
-// 着地後検証の失敗・SIGINT/SIGTERM による中断・bdboard-2hj4 の verifyingPid 記録)。
+// 着地後検証の失敗・SIGINT/SIGTERM による中断。bdboard-2hj4 の verifyingPid 記録は bdboard-wea0.2 で worktree lock
+// に置き換えた: lock のテストは merge-pr.worktree-lock.test.mjs)。
 // 一時リポジトリと偽の gh / bd / npm の harness は merge-pr.test-support.mjs で共有する。
 // describe 名は切り出し前と同じ (テスト名の集合を変えないため)。
 import { spawn } from 'node:child_process';
@@ -7,7 +8,6 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { VERIFYING_PID_MAX_AGE_MS } from './merge-pr.mjs';
 import {
   advanceMain,
   auditText,
@@ -164,7 +164,6 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(run(['gate', String(PR)]).status).toBe(0);
     simulateMerge();
     const pidFile = path.join(tmp, 'verify.pid');
-    const startedAt = Date.now();
     const child = spawn(process.execPath, [SCRIPT, 'finish', String(PR)], {
       cwd: work,
       env: { ...env, FAKE_VERIFY_SLEEP_MS: '60000', FAKE_VERIFY_PID_FILE: pidFile, BDBOARD_MERGE_KILL_GRACE_MS: '200' },
@@ -190,13 +189,11 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
         return true;
       });
       expect(pidAlive(verifyPid)).toBe(true);
-      // bdboard-2hj4: 走っている finish は自分の pid の横に verifyingAt を刻み、その間に起動した
-      // 2 本目の finish は二重に verify せず 75 で止まる。
-      const stamped = JSON.parse(readFileSync(stateFile(), 'utf8'));
-      expect(stamped.verifyingPid).toBe(child.pid);
-      expect(Date.parse(stamped.verifyingAt)).toBeGreaterThanOrEqual(startedAt);
-      expect(Date.parse(stamped.verifyingAt)).toBeLessThanOrEqual(Date.now());
-      expect(run(['finish', String(PR)]).status).toBe(75);
+      // bdboard-wea0.2: 走っている finish は worktree lock を持つので、2 本目の finish は二重に verify せず 75 で止まる
+      // (持ち主の行が 1 本目を名指しする)。
+      const second = run(['finish', String(PR)]);
+      expect(second.status).toBe(75);
+      expect(second.stderr).toContain(`merge-pr finish ${PR} (pid ${child.pid}, phase verify`);
 
       child.kill('SIGINT');
       const [code, signal] = await new Promise((resolve) => {
@@ -383,63 +380,20 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(stderr).not.toContain('着地後検証を実行できませんでした');
   });
 
-  // bdboard-2hj4: finish が状態ファイルに書く verifyingPid は、finish の中断・クラッシュで残る。その PID が
-  // 後で別プロセスに再利用された (EPERM でも alive 扱い) 場合に、永久に RETRY (75) になってはいけない。
-  describe('finish: a leftover verifyingPid record (bdboard-2hj4)', () => {
-    const ago = (ms) => new Date(Date.now() - ms).toISOString();
-
-    /** gate まで進めて PR をマージ済みにし、状態ファイルに verifyingPid (= 生きているこのテストの pid) を書く。 */
-    function gatedAndMergedWithVerifying(extra) {
-      setup();
-      expect(run(['prepare', String(PR)]).status).toBe(0);
-      expect(run(['gate', String(PR)]).status).toBe(0);
-      const landed = simulateMerge();
-      const state = JSON.parse(readFileSync(stateFile(), 'utf8'));
-      writeFileSync(stateFile(), `${JSON.stringify({ ...state, verifyingPid: process.pid, ...extra }, null, 2)}\n`);
-      return landed;
-    }
-
-    it('a live pid with a day-old verifyingAt is a stale record: ignored with a notice, and the landed verify runs', () => {
-      const landed = gatedAndMergedWithVerifying({ verifyingAt: ago(24 * 60 * 60_000) });
-      const finished = run(['finish', String(PR)]);
-      expect(finished.stderr).toContain(`verifyingPid ${process.pid}`);
-      expect(finished.stderr).toContain('古い記録');
-      expect(finished.status).toBe(0);
-      expect(verified()).toEqual([landed]);
-      expect(existsSync(stateFile())).toBe(false);
-    });
-
-    it('a live pid with a verifyingAt of right now still means a verify is running: 75, nothing touched', () => {
-      gatedAndMergedWithVerifying({ verifyingAt: ago(0) });
-      const finished = run(['finish', String(PR)]);
-      expect(finished.status).toBe(75);
-      expect(finished.stderr).toContain('二重に走らせません');
-      expect(finished.stderr).toMatch(/あと (119|120) 分で古い記録として扱います/);
-      expect(finished.stderr).toContain(`ps -p ${process.pid} -o lstart=,command=`);
-      expect(finished.stderr).not.toContain('古い記録とみなして無視');
-      expect(verified()).toEqual([]);
-      expect(posted()).toEqual([]);
-      expect(readFake().slot.holder).toBe(`demo-1 / PR#${PR}`); // 二重に動かないので枠もまだ返さない
-      expect(JSON.parse(readFileSync(stateFile(), 'utf8'))).toMatchObject({ verifyingPid: process.pid });
-    });
-
-    it('the cut-off is VERIFYING_PID_MAX_AGE_MS: just inside it is still running, just outside it is stale', () => {
-      gatedAndMergedWithVerifying({ verifyingAt: ago(VERIFYING_PID_MAX_AGE_MS - 60_000) });
-      expect(run(['finish', String(PR)]).status).toBe(75);
-      const landed = gatedAndMergedWithVerifying({ verifyingAt: ago(VERIFYING_PID_MAX_AGE_MS + 60_000) });
-      expect(run(['finish', String(PR)]).status).toBe(0);
-      expect(verified()).toEqual([landed]);
-    });
-
-    it('a record from before verifyingAt existed (or an unreadable verifyingAt) is judged by the pid alone, as before', () => {
-      gatedAndMergedWithVerifying({});
-      const legacy = run(['finish', String(PR)]);
-      expect(legacy.status).toBe(75);
-      expect(legacy.stderr).toContain('二重に走らせません');
-      expect(legacy.stderr).toContain('旧形式');
-      gatedAndMergedWithVerifying({ verifyingAt: 'not-a-date' });
-      expect(run(['finish', String(PR)]).status).toBe(75);
-      expect(verified()).toEqual([]);
-    });
+  // bdboard-wea0.2 (設計 §6 の移行 3): 旧コードの finish が状態ファイルに残した verifyingPid / verifyPgid の記録は、
+  // 生きている pid を指していても読まない (使用中かは worktree lock が答える)。
+  it('finish: a leftover verifyingPid / verifyPgid record from the old code is ignored, and the landed verify runs', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = simulateMerge();
+    const state = JSON.parse(readFileSync(stateFile(), 'utf8'));
+    const now = new Date().toISOString();
+    const record = { verifyingPid: process.pid, verifyingAt: now, verifyPgid: process.pid, verifyPgidAt: now };
+    writeFileSync(stateFile(), `${JSON.stringify({ ...state, ...record }, null, 2)}\n`);
+    const finished = run(['finish', String(PR)]);
+    expect(finished.status).toBe(0);
+    expect(verified()).toEqual([landed]);
+    expect(existsSync(stateFile())).toBe(false);
   });
 });

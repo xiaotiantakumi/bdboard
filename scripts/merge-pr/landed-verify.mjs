@@ -8,6 +8,9 @@
 // 行うよう順序を直し、(2)の中断メッセージに「次にやり直すコマンド」のヒントと監査ログを足した。
 // bdboard-xdk8: 着地後検証 (台帳に書くもの) が落ち、失敗が全部時間切れの形 (負荷由来、load-retry.mjs) なら、
 // 1 回目のログを別名で残して 1 回だけ再実行してから記録する。2 回目も落ちれば従来どおり failure。
+// bdboard-wea0.2: 木を切り替える 2 つの操作 (detach と restore) は worktree lock の EX の下で行い、verify の間は SH に
+// 降格する (worktree-hold.mjs)。npm ci と契約の verify には lock の記述を fd 3 で渡す (merge-pr が SIGKILL されても、
+// その子が生きている間は lock が残る)。
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
@@ -16,6 +19,8 @@ import { installInterruptHandler } from './interrupt.mjs';
 import { retryLoadInduced } from './load-retry.mjs';
 import { audit, readInstalledFor, say, stateDir, writeInstalledFor } from './state.mjs';
 import { postQuietly, runContractVerify, stoppedEarly, tail } from './verify-run.mjs';
+import { downgradeForVerify, holdWorktree, lockFds, setPhase } from './worktree-hold.mjs';
+import { restoreAfterInterrupt, restoreUnderLock } from './worktree-restore.mjs';
 
 const LOCKFILES = [
   { file: 'package-lock.json', args: ['ci'] },
@@ -49,13 +54,6 @@ function untrackedFiles(root) {
     .filter((line) => line.startsWith('?? '))
     .map((line) => line.slice(3).trim())
     .filter((line) => line !== '');
-}
-
-function restoreBranch(root, restoreTo) {
-  const back = run('git', ['checkout', '--quiet', restoreTo], { cwd: root });
-  if (back.status !== 0) {
-    say(`元の ${restoreTo} に戻れませんでした: ${back.stderr.trim()}`);
-  }
 }
 
 /**
@@ -104,7 +102,7 @@ export async function runLandedVerify(
   ctx,
   sha,
   by,
-  { ledger = true, logName, retryHint, priority = 'landed', queueSince, abandonWhen, onSpawn, command = ctx.config.verify } = {},
+  { ledger = true, logName, retryHint, priority = 'landed', queueSince, abandonWhen, command = ctx.config.verify } = {},
 ) {
   const root = ctx.cwd;
   const label = ledger ? '着地後検証' : '着地予定ツリーの verify';
@@ -116,6 +114,7 @@ export async function runLandedVerify(
     );
     return { result: 'error' };
   }
+  const hold = holdWorktree(ctx); // EX|NB (finish・prepare は入口で取り済み)。塞がっていれば 75
   if (git(['status', '--porcelain', '--untracked-files=no'], { cwd: root }) !== '') {
     say(`作業ツリーに未コミットの変更があるため${label}を始められません (detach checkout できない)。`);
     return { result: 'error' };
@@ -130,11 +129,14 @@ export async function runLandedVerify(
   const branch = run('git', ['symbolic-ref', '-q', '--short', 'HEAD'], { cwd: root });
   const originalHead = git(['rev-parse', 'HEAD'], { cwd: root });
   const restoreTo = branch.status === 0 ? branch.stdout.trim() : originalHead;
+  setPhase(hold, 'checkout'); // detach の前に持ち主の行 (書けなければ致命的)
   const checkout = run('git', ['checkout', '--quiet', '--detach', sha], { cwd: root });
   if (checkout.status !== 0) {
+    setPhase(hold, 'done', { fatal: false });
     say(`git checkout --detach ${sha} に失敗しました: ${checkout.stderr.trim()}`);
     return { result: 'error' };
   }
+  const target = { restoreTo, sha };
   const activeChild = { current: undefined, interrupted: false };
   const removeInterruptHandler = installInterruptHandler({
     activeChild,
@@ -144,7 +146,7 @@ export async function runLandedVerify(
         `${signal} を受け取ったため${label}を中断します。子プロセスを終了して ${restoreTo} に戻します。`,
         retryHint ? `そのまま次を実行してやり直せます: ${retryHint}` : `${restoreTo} に戻したので、直してからやり直してください。`,
       );
-      restoreBranch(root, restoreTo);
+      restoreAfterInterrupt(hold, target); // グループが空になった後。EX へ戻せなければ保留の行
     },
   });
   // ハンドラは checkout 直後、未追跡ファイルの判定より前に登録する — 判定自体は速いが、ここで
@@ -174,16 +176,18 @@ export async function runLandedVerify(
         installedAny = true;
       };
       const queue = { priority, queueSince, abandonWhen };
-      ({ result, retried } = await installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, onSpawn }));
+      downgradeForVerify(hold); // 持ち主の行 (phase verify) を書いてから SH へ。拒否なら 75 で、木は戻さない
+      ({ result, retried } = await installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, hold }));
     }
   } finally {
     // activeChild.interrupted の間は installAndVerify がここへ戻ってこない (待つだけで
     // resolve しない) ので、この finally は「中断されなかった」経路でしか走らない。中断時の
-    // 後始末 (restoreBranch・audit・process.exit) は上の onCleanup / interrupt.mjs 側が
-    // 一元的に行う (opus レビュー指摘: ここで先に restoreBranch すると、プロセスグループが
-    // まだ空になっていないうちにブランチを戻してしまう)。
+    // 後始末 (restore・audit・process.exit) は上の onCleanup / interrupt.mjs 側が
+    // 一元的に行う (opus レビュー指摘: ここで先に restore すると、プロセスグループが
+    // まだ空になっていないうちにブランチを戻してしまう)。restore の EX 待ち (最大 2 分) の間も
+    // 中断ハンドラは外さない (外すと SIGINT で detach したまま終わる)。
+    await restoreUnderLock(hold, target);
     removeInterruptHandler();
-    restoreBranch(root, restoreTo);
     if (installedAny && LOCKFILES.some((lock) => lockfileChanged(root, sha, originalHead, lock.file))) {
       say(`注意: この worktree の node_modules は ${sha.slice(0, 12)} 用に入れ直しました。ブランチで作業を続けるなら npm ci し直してください。`);
     }
@@ -191,13 +195,14 @@ export async function runLandedVerify(
   return { result, logPath, retried: retried === true };
 }
 
-async function installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, onSpawn }) {
+async function installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, hold }) {
   const installedFor = readInstalledFor(root) ?? originalHead;
   for (const lock of LOCKFILES) {
     if (lockfileChanged(root, installedFor, sha, lock.file)) {
       say(`${lock.file} が変わっているので npm ${lock.args.join(' ')} を実行します`);
       onInstall();
-      const installed = run('npm', lock.args, { cwd: root, stdio: ['ignore', 'inherit', 'inherit'] });
+      // lock の記述を fd 3 で渡す: merge-pr がここで SIGKILL されても、npm ci が終わるまで lock は残る (設計の症状 4)。
+      const installed = run('npm', lock.args, { cwd: root, stdio: ['ignore', 'inherit', 'inherit', ...lockFds(hold)] });
       if (installed.status !== 0) {
         // ネットワーク等の環境要因がほとんどなので main の破損 (failure) とは記録しない。
         say(`npm ${lock.args.join(' ')} が失敗しました (exit ${installed.status})。台帳には書きません。`);
@@ -210,8 +215,8 @@ async function installAndVerify(ctx, { root, sha, by, command, originalHead, log
   if (ledger && !postQuietly(ctx, sha, 'pending', running)) {
     return { result: 'error' };
   }
-  // onSpawn (bdboard-ky9l) は再実行の verify でも呼ぶ — finish が新しいプロセスグループを記録し直す。
-  const attempt = { ctx, root, sha, command, logPath, activeChild, ledger, onSpawn };
+  // hold: 契約の verify は lock を SH で持っている間だけ走らせる (再実行の前にも確かめる。verify-run.mjs)。
+  const attempt = { ctx, root, sha, command, logPath, activeChild, ledger, hold };
   const firstQueuedAt = Date.now();
   let code = await runContractVerify({ ...attempt, queue, running });
   const stopped = await stoppedEarly(activeChild, code, logPath);

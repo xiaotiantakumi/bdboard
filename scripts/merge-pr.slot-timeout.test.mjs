@@ -50,9 +50,10 @@ describe.skipIf(process.platform === 'win32')('merge-pr: a verify slot wait time
     expect(readFake().slot.holder).toBeNull(); // holdBrokenMain に至っていない
     expect(auditText()).toMatch(/\tlanded-verify\t.*result=error/);
     expect(auditText()).not.toContain('main-broken');
-    // 状態は残り (再試行できる)、二重起動の目印だけ外れている。
+    // 状態は残り (再試行できる)。二重起動の目印は bdboard-wea0.2 で worktree lock に置き換えて書かない。
     expect(existsSync(stateFile())).toBe(true);
-    expect(readState()).toMatchObject({ verifyingPid: null, verifyingAt: null });
+    expect(readState()).toMatchObject({ newMain: landed });
+    expect(readState()).not.toHaveProperty('verifyingPid');
     expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
   });
 

@@ -5,8 +5,7 @@
 // その後の `merge-pr verify <sha>` や次の merger の gate の自己修復で failure が出ても、L であることが失われて
 // すり抜けに数えられない。そこで 3 か所 (finish / verify / gate の自己修復) が同じ関数で報告する。
 // verify と gate は PR 番号を知らないので、着地コミット (newMain) から状態ファイルを引く。finish は error のとき
-// 状態ファイルを消さない (verify-guard.mjs の clearVerifyRecord は実行中の印を外して書き戻すだけ。SIGINT 等の
-// 中断でも消さない) ので、newMain と class: 'L' が残っている。bdboard-ulxa.7: クラス L の failure でも消さない
+// 状態ファイルを消さない (SIGINT 等の中断でも消さない) ので、newMain と class: 'L' が残っている。bdboard-ulxa.7: クラス L の failure でも消さない
 // (landedResult: 'failure' の印を付けて残す。フレークの再検証 `merge-pr verify <sha>` が L の記録を見つけ、success を
 // 最後の行にして数え直せる。finish.mjs)。その再検証が success なら記録を消す (forgetLightFailure)。再検証も failure の
 // 確定したすり抜けの記録は残ってよい — すり抜けは 1 件ごとに S2 に戻るので、残る数はすり抜けの件数で抑えられる。
@@ -17,8 +16,6 @@
 import { readCommit } from './exec.mjs';
 import { lightSlipSteps } from './messages.mjs';
 import { audit, auditLogPath, listStates, removeState, say } from './state.mjs';
-import { VERIFYING_PID_MAX_AGE_MS } from './verify-guard.mjs';
-import { judgeVerifyingPid } from './verifying-record.mjs';
 
 function warnLight(what, error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -79,15 +76,13 @@ function newestGateFirst(a, b) {
 
 /**
  * 手動の再検証 (merge-pr verify <sha>) が success になったとき、フレークと確かめられた L の failure の記録を消す
- * (bdboard-ulxa.7)。消すのは finish が failure で残した記録 (newMain === sha かつ landedResult === 'failure') だけで、
- * finish がまだ検証を実行中の記録 (verifyingPid が生きている) は残す (印の付いた記録は常に verifyingPid: null なので実際には発火しない防御)。何があっても投げない。
+ * (bdboard-ulxa.7)。消すのは finish が failure で残した記録 (newMain === sha かつ landedResult === 'failure') だけ。
+ * その印は finish の着地後検証が終わってから書かれ、印のある PR の finish は入口で止まるので、実行中の finish の記録では
+ * ない (bdboard-wea0.2 で PID の確認を外した)。何があっても投げない。
  */
 export function forgetLightFailure(root, state, sha, { recorded = true } = {}) {
   try {
     if (state?.class !== 'L' || state.newMain !== sha || state.landedResult !== 'failure' || !Number.isInteger(state.pr)) {
-      return;
-    }
-    if (judgeVerifyingPid(state, VERIFYING_PID_MAX_AGE_MS).running) {
       return;
     }
     if (recorded !== true) {

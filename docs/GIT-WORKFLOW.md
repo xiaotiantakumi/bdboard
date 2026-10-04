@@ -433,51 +433,49 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   tree verify). The message on the way out says exactly what to rerun (`finish <N>` or
   `verify <sha>`); nothing is posted to the ledger for an interrupted run, so re-running it is
   always safe. Only a SIGKILL (`kill -9`) or a crash can still leave the worktree detached, in
-  which case `git checkout bd/<id>` and rerun. A contract whose `verify` is not `npm run verify`
+  which case `git checkout bd/<id>` and rerun once the worktree lock is free (the "Worktree lock" item
+  below). A contract whose `verify` is not `npm run verify`
   has no self-cleanup of its own descendants (`scripts/verify.mjs`'s leader mode is what folds
   `npm run verify`'s tsc/vitest workers), so the interrupt handler itself polls the process group
   until it is actually empty and resends `SIGKILL` while anything in it is still alive, instead of
   trusting the direct child's exit as a proxy for the whole tree being gone.
-- **A second `finish` while one is running exits 75** (`verifyingPid` in the state file is alive). The
-  record is stamped with `verifyingAt` and the process start time `verifyingStart` (`ps -p <pid> -o
-  lstart=`, bdboard-ky9l). If the live process was started at the recorded time it is the same `finish`:
-  it stays 75 however long it has been running (a verify past 2 hours, a laptop that slept). If it was
-  started at another time the PID was reused, the record is stale even when fresh, and `finish` ignores
-  it with a notice and goes on. When the start time cannot be compared (a record from before
-  bdboard-ky9l, no usable `ps`, **Windows** — no `ps`, so it is not read there), the old rule applies:
-  older than 2 hours (`VERIFYING_PID_MAX_AGE_MS`) means stale (bdboard-2hj4).
-- **A `finish` killed with SIGKILL leaves its verify running.** The verify is started `detached`
-  (its own process group), so SIGKILL of `finish` skips the cleanup above and the group survives. The
-  verify's group id is stamped in the state file (`verifyPgid`, with `verifyPgidStart` and
-  `verifyPgidAt`); a rerun of `finish` that finds that group still alive exits 75 with `pgrep -g <pgid>`
-  and `kill -TERM -<pgid>` hints instead of starting a second verify in the same worktree (bdboard-ky9l).
-  Kill the group (or wait for it), then rerun `finish`. A group whose leader has exited but which still
-  has members is the original group (POSIX does not reuse the number while the group exists); a live
-  leader is compared by start time like `verifyingPid`. There are no process groups on Windows, so
-  nothing is recorded or checked there. A leaderless group is held only for 2 hours from `verifyPgidAt`
-  (`LEADERLESS_GROUP_MAX_AGE_MS`, bdboard-h2fk; a verify takes 10-20 minutes at worst). `npm` leads the
-  group (bash execs it) and `verify.mjs` is its direct child; when `npm` dies `verify.mjs` sees PPID=1 and
-  exits within about a second. The exception is that `verify.mjs` only starts watching for that after it
-  holds a verify slot, so a leaderless original group can outlive its leader for as long as it waits in the
-  slot queue. Past the cap the group is reported as *unknown* — most likely an unrelated double-forked
-  daemon that took the number, but not provably — and `finish` prints `pgrep -g <pgid> -l` (always check
-  first, never kill without it) and `kill -TERM -<pgid>` (only if the check shows a leftover verify) as
-  advice and goes on instead of exiting 75 forever.
-  When `verifyingPid` is judged stale but a live verify group still stops `finish`, the message says so
-  rather than announcing that the stale record is ignored.
-- **A `prepare` killed with SIGKILL during S2's predicted-tree verify likewise leaves its verify running**
-  (bdboard-h2fk). `prepare` removes the state file before the verify, so it stamps the verify's group in a
-  separate file next to it (`pr-<N>-predicted-verify.json`, same `verifyPgid` / `verifyPgidAt` /
-  `verifyPgidStart` fields and the same judgement as above) and deletes it when the verify returns. A rerun
-  of `prepare` that finds the group alive exits 75 *before* the detached-HEAD advice (`git checkout bd/<id>`),
-  because that checkout would swap the tree under the orphan; kill the group, `git checkout bd/<id>`, rerun.
-  `prepare --dry-run` starts no verify but runs the same check read-only: while the group is running it
-  exits 75 with the same message (otherwise it would end at the detached-HEAD advice above), and it never
-  writes or deletes the record and prints no notice for a stale or unknown one. If `pgrep -g <pgid> -l`
-  shows that the group named in the 75 is unrelated (the number was reused), delete
-  `<git-common-dir>/bdboard-merge/pr-<N>-predicted-verify.json` by hand (`git rev-parse --git-common-dir`
-  prints the directory) and rerun `prepare`. A manual `merge-pr verify <sha>` records nothing, so its
-  orphan is still not detected.
+- **Worktree lock: one tree switcher per worktree, and a busy worktree exits 75** (bdboard-wea0.2; the
+  lock itself is bdboard-wea0.1, [VERIFY.md "Worktree lock"](VERIFY.md)). `prepare` and `finish` take the
+  worktree's lock (`flock` on `<git-dir>/bdboard-worktree.lock`, where `<git-dir>` is
+  `git rev-parse --absolute-git-dir` in the PR worktree) exclusively at entry, before anything else, and
+  keep it until they exit; a manual `verify <sha>` and `gate`'s self-heal take it when they start a landed
+  verify. Around the contract verify they hold it shared: detach under the exclusive lock,
+  downgrade, run `npm ci` and the verify (both get the lock's descriptor as fd 3), upgrade again, restore
+  the branch. A second `merge-pr` or a manual `npm run verify` in the same worktree therefore never runs on
+  a tree being switched, and the answer to "is something still using this worktree?" is the kernel's, not a
+  guess from a PID, a start time or an age (the old `verifyingPid` / `verifyPgid` stamps and
+  `pr-<N>-predicted-verify.json` are gone; `prepare` deletes a leftover `pr-<N>-predicted-verify.json`
+  and the old fields in an existing state file are ignored).
+  - **Exit 75 when the lock is busy** — a second `finish` / `prepare` of the same worktree, a manual
+    `npm run verify` there, or the verify of a `merge-pr` that was killed with SIGKILL (its verify keeps
+    the inherited descriptor, so the lock stays held until the last of those processes exits; the same is
+    true of an `npm ci` in progress). Nothing is started, nothing is checked out, and `prepare` says nothing
+    about a detached HEAD until the lock is free. `prepare --dry-run` only probes the lock (exit 75 while
+    it is busy, no owner line written) so a read-only run never makes a verify wait.
+  - **How to read the 75.** It prints the owner line — `by`, `pid`, `phase`, `sha`, `at` of whoever last
+    took the lock exclusively, e.g. `merge-pr finish 123 (pid 4242, phase verify, …)` or `npm run verify
+    (…)` — and `lsof -t '<lock path>'`. The owner line is advice and may be stale (`owner unreadable: …`
+    if the file holds garbage, which changes nothing about the locking); `lsof -t` lists the processes
+    that hold the lock now. Wait for them to finish (or stop the one you started), then rerun the same
+    command; after a SIGKILL, `git checkout bd/<id>` once `lsof -t` is empty and rerun.
+  - **The lock file is never deleted** — not by `merge-pr`, not by hand (deleting it lets a second holder
+    lock a new file at the same path while the first still holds the old one). There is no record to
+    delete any more: the h2fk-era "delete `pr-<N>-predicted-verify.json` by hand" escape no longer exists.
+  - **Restore under a shared holder.** After the verify, `merge-pr` upgrades back to exclusive before
+    `git checkout bd/<id>`, retrying every 200 ms for up to 2 minutes while holding the shared lock in
+    between. If something still holds it then (a manual verify started on the detached tree), it reports
+    the verify result normally and prints `restore を保留しました: … detach したままです` with the
+    `lsof -t` line: restore by hand once that is empty. The SIGINT/SIGTERM cleanup (above) does the same
+    upgrade, with a 2-second budget.
+  - **`merge-pr` refuses to run without a lock (exit 1)**: no working `perl` / `python3` helper
+    (`BDBOARD_FLOCK_HELPER` overrides), or a self-check that finds a second descriptor is not excluded
+    (a filesystem that does not keep `flock`, e.g. some NFS mounts). **Windows is unprotected**: there
+    the lock is not taken and `merge-pr` goes on with one notice.
 - **Never release someone else's slot.** If it stays held past `merge.slotWaitMinutes` (10),
   `gate` exits 75 and the agent reports the holder to the chair. A holder equal to
   `<id> / PR#<N>` (this PR's own interrupted gate) is taken over.
@@ -693,14 +691,13 @@ File overlap still never decides whether to merge without a rebase; it only pick
   `gate` is sent back to `prepare` (exit 75), where it becomes F and gets the full verify. A PR already
   gated finishes normally.
 - **A flake re-verify un-counts the slip (bdboard-ulxa.7).** On a class-L `failure`, `finish` keeps the
-  record (`newMain` and `class: "L"`, the running-verify mark cleared) and stamps it
+  record (`newMain` and `class: "L"`) and stamps it
   `landedResult: "failure"` (on `failure` for every other class it removes the record, as before). So
   the `merge-pr verify <sha>` you run after ruling out a flake finds the record and audits
   `light-landed … result=success by=manual` as the last line for that `new=`; the earlier
   `result=failure by=finish` is then not a slip (count the last `success` / `failure` per `new=`).
-  That successful re-verify also removes the record, unless a `finish` is still verifying (a live
-  `verifyingPid`). This live-PID check is defensive: a stamped record is written with
-  `verifyingPid: null` in the same write that clears the verify mark, so it does not fire in practice.
+  That successful re-verify also removes the record (the stamp is written after `finish`'s verify has
+  ended, and a stamped PR's `finish` stops at entry, so no running `finish` owns it).
   The record is removed only when the `light-landed … result=success by=manual` audit row was actually
   appended. If the audit log cannot be written, the record is kept and one line says to fix the log
   and rerun `BDBOARD_MERGER=chair npm run merge-pr -- verify <sha>`. The record of a **confirmed** slip (the re-verify fails too) stays; they are bounded

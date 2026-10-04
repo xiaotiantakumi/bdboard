@@ -116,10 +116,11 @@ export function shellQuote(value) {
  * 切り離すので、呼び出し元 (interrupt.mjs) も SIGHUP を自分で扱う。env は子の環境変数
  * (bdboard-ulxa.6: verify スロットの優先度を渡す。既定は process.env)。
  */
-export function runShellToLog(command, { cwd, logFd, env = process.env, heartbeatMs = 0, onHeartbeat = () => {}, onSpawn = () => {} }) {
+export function runShellToLog(command, { cwd, logFd, env = process.env, extraFds = [], heartbeatMs = 0, onHeartbeat = () => {}, onSpawn = () => {} }) {
   return new Promise((resolve) => {
     let settled = false;
-    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', logFd, logFd], env, detached: true });
+    // extraFds は fd 3 以降に渡す記述 (bdboard-wea0.2: worktree lock。子が生きている間 lock が残る)。
+    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', logFd, logFd, ...extraFds], env, detached: true });
     onSpawn(child);
     const timer = heartbeatMs > 0 ? setInterval(onHeartbeat, heartbeatMs) : null;
     const done = (code) => {
