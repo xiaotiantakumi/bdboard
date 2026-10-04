@@ -216,6 +216,20 @@ describe('foldHomePaths', () => {
     ['C:\\Users\\John Smith D:\\Users\\example-user\\x', '~/ ~/x'],
     ['C:\\Users\\example-user \\\\wsl$\\Ubuntu\\home\\example-other\\x', '~/ ~/x'],
     ['C:\\Users\\example-user D:\\data', '~/ D:\\data'],
+    // 空白か "(" の直後が次のパスの頭 ("(" を挟んでもよい) なら、その手前で名前を終える (4lea の再レビューの F1・F2)
+    ['C:\\Users\\example-user (D:\\Users\\example-other\\x)', '~/ (~/x)'],
+    ['C:\\Users\\example-user (/home/example-other/x)', '~/ (~/x)'],
+    ['C:\\Users\\example-user (\\\\wsl$\\Ubuntu\\home\\example-other\\x)', '~/ (~/x)'],
+    ['C:\\Users\\example-user failed (C:\\Users\\example-other\\x)', '~/ (~/x)'],
+    ['C:\\Users\\example-user x(D:\\Users\\example-other)', '~/(~/)'],
+    ['C:\\Users\\example-user(D:\\Users\\example-other\\x)', '~/(~/x)'],
+    ['cwd C:\\Users\\example-user (C:\\Users\\example-user\\x.js:1:2)', 'cwd ~/ (~/x.js:1:2)'],
+    ['/home/example-user(/home/example-other/y', '~/(~/y'],
+    ['\\\\wsl$\\Ubuntu\\home\\example-user(/home/example-other/y', '~/(~/y'],
+    // 名前の中の "(" は、後ろが次のパスの頭でなければ名前に入れる (止まる文字にはしない)
+    ['/Users/(example-user/x', '~/x'],
+    ['C:\\Users\\(example-user\\x', '~/x'],
+    ['C:\\Users\\example-user (work\\x', '~/x'],
     ['two /Users/a/x.sh and /home/b/y.sh', 'two ~/x.sh and ~/y.sh'],
     ['  /Users/example-user/x.sh  ', '  ~/x.sh  '],
   ])('%s -> %s', (input, expected) => {
@@ -279,7 +293,16 @@ describe('foldHomePaths', () => {
     ['a second drive path right after the bare root', 'C:\\Users\\example-user D:\\Users\\example-user\\x'],
     ['a POSIX path right after the bare root', 'cp C:\\Users\\example-user /home/example-user/x'],
     ['two users on two drives', 'C:\\Users\\example-user D:\\Users\\example-other\\x'],
-  ])('leaves no user name behind when %s follows a space', (_label, input) => {
+    ['a drive path inside parentheses', 'C:\\Users\\example-user (D:\\Users\\example-other\\x)'],
+    ['a POSIX path inside parentheses', 'C:\\Users\\example-user (/home/example-other/x)'],
+    ['a WSL UNC path inside parentheses', 'C:\\Users\\example-user (\\\\wsl$\\Ubuntu\\home\\example-other\\x)'],
+    ['a word and a parenthesised path', 'C:\\Users\\example-user failed (C:\\Users\\example-other\\x)'],
+    ['a parenthesised path glued to a word', 'C:\\Users\\example-user x(D:\\Users\\example-other)'],
+    ['a parenthesised path glued to the bare root', 'C:\\Users\\example-user(D:\\Users\\example-other\\x)'],
+    ['a stack frame in parentheses', 'cwd C:\\Users\\example-user (C:\\Users\\example-other\\x.js:1:2)'],
+    ['a POSIX path glued behind a bare POSIX root', '/home/example-user(/home/example-other/y'],
+    ['a POSIX path glued behind a bare WSL root', '\\\\wsl$\\Ubuntu\\home\\example-user(/home/example-other/y'],
+  ])('leaves no user name behind: %s', (_label, input) => {
     const folded = foldHomePaths(input);
     expect(folded).not.toContain('example-user');
     expect(folded).not.toContain('example-other');
@@ -309,6 +332,10 @@ describe('foldHomePaths', () => {
       `${'\\\\wsl$\\'.repeat(10_000)}`,
       `${'C:\\Users\\a D:\\Users\\b '.repeat(10_000)}`,
       `C:\\Users\\${'a '.repeat(50_000)}`,
+      `C:\\Users\\${'a ('.repeat(30_000)}`,
+      `C:\\Users\\${'(('.repeat(50_000)}`,
+      `${'/home/a('.repeat(20_000)}`,
+      `/home/${'('.repeat(100_000)}`,
     ];
     const started = Date.now();
     for (const input of hostile) foldHomePaths(input);

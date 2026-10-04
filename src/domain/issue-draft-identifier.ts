@@ -57,31 +57,35 @@ export function stripNonLineText(value: string): string {
 /** 直前が、行頭・空白・区切り記号・"file://"・"\\?\" のどれか (パスの先頭として読める位置)。 */
 const PATH_START = /(?<=^|[\s'"`=:(,;|<>[{]|file:\/\/\/?|\\\\\?\\)/;
 /**
- * 名前が止まる文字は、区切り (/ \)・空白・引用符のほか、リストの区切りと括りの閉じ (` : ; , | < > ) [ ] { } =)。
+ * 名前が止まる文字は、区切り (/ \)・空白・引用符のほか、リストの区切りと括り (` : ; , | < > ( ) [ ] { } =)。
  * 名前の欄はこれらを含まないので、"/home/u:/home/u/bin" や "x=/Users/u;y=/Users/u/z" は名前ごとに畳まれ、
  * 区切りの先の文字は残る。次の PATH_END は、名前の後ろが区切りの連なりか、これらの止まる文字か、文字列の終わりであることを求める。
+ * "(" は、次のパスの頭 ("u(D:\Users\v\x"、"/home/u(/home/v/y") の手前で名前を終えるために止まる文字にする
+ * (名前の中の "(" は、後ろが次のパスの頭でなければ名前に入れる: 下の各パターン)。
  */
-const PATH_END = /(?:[\\/]+|(?=[\s'"`:;,|<>)[\]{}=]|$))/;
+const PATH_END = /(?:[\\/]+|(?=[\s'"`:;,|<>()[\]{}=]|$))/;
 
 /**
  * Windows: C:\Users\<名前>、C:/Users/<名前>。大文字小文字は区別しない。名前には半角スペースだけ許す
  * (John Smith)。改行・タブなどの空白は名前に入れないので、複数行の本文でも次の行を巻き込まない。
- * ただし半角スペースの直後が "X:\"・"X:/" (ドライブ文字) か "/"・"\" のときは、そのスペースで名前を終える。
- * 次のパスの頭を名前として飲み込むと、"cd C:\Users\u && node C:\Users\u\x.js" が "cd ~/:\Users\u\x.js" になり、
- * 次のパスのユーザー名が残るため (bdboard-4lea)。終えたあとの次のパスは、空白の直後なので別に畳まれる。
+ * ただし半角スペースか "(" の直後が、"X:\"・"X:/" (ドライブ文字) か "/"・"\" ("(" を挟んでもよい) のときは、
+ * その手前で名前を終える。次のパスの頭を名前として飲み込むと、"cd C:\Users\u && node C:\Users\u\x.js" が
+ * "cd ~/:\Users\u\x.js" になり、次のパスのユーザー名が残るため (bdboard-4lea)。終えたあとの次のパスは、
+ * 空白か "(" の直後なので別に畳まれる ("cwd C:\Users\u (C:\Users\v\x.js:1:2)" は "cwd ~/ (~/x.js:1:2)")。
+ * 名前の中の "(" は、後ろが次のパスの頭でなければ名前に入れる ("C:\Users\u (work)\x" は "~/)\x")。
  */
 const WINDOWS_HOME =
-  /[A-Za-z]:[\\/]+[Uu][Ss][Ee][Rr][Ss][\\/]+(?:[^\\/\s'"`:;,|<>)[\]{}=]| (?![A-Za-z]:[\\/]|[\\/]))+/;
+  /[A-Za-z]:[\\/]+[Uu][Ss][Ee][Rr][Ss][\\/]+(?:[^\\/\s'"`:;,|<>()[\]{}=]|[ (](?!\(?(?:[A-Za-z]:[\\/]|[\\/])))+/;
 /** WSL から Windows 側を見たパス: \\wsl$\<distro>\home\<名前>、\\wsl.localhost\<distro>\home\<名前>。 */
 const WSL_UNC_HOME =
-  /\\\\wsl(?:\$|\.localhost)[\\/]+[^\\/\s'"]+[\\/]+home[\\/]+[^\\/\s'"`:;,|<>)[\]{}=]+/;
+  /\\\\wsl(?:\$|\.localhost)[\\/]+[^\\/\s'"]+[\\/]+home[\\/]+(?:[^\\/\s'"`:;,|<>()[\]{}=]|\((?!\(?(?:[A-Za-z]:[\\/]|[\\/])))+/;
 /**
  * POSIX: /Users/<名前> (macOS。マウント先と大文字小文字違いも)、/home/<名前> (Linux)。
  * 前に付く形: /mnt/c (WSL)、/c (Git Bash)、/cygdrive/c、/System/Volumes/Data、/Volumes/<ディスク名>
  * (macOS)、/var と /usr (/var/home・/usr/home)。macOS は大文字小文字を区別しないので /users/ も畳む。
  */
 const POSIX_HOME =
-  /(?:\/(?:mnt\/|cygdrive\/)?[A-Za-z](?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/System\/Volumes\/Data(?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/Volumes\/(?:[^/\s'"]| )+(?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/(?:var|usr)(?=\/home\/))?\/(?:[Uu][Ss][Ee][Rr][Ss]|home)[\\/]+[^\\/\s'"`:;,|<>)[\]{}=]+/;
+  /(?:\/(?:mnt\/|cygdrive\/)?[A-Za-z](?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/System\/Volumes\/Data(?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/Volumes\/(?:[^/\s'"]| )+(?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/(?:var|usr)(?=\/home\/))?\/(?:[Uu][Ss][Ee][Rr][Ss]|home)[\\/]+(?:[^\\/\s'"`:;,|<>()[\]{}=]|\((?!\(?(?:[A-Za-z]:[\\/]|[\\/])))+/;
 
 const HOME_PATH_PATTERN = new RegExp(
   `${PATH_START.source}(?:${WINDOWS_HOME.source}|${WSL_UNC_HOME.source}|${POSIX_HOME.source})${PATH_END.source}`,
@@ -99,12 +103,14 @@ const HOME_PATH_PATTERN = new RegExp(
  * パスとして読むのは、直前が行頭・空白・' " ` = : ( , ; | < > [ {・"file://"・"\\?\" のときだけ。
  * だから "GET /api/home/x" や "POST /api/Users/42" のように途中に現れるものは触らない
  * (行頭や空白の直後の "/Users/42" と "/home/x" は畳む)。名前は、区切り (/ \)・空白・引用符・
- * ` : ; , | < > ) [ ] { } = のどれかか文字列の終わりで終わる (PATH 風の "/home/u:/home/u/bin" や
+ * ` : ; , | < > ( ) [ ] { } = のどれかか文字列の終わりで終わる ("(" は、後ろが次のパスの頭 (ドライブ文字・/・\。
+ * さらに "(" を挟んでもよい) でなければ名前に入れる: "/Users/(name" は畳む。PATH 風の "/home/u:/home/u/bin" や
  * "x=/Users/u;y=/Users/u/z" は名前ごとに畳み、区切りの先は残す)。Windows の名前だけは半角スペースを含みうるので、
  * 上の止まる文字か行の終わりまで名前として読む: "bash C:\Users\u --flag" は "bash ~/" になる
- * (引数を残すより、ユーザー名を残さないことを優先する)。ただし半角スペースの直後が "X:\"・"X:/" か "/"・"\" なら
- * そこで名前を終える: "cd C:\Users\u && node C:\Users\u\x.js" は "cd ~/ ~/x.js"、
- * "cp C:\Users\u /home/u/x" は "cp ~/ ~/x" (次のパスも別に畳む)。"/Users/Shared"・"C:\Users\Public"・
+ * (引数を残すより、ユーザー名を残さないことを優先する)。ただし半角スペースか "(" の直後が "X:\"・"X:/" か "/"・"\"
+ * ("(" を挟んでもよい) なら、その手前で名前を終える: "cd C:\Users\u && node C:\Users\u\x.js" は "cd ~/ ~/x.js"、
+ * "cp C:\Users\u /home/u/x" は "cp ~/ ~/x"、"C:\Users\u (D:\Users\v\x)" は "~/ (~/x)"、
+ * "/home/u(/home/v/y)" は "~/(~/y)" (次のパスも別に畳む。POSIX・WSL の名前も "(" だけ同じ)。"/Users/Shared"・"C:\Users\Public"・
  * "/home/linuxbrew" のような共有の場所も同じ形なので畳まれる。パス以外の秘密 (引数のトークンなど) と、
  * "~name/" の形は見つけない。
  *

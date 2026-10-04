@@ -108,7 +108,7 @@ const receiveBodySchema = z.object({
 
 // 一言 (1 行)。貼り付けで混ざるゼロ幅スペースと BOM は落とし、前後の空白も落とす。絵文字の連結 (ZWJ・ZWNJ) は
 // 許す。改行・制御文字・そのほかの不可視の書式文字が途中にあれば 400 (末尾の改行も含めて、整える前の値で見る)。
-// 整えたあとに見える文字が残らない (空白と ZWJ・ZWNJ だけ) ものも 400。
+// 整えたあとに見える文字が残らない (空白・ZWJ・ZWNJ・結合文字 \p{M}・点字の空白 U+2800 だけ) ものも 400。
 const dismissBodySchema = z.object({
   reason: z
     .string()
