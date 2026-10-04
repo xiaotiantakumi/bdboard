@@ -56,6 +56,10 @@ const DISMISS_BODY_MAX_BYTES = 16 * 1024;
  */
 const STORAGE_FULL_BODY = { error: 'issue draft storage is full', code: 'storage-full' } as const;
 
+/** 見送り・投稿済みの下書きへの画像の追加 (409)。`code` は機械が読む固定の値、`status` は下書きの今の状態。 */
+const draftNotPendingBody = (status: string) =>
+  ({ error: 'images can only be added to a pending draft', code: 'draft-not-pending', status }) as const;
+
 const SINGLE_LINE_MESSAGE = 'must be a single line without control, invisible or format characters';
 
 /**
@@ -206,8 +210,10 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
   app.post(`${ISSUE_DRAFTS_PATH}/:id/images`, localOnlyGuard, limitBody(ATTACHMENT_BODY_MAX_BYTES), async (c) => {
     const id = c.req.param('id');
     if (!isDraftId(id)) return c.json({ error: 'invalid draft id' }, 400);
-    // 10MB 級のデコードをする前に、下書きの存在だけ先に確かめる。
-    if ((await service.get(id)) === undefined) return c.json({ error: 'draft not found', id }, 404);
+    // 10MB 級のデコードをする前に、下書きの存在と状態を先に確かめる (状態の判定の正はサービス。これは先回り)。
+    const draft = await service.get(id);
+    if (draft === undefined) return c.json({ error: 'draft not found', id }, 404);
+    if (draft.status !== 'pending') return c.json(draftNotPendingBody(draft.status), 409);
 
     const parsed = await parseJsonBody(c, imageBodySchema);
     if (!parsed.ok) return parsed.response;
@@ -225,10 +231,7 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
         case 'storage-full':
           return c.json(STORAGE_FULL_BODY, 507);
         case 'not-pending':
-          return c.json(
-            { error: 'images can only be added to a pending draft', code: 'draft-not-pending', status: result.status },
-            409,
-          );
+          return c.json(draftNotPendingBody(result.status), 409);
         case 'limit-reached':
           return c.json({ error: `image limit reached (max ${ISSUE_DRAFT_MAX_IMAGES} per draft)` }, 409);
       }

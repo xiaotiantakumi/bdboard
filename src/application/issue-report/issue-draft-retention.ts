@@ -49,10 +49,16 @@ export interface DraftRetention {
   /**
    * incomingBytes を足しても上限に収まるか。収まらなければ、終端の下書きを古い順に消して空け、それでも
    * 収まらなければ false (開いている下書きは消さない)。測れなかったときは true (fail-open)。投げない。
+   * keepId は今まさに書き込む下書き: 空ける候補から外す (自分の画像を消してから draft.json だけ書き戻さない)。
    */
-  ensureRoom(incomingBytes: number): Promise<boolean>;
+  ensureRoom(incomingBytes: number, keepId?: string): Promise<boolean>;
   /** 書き込みに成功したあとの差分 (増えたバイト数。縮んだら負)。実測の合計をずらさず保つ。 */
   recordWrite(deltaBytes: number): void;
+}
+
+/** 経過時間が [0, windowMs) の中か。負 (時計が戻った) は外: 間隔が過ぎたものとして扱う。 */
+function isWithin(elapsedMs: number, windowMs: number): boolean {
+  return elapsedMs >= 0 && elapsedMs < windowMs;
 }
 
 function errorCode(error: unknown): string {
@@ -102,6 +108,9 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
       }
       return true;
     } catch (error) {
+      // 測れない = 合計が分からない。前回の合計や一覧で判断し続けず、容量の確認は通す側 (fail-open) に倒す。
+      totalBytes = undefined;
+      snapshot = [];
       // 試みは 1 時間 (掃除) と 1 分 (容量) に 1 回までなので、毎回警告を出してよい。
       warn(`issue draft survey failed (${errorCode(error)})`);
       return false;
@@ -134,18 +143,20 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
 
     async pruneIfDue() {
       const nowMs = deps.now().getTime();
-      if (lastPruneAtMs !== undefined && nowMs - lastPruneAtMs < pruneIntervalMs) return;
+      // 時計が戻った (前回より前の時刻) ときは、間隔が過ぎたものとして走らせる。
+      if (lastPruneAtMs !== undefined && isWithin(nowMs - lastPruneAtMs, pruneIntervalMs)) return;
       await pruneNow();
     },
 
-    async ensureRoom(incomingBytes) {
+    async ensureRoom(incomingBytes, keepId) {
       if (incomingBytes <= 0) return true;
       if (totalBytes !== undefined && fits(incomingBytes)) return true;
-      // 上限を超えそうなときだけ実測する。ただし測り直しは resurveyGapMs に 1 回まで。
+      // 上限を超えそうなときだけ実測する。ただし測り直しは resurveyGapMs に 1 回まで (時計が戻ったときは測り直す)。
       const sinceSurveyMs = lastSurveyAtMs === undefined ? Infinity : deps.now().getTime() - lastSurveyAtMs;
-      if (sinceSurveyMs >= resurveyGapMs) await takeSnapshot();
+      if (!isWithin(sinceSurveyMs, resurveyGapMs)) await takeSnapshot();
       if (fits(incomingBytes)) return true;
-      const targets = selectDraftsToFree(snapshot, (totalBytes ?? 0) + incomingBytes - maxTotalBytes);
+      const candidates = keepId === undefined ? snapshot : snapshot.filter((draft) => draft.id !== keepId);
+      const targets = selectDraftsToFree(candidates, (totalBytes ?? 0) + incomingBytes - maxTotalBytes);
       if (targets === undefined) return false;
       await removeAll(targets);
       return fits(incomingBytes);

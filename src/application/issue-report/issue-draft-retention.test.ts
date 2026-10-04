@@ -96,6 +96,58 @@ describe('createDraftRetention', () => {
     expect(storage.survey).not.toHaveBeenCalled();
   });
 
+  it('never frees the draft being written (keepId), even when it is the oldest terminal one', async () => {
+    const storage = stubStorage({
+      drafts: [dismissedFootprint('1-aaaaaaaaaaaaaaaa', 9, 60), dismissedFootprint('2-bbbbbbbbbbbbbbbb', 5, 60)],
+      totalBytes: 120,
+      unmeasured: [],
+    });
+    const retention = createDraftRetention({ storage, now: () => NOW, maxTotalBytes: 120, warn: vi.fn() });
+
+    expect(await retention.ensureRoom(10, '1-aaaaaaaaaaaaaaaa')).toBe(true);
+    expect(storage.remove.mock.calls.map(([id]) => id)).toEqual(['2-bbbbbbbbbbbbbbbb']);
+
+    // 残りが書き込み中の下書きだけなら、空けられない: 消さずに断る。
+    retention.recordWrite(60); // 合計はまた上限ちょうど (X の 60 + 書いた 60)
+    expect(await retention.ensureRoom(10, '1-aaaaaaaaaaaaaaaa')).toBe(false);
+    expect(storage.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('is fail-open after a survey that worked once and then fails: the old total and list are dropped', async () => {
+    const storage = stubStorage({ drafts: [dismissedFootprint('1-aaaaaaaaaaaaaaaa', 9, 60)], totalBytes: 120, unmeasured: [] });
+    let nowMs = NOW.getTime();
+    const warn = vi.fn();
+    const retention = createDraftRetention({ storage, now: () => new Date(nowMs), maxTotalBytes: 100, warn });
+    storage.remove.mockRejectedValue(Object.assign(new Error('x'), { code: 'EBUSY' }));
+    expect(await retention.ensureRoom(10)).toBe(false); // 測れていて、上限を超え、消せない
+
+    storage.survey.mockRejectedValue(Object.assign(new Error('x'), { code: 'EIO' }));
+    nowMs += 60 * 1000;
+
+    expect(await retention.ensureRoom(10)).toBe(true);
+    expect(warn).toHaveBeenCalledWith('issue draft survey failed (EIO)');
+    // 失敗した直後の 1 分は、また測りに行かずに通す。
+    expect(await retention.ensureRoom(10)).toBe(true);
+    expect(storage.survey).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats a clock that stepped backwards as due, for the hourly prune and for the re-survey', async () => {
+    const storage = stubStorage({ drafts: [], totalBytes: 100, unmeasured: [] });
+    let nowMs = NOW.getTime();
+    const retention = createDraftRetention({ storage, now: () => new Date(nowMs), maxTotalBytes: 100, warn: vi.fn() });
+
+    await retention.pruneIfDue();
+    nowMs -= 10 * 60 * 1000; // 前回の掃除より前の時刻
+    await retention.pruneIfDue();
+    expect(storage.survey).toHaveBeenCalledTimes(2);
+
+    expect(await retention.ensureRoom(10)).toBe(false); // 直前の棚卸しから 0 ミリ秒: 測り直さない
+    expect(storage.survey).toHaveBeenCalledTimes(2);
+    nowMs -= 1000;
+    expect(await retention.ensureRoom(10)).toBe(false); // 時計が戻った: 測り直す
+    expect(storage.survey).toHaveBeenCalledTimes(3);
+  });
+
   it('uses the injected limits: retention period, prune interval and cap', async () => {
     const storage = stubStorage({
       drafts: [dismissedFootprint('1-aaaaaaaaaaaaaaaa', 2, 10), dismissedFootprint('2-bbbbbbbbbbbbbbbb', 0.5, 10)],

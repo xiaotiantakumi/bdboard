@@ -34,7 +34,11 @@ export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRout
 
   // 起動時の掃除 (bdboard-00qh): 見送り・投稿済みで 30 日を過ぎた下書きを画像ごと消す。待たない・失敗しても
   // 起動は止めない (service が警告だけ出して投げない)。開いている (pending) 下書きは消さない。
-  void service.pruneOnStart();
+  // 万一投げても未処理の reject でプロセスを落とさない: ログは code だけ (パスも message も出さない)。
+  void service.pruneOnStart().catch((error: unknown) => {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    log(`issue draft prune at start failed (${typeof code === 'string' ? code : 'unknown'})`);
+  });
 
   log(`Issue report drafts: storing under ${draftsDir}`);
 

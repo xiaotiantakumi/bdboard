@@ -106,11 +106,12 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
 
   /**
    * 合計容量の上限に収まるときだけ書く (収まらなければ false で、何も書かない)。previous は上書きされる前の
-   * 下書きで、差分 (新しい大きさ - 古い大きさ) だけを数える。
+   * 下書きで、差分 (新しい大きさ - 古い大きさ) だけを数える。上書きする下書き自身は、容量を空けるために
+   * 消す候補から外す (消すと画像まで失い、draft.json だけが書き戻る)。
    */
   async function saveWithinCap(draft: IssueDraft, previous: IssueDraft | undefined): Promise<boolean> {
     const delta = draftJsonBytes(draft) - (previous === undefined ? 0 : draftJsonBytes(previous));
-    if (!(await retention.ensureRoom(delta))) return false;
+    if (!(await retention.ensureRoom(delta, previous?.id))) return false;
     await deps.storage.save(draft);
     retention.recordWrite(delta);
     return true;
@@ -236,7 +237,7 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
         if ((await deps.storage.countImages(id)) >= ISSUE_DRAFT_MAX_IMAGES) {
           return { ok: false, reason: 'limit-reached' };
         }
-        if (!(await retention.ensureRoom(data.byteLength))) return storageFull;
+        if (!(await retention.ensureRoom(data.byteLength, id))) return storageFull;
         const image = await deps.storage.saveImage(id, extension, data);
         retention.recordWrite(image.byteLength);
         return { ok: true, image };

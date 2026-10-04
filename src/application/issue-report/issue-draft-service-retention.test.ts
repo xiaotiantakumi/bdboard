@@ -75,6 +75,12 @@ function age(harness: Harness, id: string, ageMs: number): void {
   harness.storage.updatedAtMs.set(id, harness.now().getTime() - ageMs);
 }
 
+/** 新しい下書き 1 件の draft.json の大きさ (スラッグの長さが同じなら、どの文字でも同じ)。 */
+async function newDraftBytes(): Promise<number> {
+  const probe = createHarness();
+  return draftJsonBytes(probe.storage.drafts.get(await createdId(probe.service, 'z'))!);
+}
+
 function totalBytes(storage: InMemoryIssueDraftStorage): number {
   let total = 0;
   for (const draft of storage.drafts.values()) total += draftJsonBytes(draft);
@@ -373,6 +379,136 @@ describe('total size cap: terminal drafts are pruned oldest first, then a receiv
     const result = await h.service.dismiss(id, 'a longer reason than before, to grow the draft');
 
     expect(result.ok).toBe(true);
+  });
+
+  it('is fail-open also after a survey that worked once: when the next survey fails, no stale total refuses the report', async () => {
+    const base = createHarness();
+    await createdId(base.service, 'a');
+    const h = createHarness({ maxTotalBytes: totalBytes(base.storage) }, base);
+    expect(await receive(h.service, 'b')).toEqual({ ok: false, reason: 'storage-full' }); // 測れていて、開いた下書きで満杯
+
+    vi.spyOn(h.storage, 'survey').mockRejectedValue(Object.assign(new Error('x'), { code: 'EIO' }));
+    h.advance(MINUTE_MS);
+    const result = await receive(h.service, 'c');
+
+    expect(result.ok && result.outcome).toBe('created');
+    expect(h.warn).toHaveBeenCalledWith('issue draft survey failed (EIO)');
+  });
+
+  it('counts what a dismissal adds to the running total, so the next write is checked against the grown size', async () => {
+    const newSize = await newDraftBytes();
+    const base = createHarness();
+    const id = await createdId(base.service, 'a');
+    const cap = totalBytes(base.storage) + newSize + 10; // 新しい下書き 1 件と 10 バイトの余裕
+    const h = createHarness({ maxTotalBytes: cap }, base);
+    await h.service.pruneOnStart(); // 実測の合計を取る
+
+    expect((await h.service.dismiss(id, 'x'.repeat(100))).ok).toBe(true); // 余裕より大きく育つ
+    expect(totalBytes(h.storage) + newSize).toBeGreaterThan(cap);
+
+    expect(await receive(h.service, 'b')).toEqual({ ok: false, reason: 'storage-full' });
+  });
+
+  it('does not count a write whose save failed: the next report is judged against the real total', async () => {
+    const newSize = await newDraftBytes();
+    const h = createHarness({ maxTotalBytes: newSize }); // 新しい下書き 1 件だけ入る
+    await h.service.pruneOnStart();
+
+    vi.spyOn(h.storage, 'save').mockRejectedValueOnce(new Error('disk gone'));
+    await expect(receive(h.service, 'a')).rejects.toThrow('disk gone');
+    const second = await receive(h.service, 'a');
+
+    expect(second.ok && second.outcome).toBe('created');
+  });
+});
+
+describe('total size cap: the draft being written is never the one freed to make room for it', () => {
+  /**
+   * 回数が 9 で画像つきの見送り済み (x。5 日前に最後の保存)。同じ報告がもう一度来ると回数が 10 になって
+   * draft.json が 1 バイト増える (差分 +1) ので、ちょうど満杯だと空けが要る。
+   */
+  async function seedNineWithImage() {
+    const base = createHarness();
+    const x = await createdId(base.service, 'a');
+    for (let count = 1; count < 9; count += 1) await receive(base.service, 'a');
+    expect(base.storage.drafts.get(x)?.occurrenceCount).toBe(9);
+    expect((await base.service.addImage(x, 'png', new Uint8Array(50))).ok).toBe(true);
+    expect((await base.service.dismiss(x, 'not a bug')).ok).toBe(true);
+    age(base, x, 5 * DAY_MS);
+    return { base, x };
+  }
+
+  it('refuses a count-only merge at exactly full instead of freeing the very draft: images and count stay', async () => {
+    const { base, x } = await seedNineWithImage();
+    const h = createHarness({ maxTotalBytes: totalBytes(base.storage) }, base);
+
+    const result = await receive(h.service, 'a'); // 9 -> 10: +1 バイト、空ける相手は x 自身しかいない
+
+    expect(result).toEqual({ ok: false, reason: 'storage-full' });
+    expect(h.storage.images.get(x)?.size).toBe(1);
+    expect(h.storage.drafts.get(x)?.occurrenceCount).toBe(9);
+  });
+
+  it('frees another terminal draft instead: the merged draft keeps its images and the real total stays within the cap', async () => {
+    const { base, x } = await seedNineWithImage();
+    const y = await dismissed(base.service, 'b');
+    age(base, y, 3 * DAY_MS); // x より新しい
+    const cap = totalBytes(base.storage);
+    const h = createHarness({ maxTotalBytes: cap }, base);
+
+    const merged = await receive(h.service, 'a');
+
+    expect(merged.ok && merged.outcome).toBe('merged');
+    expect(h.storage.drafts.get(x)?.occurrenceCount).toBe(10);
+    expect(h.storage.images.get(x)?.size).toBe(1);
+    expect(h.storage.drafts.has(y)).toBe(false);
+    expect(totalBytes(h.storage)).toBeLessThanOrEqual(cap);
+  });
+});
+
+describe('retention: runs one at a time with the other writes', () => {
+  it('pruneOnStart holds the same mutex as receive: a receive queued behind it waits for the survey to finish', async () => {
+    const h = createHarness();
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const realSurvey = h.storage.survey.bind(h.storage);
+    vi.spyOn(h.storage, 'survey').mockImplementation(async () => {
+      await gate;
+      return realSurvey();
+    });
+
+    const prune = h.service.pruneOnStart();
+    let received = false;
+    const pending = receive(h.service, 'a').then((result) => {
+      received = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(received).toBe(false);
+    expect(h.storage.drafts.size).toBe(0);
+
+    release();
+    await prune;
+    const result = await pending;
+    expect(result.ok && result.outcome).toBe('created');
+  });
+});
+
+describe('retention: a clock that stepped backwards does not pause the hourly prune', () => {
+  it('prunes again once the clock goes back before the last prune', async () => {
+    const base = createHarness();
+    const h = createHarness({}, base);
+    const survey = vi.spyOn(h.storage, 'survey');
+    await receive(h.service, 'a');
+    expect(survey).toHaveBeenCalledTimes(1);
+
+    h.advance(-10 * MINUTE_MS);
+    await receive(h.service, 'b');
+
+    expect(survey).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -111,6 +111,22 @@ describe('409: an image for a draft that is already finished', () => {
     expect(storage.images.get(id)?.size ?? 0).toBe(0);
   });
 
+  it('is answered before the body is read: a dismissed draft gets 409 even for a body that would be a 400', async () => {
+    const storage = createInMemoryIssueDraftStorage();
+    const app = appOn(storage);
+    const id = await create(app, 'a');
+    await app.request(`${DRAFTS}/${id}/dismiss`, json({ reason: 'not a bug' }, 'PATCH'), LOCAL_ENV);
+
+    const res = await app.request(
+      `${DRAFTS}/${id}/images`,
+      { method: 'POST', headers: { 'content-type': 'application/json', host: LOCAL_HOST }, body: 'not json at all' },
+      LOCAL_ENV,
+    );
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { code: string }).code).toBe('draft-not-pending');
+  });
+
   it('is still accepted (201) while the draft is pending', async () => {
     const storage = createInMemoryIssueDraftStorage();
     const app = appOn(storage);
