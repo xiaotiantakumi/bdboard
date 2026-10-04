@@ -86,13 +86,14 @@ export async function stoppedEarly(activeChild, code, logPath) {
     return 'abandoned';
   }
   if (code === SLOT_WAIT_TIMEOUT_EXIT_CODE) {
-    // bdboard-wj9m: verify スロットの待ちが打ち切られた (verify.mjs の予約済み終了コード)。verify は
-    // 1 行も走っていないので、main が壊れたという結果ではない。台帳には pending 以外を書かず
+    // bdboard-wj9m: verify.mjs の予約済み終了コード = 何も走らせずに諦めた。verify スロットの待ちの打ち切りか、
+    // bdboard-wea0.1 の worktree lock の共有待ちの打ち切り (どちらだったかは verify 自身の stderr、ログの末尾にある)。
+    // verify は 1 行も走っていないので、main が壊れたという結果ではない。台帳には pending 以外を書かず
     // (failure はもちろん、landed.mjs が main-broken と読む error も)、検証できなかった (error、再試行可) として返す。
     // bdboard-xdk8: 負荷由来の失敗の再実行がこれで終わったときも同じ (1 回目のログは残してある)。
     say(
-      `verify スロットの待ちがタイムアウトしました (exit ${code})。verify は走っていないので、結果は記録しません (failure も書きません)。`,
-      'スロットが空いてからやり直してください。ログの末尾:',
+      `verify が何も走らせずに終わりました (exit ${code}: verify スロットの待ちがタイムアウトしました、または worktree lock の共有待ちの打ち切り。どちらかはログの末尾の verify の行にあります)。結果は記録しません (failure も書きません)。`,
+      'スロット (または worktree) が空いてからやり直してください。ログの末尾:',
       tail(logPath, 10),
     );
     return 'error';

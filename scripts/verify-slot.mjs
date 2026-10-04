@@ -71,7 +71,9 @@ export const DEFAULT_SLOT_OPTIONS = Object.freeze({
 // リーダー (verify:steps → vitest のワーカー) に渡す env からこれを外す: 受け継ぐと、テストの中で起こす verify.mjs や
 // スロットのスクリプトが外側の landed の優先度・並んだ時刻・予約を名乗ってしまう (landed の待ちの延長で、
 // スロット待ちの打ち切りのテストが 32 分待って落ちた。PR #855 のレビュー)。
-export const SLOT_IDENTITY_ENV = Object.freeze(['BDBOARD_VERIFY_PRIORITY', 'BDBOARD_VERIFY_QUEUE_SINCE', 'BDBOARD_VERIFY_SLOT_HANDOFF']);
+// bdboard-wea0.1: BDBOARD_WORKTREE_HELD_BY (merge-pr が自分の契約 verify に「この worktree の lock の持ち主は私」と渡す。
+// verify-worktree-claim.mjs) も同じ扱い: テストの中の verify.mjs が受け継ぐと、merge-pr 所有の worktree で通ってしまう。
+export const SLOT_IDENTITY_ENV = Object.freeze(['BDBOARD_VERIFY_PRIORITY', 'BDBOARD_VERIFY_QUEUE_SINCE', 'BDBOARD_VERIFY_SLOT_HANDOFF', 'BDBOARD_WORKTREE_HELD_BY']);
 
 export function withoutSlotIdentity(env = process.env) {
   const copy = { ...env };
