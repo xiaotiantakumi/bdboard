@@ -221,6 +221,14 @@ export function useThreadListSync({
               : admitted,
           }));
         }
+        // bdboard-4w2d: 応答が届いた時点の永続化を読む(効果開始時のスナップショットではない)。
+        const persistedNow = readPersistedChatThreads()[selectedProjectId];
+        // bdboard-0206: 初回訪問で、fetch の in-flight 中に最初の永続化エントリが現れた(isFirstVisitWritten)。
+        const firstVisitWritten = isFirstVisitWritten(startedWithoutEntry, persistedNow);
+        // bdboard-0206: その open に広げる元の一覧。admitted が undefined のときは、この応答が古い(採用の取り直しなど、
+        // より新しい一覧が既に当たっている)ので、応答ではなく当たっている一覧を使う。応答の id を open と永続化に
+        // 入れると、応答の後に削除されたスレッドが threadLists に無いまま (無題) のタブになる。
+        const listForFirstVisit = admitted ?? threadListOrder.appliedList(selectedProjectId) ?? threads;
         // bdboard-4w2d(Opus レビュー対応、2巡目レビューで文言訂正): この fetch が
         // in-flight の間に handleAgentChange が先にこのプロジェクトの open を [] に
         // 確定させ、restoredProjectsRef もマーク済みなら、ここで persisted から
@@ -233,17 +241,13 @@ export function useThreadListSync({
         // CLI セッションの採用(handleResumeDiscoveredSession。bdboard-oaak 以降マーカーを
         // 立てる)。pending なチケット起動ドラフトの消化だけは、この応答でしか
         // 担えないので続ける。
-        // bdboard-4w2d: 応答が届いた時点の永続化を読む(効果開始時のスナップショットではない)。
-        const persistedNow = readPersistedChatThreads()[selectedProjectId];
-        // bdboard-0206: 初回訪問で、fetch の in-flight 中に最初の永続化エントリが現れた(isFirstVisitWritten)。
-        const firstVisitWritten = isFirstVisitWritten(startedWithoutEntry, persistedNow);
         if (establishedByOtherPath) {
           // bdboard-0206: 確立したのが採用なら、open はその 1 件(と永続化の基点)だけで、サーバー一覧の他の
           // スレッドが開かれない。初回訪問のときだけ、採用が確立した open にサーバー一覧を足し、永続化も揃える
           // (でないとリロードで閉じられる)。選択は採用が確立したまま触らない。open が分からない(undefined)なら
           // 足さない。エージェント切替の「空に確定」はエントリの activeSessionIds が空なので当たらず、そのまま残る。
           if (firstVisitWritten && openIdsNow !== undefined) {
-            const widened = widenOpenToServerList(admitted ?? threads, openIdsNow);
+            const widened = widenOpenToServerList(listForFirstVisit, openIdsNow);
             setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: widened }));
             writePersistedChatThreadState(selectedProjectId, {
               activeSessionIds: widened,
@@ -253,7 +257,11 @@ export function useThreadListSync({
           consumePendingTicketDraft();
           return;
         }
-        const { open, selected } = restoreThreadView(admitted ?? threads, persistedNow, firstVisitWritten);
+        const { open, selected } = restoreThreadView(
+          firstVisitWritten ? listForFirstVisit : (admitted ?? threads),
+          persistedNow,
+          firstVisitWritten,
+        );
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: open }));
         // bdboard-0206: 送信成功が書いた最初のエントリは送信した会話 1 件だけなので、メモリの open に揃える
         // (でないとリロードでサーバー一覧のスレッドが閉じられる)。選択の永続化は送信が書いたまま。

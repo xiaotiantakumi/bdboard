@@ -419,6 +419,47 @@ describe('useThreadListSync', () => {
       expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-a', 'sess-b', 'sess-c'] });
     });
 
+    it('widens an adopted open with the list already applied, not with a stale response that lists a deleted thread', async () => {
+      const list = deferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockReturnValue(list.promise);
+      const { result } = renderProbe();
+      // 採用が確立し、採用の取り直し(E7 より後に始まった)の一覧が先に当たっている。sess-2 はその間に削除されて載っていない。
+      act(() => {
+        result.current.restoredProjectsRef.current.add('proj-a');
+        result.current.openThreadIdsRef.current = { 'proj-a': ['sess-new'] };
+        writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+        const seq = result.current.threadListOrder.begin('proj-a');
+        const applied = result.current.threadListOrder.admit('proj-a', seq, [thread('sess-1'), thread('sess-new')]);
+        result.current.setThreadLists({ 'proj-a': applied ?? [] });
+      });
+      // 古い E7 の一覧(削除済みの sess-2 を載せている)が届く。応答は捨てられる(admit が undefined)。
+      await act(async () => { list.resolve([thread('sess-1'), thread('sess-2')]); await list.promise; });
+      // 古い一覧のデータを open と永続化に入れない: 入れると threadLists に無い (無題) のタブになる。
+      expect(result.current.threadLists['proj-a']?.map((t) => t.sessionId)).toEqual(['sess-1', 'sess-new']);
+      expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-1', 'sess-new'] });
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-1', 'sess-new'],
+        selectedSessionId: 'sess-new',
+      });
+    });
+
+    it('opens from the list already applied, not from a stale response, on the send path too', async () => {
+      const list = deferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockReturnValue(list.promise);
+      const { result } = renderProbe();
+      // 送信が最初のエントリを書いた(マーカーは立てない)。E7 より後に始まった一覧が先に当たっている(到達しにくい順序だが、
+      // 古い応答の id を open と永続化に入れないことは経路によらず守る)。
+      act(() => {
+        writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+        const seq = result.current.threadListOrder.begin('proj-a');
+        const applied = result.current.threadListOrder.admit('proj-a', seq, [thread('sess-1'), thread('sess-new')]);
+        result.current.setThreadLists({ 'proj-a': applied ?? [] });
+      });
+      await act(async () => { list.resolve([thread('sess-1'), thread('sess-2')]); await list.promise; });
+      expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-1', 'sess-new'] });
+      expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-1', 'sess-new']);
+    });
+
     it('keeps an explicit empty open from an agent change: its entry has no active ids', async () => {
       const list = deferred<ChatThreadDto[]>();
       fetchChatThreadsMock.mockReturnValue(list.promise);
