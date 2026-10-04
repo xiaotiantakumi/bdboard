@@ -28,8 +28,9 @@
 //   stale になるまで打ち切りを延ばす (verify-slot-wait.mjs の slotWaitLimitMs。明示した
 //   BDBOARD_VERIFY_SLOT_WAIT_MS が優先)。走っている landed を待つ側の表示は「正常、kill しない」にする (旧表示の
 //   「hung verify?」は kill を誘っていた)。merge-pr が着地後検証を 1 回だけ再実行するときの隙間は予約 holder で
-//   埋める (reserveVerifySlot / handoffPath)。verify.mjs はこの verify の素性の env をリーダーに渡さない
-//   (withoutSlotIdentity)。
+//   埋める (reserveVerifySlot / handoffPath)。引き継ぎの瞬間に一覧を読んだ待ち手は、読む前に消えた holder があれば
+//   一覧を読み直して引き継ぎ先を拾う (bdboard-bwys、verify-slot-files.mjs の readOthers)。verify.mjs はこの verify の
+//   素性の env をリーダーに渡さない (withoutSlotIdentity)。
 // - stale 処理: pid が死んだ holder は即回収 (SIGKILL された verify の後始末)。
 //   pid が生きていて staleTtlMs を超えた holder は枠のカウントから外す (ハング1本が
 //   枠を永久占有しない) が、ファイルは本人の後始末に任せて消さない。

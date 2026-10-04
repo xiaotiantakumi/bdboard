@@ -474,7 +474,14 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   `since` = when the first run queued) right after the first run exits, and
   passes its path to the re-run in `BDBOARD_VERIFY_SLOT_HANDOFF`. The re-run's
   `npm run verify` deletes it once its own holder is written, before its first
-  look at the queue. The re-run's holder is marked `retry: true`. The
+  look at the queue. The re-run's holder is marked `retry: true`. When a
+  holder listed in a waiter's look is gone by the time the waiter reads it,
+  the waiter lists the slot directory again and reads the names that are new
+  (bdboard-bwys). Without that, a look whose listing came just before the
+  re-run's holder, and whose read came just after the reservation was deleted,
+  saw no `landed` holder at all, and a `pr` waiter started in the gap (once in
+  CI; 24 of 700 runs under CPU stress, 0 of 800 after). The new listing comes
+  after the delete, so it has the re-run's holder. The
   reservation and the re-run both keep `since` without the 10 min seniority
   cap, so a `pr` that has waited longer than 10 min does not pass them. The
   reservation is a waiting `landed` holder, so it narrows the window in which
