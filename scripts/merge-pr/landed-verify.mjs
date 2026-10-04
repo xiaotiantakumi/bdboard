@@ -112,7 +112,7 @@ export async function runLandedVerify(
     say(
       `${label}は PR の worktree (git worktree add で作った作業ツリー) でだけ実行します。`,
       'main checkout で detach checkout すると常時稼働サーバーの配信物 (web/dist) まで置き換わるため拒否しました。',
-      ledger ? `PR の worktree に移って npm run merge-pr -- verify ${sha} を実行してください。` : 'PR の worktree に移って prepare してください。',
+      ledger ? `PR の worktree に移って BDBOARD_MERGER=chair npm run merge-pr -- verify ${sha} を実行してください。` : 'PR の worktree に移って prepare してください。',
     );
     return { result: 'error' };
   }
@@ -165,7 +165,7 @@ export async function runLandedVerify(
         `作業ツリーに未追跡ファイル (${sha.slice(0, 12)} の .gitignore で ignore されていないもの) が ${untracked.length} 件あるため${label}を始めません:`,
         shown.map((file) => `  ${file}`).join('\n') + more,
         ledger
-          ? `コミットするか git clean/rm で消してから npm run merge-pr -- verify ${sha} し直してください (混ざると検証した木と実際の木が一致しません)。`
+          ? `コミットするか git clean/rm で消してから BDBOARD_MERGER=chair npm run merge-pr -- verify ${sha} し直してください (混ざると検証した木と実際の木が一致しません)。`
           : 'コミットするか git clean/rm で消してから prepare し直してください (混ざると検証した木と実際の木が一致しません)。',
       );
       result = 'error';

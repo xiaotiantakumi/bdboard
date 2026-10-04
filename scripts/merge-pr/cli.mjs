@@ -25,7 +25,8 @@ export const USAGE = `merge-pr — マージ手順 S1 / S2 / S3 (枠は CAS と�
 
 終了コード: 0 成功 / 1 使い方・想定外 / 2 前提不成立 / 4 main が壊れている
             3 rebase が要る (S1: main が動いた / S2: テキスト衝突・hot file・着地予定ツリーの verify failure)
-            5 finish: 未マージ (枠は返した) / 6 finish: 着地後検証 failure / 7 議長以外の gate / finish / verify
+            5 finish: 未マージ (枠は返した) / 6 finish: 着地後検証 failure (origin/main が先へ進んでいれば main-broken の枠は取らない)
+            7 議長以外の gate / finish / verify
             8 origin/main の ref が lock されている (stale lock の疑い。人が確認して消す。自動では消さない)
             75 やり直し (CAS 負け等)`;
 

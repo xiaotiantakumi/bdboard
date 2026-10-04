@@ -95,7 +95,7 @@ export function auditLogPath() {
   return process.env.BDBOARD_MERGE_AUDIT_LOG || path.join(process.env.TMPDIR || tmpdir(), 'bdboard-merge-audit.log');
 }
 
-/** 1 行: ts event pr=.. key=value ... (値の空白・タブは _ に潰す)。 */
+/** 1 行: ts event pr=.. key=value ... (値の空白・タブは _ に潰す)。追記できたら true、できなければ false (手順は止めない)。 */
 export function audit(event, fields) {
   const parts = [new Date().toISOString(), event];
   for (const [key, value] of Object.entries(fields)) {
@@ -105,8 +105,10 @@ export function audit(event, fields) {
   }
   try {
     appendFileSync(auditLogPath(), `${parts.join('\t')}\n`);
+    return true;
   } catch {
     // 監査ログが書けなくてもマージ手順は止めない。
+    return false;
   }
 }
 

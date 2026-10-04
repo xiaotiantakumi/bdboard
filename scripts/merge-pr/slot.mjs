@@ -5,7 +5,7 @@
 //   握りっぱなしの holder は議長に報告させる (委譲ブリーフの規律。設計 §3.7 の
 //   「LEASE 超過なら release してから acquire」は採らない)
 // - 自分と同じ holder 名 (= 同じ PR の前回の gate) が握っているときだけ、それを引き継ぐ
-import { run } from './exec.mjs';
+import { run, shellQuote } from './exec.mjs';
 import { say } from './state.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -30,9 +30,10 @@ export function readSlot(cwd) {
 }
 
 /** sha の main-broken の枠 (`… / main-broken <sha12>`) を今握っている holder。握っていなければ (読めなくても) null。 */
-export function mainBrokenHolder(cwd, sha) {
+export function mainBrokenSlot(cwd, sha) {
   const slot = readSlot(cwd);
-  return slot.ok && slot.holder?.endsWith(` / main-broken ${sha.slice(0, 12)}`) ? slot.holder : null;
+  if (!slot.ok) return slot;
+  return { ok: true, holder: slot.holder?.endsWith(` / main-broken ${sha.slice(0, 12)}`) ? slot.holder : null };
 }
 
 /**
@@ -75,7 +76,7 @@ export function releaseSlot(cwd, holder) {
   if (released.status !== 0) {
     say(
       `枠の返却に失敗しました: ${released.stderr.trim()}`,
-      `手で返してください: bd merge-slot release --holder '${holder}'`,
+      `手で返してください: bd merge-slot release --holder ${shellQuote(holder)}`,
     );
     return false;
   }

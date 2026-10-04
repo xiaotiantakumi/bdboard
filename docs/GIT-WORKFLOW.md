@@ -313,11 +313,13 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   `3` main moved (class R) → `git rebase origin/main` (or `git merge origin/main`)
   → push → wait for CI → `prepare` again. `75` start over from `prepare` (CAS lost, main moved
   while waiting, `ls-remote` failed, slot not free within `merge.slotWaitMinutes`, CI pending or
-  the GitHub API unreachable). `4` / `6` main is broken → below. `5` finish found the PR unmerged
+  the GitHub API unreachable). `4` / `6` main is broken → below (`6` is also what `finish` exits with
+  when its landed verify failed but `origin/main` has moved past the landed commit: it takes no slot,
+  see "`finish` takes `main-broken` only for the tip" below). `5` finish found the PR unmerged
   (and returned the slot, except under `--repair`). `1` could not run at all (bd unusable, dirty
   worktree, run from the main checkout, `npm ci` failed, untracked files not `.gitignore`d by the
   tree about to be verified, the verify slot wait timed out, …) — the message says what to fix; for a
-  landed verify that could not run, fix it and run `npm run merge-pr -- verify <sha>`.
+  landed verify that could not run, fix it and run `BDBOARD_MERGER=chair npm run merge-pr -- verify <sha>`.
 - **The merge line is printed, not run by the script** (decision 4 of bdboard-ulxa §6): if the
   permission classifier refuses `gh pr merge`, running it from inside a script would be a
   bypass. Refused → do not retry, run `finish` (it returns the slot), then the human gate
@@ -380,6 +382,22 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   real race can also fail with an assertion, and a load threshold would retry it too, while a
   deterministic regression (including a hang that always times out) fails the retry and is still
   recorded.
+- **`finish` takes `main-broken` only for the tip (bdboard-89jv).** On a landed-verify
+  `failure`, `finish` fetches `origin/main` again and takes `<id> / main-broken <sha12>` only
+  while the landed commit is still the tip. If the tip has moved, it takes no slot, exits 6, and
+  writes a `finish-main-moved-on` audit row. Its advice uses the tip ledger only to choose wording:
+  `success` → main is healthy, no repair PR; `failure` / `error` → follow the broken-main steps for
+  the tip; unconfirmed → run `BDBOARD_MERGER=chair npm run merge-pr -- verify <tip>`. This covers
+  `finish` error → a manual `verify` or another merger's self-heal finds failure (neither stamps nor
+  takes a slot) → repair lands → rerun `finish <N>`, and late recovery `finish` after manually
+  releasing a crashed merger's slot.
+  The slot must not be taken merely because the tip ledger is not `success`: the repair PR's holder
+  is derived from its PRED_BASE (the tip; `gate --repair`'s `holderFor`), so an old-SHA slot cannot be
+  inherited and would block every gate indefinitely. If the tip is unconfirmed, layer 3 protects it:
+  the next gate reads that tip's ledger and self-heals after the LEASE. We considered skipping the
+  re-verify when the landed SHA already has a final ledger result, but the fix is slot ownership, not
+  verification; a landed SHA whose ledger remains `failure` still requires checking the current tip.
+  The re-verify result overwrites that SHA's ledger as usual.
 - **The next merger's gate** reads that ledger for its PRED_BASE: `success` → go on; `failure` →
   do not merge; `pending` / none → wait (30 s polls) until `merge.leaseMinutes` (8) after the last
   update (or the commit time), then verify that SHA itself and post the result (self-heal —
@@ -616,7 +634,11 @@ File overlap still never decides whether to merge without a rebase; it only pick
   `light-landed … result=success by=manual` as the last line for that `new=`; the earlier
   `result=failure by=finish` is then not a slip (count the last `success` / `failure` per `new=`).
   That successful re-verify also removes the record, unless a `finish` is still verifying (a live
-  `verifyingPid`). The record of a **confirmed** slip (the re-verify fails too) stays; they are bounded
+  `verifyingPid`). This live-PID check is defensive: a stamped record is written with
+  `verifyingPid: null` in the same write that clears the verify mark, so it does not fire in practice.
+  The record is removed only when the `light-landed … result=success by=manual` audit row was actually
+  appended. If the audit log cannot be written, the record is kept and one line says to fix the log
+  and rerun `BDBOARD_MERGER=chair npm run merge-pr -- verify <sha>`. The record of a **confirmed** slip (the re-verify fails too) stays; they are bounded
   by the number of slips, and every slip rolls back to S2.
   - **`finish`, `gate` and `prepare` refuse a record stamped `landedResult: "failure"`** (exit 2, a
     message that it is a finished class-L failure and points at `merge-pr verify <newMain>` and the
@@ -628,7 +650,10 @@ File overlap still never decides whether to merge without a rebase; it only pick
     a `success`, `merge-pr verify <sha>` reads the slot and, if its holder ends in `/ main-broken
     <sha12>` for that SHA, prints the exact `bd merge-slot release --holder '<holder>'` (the slip
     rule's step 1 says the same: check with `bd merge-slot check`, release unless a `--repair`-gated
-    repair PR exists). It only prints.
+    repair PR exists). The slot may have been taken by `finish`, inherited by `gate --repair`, or
+    acquired manually, so the instructions call it "this SHA's main-broken slot". If `bd merge-slot
+    check` itself fails, the script cannot say whether a slot remains and tells you to run that check
+    by hand. It only prints.
 - **Duplicate reports (bdboard-ulxa.7).** `finish`'s own landed verify cannot outlast the lease: the
   runner refreshes the ledger's `pending` every lease/3. The real overlaps, where `finish` and another
   merger's self-heal (or a second `verify`) report the same SHA, are: `finish` started more than a
@@ -658,7 +683,8 @@ Detected by a `failure` in `bdboard/landed-verify`, a red `verify` / `e2e` in ma
 revert:
 
 1. The detector takes the slot and keeps it until main is green again — the only long hold in S1
-   (`finish` does this itself when it records `failure`, holder `<id> / main-broken <sha12>`).
+   (`finish` does this itself when it records `failure` and the landed commit is still the tip of
+   `origin/main`, holder `<id> / main-broken <sha12>`).
 2. `bd create --type bug -p 0 "main 破損: <sha> <failing step>"`, first lines of the log in a comment.
 3. Find the last `success` and the first `failure` from the per-SHA statuses (CI runs on main are
    `cancel-in-progress`, so they can be missing; statuses are not).

@@ -1,5 +1,6 @@
 // bdboard-ulxa.1: エージェントに次の行動を指示する定型文。文言の正本は
 // harness/packs/bdboard-harness/references/worktree-pr-flow.md §5「S1」と docs/GIT-WORKFLOW.md。
+import { shellQuote } from './exec.mjs';
 
 /** main が壊れている (着地後検証 failure) ときの手順 (設計 §3.6)。 */
 export function brokenMainSteps(sha, repo, context) {
@@ -22,7 +23,7 @@ export function lightSlipSteps(sha) {
   const short = sha.slice(0, 12);
   return [
     `${short} はクラス L (着地予定ツリーの軽量チェックだけで着地) で、その着地後検証が failure です — S3 のすり抜け (軽量チェックが見ない test 等で壊れた) の疑い。`,
-    `  1. まずログで既知のフレーク (bdboard-241s 等) や負荷由来 (並列 verify の時間切れ等) でないことを確かめる。そうなら壊れていないので npm run merge-pr -- verify ${sha} で検証し直す (クラス L の記録は残してあるので、success が light-landed の最後の行になり、すり抜けに数えない)。success なら finish が取った main-broken の枠が残るので、bd merge-slot check で "… / main-broken ${short}" を確かめ、gate --repair 済みの修復 PR が無ければ bd merge-slot release --holder '<holder>'`,
+    `  1. まずログで既知のフレーク (bdboard-241s 等) や負荷由来 (並列 verify の時間切れ等) でないことを確かめる。そうなら壊れていないので BDBOARD_MERGER=chair npm run merge-pr -- verify ${sha} で検証し直す (クラス L の記録は残してあるので、success が light-landed の最後の行になり、すり抜けに数えない)。success でも、この SHA の main-broken 枠 (finish が failure のときに取ったもの・gate --repair が引き継いだもの・手で取ったもの) が残りうるので、bd merge-slot check で "… / main-broken ${short}" を確かめ、gate --repair 済みの修復 PR が無ければ bd merge-slot release --holder '<holder>'`,
     '  2. そうでなければすり抜け 1 件で S2 に戻す: 下の修復 PR (fix-forward / revert) に .claude/bdboard-harness.json の merge.mode を "S2" にする 1 行を含め、議長に報告する',
     `  3. 同じ着地コミットの failure を別の merger も報告することがある (gh pr merge から LEASE 以上あとに finish を始めた compact・遅延 / pending を書く前の npm ci が LEASE より長い / pending の更新 heartbeat の投稿が LEASE より長く失敗 / 自己修復が報告したあとで遅れて finish が走った)。起票と修復 PR の前に bd search "main 破損: ${short}" --status open、bd merge-slot check (枠の holder が "… / main-broken ${short}")、gh pr list --state open で既に誰かが対応していないか確かめ、していれば重ねて作らない`,
   ];
@@ -37,7 +38,7 @@ export function keptLightFailureSteps(pr, state) {
   const landed = String(state.newMain ?? '');
   return [
     `PR #${pr} はクラス L でマージ済みで、その着地後検証 (${landed.slice(0, 12)}) は failure で終わっています。prepare / gate / finish はやり直せません。`,
-    `  - フレーク・負荷由来なら: npm run merge-pr -- verify ${landed} (success でこの記録を消します)`,
+    `  - フレーク・負荷由来なら: BDBOARD_MERGER=chair npm run merge-pr -- verify ${landed} (success でこの記録を消します)`,
     '  - すり抜けなら: 「When main is broken」の手順 (docs/GIT-WORKFLOW.md) の修復 PR で直し、merge.mode を "S2" に戻す',
   ];
 }
@@ -45,8 +46,46 @@ export function keptLightFailureSteps(pr, state) {
 /** bdboard-ulxa.7: 手動の再検証が success でも、finish が取った main-broken の枠は自動では返らない。 */
 export function mainBrokenSlotHeldSteps(sha, holder) {
   return [
-    `${sha.slice(0, 12)} の枠 (${holder}) は finish が failure のときに取った main-broken の枠で、この再検証が success でも返されません。`,
-    `この main を直す修復 PR を gate --repair 済みでなければ (その枠は修復の finish が返します): bd merge-slot release --holder '${holder}'`,
+    `${sha.slice(0, 12)} の main-broken 枠 (${holder}) が残っています。この SHA の枠は、finish が failure のときに取ったもの・gate --repair が引き継いだもの・手で取ったもののどれでもありえ、この再検証が success でも自動では返されません。`,
+    `この main を直す修復 PR を gate --repair 済みでなければ (その枠は修復の finish が返します): bd merge-slot release --holder ${shellQuote(holder)}`,
+  ];
+}
+
+/** bdboard-89jv: 手動の再検証が success でも、bd merge-slot check 自体が失敗したときは枠の有無が言えない。手で確かめる 1 行。 */
+export function mainBrokenSlotUnknownSteps(sha, error) {
+  const short = sha.slice(0, 12);
+  return [
+    `${short} の main-broken 枠が残っていないか確かめられませんでした (bd merge-slot check に失敗: ${error})。手で bd merge-slot check を実行し、"… / main-broken ${short}" が残っていれば、gate --repair 済みの修復 PR が無いときだけ返してください。`,
+  ];
+}
+
+/**
+ * bdboard-89jv: finish の着地後検証が failure でも、origin/main (tip) が着地コミットより先へ進んでいるときの案内。
+ * 古い SHA の main-broken の枠は取らない (枠の名前は修復 PR の PRED_BASE = 先頭で決まり、古い SHA の枠は引き継げない)。
+ * ledger は先頭の台帳の state ('success' | 'failure' | 'error' | 'pending' | 'none' | 'unknown')。文面を選ぶためだけに使う。
+ */
+export function mainMovedOnSteps(landed, tip, ledger, repo, context) {
+  const short = landed.slice(0, 12);
+  const tipShort = tip.slice(0, 12);
+  const head = [
+    `着地コミット ${short} の着地後検証 (${context}) は failure でしたが、origin/main は既に ${tipShort} まで進んでいます。`,
+    `${short} の main-broken の枠は取りません (枠の名前は修復 PR の PRED_BASE = 先頭の SHA で決まるので、古い SHA の枠は gate --repair が引き継げず、誰も返さないまま全 gate を止めます。bdboard-89jv)。`,
+  ];
+  if (ledger === 'success') {
+    return [...head, `先頭 ${tipShort} の着地後検証は success です — main は壊れていません。修復 PR は要りません。`];
+  }
+  if (ledger === 'failure' || ledger === 'error') {
+    return [
+      ...head,
+      `先頭 ${tipShort} の着地後検証も failure です — main は壊れています。先頭に対して次の手順を取ってください。`,
+      ...brokenMainSteps(tip, repo, context),
+    ];
+  }
+  return [
+    ...head,
+    `先頭 ${tipShort} の着地後検証はまだ success と確かめられていません (台帳: ${ledger})。`,
+    `  - 確かめる: BDBOARD_MERGER=chair npm run merge-pr -- verify ${tip}`,
+    '  - 修復 PR を開くのは、先頭が failure のときだけ (手順は verify の出力に出ます)。success なら何もしなくてよい。',
   ];
 }
 

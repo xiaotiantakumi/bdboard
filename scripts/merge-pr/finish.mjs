@@ -12,13 +12,13 @@
 // (light-landed) に残し、failure は S3 のすり抜け (S2 に戻す合図) として知らせる (light-landed.mjs。error の
 // ときも L であることを残し、後の merge-pr verify が同じ扱いをする)。木の突き合わせは F が predicted-tree、
 // L が light-tree (S2 の指標・戻し規則が数える predicted-tree に L を混ぜない)。
-import { git, run } from './exec.mjs';
+import { git, run, shellQuote } from './exec.mjs';
 import { EXIT, REMOTE, fail, refetchMain } from './context.mjs';
-import { getPull } from './github.mjs';
+import { getLandedStatus, getPull } from './github.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { forgetLightFailure, lightLandedState, reportLightLanded } from './light-landed.mjs';
-import { brokenMainSteps, keptLightFailureSteps, mainBrokenSlotHeldSteps } from './messages.mjs';
-import { mainBrokenHolder, releaseSlot } from './slot.mjs';
+import { brokenMainSteps, keptLightFailureSteps, mainBrokenSlotHeldSteps, mainBrokenSlotUnknownSteps, mainMovedOnSteps } from './messages.mjs';
+import { mainBrokenSlot, releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 import { clearVerifyRecord, guardAgainstRunningVerify, recordVerifyGroup, verifyingStamp } from './verify-guard.mjs';
 import { forgetQueueSince } from './verify-queue.mjs';
@@ -35,6 +35,29 @@ function holdBrokenMain(ctx, id, sha) {
       ? `枠を ${holder} で取りました。修復 PR は prepare → BDBOARD_MERGER=chair npm run merge-pr -- gate --repair → gh pr merge → BDBOARD_MERGER=chair npm run merge-pr -- finish (success で枠が返ります)。`
       : `枠を取れませんでした (${got.stderr.trim()})。他の merger は台帳の failure を見て止まります。`,
   );
+}
+
+/**
+ * bdboard-89jv: 着地後検証が failure のときの締め。着地コミットがまだ origin/main の先頭なら main-broken の枠を取る (設計 §3.6)。
+ * 先頭が先へ進んでいれば取らない — 修復が先に着地した後に古い SHA の枠を取ると、誰も返さないまま全 gate を止める。
+ */
+function failedLanding(ctx, id, landed) {
+  const tip = refetchMain(ctx);
+  if (tip === landed) {
+    holdBrokenMain(ctx, id, landed);
+    return brokenMainSteps(landed, ctx.repo, ctx.statusContext);
+  }
+  audit('finish-main-moved-on', { id, landed, tip });
+  return mainMovedOnSteps(landed, tip, tipLedger(ctx, tip), ctx.repo, ctx.statusContext);
+}
+
+/** 案内の文面を選ぶためだけに先頭の台帳を読む。読めなくても落とさない。 */
+function tipLedger(ctx, tip) {
+  try {
+    return getLandedStatus(ctx, tip)?.state ?? 'none';
+  } catch {
+    return 'unknown';
+  }
 }
 
 /** prepare が着地予定ツリーで検証した記録 (F = フル verify、L = 軽量チェック) と、突き合わせの監査イベント名。無ければ null。 */
@@ -136,8 +159,8 @@ export async function finish(ctx, pr) {
     fail(
       EXIT.USAGE,
       `着地後検証を実行できませんでした。台帳 (${ctx.statusContext}) の ${landed.slice(0, 12)} には結果を書いていません。`,
-      `原因を直して npm run merge-pr -- verify ${landed} を実行してください (LEASE を過ぎると次の merger が自己修復します)。`,
-      ...(state.repair ? [kept, `success を確かめたら: bd merge-slot release --holder '${state.holder}'`] : []),
+      `原因を直して BDBOARD_MERGER=chair npm run merge-pr -- verify ${landed} を実行してください (LEASE を過ぎると次の merger が自己修復します)。`,
+      ...(state.repair ? [kept, `success を確かめたら: bd merge-slot release --holder ${shellQuote(state.holder)}`] : []),
     );
   }
   if (verified.result === 'failure' && state.class === 'L') {
@@ -154,10 +177,9 @@ export async function finish(ctx, pr) {
   if (verified.result === 'failure') {
     if (state.repair) {
       say(`修復後も failure です。${kept}`);
-    } else {
-      holdBrokenMain(ctx, state.id, landed);
+      fail(EXIT.LANDED_FAILED, ...brokenMainSteps(landed, ctx.repo, ctx.statusContext));
     }
-    fail(EXIT.LANDED_FAILED, ...brokenMainSteps(landed, ctx.repo, ctx.statusContext));
+    fail(EXIT.LANDED_FAILED, ...failedLanding(ctx, state.id, landed));
   }
   if (state.repair) {
     releaseSlot(ctx.cwd, state.holder);
@@ -177,24 +199,27 @@ export async function finish(ctx, pr) {
 export async function verifyLanded(ctx, sha) {
   const full = git(['rev-parse', `${sha}^{commit}`], { cwd: ctx.cwd });
   const by = `manual ${git(['config', '--default', 'unknown', 'user.name'], { cwd: ctx.cwd })}`;
-  const verified = await runLandedVerify(ctx, full, by, { retryHint: `npm run merge-pr -- verify ${full}` });
+  const verified = await runLandedVerify(ctx, full, by, { retryHint: `BDBOARD_MERGER=chair npm run merge-pr -- verify ${full}` });
   audit('landed-verify', { new: full, result: verified.result, by: 'manual', retried: verified.retried ? 1 : undefined });
   // finish が error / failure で終わったクラス L の着地、finish が走らなかった L の着地なら、その記録 (状態ファイル) から L を見分ける。
   const light = lightLandedState(ctx.cwd, full);
-  reportLightLanded(light, full, verified.result, 'manual', verified.retried);
+  const recorded = reportLightLanded(light, full, verified.result, 'manual', verified.retried) === true;
   if (verified.result === 'error') {
     fail(EXIT.USAGE, '着地後検証を実行できませんでした (上のメッセージ参照)。');
   }
   if (verified.result === 'failure') {
     fail(EXIT.LANDED_FAILED, ...brokenMainSteps(full, ctx.repo, ctx.statusContext));
   }
-  forgetLightFailure(ctx.cwd, light, full); // フレークだった L の failure の記録はもう要らない
+  forgetLightFailure(ctx.cwd, light, full, { recorded }); // success 行を記録できたフレーク L の記録だけ消す
   say(`着地後検証 success: ${full.slice(0, 12)}`);
-  // finish が failure のときに取った main-broken の枠は、この再検証では返らない。コマンドを案内するだけで返さない
-  // (修復 PR が gate --repair でその枠を引き継いでいると、返すと修復の finish が枠を失う)。
-  const held = mainBrokenHolder(ctx.cwd, full);
-  if (held !== null) {
-    say(...mainBrokenSlotHeldSteps(full, held));
+  // この SHA の main-broken 枠 (finish が failure のときに取ったもの・gate --repair が引き継いだもの・手で取ったもの) は、
+  // この再検証では返らない。コマンドを案内するだけで返さない (修復 PR が gate --repair でその枠を引き継いでいると、返すと
+  // 修復の finish が枠を失う)。bdboard-89jv: 枠を読めないときは黙らず、手で確かめる 1 行を出す。
+  const slot = mainBrokenSlot(ctx.cwd, full);
+  if (!slot.ok) {
+    say(...mainBrokenSlotUnknownSteps(full, slot.error));
+  } else if (slot.holder !== null) {
+    say(...mainBrokenSlotHeldSteps(full, slot.holder));
   }
   return EXIT.OK;
 }
