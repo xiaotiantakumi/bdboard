@@ -12,6 +12,9 @@
 // - 閾値を 1 回の事故から決めなくてよい。
 // - 決定的な回帰 (ハングで毎回時間切れになるものを含む) は再実行でもう一度落ちて failure になる。隠れうる
 //   のは「時間切れで間欠的に落ちる」ものだけで、それは負荷に弱いテストそのもの。
+// この判定 (classifyVerifyFailure) は、着地予定ツリーの verify と S3 の軽量チェックの失敗 (predicted.mjs) も使う
+// (bdboard-e8jj)。そちらは自動では再実行しないので、「再実行は 1 回で打ち切る」上限を predicted-timeouts.mjs が
+// 「同じ PR head につき 1 回の exit 75」で持つ。上限が無いと、決定的なハングが毎回 75 になって格下げされない。
 // 迷う形 (vitest 以外のステップで落ちた・要約が無い・時間切れ以外のエラー行が 1 つでもある) は全部
 // 「負荷由来ではない」に倒す。spawnSync の子が時間切れで殺されて status が null になり、それを
 // `expected null to be +0` と比べて落ちる形 (事故の 2 回目) も、メッセージが時間切れと言っていないので対象外。
@@ -20,13 +23,20 @@
 // 並ぶまでの数秒〜十数秒 (ログの退避・監査・pending の投稿・npm の起動) に、待っていた pr が先に枠を取って再実行を
 // 待たせないよう、1 回目が終わった直後に予約 holder を置き (scripts/verify-slot.mjs の reserveVerifySlot)、
 // 再実行の verify に BDBOARD_VERIFY_SLOT_HANDOFF で渡す。1 回目の verify.mjs が自分の holder を消してから予約を
-// 置くまでの短い隙間は覆えない (そこで pr が始めると再実行はその終わりを待つ。遅れるだけで、隣では走らない)。再実行しない経路でも finally で消す (中断で process.exit
-// する経路は reserveVerifySlot の 'exit' フック、SIGKILL で残った予約は pid が死んでいれば次の参加者が回収する)。
+// 置くまでの短い隙間は覆えない (そこで pr が始めると再実行はその終わりを待つ。遅れるだけで、隣では走らない)。
+// 予約は再実行の verify が自分の holder を書いた後で消すが、その削除が失敗しても (Windows の EPERM 等) 幽霊枠を残さない
+// ために、merge-pr も再実行の holder (retry: true、同じ since) が見えた時点で自分で消す (reservation-watch.mjs。
+// 通常は残るのは poll 1 回分。merge-pr 自身の unlink も失敗するなら、消えるまで毎周消し直す)。それでも残る間は再実行が
+// 戻るまでで、そこで必ず finally が消す。再実行が holder を見せないまま戻る経路と、再実行しない経路も finally で消す
+// (中断で process.exit する経路は reserveVerifySlot の 'exit' フック、SIGKILL で残った予約は pid が死んでいれば
+// 次の参加者が回収する)。
 import { copyFileSync, readFileSync, renameSync } from 'node:fs';
 import { cpus, loadavg } from 'node:os';
 
 import { envSlotOptions, reserveVerifySlot } from '../verify-slot.mjs';
+import { watchRetryHolder } from './reservation-watch.mjs';
 import { audit, say } from './state.mjs';
+import { pollMs } from './verify-queue.mjs';
 import { postQuietly, runContractVerify, stoppedEarly } from './verify-run.mjs';
 
 // eslint-disable-next-line no-control-regex -- ログに残った色付けを外す
@@ -179,7 +189,13 @@ export async function retryLoadInduced({ attempt, queue, code, by, firstQueuedAt
     if (!postQuietly(ctx, sha, 'pending', running)) {
       return { stopped: 'error', retried: null };
     }
-    const again = await runContractVerify({ ...attempt, queue: { ...queue, queueSince, handoff: reservation.path }, running });
+    const stopWatching = watchRetryHolder({ reservation, since: queueSince, intervalMs: pollMs() });
+    let again;
+    try {
+      again = await runContractVerify({ ...attempt, queue: { ...queue, queueSince, handoff: reservation.path }, running });
+    } finally {
+      stopWatching();
+    }
     const retried = { timeouts: verdict.timeouts };
     const stopped = await stoppedEarly(activeChild, again, logPath);
     return stopped ? { stopped, retried } : { code: again, retried };

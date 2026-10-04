@@ -10,8 +10,10 @@ const EXCLUDING_WAIT_MARGIN_MS = 2 * 60_000;
 
 /**
  * 待ちの打ち切り (ms、bdboard-xdk8)。既定は waitTimeoutMs。次の待ち手は、相手が stale になって数から外れるまで
- * (staleTtlMs + 余裕) 打ち切らない: 他を止める側 (landed。走っている pr が抜けるのを待つ) と、同居の規則で
- * 止まっている待ち手 (plan.blocked。走っている landed や再実行の予約の後ろで待つ pr 等 — 相手は正常に走っている)。
+ * (staleTtlMs + 余裕) 打ち切らない: 他を止める側 (landed。走っている pr が抜けるのを待つ) と、空き枠があるのに
+ * この規則で止められている待ち手 (plan.blocked。走っている landed や再実行の予約の後ろで待つ pr 等 — 相手は正常に
+ * 走っている)。空き枠が無くて待っているだけの待ち手 (landed + merge が 2 枠を埋めている間の pr 等) は pickStarters が
+ * blocked を立てないので延ばさず、waitTimeoutMs のまま (bdboard-e8jj。docs/VERIFY.md「Wait limits under this rule」)。
  * BDBOARD_VERIFY_SLOT_WAIT_MS で明示した値 (options.waitTimeoutFromEnv) は延ばさずにそのまま使う (テストと
  * 緊急脱出ハッチ。landed の verify の中で走るテストが、受け継いだ優先度で 32 分待ってしまわないため)。
  */

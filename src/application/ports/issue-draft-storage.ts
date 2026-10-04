@@ -1,4 +1,5 @@
 import type { IssueDraft } from '../../domain/issue-draft.js';
+import type { DraftFootprint } from '../../domain/issue-draft-retention.js';
 
 /**
  * 不具合報告の下書き (bdboard-4y8q.1) の保存先ポート。実装は infrastructure/fs 配下の
@@ -26,9 +27,29 @@ export interface DraftListing {
   readonly complete: boolean;
 }
 
+/** 保持期限と合計容量のための棚卸し (bdboard-00qh)。 */
+export interface DraftSurvey {
+  readonly drafts: readonly DraftFootprint[];
+  /** 全下書き (読めないものも) の draft.json と画像の合計。 */
+  readonly totalBytes: number;
+  /**
+   * 大きさを測れなかった場所 (画像ディレクトリの readdir・stat の失敗) のエラー code。1 件につき 1 つ。
+   * その場所は 0 バイトで数えているので、合計は少なめになりうる。code 以外 (パス・message) は載せない。
+   */
+  readonly unmeasured: readonly string[];
+}
+
 export interface IssueDraftStoragePort {
   /** list() と同じ一覧に、欠けていないかどうかを添える。受け取りの索引づくり用 (bdboard-r50m)。 */
   scan(): Promise<DraftListing>;
+  /**
+   * 全下書きの大きさと、自動で消してよいかの材料 (状態と最終更新時刻) を集める。draft.json を読む
+   * errno の扱いは get() と同じ (読めないものは `known` なしで返し、プロセス全体の失敗だけ投げる)。
+   * 画像の大きさの測り損ねは投げずに `unmeasured` に積む。
+   */
+  survey(): Promise<DraftSurvey>;
+  /** 下書きを画像ごと消す。無ければ何もしない。 */
+  remove(id: string): Promise<void>;
   /**
    * 全下書き。読めない・壊れている下書き (権限、ディレクトリでないもの、不正な JSON、形や時刻の
    * 不正、EIO のような未列挙のエラー、再試行しても直らない EBUSY など) は警告を出して読み飛ばす
