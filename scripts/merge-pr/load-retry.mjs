@@ -51,6 +51,9 @@ const FAIL_LINE = /^\s*FAIL\s+\S/;
 const ERROR_BANNER = /^\s*⎯+\s*(?:Unhandled (?:Error|Rejection)|Startup Error|Collect Error)\s*⎯+\s*$/;
 // `Error: …` `AssertionError: …` `TypeError [ERR_X]: …` などのエラーの見出し行。
 const ERROR_HEADLINE = /^\s*(?:[A-Za-z_$][\w$]*)?Error\b[^:]{0,40}:\s/;
+// テストが起こした子プロセス (spawnSync) が自分の時間切れで殺された形。負荷下ではこれが落ちる原因の 1 つで、
+// 見出しでは `Error: spawnSync /bin/sh ETIMEDOUT` としか出ないので、件数を別に数えて表に出す (bdboard-7qhq)。
+const CHILD_TIMEOUT = /^spawnSync \S+ ETIMEDOUT\b/;
 
 /**
  * 時間切れの形 (vitest 4.1 の文言)。これ以外のエラー行が 1 つでもあれば負荷由来とはみなさない。
@@ -60,9 +63,6 @@ const ERROR_HEADLINE = /^\s*(?:[A-Za-z_$][\w$]*)?Error\b[^:]{0,40}:\s/;
  * いてこのタイマー自体が張られない (docs/VERIFY.md「vitest worker RPC タイムアウト」)。出たら想定外なので
  * 再実行せずに調べる。
  */
-// テストが起こした子プロセス (spawnSync) が自分の時間切れで殺された形。負荷下ではこれが落ちる原因の 1 つで、
-// 見出しでは `Error: spawnSync /bin/sh ETIMEDOUT` としか出ないので、件数を別に数えて表に出す (bdboard-7qhq)。
-const CHILD_TIMEOUT = /^spawnSync \S+ ETIMEDOUT\b/;
 export const TIMEOUT_SHAPES = Object.freeze([
   /^(?:Test|Hook) timed out in \d+ms\b/,
   /^\[vitest-pool\]: Timeout (?:starting|terminating) \S+ (?:runner|worker)\b/,
@@ -77,7 +77,8 @@ const isTimeout = (line) => TIMEOUT_SHAPES.some((shape) => shape.test(headlineMe
 
 /**
  * 子プロセスの時間切れ (ETIMEDOUT) の件数を人が読む 1 行にする (0 件なら行なし)。say / fail の引数に spread で渡す。
- * 件数は classifyVerifyFailure の etimedout で、ログを読む箇所を増やさない (bdboard-7qhq)。
+ * 件数は classifyVerifyFailure の etimedout (数え方はそちら)。着地後検証の failure の行 (landed-verify.mjs) は、最後のログを
+ * もう一度この関数で読んで数える (bdboard-7qhq。再実行しなかった回は同じログを 2 回読むことになるが、読むだけで安い)。
  */
 export const childTimeoutLines = (count) => (count > 0 ? [`子プロセスの時間切れ (ETIMEDOUT) が ${count} 件 (ログの見出しの spawnSync … ETIMEDOUT)。`] : []);
 
@@ -92,8 +93,11 @@ function lastIndex(lines, test, from = 0) {
 
 /**
  * verify のログから、落ちたステップの失敗が全部時間切れの形かを決める純関数。
- * etimedout は見出しのうち spawnSync の子の時間切れ (`spawnSync … ETIMEDOUT`) の件数 (timeouts の内数)。負荷由来でない
- * 失敗が混ざっていても数える (bdboard-7qhq: 失敗の原因を読む人に件数を見せるため。再実行の判断には使わない)。
+ * etimedout は見出しのうち spawnSync の子の時間切れ (`spawnSync … ETIMEDOUT`) の件数。数えるのは FAIL 行か見出しの帯の
+ * 直後の見出しだけで、アサーションの長いメッセージが途中に繰り返すエラー文 (merge-pr の stderr をそのまま載せたもの等) は
+ * 数えない。timeouts より広い集合 (ERROR_HEADLINE の形の行) は使わないので、loadInduced なら timeouts 以下。負荷由来でない
+ * 失敗が混ざっていても数える (その回は timeouts が 0 でも etimedout は 1 以上になりうる)。bdboard-7qhq: 失敗の原因を読む人に
+ * 件数を見せるためで、再実行の判断には使わない。
  * @returns {{ loadInduced: boolean, timeouts: number, etimedout: number, reason: string }}
  */
 export function classifyVerifyFailure(logText) {
@@ -109,6 +113,7 @@ export function classifyVerifyFailure(logText) {
     return { loadInduced: false, timeouts: 0, etimedout: 0, reason: 'no vitest failure summary' };
   }
   const headlines = new Set();
+  const anchored = new Set(); // headlines のうち FAIL 行か見出しの帯の直後のもの (etimedout はこちらだけで数える)
   segment.forEach((line, index) => {
     if (ERROR_HEADLINE.test(line)) {
       headlines.add(index);
@@ -120,12 +125,12 @@ export function classifyVerifyFailure(logText) {
       }
       if (next < segment.length) {
         headlines.add(next);
+        anchored.add(next);
       }
     }
   });
-  const failures = [...headlines].map((index) => segment[index]);
-  const etimedout = failures.filter((line) => CHILD_TIMEOUT.test(headlineMessage(line))).length;
-  const other = failures.find((line) => !isTimeout(line));
+  const etimedout = [...anchored].filter((index) => CHILD_TIMEOUT.test(headlineMessage(segment[index]))).length;
+  const other = [...headlines].map((index) => segment[index]).find((line) => !isTimeout(line));
   if (other !== undefined) {
     return { loadInduced: false, timeouts: 0, etimedout, reason: `a failure that is not a timeout: ${other.trim().slice(0, 120)}` };
   }

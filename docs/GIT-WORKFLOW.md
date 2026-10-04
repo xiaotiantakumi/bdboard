@@ -392,9 +392,15 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   killed by its timeout (`spawnSync … ETIMEDOUT`; bdboard-7qhq): "子プロセスの時間切れ (ETIMEDOUT) が N
   件" on the retry notice and on the `verify が失敗しました` line, and `etimedout=N` on
   `landed-verify-retry` (first log) and on the `landed-verify` line of a failure (last log; omitted when
-  0). The count comes from the same scan as the load-induced decision, and is shown even when a
-  failure that is not a timeout is mixed in (then there is no retry). S2's `predicted-verify` and S3's
-  `light-check` lines carry the same `etimedout=N`, with the same message line on exit 75 and exit 3.
+  0; also present on `result=error` when the ledger post fails after a failure). Only a headline that
+  directly follows a `FAIL` line or an error banner is counted, so a line that a long assertion
+  message merely repeats (for example merge-pr's own stderr echoed into the message) is not. The count
+  comes from the same scanner as the load-induced decision (`classifyVerifyFailure`; the
+  `landed-verify` line re-reads the last log with it), and is shown even when a failure that is not a
+  timeout is mixed in (then there is no retry). S2's `predicted-verify` carries the same
+  `etimedout=N`, with the same message line on exit 75 and exit 3. S3's `light-check` line does too, but
+  only when a custom `merge.lightCheck` runs vitest: the default `verify -- --light` runs no tests, so
+  the classifier sees "not a vitest run" and the field never appears.
 - **`finish` takes `main-broken` only for the tip (bdboard-89jv).** On a landed-verify
   `failure`, `finish` reads the tip with `git ls-remote` (before the fetch, so the fetch brings in that
   tip's objects), fetches `origin/main` again, and takes `<id> / main-broken <sha12>` unless the

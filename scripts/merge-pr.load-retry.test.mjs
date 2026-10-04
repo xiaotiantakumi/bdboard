@@ -100,7 +100,7 @@ describe('classifyVerifyFailure (bdboard-xdk8)', () => {
   });
 
   // bdboard-7qhq: 子プロセスの時間切れ (ETIMEDOUT) は timeouts の内数として別に数える。同じ走査の結果で、パーサは増やさない。
-  it('counts the ETIMEDOUT headlines apart from the other timeouts (etimedout is a subset of timeouts)', () => {
+  it('counts the ETIMEDOUT headlines apart from the other timeouts (etimedout never exceeds timeouts when load-induced)', () => {
     const two = ` FAIL  a.test.mjs > one\nError: spawnSync /bin/sh ETIMEDOUT\n FAIL  b.test.mjs > two\nError: spawnSync git ETIMEDOUT\n`;
     expect(classifyVerifyFailure(vitestLog(two, '2 failed | 1 passed (3)'))).toMatchObject({ loadInduced: true, timeouts: 2, etimedout: 2 });
     const withTimeout = `${TIMEOUTS}\n FAIL  c.test.mjs > three\nError: spawnSync /bin/sh ETIMEDOUT\n`;
@@ -116,6 +116,34 @@ describe('classifyVerifyFailure (bdboard-xdk8)', () => {
     expect(classifyVerifyFailure(vitestLog(midLine, '1 failed | 1 passed (2)')).etimedout).toBe(0);
     expect(classifyVerifyFailure(`${banner('build', 'tsc --noEmit')}Error: spawnSync /bin/sh ETIMEDOUT\n`).etimedout).toBe(0);
     expect(classifyVerifyFailure('').etimedout).toBe(0);
+  });
+
+  // bdboard-7qhq (PR #875 レビュー指摘 1): アサーションのメッセージが長く、merge-pr の stderr をそのまま載せていると
+  // `Error: spawnSync … ETIMEDOUT` の行が途中に繰り返される。それは新しい失敗ではないので数えない
+  // (FAIL 行か見出しの帯の直後の見出しだけ数える。loadInduced の判定に使う見出しの集合は今までどおり)。
+  it('does not count an ETIMEDOUT line that a multi-line AssertionError message merely repeats', () => {
+    const echoed = [
+      ' FAIL  scripts/a.test.mjs > one',
+      'Error: spawnSync /bin/sh ETIMEDOUT',
+      ' ❯ scripts/a.test.mjs:10:3',
+      '',
+      ' FAIL  scripts/b.test.mjs > two',
+      'Error: spawnSync git ETIMEDOUT',
+      '',
+      ' FAIL  scripts/c.test.mjs > three',
+      'AssertionError: merge-pr failed:',
+      'merge-pr: verify が失敗しました (exit 1)。',
+      'Error: spawnSync /bin/sh ETIMEDOUT',
+      ' ❯ scripts/c.test.mjs:20:3',
+      '',
+    ].join('\n');
+    expect(classifyVerifyFailure(vitestLog(echoed, '3 failed | 1 passed (4)'))).toMatchObject({ loadInduced: false, timeouts: 0, etimedout: 2 });
+    // 見出しの帯 (Unhandled Rejection) の直後の見出しは数える。
+    const banner2 = `⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯\nError: spawnSync /bin/sh ETIMEDOUT\n`;
+    expect(classifyVerifyFailure(vitestLog(banner2, '1 failed | 1 passed (2)'))).toMatchObject({ loadInduced: true, timeouts: 1, etimedout: 1 });
+    // 時間切れの見出しだけの失敗の途中に繰り返しがあっても、timeouts (見出しの集合) は変わらず、etimedout は数えた分だけ。
+    const onlyTimeouts = ` FAIL  scripts/a.test.mjs > one\nError: spawnSync /bin/sh ETIMEDOUT\nError: spawnSync /bin/sh ETIMEDOUT\n`;
+    expect(classifyVerifyFailure(vitestLog(onlyTimeouts, '1 failed | 1 passed (2)'))).toMatchObject({ loadInduced: true, timeouts: 2, etimedout: 1 });
   });
 });
 
@@ -369,7 +397,15 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     ' FAIL  scripts/a.test.mjs > one\nError: spawnSync /bin/sh ETIMEDOUT\n\n FAIL  scripts/b.test.mjs > two\nError: spawnSync git ETIMEDOUT\n',
     '2 failed | 100 passed (102)',
   );
-  const etimedoutNotes = (stderr) => stderr.split('子プロセスの時間切れ (ETIMEDOUT) が 2 件').length - 1;
+  // 件数 count の行が stderr に何回出たか (重複して出るのも見つけるため、toContain ではなく数える)。
+  const etimedoutNotes = (stderr, count = 2) => stderr.split(`子プロセスの時間切れ (ETIMEDOUT) が ${count} 件`).length - 1;
+  // 2 回の実行で ETIMEDOUT の件数が違うログ (1 回目は 2 件、再実行は 1 件) を出す偽の verify.cjs。FAKE_VERIFY_SEQUENCE_FILE が
+  // あれば 2 回目以降 (VERIFY_JS が終了時に数える前なので、ファイルがあれば 1 回は走っている) で別の出力ファイルに差し替える。
+  const SWITCH_OUTPUT_ON_RETRY = `{
+  const seq = process.env.FAKE_VERIFY_SEQUENCE_FILE;
+  if (process.env.FAKE_VERIFY_OUTPUT_FILE_RETRY && seq && require('node:fs').existsSync(seq)) process.env.FAKE_VERIFY_OUTPUT_FILE = process.env.FAKE_VERIFY_OUTPUT_FILE_RETRY;
+}
+`;
 
   it('says how many child processes hit their timeout (ETIMEDOUT) when it retries, and puts etimedout=N on the retry audit line', () => {
     setup();
@@ -396,6 +432,38 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(etimedoutNotes(finished.stderr)).toBe(2); // 再実行の案内 + 2 回目 (最後のログ) の failure
     expect(auditText()).toMatch(/\tlanded-verify-retry\t.*exit=1\ttimeouts=2\tetimedout=2\t/);
     expect(auditText()).toMatch(/\tlanded-verify\t.*\tresult=failure\tretried=1\tetimedout=2\n/);
+  });
+
+  it('counts the retry notice and the retry audit line from the first log, and the failure line and the landed-verify line from the last log', () => {
+    setup({ branchFiles: { 'verify.cjs': SWITCH_OUTPUT_ON_RETRY + VERIFY_JS } });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    simulateMerge();
+    const oneKilled = vitestLog(' FAIL  scripts/a.test.mjs > one\nError: spawnSync /bin/sh ETIMEDOUT\n', '1 failed | 100 passed (101)');
+    const retryOutput = path.join(tmp, 'fake-verify-output-retry.txt');
+    writeFileSync(retryOutput, oneKilled);
+    const finished = run(['finish', String(PR)], { ...loadRetryEnv('1,1', killedByTimeout), FAKE_VERIFY_OUTPUT_FILE_RETRY: retryOutput });
+    expect(finished.status).toBe(6);
+    expect(verified()).toHaveLength(2);
+    // 1 回目のログは 2 件: 再実行の案内と landed-verify-retry の行。2 回目のログは 1 件: failure の行と landed-verify の行。
+    expect(etimedoutNotes(finished.stderr, 2)).toBe(1);
+    expect(etimedoutNotes(finished.stderr, 1)).toBe(1);
+    // 案内 (1 回目のログ) が先、failure の行 (2 回目のログ) が後。
+    expect(finished.stderr.indexOf('(ETIMEDOUT) が 2 件')).toBeLessThan(finished.stderr.indexOf('(ETIMEDOUT) が 1 件'));
+    expect(auditText()).toMatch(/\tlanded-verify-retry\t.*exit=1\ttimeouts=2\tetimedout=2\t/);
+    expect(auditText()).toMatch(/\tlanded-verify\t.*\tresult=failure\tretried=1\tetimedout=1\n/);
+  });
+
+  it('puts etimedout=N on the audit line of a manual verify too', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = simulateMerge();
+    const manual = run(['verify', landed], loadRetryEnv('1,1', killedByTimeout));
+    expect(manual.status).toBe(6);
+    expect(verified()).toHaveLength(2);
+    expect(etimedoutNotes(manual.stderr)).toBe(2); // 再実行の案内 + 最後のログの failure
+    expect(auditText()).toMatch(new RegExp(`\tlanded-verify\tnew=${landed}\tresult=failure\tby=manual[^\t]*\tretried=1\tetimedout=2\n`));
   });
 
   it('shows the ETIMEDOUT count on a landed failure that is not retried (a failure that is not a timeout is mixed in)', () => {
@@ -495,7 +563,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(prepared.stderr).not.toContain('意味的衝突の可能性が高い');
     // bdboard-7qhq: 子プロセスの時間切れ (ETIMEDOUT) の件数をメッセージと監査行に出す (0 件なら出さない)。
     if (etimedout > 0) {
-      expect(prepared.stderr).toContain(`子プロセスの時間切れ (ETIMEDOUT) が ${etimedout} 件`);
+      expect(etimedoutNotes(prepared.stderr, etimedout)).toBe(1); // 1 回だけ (着地後検証の failure の行と二重に出さない)
       expect(auditText()).toMatch(new RegExp(`\tpredicted-verify\t.*\tresult=failure\t.*\tloadInduced=1\ttimeouts=1\tetimedout=${etimedout}\n`));
     } else {
       expect(prepared.stderr).not.toContain('ETIMEDOUT');
@@ -513,7 +581,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     const prepared = predictedWith(mixed);
     expect(prepared.status).toBe(3);
     expect(prepared.stderr).toContain('意味的衝突の可能性が高い');
-    expect(prepared.stderr).toContain('子プロセスの時間切れ (ETIMEDOUT) が 1 件');
+    expect(etimedoutNotes(prepared.stderr, 1)).toBe(1);
     const [line] = auditText().split('\n').filter((entry) => entry.includes('\tpredicted-verify\t'));
     expect(line).toMatch(/\tresult=failure\t.*\tetimedout=1$/);
     expect(line).not.toContain('loadInduced'); // 時間切れだけではないので loadInduced は付かない
