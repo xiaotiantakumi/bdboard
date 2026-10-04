@@ -42,6 +42,8 @@ export interface PreparedKeys {
   readonly projectRoots: readonly RegExp[];
   readonly replaceableNouns: readonly PreparedNoun[];
   readonly detectableNouns: readonly PreparedNoun[];
+  /** detectableNouns のうち SHORT (2〜3 コードポイント。置き換えず報告だけ) のもの。 */
+  readonly shortNouns: readonly PreparedNoun[];
   /** 上限・長さの制限で、一部の鍵を探していない。 */
   readonly truncated: boolean;
 }
@@ -115,6 +117,7 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
   if (ordered.length > MAX_NOUNS) truncated = true;
   const replaceableNouns: PreparedNoun[] = [];
   const detectableNouns: PreparedNoun[] = [];
+  const shortNouns: PreparedNoun[] = [];
   const seenPatterns = new Set<string>();
   for (const { category, value, length } of ordered.slice(0, MAX_NOUNS)) {
     for (const variant of nounVariants(value)) {
@@ -130,9 +133,10 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
           : { kind: category, pattern: literalPattern(variant) };
       detectableNouns.push(entry);
       if (length >= LONG_NOUN_CODE_POINTS) replaceableNouns.push(entry);
+      else shortNouns.push(entry);
     }
   }
-  return { projectRoots: rootPatterns, replaceableNouns, detectableNouns, truncated };
+  return { projectRoots: rootPatterns, replaceableNouns, detectableNouns, shortNouns, truncated };
 }
 
 function spansOf(text: string, pattern: RegExp): KeySpan[] {
@@ -157,4 +161,9 @@ export function findReplaceableNounSpans(text: string, prepared: PreparedKeys): 
 /** 検出する固有名詞 (LONG と SHORT。SHORT は単語として現れたときだけ) の出現位置。 */
 export function findDetectableNounSpans(text: string, prepared: PreparedKeys): NounSpan[] {
   return nounMatches(text, prepared.detectableNouns);
+}
+
+/** 報告だけの固有名詞 (SHORT のみ。単語として現れたときだけ) の出現位置。LONG の名前と根は探さない (その分の O(n·m) を払わない)。 */
+export function findShortNounSpans(text: string, prepared: PreparedKeys): NounSpan[] {
+  return nounMatches(text, prepared.shortNouns);
 }

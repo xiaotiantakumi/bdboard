@@ -11,6 +11,7 @@ import {
   findDetectableNounSpans,
   findProjectRootSpans,
   findReplaceableNounSpans,
+  findShortNounSpans,
   type PreparedKeys,
 } from './issue-public-keys.js';
 import { findKeyBlockSpans } from './issue-public-pem.js';
@@ -76,6 +77,28 @@ export function findLeakSpans(text: string, prepared: PreparedKeys): KindSpan[] 
       'home-path',
       findLooseHomeRanges(text).filter((range) => !strictHome(range.start, range.end)),
     ),
+  ];
+}
+
+/**
+ * 最後の網の一致のうち、鍵 (プロジェクトの根・LONG の固有名詞) を使わない分: 緩めたトークン、開始位置の条件なしのホームのパス、
+ * SHORT の固有名詞、鍵ブロックの単独の印、メール。省略の切れ目を避けるための探索 (issue-public-redact.ts の elide の avoid) に使う。
+ * 置き換えは済んだ文字列にかけるので、根と LONG の名前はもう印の中にあり、探し直す必要がない。探し直すと、鍵の側の
+ * O(n·m) (本文の長さ × 鍵の長さの合計) をもう一度払い、敵対的な鍵では省略する欄の時間が 1.5〜2 倍になる。
+ */
+export function findReportOnlySpans(text: string, prepared: PreparedKeys): KindSpan[] {
+  const strictHomeRanges = findPublicHomeRanges(text);
+  const strictHome = coverage(strictHomeRanges);
+  return [
+    ...tagged('home-path', strictHomeRanges),
+    ...tagged('key-block', findKeyBlockSpans(text)),
+    ...tagged('email', findEmailSpans(text)),
+    ...tagged('token', findTokenSpans(text, true)),
+    ...tagged(
+      'home-path',
+      findLooseHomeRanges(text).filter((range) => !strictHome(range.start, range.end)),
+    ),
+    ...findShortNounSpans(text, prepared),
   ];
 }
 

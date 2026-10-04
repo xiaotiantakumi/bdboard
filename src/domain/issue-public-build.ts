@@ -31,7 +31,7 @@ import { prepareKeys, type PreparedKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
 import { codeBlock, codeSpan, type MarkdownPiece } from './issue-public-markdown.js';
 import { elide, redactText } from './issue-public-redact.js';
-import { findLeakSpans } from './issue-public-spans.js';
+import { findReportOnlySpans } from './issue-public-spans.js';
 import { normalizeBlock, normalizeInline } from './issue-public-text.js';
 import type {
   LocalOnlyKeys,
@@ -86,9 +86,11 @@ function textOf(value: unknown): string | undefined {
 /**
  * 省略の切れ目を落とさない範囲: 置換の後でも最後の網が報告するはずの一致 (置き換えなかった緩い一致など)。省略前の全文で探し、
  * 切れ目がその内側に落ちるなら範囲ごと省略側へ寄せる (切れ目で報告できない短い断片にしない)。省略するときだけ探す。
+ * 探すのは報告だけの形 (緩めたトークン・ホームのパス・SHORT の名前・鍵ブロックの単独の印・メール) に限る: 根と LONG の名前は
+ * 置換でもう印になっているので、探し直さない (鍵の側の O(n·m) をもう一度払わない)。
  */
 function avoidingLeaks(prepared: PreparedKeys): (text: string) => readonly { start: number; end: number }[] {
-  return (text) => findLeakSpans(text, prepared);
+  return (text) => findReportOnlySpans(text, prepared);
 }
 
 function inline(value: string, cap: number, prepared: PreparedKeys): MarkdownPiece {

@@ -203,9 +203,20 @@ describe('e-mail addresses', () => {
     }
   });
 
-  it('does not cut an address out of the middle of a dotted version', () => {
-    expect(findEmailSpans('a@b.c1.2')).toEqual([]);
-    expect(findEmailSpans('a@b.com.9')).toEqual([]);
+  it('takes the digit-only labels after the last letter-led label into the address (no "<email>.1" remnant, no silent address)', () => {
+    for (const address of ['a@b.c1.2', 'a@b.com.9', 'jdoe@example.com.1', 'jdoe@example.com.2024', 'jdoe@example.com.0.1']) {
+      expect(spanTexts(address, findEmailSpans(address))).toEqual([address]);
+      const sentence = `to ${address} failed`;
+      expect(spanTexts(sentence, findEmailSpans(sentence))).toEqual([address]);
+    }
+    // 終わりの "." はドメインに入れない。
+    expect(spanTexts('mail jdoe@example.com.', findEmailSpans('mail jdoe@example.com.'))).toEqual(['jdoe@example.com']);
+  });
+
+  it('still leaves a package version alone when no label after the first one starts with a letter', () => {
+    for (const text of ['react@19.0.0-rc.1', 'react@18.2.0', 'typescript@5.6.3', 'vitest@4.1.11', '@types+node@22.1.0', 'pkg@2.0.0-beta.1']) {
+      expect(findEmailSpans(text)).toEqual([]);
+    }
   });
 
   it('still finds an ssh target written with an IPv4 address (digits only, four parts)', () => {
@@ -214,6 +225,18 @@ describe('e-mail addresses', () => {
     // 3 つ以下、または桁が多い数字の連なりは版として読む。
     expect(findEmailSpans('deploy@10.0.5')).toEqual([]);
     expect(findEmailSpans('chromium@120.0.6099.109')).toEqual([]);
+  });
+
+  it('does not cut an IPv4 target out of a longer number or word (what may follow the last octet)', () => {
+    // 最後の 8 進数の後ろに数字・文字・ハイフンが続くときは、IPv4 とは読まない ("<email>4" のように断片を残さない)。
+    for (const text of ['deploy@10.0.0.1234', 'deploy@10.0.0.5x', 'deploy@10.0.0.5-x']) {
+      expect(findEmailSpans(text)).toEqual([]);
+    }
+    // ポート・パス・句読点・空白は IPv4 のあとに続いてよい。
+    for (const suffix of [':22', '/srv', ',', ';', ' x']) {
+      const text = `deploy@10.0.0.5${suffix}`;
+      expect(spanTexts(text, findEmailSpans(text))).toEqual(['deploy@10.0.0.5']);
+    }
   });
 });
 
@@ -273,6 +296,9 @@ describe('linear time on hostile 100k inputs', () => {
       'x@' + 'a1.'.repeat(33_000),
       'x@' + '1.'.repeat(50_000) + 'a',
       'x@10.0.0.' + '1'.repeat(100_000),
+      'a@b' + '.c.1'.repeat(25_000),
+      'x@a.b' + '.1'.repeat(50_000),
+      ('a@b.1.' + 'x'.repeat(10) + '.').repeat(6_000),
       '.eyJ'.repeat(25_000),
       '.eyJaaaaaaaa'.repeat(7_000),
       ('.eyJaaaaaaaa.' + 'b'.repeat(7)).repeat(5_000),

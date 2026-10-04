@@ -573,6 +573,24 @@ describe('terminal colours, glued paths and encoded names (the second review of 
     expect(result.suspectedLeaks).toEqual([]);
   });
 
+  it.each([
+    ['a truncated CSI before /Users', `x ${ESC}[/Users/jdoe/x`],
+    ['a truncated CSI before /home', `x ${ESC}[/home/jdoe/x`],
+    ['a truncated CSI, a space, then /Users', `x ${ESC}[ /Users/jdoe/x`],
+    ['an 8-bit CSI with no body before /Users', `x ${String.fromCharCode(0x9b)}/Users/jdoe/x`],
+    ['a truncated shell-form CSI before /Users', `echo ${BS}e[ /Users/jdoe/x`],
+    ['a truncated CSI before a drive letter', `x ${ESC}[C:${BS}Users${BS}jdoe${BS}x`],
+    ['tput sgr0 and a reset before /Users', `Error:${ESC}(B${ESC}[m/Users/jdoe/x`],
+    ['a save-cursor escape before /Users', `${ESC}7/Users/jdoe/x`],
+  ])('keeps the whole path after %s, so the user name is removed', (_name, text) => {
+    for (const result of [fromSymptom(text, NONE), buildPublicIssueBody({ ...BASE, errorText: text }, NONE)]) {
+      expect(result.body).not.toContain('jdoe');
+      expect(result.body).toContain('~/');
+      expect(result.suspectedLeaks).toEqual([]);
+      expectMarksExact(result);
+    }
+  });
+
   it('removes the user name behind a one-letter compiler flag', () => {
     const text = 'c++ -I/Users/jdoe/Library/Caches/node-gyp/22.0.0/include/node -L/home/jdoe/lib -c x.cc';
     const result = fromSymptom(text, NONE);
@@ -609,6 +627,12 @@ describe('terminal colours, glued paths and encoded names (the second review of 
     expect(result.suspectedLeaks).toEqual([]);
   });
 
+  it('redacts an address that is followed by digit-only labels, and keeps the package versions of the same line', () => {
+    const result = fromSymptom('to jdoe@example.com.1 and jdoe@example.com.2024 and jdoe@example.com.0.1; react@18.2.0 typescript@5.6.3 react@19.0.0-rc.1 vitest@4.1.11', NONE);
+    expect(result.body).toContain('to <email> and <email> and <email>; react@18.2.0 typescript@5.6.3 react@19.0.0-rc.1 vitest@4.1.11');
+    expect(result.suspectedLeaks).toEqual([]);
+  });
+
   it('does not let a generic project folder name eat words of the report', () => {
     const keys: LocalOnlyKeys = { projectRoots: ['/work/test'], properNouns: [] };
     const result = fromSymptom('installed vitest@4.1.11 in /work/test/src and ran the test server', keys);
@@ -632,6 +656,26 @@ describe('terminal colours, glued paths and encoded names (the second review of 
       // 末尾側の断片は "sk-" を含まない (トークンの後ろ半分だけが残る) ので、本体の文字の並びで探す。
       expect(result.body).not.toContain('ab_-ab');
       expect(result.body).not.toMatch(/sk-/);
+    }
+  });
+
+  it('does not leave a fragment of a glued token at the 8000 cut of a free-text field', () => {
+    for (const pad of [7_960, 7_975, 7_985]) {
+      const symptom = `${'h'.repeat(pad)} id1${SK}x\n${'m'.repeat(2_000)}`;
+      const result = buildPublicIssueBody({ ...BASE, symptom }, NONE);
+      expect(result.body).not.toMatch(/sk-/);
+      expect(result.body).not.toContain('ab_-ab');
+      expect(result.suspectedLeaks).toEqual([]);
+    }
+  });
+
+  it('does not leave a fragment of a glued token at the 80 cut of a version field', () => {
+    for (const pad of [40, 55, 60, 65]) {
+      const bdboardVersion = `${'v'.repeat(pad)}id1${SK}x${'w'.repeat(40)}`;
+      const result = buildPublicIssueBody({ ...BASE, versions: { ...BASE.versions, bdboardVersion } }, NONE);
+      expect(result.body).not.toMatch(/sk-/);
+      expect(result.body).not.toContain('ab_-ab');
+      expect(result.suspectedLeaks).toEqual([]);
     }
   });
 });

@@ -26,8 +26,14 @@ const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/gu;
 /**
  * 端末の色・消去・見出しの ANSI エスケープ。ESC (Cc) だけを取り除くと "[36m" のような可視の残りが /Users の直前に残り
  * (m は英数字)、パスの開始条件を満たさなくなる。vitest・ESLint・tsc の出力に実際に入る。ESC の前に取り除く。
- *   - CSI: ESC "[" パラメータ (0-?)* 中間 (空白-/)* 終端 (@-~) と、8 ビットの CSI (U+009B)
+ *   - CSI: ESC "[" パラメータ (0-?)* 中間 (空白-".")* 終端 (@-~ のうち "\" を除く) と、8 ビットの CSI (U+009B)。
+ *     中間に "/" を入れず、終端に "\" を入れないのは、途中で切れた "ESC[" の直後にパスが続く "ESC[/Users/jdoe/x"・
+ *     U+009B + "/Users/…" で、パスの頭 ("/U") を CSI の一部として食わないため。ドライブ文字が終端に見える
+ *     "ESC[C:\Users\…" も、終端の直後が ":" と区切りのときは CSI とは読まない (本物のカーソル移動 "ESC[C" の直後に
+ *     ":\" が来ることはない)。
  *   - OSC: ESC "]" … BEL または ESC "\" (終端が無ければ取り除かない)
+ *   - 2 文字のエスケープ: 文字集合の指定 "ESC(B"・"ESC)0" (tput sgr0 が出す)、"ESC7"・"ESC8"・"ESC="・"ESC>"。パスの頭の文字
+ *     (英字・"/"・"~") は食わないよう、取り除く 2 文字目を上のものだけに限る。
  *   - JSON・ログに文字列として入った形: \u001b[ \x1b[ \033[ \e[ (CSI のみ)
  * どれも文字クラスが互いに素で、開始は ESC (または固定の文字列) だけなので線形 (終端が無いときも次の ESC までで止まる)。
  * 正規表現の中に制御文字を書かないよう、ESC・BEL・U+009B は文字コードから作る。
@@ -35,12 +41,14 @@ const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/gu;
 const ESC = String.fromCharCode(0x1b);
 const BEL = String.fromCharCode(0x07);
 const CSI_8BIT = String.fromCharCode(0x9b);
-const CSI_BODY = String.raw`[0-?]*[ -/]*[@-~]`;
+const CSI_BODY = String.raw`[0-?]*[ -.]*[@-\[\]-~](?![:][\\/])`;
 const ANSI_SEQUENCE = new RegExp(
   [
     `${ESC}\\[${CSI_BODY}`,
     `${CSI_8BIT}${CSI_BODY}`,
     `${ESC}\\][^${BEL}${ESC}]*(?:${BEL}|${ESC}\\\\)`,
+    `${ESC}[()*+][0-9A-Za-z@]`,
+    `${ESC}[78=>]`,
     String.raw`\\(?:u001[bB]|x1[bB]|033|e)\[${CSI_BODY}`,
   ].join('|'),
   'g',

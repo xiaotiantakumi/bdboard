@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { prepareKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
+import { findLeakSpans, findReportOnlySpans } from './issue-public-spans.js';
 import type { LocalOnlyKeys, ProperNounCategory, RedactionMark } from './issue-public-types.js';
 
 const mark = (field: 'title' | 'body', start: number, end: number): RedactionMark => ({ field, kind: 'token', start, end });
@@ -150,6 +151,40 @@ describe('detectSuspectedLeaks: placeholders are not leaks', () => {
     const prepared2 = prepareKeys({ projectRoots: [], properNouns: [{ category: 'user', value: 'abcdef' }] });
     const marks = [mark('body', 4, 5), mark('body', 0, 6), mark('body', 2, 3), mark('body', 10, 20)];
     expect(detectSuspectedLeaks('body', 'abcdef', marks, prepared2)).toEqual([]);
+  });
+});
+
+describe('findReportOnlySpans: the subset the elision cut avoids (no key-side scan)', () => {
+  const sk = 'sk-proj-' + 'x'.repeat(40);
+  const begin = '-----' + 'BEGIN PRIVATE KEY' + '-----';
+  const prepared = prepareKeys({
+    projectRoots: ['/work/example-project'],
+    properNouns: [
+      { category: 'user', value: 'example-user' },
+      { category: 'branch', value: 'tom' },
+    ],
+  });
+  const text = `id1${sk} 12:00/Users/jdoe/x tom ${begin} jdoe@example.com example-user /work/example-project/x`;
+
+  it('finds the report-only forms: a glued token, a glued home path, a short name, a lone key marker and an address', () => {
+    const kinds = findReportOnlySpans(text, prepared).map((span) => span.kind);
+    expect(kinds.sort()).toEqual(['branch', 'email', 'home-path', 'key-block', 'token']);
+  });
+
+  it('does not search the project roots or the long names (they are already marks after the redaction)', () => {
+    const kinds = findReportOnlySpans(text, prepared).map((span) => span.kind);
+    expect(kinds).not.toContain('user');
+    expect(kinds).not.toContain('project');
+    expect(kinds).not.toContain('project-path');
+    // 最後の網の全探索は、同じ文字列でそれらも見つける。
+    const full = findLeakSpans(text, prepared).map((span) => span.kind);
+    expect(full).toEqual(expect.arrayContaining(['user', 'project-path', 'project']));
+  });
+
+  it('keeps only the short names in shortNouns, and the long ones in replaceableNouns', () => {
+    expect(prepared.shortNouns).toHaveLength(1);
+    expect(prepared.replaceableNouns.length).toBeGreaterThan(0);
+    expect(prepared.detectableNouns).toHaveLength(prepared.shortNouns.length + prepared.replaceableNouns.length);
   });
 });
 

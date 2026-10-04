@@ -31,7 +31,7 @@ const PERCENT_ENCODED = `${PERCENT_SEPARATOR}(?:[Uu][Ss][Ee][Rr][Ss]|home)${PERC
  * 名前は 1 つの文字クラスの連なりで、直後に何も続かないので後戻りしない。
  */
 const LOOSE_HOME =
-  String.raw`(?:[A-Za-z]:[\\/]+Users[\\/]+|/(?:Users|home)/)[^\\/\s'"` + '`' + String.raw`:;,|<>()[\]{}=]+`;
+  String.raw`(?:[A-Za-z]:[\\/]+[Uu][Ss][Ee][Rr][Ss][\\/]+|/(?:Users|home)/)[^\\/\s'"` + '`' + String.raw`:;,|<>()[\]{}=]+`;
 
 export interface HomeRange {
   readonly start: number;

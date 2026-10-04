@@ -134,6 +134,9 @@ describe('findLooseHomeRanges: what the last net reports even though the strict 
     ['a letter before', 'abc/home/jdoe/x', '/home/jdoe'],
     ['a Windows path after a letter', `abcC:${BS}Users${BS}jdoe${BS}x`, `C:${BS}Users${BS}jdoe`],
     ['the stripped remains of an ANSI colour', '[36m/Users/jdoe/x', '/Users/jdoe'],
+    ['a lower-case Windows path after the remains of tput sgr0', `Error:(Bc:${BS}users${BS}jdoe${BS}x`, `c:${BS}users${BS}jdoe`],
+    ['a lower-case Windows path after the remains of an ANSI colour', `[36mc:${BS}users${BS}jdoe`, `c:${BS}users${BS}jdoe`],
+    ['an upper-case USERS in a Windows path after a letter', `abC:${BS}USERS${BS}jdoe${BS}x`, `C:${BS}USERS${BS}jdoe`],
   ])('finds %s', (_name, text, expected) => {
     expect(findPublicHomeRanges(text)).toEqual([]);
     expect(loose(text)).toEqual([expected]);

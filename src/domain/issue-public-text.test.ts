@@ -139,6 +139,45 @@ describe('ANSI escape sequences are removed whole, not just the ESC character', 
     expect(normalizeInline(`${BS}u0041[36m`)).toBe(`${BS}u0041[36m`);
   });
 
+  it.each([
+    ['ESC [ and a POSIX home path', `x ${ESC}[/Users/jdoe/x`, 'x [/Users/jdoe/x'],
+    ['ESC [ and a lower-case home path', `x ${ESC}[/home/jdoe/x`, 'x [/home/jdoe/x'],
+    ['ESC [ , a space and a home path', `x ${ESC}[ /Users/jdoe/x`, 'x [ /Users/jdoe/x'],
+    ['an 8-bit CSI and a home path', `x${CSI8}/Users/jdoe/x`, 'x/Users/jdoe/x'],
+    ['the shell form \\e[ and a space and a home path', `echo ${BS}e[ /Users/jdoe/x`, `echo ${BS}e[ /Users/jdoe/x`],
+    ['ESC [ and a drive letter that looks like a cursor-forward', `x ${ESC}[C:${BS}Users${BS}jdoe${BS}x`, `x [C:${BS}Users${BS}jdoe${BS}x`],
+    ['ESC [ and a drive letter with a slash', `x ${ESC}[C:/Users/jdoe/x`, 'x [C:/Users/jdoe/x'],
+    ['the 8-bit CSI and a drive letter', `x${CSI8}C:${BS}Users${BS}jdoe`, `xC:${BS}Users${BS}jdoe`],
+  ])('keeps the whole path that follows a broken sequence: %s', (_name, text, expected) => {
+    expect(normalizeInline(text)).toBe(expected);
+    expect(normalizeBlock(text)).toBe(expected);
+  });
+
+  it('still removes a real cursor movement whose final byte is a letter', () => {
+    expect(normalizeInline(`a${ESC}[Cb`)).toBe('ab');
+    expect(normalizeInline(`a${ESC}[12Cb`)).toBe('ab');
+    expect(normalizeInline(`a${ESC}[2Kb${ESC}[1;5Hc`)).toBe('abc');
+  });
+
+  it.each([
+    ['select ASCII (tput sgr0)', `${ESC}(B`, ''],
+    ['select a line-drawing set', `${ESC})0x`, 'x'],
+    ['save cursor', `${ESC}7x`, 'x'],
+    ['restore cursor', `${ESC}8x`, 'x'],
+    ['keypad mode on', `${ESC}=x`, 'x'],
+    ['keypad mode off', `${ESC}>x`, 'x'],
+    ['tput sgr0 then a reset then a home path', `Error:${ESC}(B${ESC}[m/Users/jdoe/x`, 'Error:/Users/jdoe/x'],
+  ])('removes the two-character escape: %s', (_name, text, expected) => {
+    expect(normalizeInline(text)).toBe(expected);
+    expect(normalizeBlock(text)).toBe(expected);
+  });
+
+  it('does not take the first character of a path as the second character of an escape', () => {
+    for (const path of ['/Users/jdoe/x', 'Users/jdoe', `C:${BS}Users${BS}jdoe`, '~/x', 'c:/users/jdoe', '{x}']) {
+      expect(normalizeInline(`${ESC}${path}`)).toBe(path);
+    }
+  });
+
   it('stays linear on 100k of escape-like text', () => {
     const hostile = [
       `${ESC}[`.repeat(50_000),
@@ -148,6 +187,10 @@ describe('ANSI escape sequences are removed whole, not just the ESC character', 
       `${ESC}[` + '1;'.repeat(50_000),
       `${BS}u001b[`.repeat(15_000),
       `${BS}e[`.repeat(30_000),
+      `${ESC}[/`.repeat(40_000),
+      `${ESC}[C:${BS}`.repeat(25_000),
+      `${ESC}(`.repeat(50_000),
+      `${ESC}[ `.repeat(30_000),
     ];
     const started = performance.now();
     for (const value of hostile) {
