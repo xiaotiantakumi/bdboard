@@ -2,7 +2,8 @@ import { useEffect } from 'react';
 import { fetchChatThreads } from '../../api';
 import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { keepOpenThreadEntries } from './keepOpenThreadEntries';
-import { isFirstVisitWritten, restoreThreadView, widenOpenToServerList } from './threadViewRestore';
+import { withoutClosed } from './provisionalEntry';
+import { restoreThreadView, widenOpenToServerList } from './threadViewRestore';
 import type { UseChatConversationsStateResult } from './useChatConversationsState';
 import type { UseChatNotificationsResult } from './useChatNotifications';
 import type { UseChatThreadListsResult } from './useChatThreadLists';
@@ -14,7 +15,7 @@ export interface UseThreadListSyncParams
     Pick<UseChatConversationsStateResult, 'threadListRequestIdRef'>,
     Pick<
       UseChatThreadListsResult,
-      'setThreadLists' | 'setOpenThreadIds' | 'restoredProjectsRef' | 'provisionalEntryRef' | 'openThreadIdsRef'
+      'setThreadLists' | 'setOpenThreadIds' | 'restoredProjectsRef' | 'provisionalEntries' | 'openThreadIdsRef'
       | 'threadListOrder'
     >,
     Pick<UseChatNotificationsResult, 'setThreadError'>,
@@ -66,7 +67,7 @@ export function useThreadListSync({
   setSelectedThreadIds,
   startNewDraftThread,
   restoredProjectsRef,
-  provisionalEntryRef,
+  provisionalEntries,
   threadListOrder,
 }: UseThreadListSyncParams): void {
   useEffect(() => {
@@ -123,15 +124,15 @@ export function useThreadListSync({
     // 確立していない」状態から始める。in-flight 中に他経路が確立すればこのサイクルの
     // 中で再び立つので、下のガードは元の意図(同一サイクル内のレース)どおりに働く。
     restoredProjectsRef.current.delete(selectedProjectId);
-    // bdboard-0206 / bdboard-rt6i: 永続化済みのエントリが「仮のエントリ」(未復元のプロジェクトで、送信成功・採用が
-    // 書いた最初のエントリ。利用者の開き閉じの記録ではない)かは、応答が届いた時点の provisionalEntryRef で見る
-    // (chat/threadViewRestore.ts の isFirstVisitWritten)。永続化を正本として復元すると、サーバー一覧の他の
-    // スレッドが開かれない。以前(bdboard-0206)はこの fetch サイクルの開始時に「エントリが無かったか」をここの
-    // クロージャに記録していたが、それでは fetch 中の閉じる・削除・エージェント切替後の送信が書いた利用者の記録を
-    // 仮のエントリと区別できず、turn-status 回収の hydrate(applyRecoveredTurn)からも見えなかった。マーカーは
-    // 送信・採用が立て、利用者の明示的な意図(handleAgentChange / closeThread / deleteThread)で下り、
-    // E7 と回収の復元でも下りる。サイクルの頭では下ろさない: 取り消し・失敗で着地しなかった前の訪問の
-    // 仮のエントリは、次の訪問でも仮のまま。復元に使う永続化そのものは、下のとおり応答が届いた時点で読む。
+    // bdboard-0206 / bdboard-rt6i: 永続化済みのエントリが「仮のエントリ」(未復元のプロジェクトで、最初の永続化エントリとして
+    // 書かれたもの。利用者の開き閉じの記録ではない)かは、応答が届いた時点の provisionalEntries.isProvisional で見る
+    // (chat/provisionalEntry.ts)。永続化を正本として復元すると、サーバー一覧の他のスレッドが開かれない。以前
+    // (bdboard-0206)はこの fetch サイクルの開始時に「エントリが無かったか」をここのクロージャに記録していたが、それでは
+    // fetch 中の閉じる・削除・エージェント切替後の送信が書いた利用者の記録を仮のエントリと区別できず、turn-status 回収の
+    // hydrate(applyRecoveredTurn)からも見えなかった。印は最初のエントリを書く経路が markIfFirstEntry で立て、エージェント
+    // 切替と、E7・回収の復元が settle で下ろす。閉じる・削除は印を下ろさず、閉じた id を覚えて開く候補から外す。
+    // サイクルの頭では下ろさない: 取り消し・失敗で着地しなかった前の訪問の仮のエントリは、次の訪問でも仮のまま。
+    // 復元に使う永続化そのものは、下のとおり応答が届いた時点で読む。
     // bdboard-4w2d: persisted はここ(effect 開始時)で1回だけ読むのではなく、
     // 下の .then()/.catch() の中で「応答が届いた時点」に読む(fetch の
     // in-flight 中に他経路(useChatSendCommits.ts の送信成功、
@@ -228,12 +229,16 @@ export function useThreadListSync({
         }
         // bdboard-4w2d: 応答が届いた時点の永続化を読む(効果開始時のスナップショットではない)。
         const persistedNow = readPersistedChatThreads()[selectedProjectId];
-        // bdboard-0206: 初回訪問で、fetch の in-flight 中に最初の永続化エントリが現れた(isFirstVisitWritten)。
-        const firstVisitWritten = isFirstVisitWritten(provisionalEntryRef.current.has(selectedProjectId), persistedNow);
+        // bdboard-0206: 初回訪問で、fetch の in-flight 中に最初の永続化エントリが現れた(isProvisional)。
+        const provisional = provisionalEntries.isProvisional(selectedProjectId, persistedNow);
         // bdboard-0206: その open に広げる元の一覧。admitted が undefined のときは、この応答が古い(採用の取り直しなど、
         // より新しい一覧が既に当たっている)ので、応答ではなく当たっている一覧を使う。応答の id を open と永続化に
         // 入れると、応答の後に削除されたスレッドが threadLists に無いまま (無題) のタブになる。
-        const listForFirstVisit = admitted ?? threadListOrder.appliedList(selectedProjectId) ?? threads;
+        // 仮のエントリの間に利用者が閉じた(削除した)スレッドは、開く候補から外す(bdboard-rt6i)。
+        const listForFirstVisit = withoutClosed(
+          admitted ?? threadListOrder.appliedList(selectedProjectId) ?? threads,
+          provisionalEntries.closedIds(selectedProjectId),
+        );
         // bdboard-4w2d(Opus レビュー対応、2巡目レビューで文言訂正): この fetch が
         // in-flight の間に handleAgentChange が先にこのプロジェクトの open を [] に
         // 確定させ、restoredProjectsRef もマーク済みなら、ここで persisted から
@@ -253,7 +258,7 @@ export function useThreadListSync({
           // 足さない。エージェント切替の「空に確定」は、マーカーが下りている(handleAgentChange)うえ、エントリの
           // activeSessionIds も空なので当たらず、そのまま残る(切替のあとに送信・採用が書いたエントリでも、復元済みの
           // プロジェクトには仮のマーカーを立てないので、利用者が空にした open を一覧で広げない。bdboard-rt6i)。
-          if (firstVisitWritten && openIdsNow !== undefined) {
+          if (provisional && openIdsNow !== undefined) {
             const widened = widenOpenToServerList(listForFirstVisit, openIdsNow);
             setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: widened }));
             writePersistedChatThreadState(selectedProjectId, {
@@ -262,19 +267,19 @@ export function useThreadListSync({
             });
           }
           // bdboard-rt6i: 復元(広げた open と永続化の書き直し)が済んだので、仮のエントリではなくなる。
-          provisionalEntryRef.current.delete(selectedProjectId);
+          provisionalEntries.settle(selectedProjectId);
           consumePendingTicketDraft();
           return;
         }
         const { open, selected } = restoreThreadView(
-          firstVisitWritten ? listForFirstVisit : (admitted ?? threads),
+          provisional ? listForFirstVisit : (admitted ?? threads),
           persistedNow,
-          firstVisitWritten,
+          provisional,
         );
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: open }));
         // bdboard-0206: 送信成功が書いた最初のエントリは送信した会話 1 件だけなので、メモリの open に揃える
         // (でないとリロードでサーバー一覧のスレッドが閉じられる)。選択の永続化は送信が書いたまま。
-        if (firstVisitWritten) {
+        if (provisional) {
           writePersistedChatThreadState(selectedProjectId, {
             activeSessionIds: open,
             selectedSessionId: persistedNow?.selectedSessionId,
@@ -285,8 +290,8 @@ export function useThreadListSync({
         // 復元済みなら自分では restoreThreadView を呼び直さず、openThreadIds の
         // 有無では推測しない。
         restoredProjectsRef.current.add(selectedProjectId);
-        // bdboard-rt6i: 同上。ここから先の永続化は(firstVisitWritten なら上で書き直した)サーバー一覧と合わせた記録。
-        provisionalEntryRef.current.delete(selectedProjectId);
+        // bdboard-rt6i: 同上。ここから先の永続化は(provisional なら上で書き直した)サーバー一覧と合わせた記録。
+        provisionalEntries.settle(selectedProjectId);
         if (consumePendingTicketDraft()) {
           return;
         }
@@ -314,7 +319,7 @@ export function useThreadListSync({
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [...open] }));
         // bdboard-4w2d: 取得に失敗した場合も、この「open」が最終形(永続化からの
         // フォールバック)であることに変わりはないので、成功時と同じく復元済みとして立てる。
-        // bdboard-rt6i: ただし provisionalEntryRef は下ろさない。サーバー一覧と合わせていない仮のエントリは
+        // bdboard-rt6i: ただし provisionalEntries は下ろさない。サーバー一覧と合わせていない仮のエントリは
         // 仮のままで、次の訪問の復元が(一覧を取れれば)広げる。
         restoredProjectsRef.current.add(selectedProjectId);
         if (consumePendingTicketDraft()) {
@@ -342,7 +347,7 @@ export function useThreadListSync({
     setSelectedThreadIds,
     startNewDraftThread,
     restoredProjectsRef,
-    provisionalEntryRef,
+    provisionalEntries,
     threadListOrder,
   ]);
 }

@@ -6,8 +6,9 @@
 import { act, renderHook } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { readPersistedChatThreads } from '../../chatThreadStorage';
+import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 import type { ChatAttachment } from './attachments';
+import { createProvisionalEntryMarks } from './provisionalEntry';
 import { useChatConversationsState } from './useChatConversationsState';
 import { useChatDraftState } from './useChatDraftState';
 import { useConversationKey } from './useConversationKey';
@@ -47,8 +48,8 @@ function useLauncherProbe(projectId: string) {
   const [cancelThreadConfirmDelete] = useState(() => vi.fn());
   // bdboard-4w2d: E7 / applyRecoveredTurn と共有する「一覧・open 復元済み」マーカー。
   const restoredProjectsRef = useRef<Set<string>>(new Set());
-  // bdboard-rt6i: 仮のエントリ(未復元で最初の永続化エントリを書いた)のマーカー。
-  const provisionalEntryRef = useRef<Set<string>>(new Set());
+  // bdboard-rt6i: 仮のエントリ(未復元で最初の永続化エントリを書いた)の印。
+  const [provisionalEntries] = useState(() => createProvisionalEntryMarks((id) => restoredProjectsRef.current.has(id)));
   const launcher = useDraftThreadLauncher({
     selectedProjectId: projectId,
     ...key,
@@ -57,12 +58,12 @@ function useLauncherProbe(projectId: string) {
     setOpenThreadIds,
     openThreadIdsRef,
     restoredProjectsRef,
-    provisionalEntryRef,
+    provisionalEntries,
     setSelectedAgentId,
     cancelThreadConfirmDelete,
   });
   return {
-    key, conv, draft, launcher, openThreadIds, restoredProjectsRef, provisionalEntryRef, selectedAgentId,
+    key, conv, draft, launcher, openThreadIds, restoredProjectsRef, provisionalEntries, selectedAgentId,
     cancelThreadConfirmDelete,
   };
 }
@@ -97,19 +98,26 @@ describe('useDraftThreadLauncher', () => {
     expect(result.current.restoredProjectsRef.current.has('proj-a')).toBe(true);
   });
 
-  it('clears the provisional-entry mark on an agent switch: the explicit empty is the user\'s record (bdboard-rt6i)', () => {
+  it('settles the provisional entry on an agent switch: the explicit empty is the user\'s record (bdboard-rt6i)', () => {
     const { result } = renderHook(() => useLauncherProbe('proj-a'));
-    // 未復元のうちに送信が最初のエントリを書いた(マーカーあり)。そのあとエージェントを切り替える。
-    result.current.provisionalEntryRef.current.add('proj-a');
-    result.current.provisionalEntryRef.current.add('proj-other');
+    // 未復元のうちに送信が最初のエントリを書いた(印あり)。閉じた id も覚えている。そのあとエージェントを切り替える。
+    const marks = result.current.provisionalEntries;
+    marks.markIfFirstEntry('proj-a');
+    marks.markIfFirstEntry('proj-other');
+    marks.noteClosed('proj-a', 'sess-closed');
+    marks.noteClosed('proj-other', 'sess-closed');
 
     act(() => {
       result.current.launcher.handleAgentChange('codex');
     });
 
-    expect(result.current.provisionalEntryRef.current.has('proj-a')).toBe(false);
-    // ほかのプロジェクトのマーカーには触れない。
-    expect(result.current.provisionalEntryRef.current.has('proj-other')).toBe(true);
+    // 切替のあとに別経路が非空のエントリを書いても、印は下りているので仮のエントリではない。
+    writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+    expect(marks.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(false);
+    expect(marks.closedIds('proj-a').size).toBe(0);
+    // ほかのプロジェクトの印と閉じた id には触れない。
+    expect(marks.isProvisional('proj-other', { activeSessionIds: ['sess-new'] })).toBe(true);
+    expect(marks.closedIds('proj-other').has('sess-closed')).toBe(true);
   });
 
   it('persists zero open threads (not a deleted entry) on an agent switch (bdboard-rhl4)', () => {

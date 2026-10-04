@@ -19,7 +19,8 @@ export interface UseChatSendCommitsParams
   extends Pick<UseChatConversationsStateResult, 'setConversations' | 'setHistoryLoadedFor' | 'setThreadModelIds'>,
     Pick<
       UseChatThreadListsResult,
-      'setThreadLists' | 'setOpenThreadIds' | 'openThreadIdsRef' | 'restoredProjectsRef' | 'provisionalEntryRef' | 'threadListOrder'
+      'setThreadLists' | 'setOpenThreadIds' | 'openThreadIdsRef' | 'restoredProjectsRef' | 'provisionalEntries'
+      | 'threadListOrder'
     >,
     Pick<UseConversationKeyResult, 'setSelectedThreadIds' | 'selectedThreadIdsRef'>,
     Pick<
@@ -66,7 +67,8 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
     setThreadLists,
     setOpenThreadIds,
     openThreadIdsRef,
-    restoredProjectsRef, provisionalEntryRef,
+    restoredProjectsRef,
+    provisionalEntries,
     threadListOrder,
     setSelectedThreadIds,
     selectedThreadIdsRef,
@@ -148,11 +150,10 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
         restored: restoredProjectsRef.current.has(selectedProjectId), liveOpen, plan, newSessionId: result.sessionId,
         readPersistedOpen: () => readPersistedChatThreads()[selectedProjectId]?.activeSessionIds ?? [],
       });
-      // bdboard-rt6i: 未復元のプロジェクトで、これが最初の永続化エントリ(それまでエントリが無い)なら、書くのは
-      // 利用者が開き閉じした記録ではなく仮のエントリ。復元する側(E7・回収の hydrate)がサーバー一覧を足して開くよう
-      // マーカーを立てる(UseChatThreadListsResult.provisionalEntryRef)。復元済み(エージェント切替で空に確定した
-      // 後など)・エントリがあった再訪では立てない: そちらの永続化は利用者の記録。2 回目以降の送信では下ろさない。
-      if (!restoredProjectsRef.current.has(selectedProjectId) && readPersistedChatThreads()[selectedProjectId] === undefined) provisionalEntryRef.current.add(selectedProjectId);
+      // bdboard-rt6i: 未復元のプロジェクトで最初の永続化エントリ(それまでエントリが無い)を書くなら、それは利用者が
+      // 開き閉じした記録ではなく仮のエントリ。印を立てる(chat/provisionalEntry.ts)。復元済み(エージェント切替で
+      // 空に確定した後など)・エントリがあった再訪では立たない。2 回目以降の送信でも下ろさない。
+      provisionalEntries.markIfFirstEntry(selectedProjectId);
       writePersistedChatThread(selectedProjectId, { sessionId: result.sessionId, agentId: result.agentId }, persistedOpenBase);
       if (showModelSelect && effectiveModelId !== '') {
         // 送信で実際に使われたモデルは常に確定値として勝つべきなので、ここだけは
@@ -203,7 +204,8 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       setThreadLists,
       setOpenThreadIds,
       openThreadIdsRef,
-      restoredProjectsRef, provisionalEntryRef,
+      restoredProjectsRef,
+      provisionalEntries,
       threadListOrder,
       setSelectedThreadIds,
       selectedThreadIdsRef,

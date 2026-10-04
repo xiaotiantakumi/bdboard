@@ -11,6 +11,7 @@ import {
   type ChatThreadDto,
 } from '../../api';
 import { resolvePersistedSelectionAfterClose, writePersistedChatThreadState } from '../../chatThreadStorage';
+import { createProvisionalEntryMarks, type ProvisionalEntryMarks } from './provisionalEntry';
 import { createThreadListFetchOrder, type ThreadListFetchOrder } from './threadListFetchOrder';
 import { buildThreadById, compareThreadsNewestFirst } from './threads';
 import type { UseConversationKeyResult } from './useConversationKey';
@@ -58,19 +59,14 @@ export interface UseChatThreadListsResult {
    */
   restoredProjectsRef: MutableRefObject<Set<string>>;
   /**
-   * bdboard-rt6i: プロジェクトごとの「仮のエントリ(provisional entry)」マーカー。未復元のプロジェクトで
-   * 送信成功(chat/useChatSendCommits.ts の commitSuccess)か CLI セッションの採用
-   * (chat/useChatSessionLifecycle.ts の handleResumeDiscoveredSession)が最初の永続化エントリを書いたとき
-   * に立つ。そのエントリは利用者が開き閉じした記録ではなく、サーバー一覧と合わせる前の 1 件だけの
-   * 仮の値で、復元する側(E7 = chat/useThreadListSync.ts、turn-status 回収 = applyRecoveredTurn →
-   * chat/recoveredTurnPlan.ts)が読んで、永続化を正本にせずサーバー一覧を足して開く
-   * (chat/threadViewRestore.ts の isFirstVisitWritten)。利用者の明示的な意図(エージェント切替 =
-   * handleAgentChange、閉じる・削除 = closeThread / deleteThread)で下ろし、復元が一覧を足して
-   * 書き直した時点でも下ろす。E7 が成功で着地しなかった(取り消し・失敗)場合は立ったまま残り、
-   * 次の訪問の復元が同じ扱いをする(restoredProjectsRef と違い、E7 は訪問の頭で下ろさない)。
-   * どこにも永続化しない(リロードで消える)。
+   * bdboard-rt6i: プロジェクトごとの「仮のエントリ(provisional entry)」の印と、その間に利用者が閉じたスレッド
+   * (chat/provisionalEntry.ts)。未復元のプロジェクトで最初の永続化エントリを書く経路(送信成功・採用・履歴ロード・
+   * スレッドの選択/再オープン・選択中スレッドの死亡)が markIfFirstEntry で立て、復元する側(E7 = chat/useThreadListSync.ts、
+   * turn-status 回収 = applyRecoveredTurn)が isProvisional で読んで、永続化を正本にせずサーバー一覧を足して開く。
+   * 閉じる・削除は印を下ろさず閉じた id を覚え(noteClosed)、エージェント切替と復元は settle で下ろす。
+   * どこにも永続化しない: チャットパネルを閉じる(AppChatOverlay が ChatPanel をアンマウントする)かリロードで消える。
    */
-  provisionalEntryRef: MutableRefObject<Set<string>>;
+  provisionalEntries: ProvisionalEntryMarks;
   /**
    * bdboard-z9mn: サーバーの一覧 fetch の結果でスレッド一覧を書く 3 つの処理(E7・採用の取り直し・
    * 回収の hydrate)を、プロジェクトごとの fetch 開始順序で一本化するための状態
@@ -180,8 +176,8 @@ export function useChatThreadLists({
   // プロジェクト単位の Set なので、useRef の初期値はこのフックの
   // 生存期間(ChatPanel 相当のマウント)を通じて1つだけ作られる。
   const restoredProjectsRef = useRef<Set<string>>(new Set());
-  // bdboard-rt6i: UseChatThreadListsResult.provisionalEntryRef 参照。
-  const provisionalEntryRef = useRef<Set<string>>(new Set());
+  // bdboard-rt6i: UseChatThreadListsResult.provisionalEntries 参照。
+  const [provisionalEntries] = useState(() => createProvisionalEntryMarks((id) => restoredProjectsRef.current.has(id)));
   // bdboard-z9mn: UseChatThreadListsResult.threadListOrder 参照。
   const [threadListOrder] = useState(createThreadListFetchOrder);
 
@@ -214,9 +210,9 @@ export function useChatThreadLists({
   // を呼んだ時点で同期的に更新済み)なので、これらの ref を読む限り
   // stale になることは無い。
   const closeThread = (sessionId: string) => {
-    // bdboard-rt6i: 閉じる・削除(deleteThread もここを通る)は利用者の明示的な意図なので、これ以降の永続化は
-    // 仮のエントリではなく利用者の記録。復元する側が永続化を正本にするよう、マーカーを下ろす。
-    provisionalEntryRef.current.delete(selectedProjectId);
+    // bdboard-rt6i: 閉じる・削除(deleteThread もここを通る)は仮のエントリの印を下ろさず、閉じた id を覚える。
+    // 復元する側がサーバー一覧を足して開くとき、その id だけは開かない(chat/provisionalEntry.ts)。
+    provisionalEntries.noteClosed(selectedProjectId, sessionId);
     const liveOpenThreads = openThreadIdsRef.current[selectedProjectId] ?? [];
     const liveSelectedSessionId = selectedThreadIdsRef.current[selectedProjectId];
     const next = liveOpenThreads.filter((id) => id !== sessionId);
@@ -260,10 +256,8 @@ export function useChatThreadLists({
   const selectOpenThread = (sessionId: string) => {
     drawer.selectThread();
     setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
-    writePersistedChatThreadState(selectedProjectId, {
-      activeSessionIds: openThreads,
-      selectedSessionId: sessionId,
-    });
+    provisionalEntries.markIfFirstEntry(selectedProjectId);
+    writePersistedChatThreadState(selectedProjectId, { activeSessionIds: openThreads, selectedSessionId: sessionId });
   };
 
   // selectOpenThread と同じ理由で selectedThreadIdsRef の同期は自動(上の
@@ -280,6 +274,7 @@ export function useChatThreadLists({
     const next = [...openThreads, sessionId];
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
     setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
+    provisionalEntries.markIfFirstEntry(selectedProjectId);
     writePersistedChatThreadState(selectedProjectId, {
       activeSessionIds: next,
       selectedSessionId: sessionId,
@@ -349,7 +344,7 @@ export function useChatThreadLists({
     openThreadIds,
     setOpenThreadIds,
     openThreadIdsRef,
-    restoredProjectsRef, provisionalEntryRef, threadListOrder, openThreads, threadById,
+    restoredProjectsRef, provisionalEntries, threadListOrder, openThreads, threadById,
     displayedOpenThreads,
     closedThreads,
     hasClosedThreads,

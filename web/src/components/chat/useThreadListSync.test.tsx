@@ -8,6 +8,7 @@ import { useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatThreadDto } from '../../api';
 import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
+import { createProvisionalEntryMarks } from './provisionalEntry';
 import { createThreadListFetchOrder } from './threadListFetchOrder';
 import { useChatConversationsState } from './useChatConversationsState';
 import { useChatNotifications } from './useChatNotifications';
@@ -54,8 +55,8 @@ function useSyncProbe({ projectId, startNewDraftThread }: { projectId: string; s
   const pendingTicketDraftProjectRef = useRef<string | null>(null);
   // bdboard-4w2d: E7 と applyRecoveredTurn が共有する「一覧・open 復元済み」マーカー。
   const restoredProjectsRef = useRef<Set<string>>(new Set());
-  // bdboard-rt6i: 仮のエントリ(未復元で最初の永続化エントリを書いた送信・採用)のマーカー。E7 と回収が読み、復元で下ろす。
-  const provisionalEntryRef = useRef<Set<string>>(new Set());
+  // bdboard-rt6i: 仮のエントリ(未復元で最初の永続化エントリを書いた送信・採用)の印。E7 と回収が読み、復元で下ろす。
+  const [provisionalEntries] = useState(() => createProvisionalEntryMarks((id) => restoredProjectsRef.current.has(id)));
   // bdboard-z9mn: E7・採用の取り直し・回収が共有する、プロジェクトごとの fetch 開始順序。
   const [threadListOrder] = useState(createThreadListFetchOrder);
   useThreadListSync({
@@ -72,7 +73,7 @@ function useSyncProbe({ projectId, startNewDraftThread }: { projectId: string; s
     setSelectedThreadIds: key.setSelectedThreadIds,
     startNewDraftThread,
     restoredProjectsRef,
-    provisionalEntryRef,
+    provisionalEntries,
     threadListOrder,
   });
   return {
@@ -86,7 +87,7 @@ function useSyncProbe({ projectId, startNewDraftThread }: { projectId: string; s
     pendingPrefillRef,
     pendingTicketDraftProjectRef,
     restoredProjectsRef,
-    provisionalEntryRef,
+    provisionalEntries,
     threadListOrder,
   };
 }
@@ -215,7 +216,7 @@ describe('useThreadListSync', () => {
     // sess-1 を取りこぼさないまま、サーバー一覧の sess-2 も開く(初回訪問は全スレッドを開く既定則のまま)。
     // その書き込みは送信成功の最初のエントリ(仮のエントリ。bdboard-rt6i 以降は送信が立てるマーカーで見分ける)。
     act(() => {
-      result.current.provisionalEntryRef.current.add('proj-a');
+      result.current.provisionalEntries.markIfFirstEntry('proj-a');
       writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-1'], selectedSessionId: 'sess-1' });
     });
     await act(async () => { list.resolve([thread('sess-1'), thread('sess-2')]); await list.promise; });
@@ -345,7 +346,7 @@ describe('useThreadListSync', () => {
       // 初回の一覧が in-flight の間に、ドラフトからの送信が成功した(restoredProjectsRef は立てず、仮のエントリの
       // マーカーは立てる)。永続化は新しい会話だけ。
       act(() => {
-        result.current.provisionalEntryRef.current.add('proj-a');
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
         result.current.threadListOrder.noteEntryWrite('proj-a', thread('sess-new'), 'upsert');
         writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
       });
@@ -413,9 +414,9 @@ describe('useThreadListSync', () => {
       fetchChatThreadsMock.mockReturnValue(list.promise);
       const { result } = renderProbe();
       // 永続化エントリの無い初回訪問。一覧が in-flight の間に、ドラフトからの送信が成功して最初のエントリを書く
-      // (commitSuccess 相当: 未復元なのでマーカーは立てず、一覧の順序管理に upsert を記録する)。
+      // (commitSuccess 相当: 未復元で最初のエントリなので仮のエントリの印を立て、一覧の順序管理に upsert を記録する)。
       act(() => {
-        result.current.provisionalEntryRef.current.add('proj-a');
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
         result.current.threadListOrder.noteEntryWrite('proj-a', thread('sess-new'), 'upsert');
         writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
       });
@@ -437,8 +438,8 @@ describe('useThreadListSync', () => {
       const { result } = renderProbe();
       // 採用(handleResumeDiscoveredSession 相当)が、E7 より先に open と最初の永続化エントリを確立してマーカーを立てる。
       act(() => {
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
         result.current.restoredProjectsRef.current.add('proj-a');
-        result.current.provisionalEntryRef.current.add('proj-a');
         result.current.openThreadIdsRef.current = { 'proj-a': ['sess-new'] };
         writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
       });
@@ -457,8 +458,8 @@ describe('useThreadListSync', () => {
       fetchChatThreadsMock.mockReturnValue(list.promise);
       const { result } = renderProbe();
       act(() => {
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
         result.current.restoredProjectsRef.current.add('proj-a');
-        result.current.provisionalEntryRef.current.add('proj-a');
         result.current.openThreadIdsRef.current = { 'proj-a': ['sess-b'] };
         writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-b'], selectedSessionId: 'sess-b' });
       });
@@ -472,8 +473,8 @@ describe('useThreadListSync', () => {
       const { result } = renderProbe();
       // 採用が確立し、採用の取り直し(E7 より後に始まった)の一覧が先に当たっている。sess-2 はその間に削除されて載っていない。
       act(() => {
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
         result.current.restoredProjectsRef.current.add('proj-a');
-        result.current.provisionalEntryRef.current.add('proj-a');
         result.current.openThreadIdsRef.current = { 'proj-a': ['sess-new'] };
         writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
         const seq = result.current.threadListOrder.begin('proj-a');
@@ -495,10 +496,10 @@ describe('useThreadListSync', () => {
       const list = deferred<ChatThreadDto[]>();
       fetchChatThreadsMock.mockReturnValue(list.promise);
       const { result } = renderProbe();
-      // 送信が最初のエントリを書いた(マーカーは立てない)。E7 より後に始まった一覧が先に当たっている(到達しにくい順序だが、
+      // 送信が最初のエントリを書いた(仮のエントリの印が立つ)。E7 より後に始まった一覧が先に当たっている(到達しにくい順序だが、
       // 古い応答の id を open と永続化に入れないことは経路によらず守る)。
       act(() => {
-        result.current.provisionalEntryRef.current.add('proj-a');
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
         writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
         const seq = result.current.threadListOrder.begin('proj-a');
         const applied = result.current.threadListOrder.admit('proj-a', seq, [thread('sess-1'), thread('sess-new')]);
@@ -560,19 +561,71 @@ describe('useThreadListSync', () => {
       expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: ['sess-a'], selectedSessionId: 'sess-a' });
     });
 
-    it('does not reopen a thread the user closed after a send wrote the provisional entry: closing lowers the mark', async () => {
-      // 送信 N1 → 送信 N2 → N1 を閉じる。closeThread は永続化を [N2] にし、マーカーを下ろす(ここではその結果を再現する)。
+    it('opens the server list but not a thread the user closed after a send wrote the provisional entry: closing keeps the mark', async () => {
+      // 送信 N1 → 送信 N2 → N1 を閉じる。closeThread は永続化を [N2] にするが、印は下ろさず、閉じた N1 を覚える
+      // (ここではその結果を再現する)。[N2] は利用者の記録ではないので、一度も見ていないサーバーの A/B/C も開く。
       const list = deferred<ChatThreadDto[]>();
       fetchChatThreadsMock.mockReturnValue(list.promise);
       const { result } = renderProbe();
       act(() => {
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
         result.current.threadListOrder.noteEntryWrite('proj-a', thread('sess-n1'), 'upsert');
         result.current.threadListOrder.noteEntryWrite('proj-a', thread('sess-n2'), 'upsert');
+        result.current.provisionalEntries.noteClosed('proj-a', 'sess-n1');
         writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-n2'], selectedSessionId: 'sess-n2' });
       });
       await act(async () => { list.resolve(SERVER_LIST); await list.promise; });
+      // 閉じた N1 は一覧(upsert の重ね合わせ)に載っても開かない。一覧には載る(閉じたスレッドとして出せる)。
       expect(result.current.threadLists['proj-a']?.map((t) => t.sessionId)).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-n1', 'sess-n2']);
-      expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-n2'] });
+      expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-a', 'sess-b', 'sess-c', 'sess-n2'] });
+      expect(result.current.key.selectedThreadIds).toEqual({ 'proj-a': 'sess-n2' });
+      expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-n2']);
+      // 復元したので、印と閉じた id の両方が下りる。
+      expect(result.current.provisionalEntries.closedIds('proj-a').size).toBe(0);
+    });
+
+    it('leaves a closed thread out of the widen on the adopted-open path as well', async () => {
+      const list = deferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockReturnValue(list.promise);
+      const { result } = renderProbe();
+      act(() => {
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
+        result.current.restoredProjectsRef.current.add('proj-a');
+        result.current.openThreadIdsRef.current = { 'proj-a': ['sess-new'] };
+        result.current.provisionalEntries.noteClosed('proj-a', 'sess-b');
+        writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+      });
+      await act(async () => { list.resolve(SERVER_LIST); await list.promise; });
+      expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-c', 'sess-new']);
+      expect(result.current.provisionalEntries.closedIds('proj-a').size).toBe(0);
+    });
+
+    it('keeps a thread closed after a failed fetch when the next visit reaches the server', async () => {
+      // 1 回目の訪問: 送信 N1・N2 が仮のエントリを書き、一覧の fetch が失敗する。そのあとで N1 を閉じる(印は残り、閉じた id を覚える)。
+      let visits = 0;
+      fetchChatThreadsMock.mockImplementation(async (projectId: string) => {
+        if (projectId !== 'proj-a') return [];
+        visits += 1;
+        if (visits === 1) throw new Error('boom');
+        return [...SERVER_LIST, thread('sess-n1'), thread('sess-n2')];
+      });
+      const { result, rerender } = renderProbe();
+      act(() => {
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
+        writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-n1', 'sess-n2'], selectedSessionId: 'sess-n2' });
+      });
+      await flush();
+      await flush();
+      act(() => {
+        result.current.provisionalEntries.noteClosed('proj-a', 'sess-n1');
+        writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-n2'], selectedSessionId: 'sess-n2' });
+      });
+      rerender({ projectId: 'proj-b' });
+      await flush();
+      rerender({ projectId: 'proj-a' });
+      await flush();
+      await flush();
+      expect(result.current.openThreadIds['proj-a']).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-n2']);
     });
 
     it('lowers the mark once the response has been restored from, and does not widen a later visit', async () => {
@@ -580,12 +633,12 @@ describe('useThreadListSync', () => {
       fetchChatThreadsMock.mockReturnValue(list.promise);
       const { result } = renderProbe();
       act(() => {
-        result.current.provisionalEntryRef.current.add('proj-a');
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
         writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
       });
       await act(async () => { list.resolve([...SERVER_LIST, thread('sess-new')]); await list.promise; });
       expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-a', 'sess-b', 'sess-c', 'sess-new'] });
-      expect(result.current.provisionalEntryRef.current.has('proj-a')).toBe(false);
+      expect(result.current.provisionalEntries.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(false);
     });
 
     it('lowers the mark on the adopted-open path too, once the server list is added', async () => {
@@ -593,13 +646,13 @@ describe('useThreadListSync', () => {
       fetchChatThreadsMock.mockReturnValue(list.promise);
       const { result } = renderProbe();
       act(() => {
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
         result.current.restoredProjectsRef.current.add('proj-a');
-        result.current.provisionalEntryRef.current.add('proj-a');
         result.current.openThreadIdsRef.current = { 'proj-a': ['sess-new'] };
         writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
       });
       await act(async () => { list.resolve(SERVER_LIST); await list.promise; });
-      expect(result.current.provisionalEntryRef.current.has('proj-a')).toBe(false);
+      expect(result.current.provisionalEntries.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(false);
     });
 
     it('keeps the mark when the fetch fails, and the next visit that reaches the server opens the server list', async () => {
@@ -614,13 +667,13 @@ describe('useThreadListSync', () => {
       });
       const { result, rerender } = renderProbe();
       act(() => {
-        result.current.provisionalEntryRef.current.add('proj-a');
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
         writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
       });
       await flush();
       await flush();
       expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-new'] });
-      expect(result.current.provisionalEntryRef.current.has('proj-a')).toBe(true);
+      expect(result.current.provisionalEntries.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(true);
 
       rerender({ projectId: 'proj-b' });
       await flush();
@@ -628,7 +681,7 @@ describe('useThreadListSync', () => {
       await flush();
       await flush();
       expect(result.current.openThreadIds['proj-a']).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-new']);
-      expect(result.current.provisionalEntryRef.current.has('proj-a')).toBe(false);
+      expect(result.current.provisionalEntries.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(false);
     });
 
     it('keeps the mark when the cycle is cancelled by a project switch before the response', async () => {
@@ -636,13 +689,13 @@ describe('useThreadListSync', () => {
       fetchChatThreadsMock.mockReturnValueOnce(first.promise).mockResolvedValue([...SERVER_LIST, thread('sess-new')]);
       const { result, rerender } = renderProbe();
       act(() => {
-        result.current.provisionalEntryRef.current.add('proj-a');
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
         writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
       });
       rerender({ projectId: 'proj-b' });
       await flush();
       await act(async () => { first.resolve([]); await first.promise; });
-      expect(result.current.provisionalEntryRef.current.has('proj-a')).toBe(true);
+      expect(result.current.provisionalEntries.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(true);
 
       rerender({ projectId: 'proj-a' });
       await flush();

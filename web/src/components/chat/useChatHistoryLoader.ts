@@ -50,6 +50,8 @@ export function useChatHistoryLoader(params: {
    */
   openThreadIdsRef: UseChatThreadListsResult['openThreadIdsRef'];
   restoredProjectsRef: UseChatThreadListsResult['restoredProjectsRef'];
+  /** bdboard-rt6i: 未復元で最初の永続化エントリを書く履歴ロードが、書く前に仮のエントリの印を立てる。 */
+  provisionalEntries: UseChatThreadListsResult['provisionalEntries'];
   setSelectedAgentId: Dispatch<SetStateAction<string>>;
   unresolvedSends: Record<string, true>;
   clearUnresolvedSend: (sessionId: string) => void;
@@ -77,6 +79,7 @@ export function useChatHistoryLoader(params: {
     conversationsRef,
     openThreadIdsRef,
     restoredProjectsRef,
+    provisionalEntries,
     setSelectedAgentId,
     unresolvedSends,
     clearUnresolvedSend,
@@ -130,6 +133,9 @@ export function useChatHistoryLoader(params: {
         // live の open は応答が届いた時点の値を読む(fetch の in-flight 中に変わりうる)。
         // 未復元(初回一覧の読込中)は従来どおり永続化済みエントリを基点にする(bdboard-4w2d)。
         // 書き込みは setState の updater の外。
+        // bdboard-rt6i: 未復元で、これが最初の永続化エントリなら、書くのは利用者の記録ではなく仮のエントリ。
+        // 印を立てないと、あとから届く E7 が [S] を利用者の記録として復元し、サーバー一覧の他のスレッドを閉じる。
+        provisionalEntries.markIfFirstEntry(selectedProjectId);
         writePersistedChatThread(
           selectedProjectId,
           { sessionId: payload.sessionId, agentId: payload.agentId },
@@ -202,6 +208,7 @@ export function useChatHistoryLoader(params: {
     setSelectedAgentId,
     openThreadIdsRef,
     restoredProjectsRef,
+    provisionalEntries,
     onSessionGone,
   ]);
 

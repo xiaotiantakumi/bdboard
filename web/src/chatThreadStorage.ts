@@ -108,9 +108,10 @@ export function resolvePersistedSelectionAfterClose(
  * bdboard-0206: 未復元のうちに書いたこの 1 件のエントリ(初回訪問の E7 の一覧 fetch が in-flight の間の
  * 送信成功、採用)は、E7 が応答を受けたときに、サーバー一覧と合わせた open で書き直す
  * (chat/useThreadListSync.ts。メモリの open も同じ集合にする)。でないと、メモリは [A,B,C,新] なのに
- * 永続化と open が [新] に潰れる。E7 が書き直すのは、このエントリが仮のエントリ(bdboard-rt6i の provisionalEntryRef。
- * 未復元で最初のエントリを書いた送信・採用が立てる)のときに限る。利用者の明示的な意図(エージェント切替・閉じる・
- * 削除)が書いたエントリは、マーカーが下りているので利用者の記録として正本のまま。
+ * 永続化と open が [新] に潰れる。E7 が書き直すのは、このエントリが仮のエントリ(bdboard-rt6i。chat/provisionalEntry.ts の
+ * 印を、未復元で最初のエントリを書く送信・採用・履歴ロードなどが立てる)のときに限る。エージェント切替が書いた空のエントリや、
+ * 印が無いときの閉じる・削除の書き込みは、利用者の記録として正本のまま。印がある間の閉じる・削除は、閉じた id を覚えて
+ * 開く候補から外す。
  */
 export function writePersistedChatThread(
   projectId: string,

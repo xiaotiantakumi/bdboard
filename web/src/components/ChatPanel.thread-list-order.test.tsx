@@ -43,6 +43,7 @@ import {
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
 import {
   PROJECT_A,
+  PROJECT_B,
   CLAUDE_AGENT,
   EXAMPLE_AGENT,
   createDeferred,
@@ -515,9 +516,115 @@ describe('ChatPanel: the provisional first entry is told apart from the user\'s 
 
     await resolveDeferred(firstList, [SERVER_A, SERVER_B]);
 
-    // 閉じた sess-n1 は、一覧に upsert として重なっていても開き直さない。永続化は利用者の記録のまま。
-    expect(switcherCount(container)).toHaveTextContent('スレッド 1');
+    // 閉じた sess-n1 は、一覧に upsert として重なっていても開き直さない。ただし閉じる操作は仮のエントリの印を下ろさない:
+    // 永続化の [sess-n2] を利用者の記録にすると、一度も見ていないサーバーの A/B が開かれない(#852 の症状)。
+    // サーバー一覧と送信した会話から、閉じた N1 だけを外して開く。
+    expect(switcherCount(container)).toHaveTextContent('スレッド 3');
     expect(switcherTitle(container)).toHaveTextContent('hello two');
-    expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: ['sess-n2'], selectedSessionId: 'sess-n2' });
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['sess-a', 'sess-b', 'sess-n2'],
+      selectedSessionId: 'sess-n2',
+    });
+  });
+
+  it('keeps a thread closed after the first list failed and the next visit lands (gap 3, E7 fails then close)', async () => {
+    const user = userEvent.setup();
+    const calls: Record<string, number> = {};
+    const firstList = createDeferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockImplementation((projectId: string) => {
+      calls[projectId] = (calls[projectId] ?? 0) + 1;
+      if (projectId !== 'proj-a') return Promise.resolve([]);
+      // 1 回目 = E7(保留してから失敗させる)。2 回目(再訪)はサーバーが送信した 2 つの会話も持つ。
+      return calls[projectId] === 1
+        ? firstList.promise
+        : Promise.resolve([SERVER_A, SERVER_B, thread('sess-n1', 'hello one'), thread('sess-n2', 'hello two')]);
+    });
+    stubSends(['sess-n1', 'sess-n2']);
+
+    const { container } = renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: 'proj-a' });
+    await user.type(screen.getByLabelText('メッセージ'), 'hello one');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('AI reply 1');
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
+    await user.type(screen.getByLabelText('メッセージ'), 'hello two');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('AI reply 2');
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-n1', 'sess-n2']);
+    // 保留していた初回の一覧が失敗する(E7 は永続化のまま open を確定し、仮のエントリの印は残す)。
+    await act(async () => {
+      firstList.reject(new Error('list down'));
+      await firstList.promise.catch(() => undefined);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // 一覧の取得に失敗したあとで 1 つ目を閉じる。サーバー一覧と合わせていない仮のエントリは仮のまま。
+    const menu = await openThreadDrawerItemMenu(container, user, 'hello one');
+    await user.click(within(menu).getByRole('menuitem', { name: /タブから閉じる/ }));
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-n2']);
+
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-b');
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-a');
+    await waitFor(() => expect(calls['proj-a']).toBe(2));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // 再訪の復元はサーバー一覧(A/B)を足して開き、閉じた N1 は開き直さない。
+    expect(switcherCount(container)).toHaveTextContent('スレッド 3');
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-n2']);
+  });
+
+  it('keeps every server thread open when a revisit history load writes the first entry before the list lands (history loader)', async () => {
+    const user = userEvent.setup();
+    const A1 = thread('sess-a1', 'thread a1');
+    const A2 = thread('sess-a2', 'thread a2');
+    const secondList = createDeferred<ChatThreadDto[]>();
+    let aCalls = 0;
+    fetchChatThreadsMock.mockImplementation((projectId: string) => {
+      if (projectId !== 'proj-a') return Promise.resolve([]);
+      aCalls += 1;
+      return aCalls === 1 ? Promise.resolve([A1, A2]) : secondList.promise;
+    });
+    const firstHistory = createDeferred<Response>();
+    let historyCalls = 0;
+    const requested: string[] = [];
+    stubFetch((url, init) => {
+      const match = /^\/api\/chat\/sessions\/([^/]+)\/messages/.exec(url);
+      if (match !== null && (init?.method ?? 'GET') === 'GET') {
+        requested.push(match[1]!);
+        historyCalls += 1;
+        if (historyCalls === 1) return firstHistory.promise;
+        return jsonResponse({ sessionId: match[1], agentId: 'claude', messages: [] });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    const { container } = renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: 'proj-a' });
+    // 初回訪問: E7 が両方をメモリ上だけで開く(永続化エントリは無い)。最初の履歴ロードは保留。
+    await waitFor(() => expect(switcherCount(container)).toHaveTextContent('スレッド 2'));
+    await waitFor(() => expect(historyCalls).toBe(1));
+    expect(readPersistedChatThreads()['proj-a']).toBeUndefined();
+
+    // 履歴ロードが届く前に離れ(その応答は捨てられる)、戻る。
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-b');
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-a');
+    await act(async () => {
+      firstHistory.resolve(jsonResponse({ sessionId: requested[0], agentId: 'claude', messages: [] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // 再訪: 履歴ロードが 2 回目の一覧より先に届き、最初の永続化エントリ [sess-a1] を書く。
+    await waitFor(() => expect(historyCalls).toBe(2));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a1']);
+
+    await resolveDeferred(secondList, [A1, A2]);
+
+    // 履歴ロードが書いたのは利用者の記録ではなく仮のエントリ: sess-a2 を黙って閉じない。
+    expect(switcherCount(container)).toHaveTextContent('スレッド 2');
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a1', 'sess-a2']);
   });
 });

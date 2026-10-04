@@ -112,6 +112,35 @@ describe('planRecoveredTurn', () => {
     });
   });
 
+  describe('threads the user closed during the provisional entry (bdboard-rt6i)', () => {
+    const SERVER = [thread('A'), thread('B'), thread('N1'), thread('N2'), thread('C')];
+
+    it('leaves the closed ids out of the widened open set (N1 -> N2 -> close N1)', () => {
+      const result = plan({
+        alreadyRestored: false,
+        provisionalEntry: true,
+        closedIds: new Set(['N1']),
+        knownOpen: ['N2'],
+        threads: SERVER,
+        persisted: { activeSessionIds: ['N2'], selectedSessionId: 'N2' },
+        knownSelected: 'N2',
+      });
+      expect(result.nextOpen).toEqual(['A', 'B', 'N2', 'C']);
+    });
+
+    it('ignores closed ids when the entry is not provisional (they are only recorded while an entry is provisional)', () => {
+      const result = plan({
+        alreadyRestored: true,
+        provisionalEntry: false,
+        closedIds: new Set(['A']),
+        knownOpen: ['A', 'B'],
+        threads: SERVER,
+        persisted: { activeSessionIds: ['A', 'B'], selectedSessionId: 'A' },
+      });
+      expect(result.nextOpen).toEqual(['A', 'B', 'C']);
+    });
+  });
+
   describe('a replaced thread (bdboard-w9hv)', () => {
     it('drops an open origin from the next open, as commitSuccess does', () => {
       expect(plan({ origin: 'B' })).toMatchObject({ nextOpen: ['A', 'C'], replacedKey: 'B', nextSelected: 'A' });

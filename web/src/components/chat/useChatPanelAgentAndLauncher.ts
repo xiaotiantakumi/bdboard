@@ -31,7 +31,7 @@ export function useChatPanelAgentAndLauncher(params: UseChatPanelAgentAndLaunche
     draftNoncesRef, selectedThreadIdsRef, setDraftNonces, setSelectedThreadIds, historyRequestIdRef, setConversations,
     setHistoryLoadedFor, setLoadingHistoryFor, conversationInputsRef, conversationAttachmentsRef,
     draftSeedTextRef, setInput, updateConversationInputs, updateConversationAttachments,
-    clearAttachmentError, setOpenThreadIds, openThreadIdsRef, restoredProjectsRef, provisionalEntryRef, cancelThreadConfirmDelete, onClose,
+    clearAttachmentError, setOpenThreadIds, openThreadIdsRef, restoredProjectsRef, provisionalEntries, cancelThreadConfirmDelete, onClose,
     panelRef,
     closeButtonRef, threadDrawerOpen, threadDrawerRef, threadDrawerCloseButtonRef,
     closeThreadDrawer,
@@ -149,7 +149,7 @@ export function useChatPanelAgentAndLauncher(params: UseChatPanelAgentAndLaunche
     setOpenThreadIds,
     openThreadIdsRef,
     restoredProjectsRef,
-    provisionalEntryRef,
+    provisionalEntries,
     setSelectedAgentId,
     cancelThreadConfirmDelete,
   });

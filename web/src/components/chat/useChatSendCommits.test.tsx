@@ -14,6 +14,7 @@ vi.mock('../../api', async (importOriginal) => {
 
 import { acknowledgeChatTurn, ApiError } from '../../api';
 import type { ChatAttachment } from './attachments';
+import { createProvisionalEntryMarks } from './provisionalEntry';
 import { createReplacedThreadMarks } from './replacedThread';
 import { createThreadListFetchOrder } from './threadListFetchOrder';
 import type { ChatConversationEntry } from './useChatConversationsState';
@@ -82,7 +83,7 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
   // restoredProjectsRef。既定は空 = 未復元。
   const restoredProjectsRef = { current: new Set<string>() };
   // bdboard-rt6i: 仮のエントリ(未復元で最初の永続化エントリを書いた)のマーカー。既定は空。
-  const provisionalEntryRef = { current: new Set<string>() };
+  const provisionalEntries = createProvisionalEntryMarks((id) => restoredProjectsRef.current.has(id));
   // bdboard-d7on(Opus レビュー B1/M1 対応): commitSuccess は selectedThreadIdsRef も
   // 同じ場所で同期する。setterForWithRef が同期するので、初期値は空で足りる。
   const selectedThreadIdsRef = { current: {} as Record<string, string | undefined> };
@@ -97,7 +98,7 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
     setOpenThreadIds: setterForWithRef(store, 'openThreadIds', openThreadIdsRef),
     openThreadIdsRef,
     restoredProjectsRef,
-    provisionalEntryRef,
+    provisionalEntries,
     threadListOrder: createThreadListFetchOrder(),
     setSelectedThreadIds: setterForWithRef(store, 'selectedThreadIds', selectedThreadIdsRef),
     selectedThreadIdsRef,
@@ -177,7 +178,7 @@ describe('commitSuccess', () => {
     it('marks the project when the send writes the first persisted entry while unrestored', () => {
       const { hook, params } = setup();
       act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
-      expect(params.provisionalEntryRef.current.has('proj-a')).toBe(true);
+      expect(params.provisionalEntries.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(true);
     });
 
     it('keeps the mark on a second send into the same project', () => {
@@ -186,7 +187,7 @@ describe('commitSuccess', () => {
       act(() =>
         hook.result.current.commitSuccess('new:proj-a:1', 'again', { reply: 'AI reply', sessionId: 'sess-two', agentId: 'claude' }),
       );
-      expect(params.provisionalEntryRef.current.has('proj-a')).toBe(true);
+      expect(params.provisionalEntries.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(true);
       expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-new', 'sess-two']);
     });
 
@@ -194,7 +195,7 @@ describe('commitSuccess', () => {
       writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-a'], selectedSessionId: 'sess-a' });
       const { hook, params } = setup();
       act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
-      expect(params.provisionalEntryRef.current.has('proj-a')).toBe(false);
+      expect(params.provisionalEntries.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(false);
     });
 
     it('does not mark once the project is restored (E7, or an agent change that emptied the open set)', () => {
@@ -202,7 +203,7 @@ describe('commitSuccess', () => {
       params.restoredProjectsRef.current.add('proj-a');
       params.openThreadIdsRef.current = { 'proj-a': [] };
       act(() => hook.result.current.commitSuccess('new:proj-a:1', 'hello', RESULT));
-      expect(params.provisionalEntryRef.current.has('proj-a')).toBe(false);
+      expect(params.provisionalEntries.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(false);
     });
   });
 

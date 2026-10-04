@@ -25,7 +25,7 @@ export interface UseDraftThreadLauncherParams
       UseChatDraftStateResult,
       'setInput' | 'updateConversationInputs' | 'updateConversationAttachments' | 'clearAttachmentError'
     >,
-    Pick<UseChatThreadListsResult, 'setOpenThreadIds' | 'restoredProjectsRef' | 'provisionalEntryRef' | 'openThreadIdsRef'>,
+    Pick<UseChatThreadListsResult, 'setOpenThreadIds' | 'restoredProjectsRef' | 'provisionalEntries' | 'openThreadIdsRef'>,
     Pick<UseChatAgentModelStateResult, 'setSelectedAgentId'> {
   selectedProjectId: string;
   cancelThreadConfirmDelete: () => void;
@@ -48,7 +48,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
   const { conversationInputsRef, conversationAttachmentsRef, draftSeedTextRef, setInput } = params;
   const { updateConversationInputs, updateConversationAttachments, clearAttachmentError } = params;
   const { setOpenThreadIds, openThreadIdsRef, setSelectedAgentId, cancelThreadConfirmDelete, restoredProjectsRef } = params;
-  const { provisionalEntryRef } = params;
+  const { provisionalEntries } = params;
   // MF1/SF2 一括解消: 「これから採番される nonce」を先読みして直接
   // conversationInputs へ書き込む旧実装(未来ドラフトキーの先読み予測)は廃止した。
   // ticketContextToken 由来のプリフィル文言と、プロジェクト解決前に貼られた画像は
@@ -220,7 +220,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       restoredProjectsRef.current.add(selectedProjectId);
       // bdboard-rt6i: この「空に確定」は利用者の明示的な意図。直前に送信・採用が書いた仮のエントリがあっても、
       // 永続化の空は利用者の記録なので、復元する側がサーバー一覧で広げないようマーカーを下ろす。
-      provisionalEntryRef.current.delete(selectedProjectId);
+      provisionalEntries.settle(selectedProjectId);
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: undefined }));
       const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
       const nextDraftKey = makeDraftKey(selectedProjectId, nextDraftNonce);
@@ -297,7 +297,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       draftNoncesRef, selectedThreadIdsRef, setDraftNonces, setConversations,
       // bdboard-4w2d(2巡目 Opus レビュー nit 対応): restoredProjectsRef も ref
       // なので参照は変わらないが、他の ref と同じく exhaustive-deps に揃える。
-      restoredProjectsRef, provisionalEntryRef,
+      restoredProjectsRef, provisionalEntries,
     ],
   );
 
