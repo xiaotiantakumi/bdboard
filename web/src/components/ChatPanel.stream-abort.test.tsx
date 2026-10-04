@@ -774,11 +774,11 @@ describe('ChatPanel', () => {
       expect(screen.queryByText('reply nobody announced')).toBeNull();
 
       // サーバー履歴が追いついた状態でもう一度開く。印が残っていれば拾える。
-      // 送信成功でスレッドのタイトルは送った本文に置き換わるので、戻るときの
-      // 見出しは 'second send'。
+      // bdboard-b1rz: 既存スレッドへの送信成功では一覧の題名を送った本文に置き換えない
+      // (付けた名前か最初の発言のまま)ので、戻るときの見出しは 'first thread'。
       serverCaughtUp = true;
       await selectThreadFromDrawer(container, user, 'second thread');
-      await selectThreadFromDrawer(container, user, 'second send');
+      await selectThreadFromDrawer(container, user, 'first thread');
 
       expect(await screen.findByText('reply nobody announced')).toBeInTheDocument();
     });

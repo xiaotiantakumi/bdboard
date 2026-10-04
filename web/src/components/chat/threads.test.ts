@@ -104,10 +104,29 @@ describe('appendSentThread', () => {
     expect(appendSentThread([thread('a', 'A')], thread('b', 'B'), undefined)).toEqual([thread('a', 'A'), thread('b', 'B')]);
   });
 
-  it('同じ sessionId の既存行は落として足し直す', () => {
-    expect(appendSentThread([thread('a', 'old'), thread('c', 'C')], thread('a', 'new'), undefined)).toEqual([
+  // bdboard-b1rz: 既存スレッドへの送信は、行を作り直した値(題名 = 送った文・pinned=false)で置き換えない。
+  // サーバー側の題名は付けた名前か最初の発言で、送信のたびには変わらない。
+  it('同じ sessionId の既存行は題名とピン留めを残し、updatedAt だけ進めて末尾へ移す', () => {
+    const existing: ChatThreadDto = { ...thread('a', 'My Renamed'), pinned: true };
+    const sent: ChatThreadDto = { ...thread('a', 'second message'), updatedAt: '2026-02-02T00:00:00Z' };
+    expect(appendSentThread([existing, thread('c', 'C')], sent, undefined)).toEqual([
       thread('c', 'C'),
-      thread('a', 'new'),
+      { ...existing, updatedAt: '2026-02-02T00:00:00Z' },
+    ]);
+  });
+
+  it('既存行が無いときは作った値をそのまま足す(題名 = 送った文・ピン留めなし)', () => {
+    const sent: ChatThreadDto = { ...thread('a', 'first message'), updatedAt: '2026-02-02T00:00:00Z' };
+    expect(appendSentThread([thread('c', 'C')], sent, undefined)).toEqual([thread('c', 'C'), sent]);
+  });
+
+  // サーバーの題名は「付けた名前 ?? 最初のユーザー発言」なので、null は「名前も保存済みメッセージも無い」。
+  // その行への送信がその最初の発言で、次のサーバー一覧では送った文が題名になる(CLI セッション採用直後がこれ)。
+  it('題名が null(名前も保存済みメッセージも無い)の既存行は送った文で埋め、ピン留めは残す', () => {
+    const existing: ChatThreadDto = { ...thread('a', 'x'), title: null, pinned: true };
+    const sent: ChatThreadDto = { ...thread('a', 'my first question'), updatedAt: '2026-02-02T00:00:00Z' };
+    expect(appendSentThread([existing], sent, undefined)).toEqual([
+      { ...existing, title: 'my first question', updatedAt: '2026-02-02T00:00:00Z' },
     ]);
   });
 
