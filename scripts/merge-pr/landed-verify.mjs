@@ -9,12 +9,11 @@
 // bdboard-xdk8: 着地後検証 (台帳に書くもの) が落ち、失敗が全部時間切れの形 (負荷由来、load-retry.mjs) なら、
 // 1 回目のログを別名で残して 1 回だけ再実行してから記録する。2 回目も落ちれば従来どおり failure。
 import { mkdirSync } from 'node:fs';
-import { cpus, loadavg } from 'node:os';
 import path from 'node:path';
 
 import { git, gitOk, run } from './exec.mjs';
 import { installInterruptHandler } from './interrupt.mjs';
-import { classifyVerifyFailure, keepFirstAttemptLog, readLogQuietly } from './load-retry.mjs';
+import { retryLoadInduced } from './load-retry.mjs';
 import { audit, readInstalledFor, say, stateDir, writeInstalledFor } from './state.mjs';
 import { postQuietly, runContractVerify, stoppedEarly, tail } from './verify-run.mjs';
 
@@ -70,7 +69,8 @@ function restoreBranch(root, restoreTo) {
  * main は壊れていないのに main-broken と誤記録され、枠の保持 (holdBrokenMain) にまで至る)。
  * bdboard-xdk8: ledger: true の verify が落ち、失敗が全部時間切れの形なら 1 回だけ再実行する。台帳の
  * description に「retried after load-induced failure」、監査ログに landed-verify-retry と 1 回目のログの
- * パスを残す。再実行が落ちれば failure、スロット待ちの打ち切りなら error (記録しない)。
+ * パスを残す。再実行が落ちれば failure、スロット待ちの打ち切りなら error (記録しない)。再実行したかは
+ * 返り値の retried (呼び出し元が landed-verify の監査行に retried=1 を足す)。
  *
  * bdboard-2twf: 未追跡ファイルがあれば (ignore 済みを除く) verify を始めずに 'error' を返す。
  * verify 実行中に SIGINT/SIGTERM を受けたら、子プロセスを終了して restoreTo に戻ってから
@@ -152,6 +152,7 @@ export async function runLandedVerify(
   // detach したまま何もできずに終わってしまう (「detach したままになりうるのは SIGKILL/crash
   // だけ」という docs/GIT-WORKFLOW.md の前提が崩れる)。
   let result;
+  let retried = false;
   let installedAny = false;
   try {
     // detach した後 (= sha のツリーの .gitignore) で判定する。checkout 前のままだと違う木の
@@ -173,7 +174,7 @@ export async function runLandedVerify(
         installedAny = true;
       };
       const queue = { priority, queueSince, abandonWhen };
-      result = await installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, onSpawn });
+      ({ result, retried } = await installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, onSpawn }));
     }
   } finally {
     // activeChild.interrupted の間は installAndVerify がここへ戻ってこない (待つだけで
@@ -187,7 +188,7 @@ export async function runLandedVerify(
       say(`注意: この worktree の node_modules は ${sha.slice(0, 12)} 用に入れ直しました。ブランチで作業を続けるなら npm ci し直してください。`);
     }
   }
-  return { result, logPath };
+  return { result, logPath, retried: retried === true };
 }
 
 async function installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, onSpawn }) {
@@ -200,56 +201,41 @@ async function installAndVerify(ctx, { root, sha, by, command, originalHead, log
       if (installed.status !== 0) {
         // ネットワーク等の環境要因がほとんどなので main の破損 (failure) とは記録しない。
         say(`npm ${lock.args.join(' ')} が失敗しました (exit ${installed.status})。台帳には書きません。`);
-        return 'error';
+        return { result: 'error' };
       }
       writeInstalledFor(root, sha);
     }
   }
   const running = `npm run verify running (by ${by})`;
   if (ledger && !postQuietly(ctx, sha, 'pending', running)) {
-    return 'error';
+    return { result: 'error' };
   }
   // onSpawn (bdboard-ky9l) は再実行の verify でも呼ぶ — finish が新しいプロセスグループを記録し直す。
   const attempt = { ctx, root, sha, command, logPath, activeChild, ledger, onSpawn };
   const firstQueuedAt = Date.now();
   let code = await runContractVerify({ ...attempt, queue, running });
-  let stopped = await stoppedEarly(activeChild, code, logPath);
+  const stopped = await stoppedEarly(activeChild, code, logPath);
   if (stopped) {
-    return stopped;
+    return { result: stopped };
   }
-  let retried = '';
+  let retried = null;
   if (code !== 0 && ledger) {
     // bdboard-xdk8: 失敗が全部時間切れの形 (負荷由来) なら 1 回だけ再実行してから記録する (load-retry.mjs)。
-    const verdict = classifyVerifyFailure(readLogQuietly(logPath));
-    const kept = verdict.loadInduced ? keepFirstAttemptLog(logPath) : null;
-    if (kept === null) {
-      say(`verify が失敗しました (exit ${code})。負荷由来とは判断できないので再実行しません (${verdict.reason})。`);
-    } else {
-      audit('landed-verify-retry', { sha, by, exit: code, timeouts: verdict.timeouts, load1: loadavg()[0].toFixed(1), cpus: cpus().length, log: kept });
-      say(
-        `verify が失敗しました (exit ${code}) が、失敗は ${verdict.timeouts} 件とも時間切れの形なので負荷由来とみなし、1 回だけ再実行します。`,
-        `1 回目のログ: ${kept}`,
-      );
-      retried = ` (retried after load-induced failure: ${verdict.timeouts} timeouts)`;
-      const again = `npm run verify retrying after load-induced failure (by ${by})`;
-      if (!postQuietly(ctx, sha, 'pending', again)) {
-        return 'error';
-      }
-      // 並び直しでも最初に並んだ時刻を引き継ぐ (verify-slot-queue.mjs の seniority、最大 10 分)。
-      code = await runContractVerify({ ...attempt, queue: { ...queue, queueSince: queue.queueSince ?? firstQueuedAt }, running: again });
-      stopped = await stoppedEarly(activeChild, code, logPath);
-      if (stopped) {
-        return stopped;
-      }
+    const again = await retryLoadInduced({ attempt, queue, code, by, firstQueuedAt });
+    retried = again.retried;
+    if (again.stopped) {
+      return { result: again.stopped, retried: retried !== null };
     }
+    code = again.code;
   }
   const result = code === 0 ? 'success' : 'failure';
   if (result === 'failure') {
     say(`verify が失敗しました (exit ${code})。ログの末尾:`, tail(logPath, 40));
   }
   if (!ledger) {
-    return result;
+    return { result };
   }
   const why = result === 'success' ? 'npm run verify passed' : `npm run verify failed (exit ${code})`;
-  return postQuietly(ctx, sha, result, `${why}${retried} (by ${by})`) ? result : 'error';
+  const note = retried === null ? '' : ` (retried after load-induced failure: ${retried.timeouts} timeouts)`;
+  return { result: postQuietly(ctx, sha, result, `${why}${note} (by ${by})`) ? result : 'error', retried: retried !== null };
 }

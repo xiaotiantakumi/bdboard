@@ -350,19 +350,26 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   `pending`, runs the contract's `verify` while re-posting `pending` every `leaseMinutes / 3` (so a
   verify queued behind the machine-wide verify slots does not look abandoned), posts `success` /
   `failure`, and checks the branch out again. It never touches the main checkout. The verify log
-  is `<git common dir>/bdboard-merge/landed-verify-<sha>.log`. The landed verify runs alone in the
-  machine-wide verify slots (`landed` is exclusive, docs/VERIFY.md "Priorities", bdboard-xdk8).
+  is `<git common dir>/bdboard-merge/landed-verify-<sha>.log`. The landed verify never runs beside a
+  `pr` verify in the machine-wide verify slots (it still shares them with `merge`; docs/VERIFY.md
+  "Priorities", bdboard-xdk8).
 - **One retry for a load-induced landed failure** (bdboard-xdk8; `finish`, manual `verify`, and the
   gate self-heal — not S2's predicted-tree verify). On 2026-10-04 a docs-only PR's landed verify
   failed twice under machine load and the main-broken slot stopped every merge. When the landed
   verify fails, `scripts/merge-pr/load-retry.mjs` reads its log: only if the failing step is a
   vitest run and *every* error headline is a timeout (`Test/Hook timed out in Nms`, vitest's pool
-  start/terminate timeouts, birpc call timeouts, `spawnSync … ETIMEDOUT`) does it rename the first
+  start/terminate timeouts, `spawnSync … ETIMEDOUT`; matched at the start of the message, so an
+  assertion that merely quotes one is not a timeout) does it rename the first
   log to `landed-verify-<sha>.first-attempt-<UTC time>.log`, append `landed-verify-retry` (exit,
   timeout count, 1-min load average, CPU count, kept log) to the audit log, post `pending`
-  ("retrying after load-induced failure"), and run the verify once more. The second result is
-  recorded as usual, with `(retried after load-induced failure: N timeouts)` in the status
-  description; a second failure is a `failure` (main-broken) as before, and a slot-wait timeout on
+  ("retrying after load-induced failure"), and run the verify once more. The retry keeps its place
+  in the verify slots: right after the first run exits, merge-pr writes a `landed` reservation
+  holder (docs/VERIFY.md "Priorities") so that waiting `pr` verifies do not take the freed slot
+  during the gap, and the retry queues with `since` = the first run's queue time (the usual
+  seniority, capped at 10 min) and removes the reservation once its own holder is written. The
+  second result is recorded as usual, with `(retried after load-induced failure: N timeouts)` in the
+  status description and `retried=1` on the `landed-verify` audit line; a second failure is a
+  `failure` (main-broken) as before, and a slot-wait timeout on
   the retry is "could not run" (exit 75, nothing but `pending` recorded). Any other failure — an
   assertion, a type error, a failing non-vitest step, an unrecognized headline, a test whose
   `spawnSync` child was killed and so compares `null` to an exit code — is recorded right away, as

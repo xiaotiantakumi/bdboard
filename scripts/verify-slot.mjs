@@ -21,10 +21,12 @@
 // - bdboard-ulxa.6: 順番は FIFO から「優先度 + 仮想到着時刻」に変えた (landed > merge > pr、
 //   上限本数は不変)。決め方と旧形式の holder との混在の扱いは verify-slot-queue.mjs。
 //   走り出すときに holder file へ acquiredAt を書く (書き込みは一時ファイル + rename で原子的に)。
-// - bdboard-xdk8: landed (着地後検証) は独占して走る — 走っている holder が抜けるのを待ってから 1 本で
-//   走り、その間 (順番待ちの間も) 後ろの待ち手は始めない。負荷で着地後検証が偽の failure を出し、
-//   main-broken の枠で全マージが止まったため。独占の待ちも下の waitTimeoutMs の対象 (打ち切りは
-//   SLOT_WAIT_TIMEOUT_EXIT_CODE = 「verify は走っていない」で、merge-pr は failure と記録しない)。
+// - bdboard-xdk8: landed (着地後検証) は pr (PR 前の手元 verify) と同時に走らない (merge とは枠を分け合う)。
+//   負荷で着地後検証が偽の failure を出し、main-broken の枠で全マージが止まったため。規則と根拠は
+//   verify-slot-queue.mjs の EXCLUDED_BESIDE。landed の待ち手は走っている pr が抜けるのを待つので、
+//   打ち切りは pr が stale になるまで延ばす (slotWaitLimitMs)。走っている landed を待つ側の表示は
+//   「正常、kill しない」にする (旧表示の「hung verify?」は kill を誘っていた)。merge-pr が着地後検証を
+//   1 回だけ再実行するときの隙間は予約 holder で埋める (reserveVerifySlot / handoffPath)。
 // - stale 処理: pid が死んだ holder は即回収 (SIGKILL された verify の後始末)。
 //   pid が生きていて staleTtlMs を超えた holder は枠のカウントから外す (ハング1本が
 //   枠を永久占有しない) が、ファイルは本人の後始末に任せて消さない。
@@ -40,7 +42,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { holderPath, readOthers, unlinkQuietly, writeHolderAtomically } from './verify-slot-files.mjs';
-import { EXCLUSIVE_PRIORITIES, HOLDER_FORMAT, MAX_SENIORITY_MS, normalizePriority, planSlots, TIER_STEP_MS } from './verify-slot-queue.mjs';
+import { EXCLUDED_BESIDE, HOLDER_FORMAT, MAX_SENIORITY_MS, normalizePriority, planSlots, TIER_STEP_MS } from './verify-slot-queue.mjs';
+import { blockedNote, slotWaitLimitMs, timeoutAdvice } from './verify-slot-wait.mjs';
+
+export { slotWaitLimitMs };
 
 export const DEFAULT_SLOT_OPTIONS = Object.freeze({
   slots: 2,
@@ -54,7 +59,8 @@ export const DEFAULT_SLOT_OPTIONS = Object.freeze({
   queueSince: undefined,
   tierStepMs: TIER_STEP_MS,
   maxSeniorityMs: MAX_SENIORITY_MS,
-  exclusivePriorities: EXCLUSIVE_PRIORITIES,
+  excludedBeside: EXCLUDED_BESIDE,
+  handoffPath: undefined,
 });
 
 export class SlotWaitTimeoutError extends Error {}
@@ -97,31 +103,28 @@ export function envSlotOptions(env = process.env) {
   if (queueSince !== undefined) {
     options.queueSince = queueSince;
   }
+  if (env.BDBOARD_VERIFY_SLOT_HANDOFF) {
+    options.handoffPath = env.BDBOARD_VERIFY_SLOT_HANDOFF; // merge-pr の予約 holder (reserveVerifySlot)
+  }
   return options;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// 待ちの表示に足す独占 (bdboard-xdk8) の説明。自分が独占なら「抜けるのを待つ」、他の独占に止められて
-// いるならその pid。
-function exclusiveNote(plan, holder, options) {
-  if (options.exclusivePriorities.includes(holder.priority)) {
-    return '; landed verify runs alone, waiting for the running holders to finish';
-  }
-  return plan.exclusivePid === null ? '' : `; landed verify pid ${plan.exclusivePid} runs alone first`;
-}
-
 function newHolder(options) {
   const joinedAt = Date.now();
   const holder = { v: HOLDER_FORMAT, pid: process.pid, joinedAt, queuedAt: joinedAt, cwd: process.cwd(), priority: normalizePriority(options.priority) };
+  if (options.reserved) {
+    holder.reserved = true; // reserveVerifySlot の予約 (表示・調査用。順番の計算には使わない)
+  }
   if (typeof options.queueSince === 'number' && Number.isFinite(options.queueSince)) {
     holder.since = Math.min(options.queueSince, holder.joinedAt);
   }
   return holder;
 }
 
-// スロットを1つ獲得する。順番が来るまで待ち、走っている holder の顔ぶれが waitTimeoutMs の間
-// 変わらなければ SlotWaitTimeoutError を投げる。戻り値の release() は冪等。process 'exit' でも
+// スロットを1つ獲得する。順番が来るまで待ち、走っている holder の顔ぶれが waitTimeoutMs (landed は
+// slotWaitLimitMs) の間変わらなければ SlotWaitTimeoutError を投げる。戻り値の release() は冪等。process 'exit' でも
 // 自動 release するので、呼び出し側が process.exit() する経路でも holder は残らない
 // (SIGKILL だけは残るが、それは次の参加者の dead-pid 回収が拾う)。overrides.io は他の holder を
 // 読む/自分の holder file を書く fs の差し替え口 (テストの失敗注入用。既定は node:fs)。自分の
@@ -147,6 +150,10 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
     process.removeListener('exit', onExit);
     unlinkQuietly(selfPath);
   };
+  // bdboard-xdk8: 自分の holder が見えるようになったので、merge-pr の予約 holder (reserveVerifySlot) を消す。
+  if (isHandoffPath(options.handoffPath, dir, selfPath)) {
+    unlinkQuietly(options.handoffPath);
+  }
 
   try {
     // bakery 風 settle: ほぼ同時に並んだ相手の holder file がディスクに載るのを
@@ -203,23 +210,23 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
       }
       waited = true;
       const holderPids = plan.running.map((entry) => entry.pid).join(', ');
+      const waitLimitMs = slotWaitLimitMs(holder.priority, options);
       const key = plan.running.map((entry) => entry.pid).sort((a, b) => a - b).join(',');
       if (key !== runningKey) {
         runningKey = key;
         progressAt = now;
       }
-      if (now - progressAt > options.waitTimeoutMs) {
+      if (now - progressAt > waitLimitMs) {
         throw new SlotWaitTimeoutError(
           `verify: timed out after ${Math.round((now - progressAt) / 1000)}s without progress waiting for a verify slot` +
-            ` (slots=${slots}, holders: pid ${holderPids}).` +
-            ` Investigate those pids (hung verify?) before retrying; do not disable the slot to get past this.`,
+            ` (slots=${slots}, holders: pid ${holderPids}).${timeoutAdvice(plan, options)}`,
         );
       }
       if (now - lastStatusAt >= options.statusIntervalMs) {
         lastStatusAt = now;
         log(
           `verify: waiting for a verify slot (queue position ${plan.position}/${plan.queue.length}, priority ${holder.priority},` +
-            ` holders: pid ${holderPids}, waited ${Math.round((now - holder.queuedAt) / 1000)}s${exclusiveNote(plan, holder, options)}) — queueing, not a hang`,
+            ` holders: pid ${holderPids}, waited ${Math.round((now - holder.queuedAt) / 1000)}s${blockedNote(plan, holder, options)}) — queueing, not a hang`,
         );
       }
       await sleep(options.pollMs);
@@ -228,4 +235,43 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
     release();
     throw error;
   }
+}
+
+// 予約 holder の path として受け取ってよいか: 同じスロットの置き場にある holder file で、自分のものではない
+// (env から来た path で、無関係なファイルや自分の holder を消さないため)。
+function isHandoffPath(handoffPath, dir, selfPath) {
+  return (
+    typeof handoffPath === 'string' &&
+    handoffPath !== selfPath &&
+    path.resolve(path.dirname(handoffPath)) === path.resolve(dir) &&
+    /^holder-\d+\.json$/.test(path.basename(handoffPath))
+  );
+}
+
+/**
+ * bdboard-xdk8: 予約 holder を置く (自分の pid で並ぶだけで、走らない)。merge-pr が着地後検証を 1 回だけ
+ * 再実行するとき、1 回目の verify が抜けてから再実行の verify が自分の holder を書くまでの数秒〜十数秒に、
+ * 待っていた pr が枠を取らないため (予約は landed の待ち手として並び、pr はその後ろで止まる)。overrides は
+ * acquireVerifySlot と同じ (priority / queueSince / dir / slots)。再実行の verify には BDBOARD_VERIFY_SLOT_HANDOFF
+ * で path を渡し、verify は自分の holder を書いた後で予約を消す。戻り値の release() は冪等で、process 'exit'
+ * でも消す。SIGKILL で残っても、pid が死んでいれば次の参加者の readOthers が回収する。スロットが無効
+ * (slots <= 0) なら何も書かない (path は undefined)。
+ */
+export async function reserveVerifySlot(overrides = {}) {
+  const options = { ...DEFAULT_SLOT_OPTIONS, ...overrides };
+  if (options.slots <= 0) {
+    return { path: undefined, release: () => {} };
+  }
+  fs.mkdirSync(options.dir, { recursive: true });
+  const selfPath = holderPath(options.dir, process.pid);
+  await writeHolderAtomically(selfPath, newHolder({ ...options, reserved: true }), { io: options.io });
+  const onExit = () => unlinkQuietly(selfPath);
+  process.on('exit', onExit);
+  return {
+    path: selfPath,
+    release: () => {
+      process.removeListener('exit', onExit);
+      unlinkQuietly(selfPath);
+    },
+  };
 }

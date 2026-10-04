@@ -15,7 +15,18 @@
 // 迷う形 (vitest 以外のステップで落ちた・要約が無い・時間切れ以外のエラー行が 1 つでもある) は全部
 // 「負荷由来ではない」に倒す。spawnSync の子が時間切れで殺されて status が null になり、それを
 // `expected null to be +0` と比べて落ちる形 (事故の 2 回目) も、メッセージが時間切れと言っていないので対象外。
+//
+// 再実行の手順 (retryLoadInduced) もここに置く。1 回目の verify が抜けてから再実行の verify が verify スロットに
+// 並ぶまでの数秒〜十数秒 (ログの退避・監査・pending の投稿・npm の起動) に、待っていた pr が枠を取って再実行の
+// 隣で走らないよう、1 回目が終わった直後に予約 holder を置き (scripts/verify-slot.mjs の reserveVerifySlot)、
+// 再実行の verify に BDBOARD_VERIFY_SLOT_HANDOFF で渡す。再実行しない経路でも finally で消す (中断で process.exit
+// する経路は reserveVerifySlot の 'exit' フック、SIGKILL で残った予約は pid が死んでいれば次の参加者が回収する)。
 import { copyFileSync, readFileSync, renameSync } from 'node:fs';
+import { cpus, loadavg } from 'node:os';
+
+import { envSlotOptions, reserveVerifySlot } from '../verify-slot.mjs';
+import { audit, say } from './state.mjs';
+import { postQuietly, runContractVerify, stoppedEarly } from './verify-run.mjs';
 
 // eslint-disable-next-line no-control-regex -- ログに残った色付けを外す
 const ANSI = /\u001b\[[0-9;?]*[A-Za-z]/g;
@@ -30,16 +41,27 @@ const ERROR_BANNER = /^\s*⎯+\s*(?:Unhandled (?:Error|Rejection)|Startup Error|
 // `Error: …` `AssertionError: …` `TypeError [ERR_X]: …` などのエラーの見出し行。
 const ERROR_HEADLINE = /^\s*(?:[A-Za-z_$][\w$]*)?Error\b[^:]{0,40}:\s/;
 
-/** 時間切れの形 (vitest 4.1 の文言)。これ以外のエラー行が 1 つでもあれば負荷由来とはみなさない。 */
+/**
+ * 時間切れの形 (vitest 4.1 の文言)。これ以外のエラー行が 1 つでもあれば負荷由来とはみなさない。
+ * 見出しの先頭 (`Error: ` などのエラー名を外した直後) でだけ照合する: 途中に含むだけの行 (例えば
+ * `AssertionError: expected 'Test timed out in 5000ms' to be …`) は時間切れではない。
+ * `[birpc] timeout on calling "…"` は入れない: vitest 4 は worker / プール側の birpc に timeout: -1 を渡して
+ * いてこのタイマー自体が張られない (docs/VERIFY.md「vitest worker RPC タイムアウト」)。出たら想定外なので
+ * 再実行せずに調べる。
+ */
 export const TIMEOUT_SHAPES = Object.freeze([
-  /\b(?:Test|Hook) timed out in \d+ms\b/,
-  /\[vitest-pool\]: Timeout (?:starting|terminating) \S+ (?:runner|worker)\b/,
-  /\[vitest-pool-runner\]: Timeout waiting for worker to respond\b/,
-  /\[birpc\] timeout on calling "/,
-  /\bspawnSync \S+ ETIMEDOUT\b/,
+  /^(?:Test|Hook) timed out in \d+ms\b/,
+  /^\[vitest-pool\]: Timeout (?:starting|terminating) \S+ (?:runner|worker)\b/,
+  /^\[vitest-pool-runner\]: Timeout waiting for worker to respond\b/,
+  /^spawnSync \S+ ETIMEDOUT\b/,
 ]);
+// 見出しの先頭の字下げとエラー名 (`Error: ` `TypeError [ERR_X]: ` 等。ERROR_HEADLINE と同じ形) を外す。
+const HEADLINE_PREFIX = /^\s*(?:\w*Error\b[^:]{0,40}:\s*)?/;
 
-const isTimeout = (line) => TIMEOUT_SHAPES.some((shape) => shape.test(line));
+const isTimeout = (line) => {
+  const message = line.replace(HEADLINE_PREFIX, '');
+  return TIMEOUT_SHAPES.some((shape) => shape.test(message));
+};
 
 function lastIndex(lines, test, from = 0) {
   for (let index = lines.length - 1; index >= from; index -= 1) {
@@ -116,5 +138,51 @@ export function keepFirstAttemptLog(logPath, now = new Date()) {
     } catch {
       return null;
     }
+  }
+}
+
+async function reserveQuietly(priority, queueSince) {
+  try {
+    return await reserveVerifySlot({ ...envSlotOptions(), priority, queueSince });
+  } catch (error) {
+    say(`verify スロットに再実行の予約を置けませんでした (${error.message})。予約なしで並び直します。`);
+    return { path: undefined, release: () => {} };
+  }
+}
+
+/**
+ * 着地後検証 (ledger) の 1 回目が exit code で落ちた直後に呼ぶ。失敗が全部時間切れの形なら 1 回目のログを
+ * 残して 1 回だけ再実行する。戻り値の retried は再実行の verify を起こしたなら { timeouts }、起こしていなければ
+ * null。code は記録する終了コード、stopped は記録しない終わり方 ('error' | 'abandoned'、このときは code なし)。
+ * attempt は runContractVerify の引数 (queue と running 以外)。
+ */
+export async function retryLoadInduced({ attempt, queue, code, by, firstQueuedAt }) {
+  const { ctx, sha, logPath, activeChild } = attempt;
+  // 並び直しでも最初に並んだ時刻を引き継ぐ (verify-slot-queue.mjs の seniority、最大 10 分)。
+  const queueSince = queue.queueSince ?? firstQueuedAt;
+  const reservation = await reserveQuietly(queue.priority, queueSince);
+  try {
+    const verdict = classifyVerifyFailure(readLogQuietly(logPath));
+    const kept = verdict.loadInduced ? keepFirstAttemptLog(logPath) : null;
+    if (kept === null) {
+      const why = verdict.loadInduced ? `1 回目のログ ${logPath} を退避できなかったので再実行しません` : `負荷由来とは判断できないので再実行しません (${verdict.reason})`;
+      say(`verify が失敗しました (exit ${code})。${why}。`);
+      return { code, retried: null };
+    }
+    audit('landed-verify-retry', { sha, by, exit: code, timeouts: verdict.timeouts, load1: loadavg()[0].toFixed(1), cpus: cpus().length, log: kept });
+    say(
+      `verify が失敗しました (exit ${code}) が、失敗は ${verdict.timeouts} 件とも時間切れの形なので負荷由来とみなし、1 回だけ再実行します。`,
+      `1 回目のログ: ${kept}`,
+    );
+    const running = `npm run verify retrying after load-induced failure (by ${by})`;
+    if (!postQuietly(ctx, sha, 'pending', running)) {
+      return { stopped: 'error', retried: null };
+    }
+    const again = await runContractVerify({ ...attempt, queue: { ...queue, queueSince, handoff: reservation.path }, running });
+    const retried = { timeouts: verdict.timeouts };
+    const stopped = await stoppedEarly(activeChild, again, logPath);
+    return stopped ? { stopped, retried } : { code: again, retried };
+  } finally {
+    reservation.release();
   }
 }

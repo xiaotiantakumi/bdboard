@@ -23,15 +23,20 @@ export const POLICIES = Object.freeze({
   /** 変更前: FIFO (旧 verify-slot)、使えなくなった verify も最後まで走らせる。 */
   before: { legacy: true },
   /** 優先度だけ (議長案の順: merge > pr > landed)。 */
-  priorityChairOrder: { order: { merge: 'landed', pr: 'merge', landed: 'pr' }, exclusivePriorities: [] },
+  priorityChairOrder: { order: { merge: 'landed', pr: 'merge', landed: 'pr' }, excludedBeside: {} },
   /** 優先度だけ (landed > merge > pr)。 */
-  priorityOnly: { exclusivePriorities: [] },
+  priorityOnly: { excludedBeside: {} },
   /** FIFO のまま、使えなくなった verify をやめるだけ。 */
   abandonOnly: { legacy: true, abandon: true },
   /** bdboard-ulxa.6 の採用案: 優先度 (landed > merge > pr) + やめる + 最初に並んだ時刻の引き継ぎ。landed も枠を分け合う。 */
-  sharedLanded: { abandon: true, seniority: true, exclusivePriorities: [] },
-  /** 採用案 (bdboard-xdk8): 上に加えて landed は独占して走る。このモデルは負荷で verify が遅くなることも偽の failure も表さないので、独占の得 (負荷) は映らず損 (待ち) だけが映る。 */
-  after: { abandon: true, seniority: true },
+  sharedLanded: { abandon: true, seniority: true, excludedBeside: {} },
+  /**
+   * 比較用 (bdboard-xdk8 の最初の案、採らない): 上に加えて landed は誰とも同居しない (完全独占)。このモデルは負荷で
+   * verify が遅くなることも偽の failure も表さないので、同居させない得 (負荷) は映らず損 (待ち) だけが映る。
+   */
+  after: { abandon: true, seniority: true, excludedBeside: { landed: ['landed', 'merge', 'pr'] } },
+  /** 採用案 (bdboard-xdk8): sharedLanded に加えて landed と pr だけを同居させない (verify-slot-queue.mjs の EXCLUDED_BESIDE)。 */
+  prOnly: { abandon: true, seniority: true },
 });
 
 function mulberry32(seed) {
@@ -51,8 +56,8 @@ export function simulate(policy, { seed = 1, agents = 7, hours = 8, slots = 2, v
   const random = mulberry32(seed);
   const order = policy.order ?? { merge: 'merge', pr: 'pr', landed: 'landed' };
   const queueOptions = { ...QUEUE_OPTIONS, slots };
-  const stats = { merges: 0, predictedRuns: 0, wastedRuns: 0, abandonedInQueue: 0, redo: [], latency: [], prWait: [], maxRunning: 0, landedSharedMs: 0 };
-  const exclusive = policy.exclusivePriorities ? { exclusivePriorities: policy.exclusivePriorities } : {};
+  const stats = { merges: 0, predictedRuns: 0, wastedRuns: 0, abandonedInQueue: 0, redo: [], latency: [], prWait: [], maxRunning: 0, landedSharedMs: 0, landedBesidePrMs: 0 };
+  const exclusion = policy.excludedBeside ? { excludedBeside: policy.excludedBeside } : {};
   let now = 0;
   let main = 0;
   let nextPid = 1;
@@ -85,7 +90,7 @@ export function simulate(policy, { seed = 1, agents = 7, hours = 8, slots = 2, v
       if (job.startedAt !== undefined) {
         continue;
       }
-      const go = policy.legacy ? isRunning(job) : planSlots(jobs, { ...queueOptions, ...exclusive, selfPid: job.pid, now }).acquire;
+      const go = policy.legacy ? isRunning(job) : planSlots(jobs, { ...queueOptions, ...exclusion, selfPid: job.pid, now }).acquire;
       if (go) {
         job.acquiredAt = policy.legacy ? undefined : now;
         job.startedAt = now;
@@ -98,8 +103,10 @@ export function simulate(policy, { seed = 1, agents = 7, hours = 8, slots = 2, v
     }
     const started = jobs.filter((job) => job.startedAt !== undefined);
     stats.maxRunning = Math.max(stats.maxRunning, started.length);
-    // 着地後検証が他の verify と同時に走っていた刻みの数 (ミリ秒。bdboard-xdk8 の独占なら 0)。
-    stats.landedSharedMs += started.length > 1 && started.some((job) => job.kind === 'landed') ? tickSecs * 1000 : 0;
+    // 着地後検証が他の verify (どれでも / pr) と同時に走っていた時間 (ミリ秒。bdboard-xdk8)。
+    const landedRunning = started.some((job) => job.kind === 'landed');
+    stats.landedSharedMs += landedRunning && started.length > 1 ? tickSecs * 1000 : 0;
+    stats.landedBesidePrMs += landedRunning && started.some((job) => job.kind === 'pr') ? tickSecs * 1000 : 0;
   };
 
   const finishJob = (job) => {
@@ -171,6 +178,7 @@ function summarize(stats) {
     prWaitMaxMin: round1(max(stats.prWait) / MIN),
     maxRunning: stats.maxRunning,
     landedSharedMin: round1(stats.landedSharedMs / MIN),
+    landedBesidePrMin: round1(stats.landedBesidePrMs / MIN),
   };
 }
 

@@ -34,12 +34,16 @@
 //     上限を 1 本超えうるため
 // 新形式は走り出すときに acquiredAt を書く (旧プロセスは知らないフィールドを無視する)。
 //
-// bdboard-xdk8: 独占 (exclusive)。landed は「何本で走るか」も変える — 順番が来ても、走っている holder が
-// 1 本でも残っていれば始めず (抜けるのを待つ)、走っている間は他の誰も始めない。2026-10-04 に、着地後検証が
-// verify スロット 2 本 + スロット外の負荷 (load average 48〜111、10 コア) のなかで 5000ms タイムアウト等の偽の
-// failure を 2 回出し、main-broken の枠で全マージが止まったため。並び順 (仮想到着時刻) は変えない: landed より
-// 前に並んでいる待ち手は従来どおり先に始めてよく、landed より後ろの待ち手は landed が終わるまで始めない。
-// 旧形式・この変更より前の新形式 (独占を知らないスクリプト = rebase していない worktree) は landed を 1 本と
+// bdboard-xdk8: 同居させない組 (EXCLUDED_BESIDE)。landed (着地後検証) は pr (PR 前の手元 verify) と同時に
+// 走らせない — 順番が来ても pr が走っていれば始めず (抜けるのを待つ)、landed が走っている間は pr を始めない。
+// 2026-10-04 に、着地後検証が verify スロット 2 本 + スロット外の負荷 (load average 48〜111、10 コア) のなかで
+// 5000ms タイムアウト等の偽の failure を 2 回出し、main-broken の枠で全マージが止まった。その時間帯に landed と
+// 同居していたのは pr だけで、merge (着地予定ツリー) は 1 本も無かった。監査ログでは landed と merge の同居が
+// 約 12 回あり全部 success だったので、merge とは今までどおり枠を分け合う (landed の完全な独占は、7 エージェントの
+// シミュレーションでマージ数が 44.3 → 28.4、最大待ちが 88.5 → 263 分になる。docs/VERIFY.md「Priorities」)。
+// 並び順 (仮想到着時刻) は変えず、飛ばしもしない: 先頭から順に始め、同居させない相手 (走っている holder か、
+// この周に先に始める待ち手) が居る待ち手で止まる。その後ろは merge でも始めない (飛ばすと landed が飢える)。
+// 旧形式・この変更より前の新形式 (同居の規則を知らないスクリプト = rebase していない worktree) は landed を 1 本と
 // 数えて隣で走りうる。その分は今日までと同じ (悪くはならない) ので、移行の手当てはしない。
 // verify.mjs の import graph に入るので、古い Node でもパースできる構文に保つこと (bdboard-eu2k)。
 export const HOLDER_FORMAT = 2;
@@ -47,11 +51,23 @@ export const PRIORITY_RANK = Object.freeze({ landed: 0, merge: 1, pr: 2 });
 export const DEFAULT_PRIORITY = 'pr';
 export const TIER_STEP_MS = 4 * 60_000;
 export const MAX_SENIORITY_MS = 10 * 60_000;
-/** 独占して走る優先度 (bdboard-xdk8)。 */
-export const EXCLUSIVE_PRIORITIES = Object.freeze(['landed']);
+/** 優先度 → それと同時に走らせない優先度 (bdboard-xdk8)。関係は両向きに効く (conflict)。 */
+export const EXCLUDED_BESIDE = Object.freeze({ landed: Object.freeze(['pr']) });
 
 export function normalizePriority(value) {
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(PRIORITY_RANK, value) ? value : DEFAULT_PRIORITY;
+}
+
+/** a と b が同時に走ってはいけないか (excludedBeside をどちら向きに見ても)。 */
+export function conflict(a, b, excludedBeside = EXCLUDED_BESIDE) {
+  const first = normalizePriority(a.priority);
+  const second = normalizePriority(b.priority);
+  return (excludedBeside[first] ?? []).includes(second) || (excludedBeside[second] ?? []).includes(first);
+}
+
+/** 他の優先度を止める側か (landed。待ちの打ち切りを延ばす・表示を出し分けるのに使う。verify-slot.mjs)。 */
+export function excludesOthers(priority, excludedBeside = EXCLUDED_BESIDE) {
+  return (excludedBeside[normalizePriority(priority)] ?? []).length > 0;
 }
 
 function isCurrentFormat(holder) {
@@ -90,12 +106,13 @@ function isFiniteNumber(value) {
 
 /**
  * holders (生きている holder の一覧。自分を含む) から、自分が今走ってよいかを決める。
- * @returns {{ acquire: boolean, running: object[], queue: object[], position: number, stale: object[], exclusivePid: number | null }}
+ * @returns {{ acquire: boolean, running: object[], queue: object[], position: number, stale: object[], blocked: object | null }}
  *   running = 枠を使っているとみなす holder、queue = 待ち手の並び (先頭が次)、position = 自分の
- *   queue 内の順位 (1 始まり)、stale = staleTtlMs を超えて数から外した holder、exclusivePid = 自分を
- *   止めている独占の holder (走っている、または自分より前で順番を待っている。bdboard-xdk8) の pid (無ければ null)
+ *   queue 内の順位 (1 始まり)、stale = staleTtlMs を超えて数から外した holder、blocked = 自分 (または
+ *   自分より前の待ち手) が同居させない相手のせいで始められないとき、その組 { waiter, other, otherRunning }
+ *   (other = 走っている holder か、この周に先に始める待ち手。bdboard-xdk8。表示用)。無ければ null
  */
-export function planSlots(holders, { selfPid, slots, now, staleTtlMs, tierStepMs, maxSeniorityMs, exclusivePriorities = EXCLUSIVE_PRIORITIES }) {
+export function planSlots(holders, { selfPid, slots, now, staleTtlMs, tierStepMs, maxSeniorityMs, excludedBeside = EXCLUDED_BESIDE }) {
   const running = [];
   const waiting = [];
   const legacyWaiting = [];
@@ -123,42 +140,35 @@ export function planSlots(holders, { selfPid, slots, now, staleTtlMs, tierStepMs
   const queue = [...eligible, ...[...waiting.filter(blockedByLegacy), ...legacyWaiting].sort(byArrival)];
   // 他の holder から stale と見なされる年齢の待ち手は取らない (並び直してから)。
   const selfVisible = eligible.some((holder) => holder.pid === selfPid && now - holder.joinedAt <= staleTtlMs);
-  const isExclusive = (holder) => exclusivePriorities.includes(normalizePriority(holder.priority));
-  const starters = pickStarters(eligible, running, slots, isExclusive);
-  // 自分を止めている独占の holder (表示用): 走っているもの、または自分より前で順番を待っているもの。
-  const runningExclusive = running.find(isExclusive);
-  const exclusiveAhead = eligible.slice(0, Math.max(0, eligible.findIndex((holder) => holder.pid === selfPid))).find(isExclusive);
-  const blocker = runningExclusive ?? exclusiveAhead;
+  const picked = pickStarters(eligible, running, slots, (a, b) => conflict(a, b, excludedBeside));
+  const selfIndex = eligible.findIndex((holder) => holder.pid === selfPid);
+  const blocked = picked.blocked !== null && selfIndex >= picked.blocked.index ? picked.blocked : null;
   return {
-    acquire: selfVisible && starters.includes(selfPid),
+    acquire: selfVisible && picked.starters.some((holder) => holder.pid === selfPid),
     running,
     queue,
     position: queue.findIndex((holder) => holder.pid === selfPid) + 1,
     stale,
-    exclusivePid: blocker ? blocker.pid : null,
+    blocked: blocked && { waiter: blocked.waiter, other: blocked.other, otherRunning: blocked.otherRunning },
   };
 }
 
 /**
- * 並び順 (eligible) の先頭から「今始めてよい待ち手」を選ぶ。空き枠 = slots - 走っている数で、独占の
- * holder が走っていれば 0。独占の待ち手は、走っている holder も先に始める待ち手も無いときだけ (= 1 本で)
- * 始め、それより後ろの待ち手はその周には誰も始めない (bdboard-xdk8)。
+ * 並び順 (eligible) の先頭から「今始めてよい待ち手」を選ぶ (bdboard-xdk8)。空き枠 = slots - 走っている数。
+ * 順に見て、空き枠が尽きたら止まり、走っている holder かこの周に選んだ待ち手と同居させない待ち手でも止まる
+ * (順番は飛ばさない)。blocked = 後者で止まったときの { index, waiter, other, otherRunning }。
  */
-function pickStarters(eligible, running, slots, isExclusive) {
-  let free = running.some(isExclusive) ? 0 : slots - running.length;
+function pickStarters(eligible, running, slots, conflicts) {
+  let free = slots - running.length;
   const starters = [];
-  for (const holder of eligible) {
-    if (isExclusive(holder)) {
-      if (running.length === 0 && starters.length === 0) {
-        starters.push(holder.pid);
-      }
-      break;
+  for (let index = 0; index < eligible.length && free > 0; index += 1) {
+    const waiter = eligible[index];
+    const other = running.find((holder) => conflicts(waiter, holder)) ?? starters.find((holder) => conflicts(waiter, holder));
+    if (other !== undefined) {
+      return { starters, blocked: { index, waiter, other, otherRunning: running.includes(other) } };
     }
-    if (free <= 0) {
-      break;
-    }
-    starters.push(holder.pid);
+    starters.push(waiter);
     free -= 1;
   }
-  return starters;
+  return { starters, blocked: null };
 }
