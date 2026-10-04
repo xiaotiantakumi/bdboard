@@ -37,6 +37,13 @@ const FINGERPRINT_KIND_MARKER = /^(?:[ABC]|mass-occurrence):/;
  * 印を残すのは、"B:/Users/…" の "B:" を Windows のドライブ文字として読んで印ごと消さないため。
  * 全体をもう一度畳むのは、印の形に見える文字列が実はドライブ文字のパス ("C:\Users\u\x:abcd") だった場合のため。
  * 印が無い指紋 ("/Users/u/x:abcd") は、最初の ":" で切らず全体を畳む。
+ *
+ * 取りこぼし (docs/ISSUE-REPORTING.md、bdboard-4lea)。どちらも受け取りを通らず、畳んでいない出どころが保存先へ
+ * 直接書かれた指紋だけで起きる (受け取りは出どころを先に畳むので、"B:~/hook.ps1:abcd" の形で保存される):
+ *   - 印の文字と同じドライブ文字のルート直下のパス ("B:\Users\u\hook.ps1:abcd") は、全体をドライブ付きのパスと読むので
+ *     "~/hook.ps1:abcd" になり、印 ("B:") が消える。ユーザー名は残らない。印か Windows のドライブ文字かは、字面だけでは区別できない。
+ *   - 印の文字と同じドライブ文字の、空白を含む名前 ("C:/Users/John Smith/x:abcd") は、印を残して後ろを POSIX の名前
+ *     (空白で止まる) として畳むので "C:~/ Smith/x:abcd" になり、空白より後ろの名前の一部が残る。
  */
 function foldFingerprint(fingerprint: string): string {
   const marker = FINGERPRINT_KIND_MARKER.exec(fingerprint)?.[0] ?? '';

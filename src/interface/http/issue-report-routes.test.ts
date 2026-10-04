@@ -223,7 +223,8 @@ describe('POST /api/issue-reports/drafts — fields that reach the public title 
   );
 
   // zod の既定の文言は入力の値をそのまま含む (z.enum の invalid_enum_value は "received '<値>'")。400 の本文に
-  // 理由 (details) を載せると、トンネルの書き込み側にも値が戻る。だから固定の文言だけを返す。
+  // 理由 (details) を載せると、書き込んだ側とログへ値が戻る (受け取りはローカル直アクセスのみ。トンネルの話ではない)。
+  // だから固定の文言だけを返す。
   it.each([
     ['a bad kind that looks like a path', { kind: '/Users/example-user/secret-token-abc123' }],
     ['a bad kind', { kind: 'secret-token-abc123' }],
@@ -266,7 +267,8 @@ describe('POST /api/issue-reports/drafts — project.name is a display field (cl
     ['a carriage return and a line separator', 'a\r\nb\u2028c', 'a b c'],
     ['a bidi override', 'proj\u202Eevil', 'projevil'],
     ['a BOM and a zero-width space', '\uFEFFproj\u200B', 'proj'],
-    ['a Hangul filler', 'pro\u3164j', 'proj'],
+    ['a Hangul filler (it shows as a blank, so it becomes a space)', 'pro\u{3164}j', 'pro j'],
+    ['a zero-width joiner and a zero-width space stay stripped, not spaced', 'pro\u{200D}\u{200B}j', 'proj'],
     ['surrounding spaces', '  proj  ', 'proj'],
     // パスの手前の区切りになる文字は、取り除かず空白にしてから畳む: つなげると前の語にパスが貼り付いて畳めない
     ['a tab before a home path', 'proj\t/Users/example-user/proj', 'proj ~/proj'],
@@ -274,6 +276,13 @@ describe('POST /api/issue-reports/drafts — project.name is a display field (cl
     ['a BOM before a home path', 'proj\uFEFF/Users/example-user/proj', 'proj ~/proj'],
     ['a line separator before a Windows home path', 'proj\u2028C:\\Users\\example-user\\proj', 'proj ~/proj'],
     ['a tab and a zero-width space inside the path word', 'proj\t/Us\u200Bers/example-user/proj', 'proj ~/proj'],
+    // 画面では空白に見える文字は空白に替えてから畳む (bdboard-4lea): 取り除くと前の語にパスが貼り付き、ユーザー名が残った
+    ['a Hangul filler before a home path', 'proj\u{3164}/Users/example-user/proj', 'proj ~/proj'],
+    ['a Hangul choseong filler before a home path', 'proj\u{115F}/Users/example-user/proj', 'proj ~/proj'],
+    ['a Hangul jungseong filler before a home path', 'proj\u{1160}/Users/example-user/proj', 'proj ~/proj'],
+    ['a halfwidth Hangul filler before a home path', 'proj\u{FFA0}/Users/example-user/proj', 'proj ~/proj'],
+    ['a Mongolian vowel separator before a home path', 'proj\u{180E}/Users/example-user/proj', 'proj ~/proj'],
+    ['a Hangul filler before a Windows home path', 'proj\u{3164}C:\\Users\\example-user\\proj', 'proj ~/proj'],
   ])('strips %s from the name instead of rejecting it', async (_label, name, expected) => {
     const { app, storage } = setup();
     const res = await app.request(DRAFTS, json(withProject(name)), LOCAL_ENV);
@@ -305,6 +314,17 @@ describe('POST /api/issue-reports/drafts — project.name is a display field (cl
     const detail = await (await app.request(`${DRAFTS}/${id}`, { headers: { ...CF_HEADERS } }, TUNNEL_ENV)).text();
     const payload = JSON.parse(detail) as { draft: { occurredProjects: Array<{ name: string }> } };
     expect(payload.draft.occurredProjects.map((entry) => entry.name)).toEqual(['~/proj']);
+    expect(detail).not.toContain('example-user');
+  });
+
+  it('shows a home path glued behind a Hangul filler as ~/proj to a tunnel reader (bdboard-4lea)', async () => {
+    const { app, storage } = setup();
+    const { id } = await createDraft(app, withProject('proj\u{3164}/Users/example-user/proj'));
+    expect([...storage.drafts.values()][0].occurredProjects[0].name).toBe('proj ~/proj');
+
+    const detail = await (await app.request(`${DRAFTS}/${id}`, { headers: { ...CF_HEADERS } }, TUNNEL_ENV)).text();
+    const payload = JSON.parse(detail) as { draft: { occurredProjects: Array<{ name: string }> } };
+    expect(payload.draft.occurredProjects.map((entry) => entry.name)).toEqual(['proj ~/proj']);
     expect(detail).not.toContain('example-user');
   });
 
@@ -709,6 +729,18 @@ describe('GET /api/issue-reports/drafts and /:id — screen API', () => {
       ['a fingerprint with no marker is folded as a whole', '/Users/example-user/x:abcd', '~/x:abcd'],
       ['a drive letter that is not a marker is folded as a whole', 'D:/Users/example-user/x:abcd', '~/x:abcd'],
       ['a marker followed by a Windows path', 'B:C:\\Users\\example-user\\x:abcd', 'B:~/x:abcd'],
+      // 取りこぼし (docs/ISSUE-REPORTING.md の「指紋の取りこぼし」、bdboard-4lea): 畳んでいない出どころが保存先へ直接書かれた
+      // 場合だけ。字面では印かドライブ文字か区別できない。
+      [
+        'caveat: a root-relative Windows source on a marker drive reads as a drive path and loses the marker (no user name left)',
+        'B:\\Users\\example-user\\hook.ps1:abcd',
+        '~/hook.ps1:abcd',
+      ],
+      [
+        'caveat: a name with a space under a marker drive keeps the part after the space',
+        'C:/Users/example user/x:abcd',
+        'C:~/ user/x:abcd',
+      ],
       ['a mass-occurrence fingerprint is left as it is', 'mass-occurrence:B:2026-10-04T12', 'mass-occurrence:B:2026-10-04T12'],
       ['an A fingerprint with a plain slug is left as it is', 'A:jq-missing', 'A:jq-missing'],
     ])('folds the fingerprint in the list and the tunnel detail: %s', async (_label, fingerprint, expected) => {
@@ -834,6 +866,31 @@ describe('PATCH /api/issue-reports/drafts/:id/dismiss', () => {
     // 見える文字が一つでもあれば通る (絵文字の連結もそのまま)
     const ok = await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason: '\u200D\u{1F469}\u200D\u{1F4BB}' }), LOCAL_ENV);
     expect(ok.status).toBe(200);
+  });
+
+  // bdboard-4lea: 結合文字 (\p{M}) と点字の空白だけの理由は、手前に付く文字が無く何も見えないので 400。
+  it('400s a reason made only of combining marks, variation selectors or the braille blank, and keeps the draft pending', async () => {
+    const { app, storage } = setup();
+    const { id } = await createDraft(app);
+    for (const reason of [
+      '\u{0301}', '\u{FE0F}', '\u{034F}', '\u{2800}', '\u{17B4}', '\u{E0100}', ' \u{FE0F}\u{200D}\u{2800} ', '\u{0301}\u{0301}',
+    ]) {
+      const res = await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason }), LOCAL_ENV);
+      expect(res.status, JSON.stringify(reason)).toBe(400);
+      expect(await res.json()).toEqual({ error: 'invalid request body' });
+    }
+    expect(storage.drafts.get(id)?.status).toBe('pending');
+    expect(storage.drafts.get(id)?.dismissReason).toBeUndefined();
+  });
+
+  it('still accepts emoji sequences and accented text as a reason', async () => {
+    const { app, storage } = setup();
+    for (const reason of ['\u{200D}\u{1F469}\u{200D}\u{1F4BB}', 'cafe\u{0301}', 'e\u{0301}', '\u{2764}\u{FE0F}']) {
+      const { id } = await createDraft(app, { ...DRAFT_BODY, source: `s-${[...reason].length}-${reason.codePointAt(0)}.sh` });
+      const res = await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason }), LOCAL_ENV);
+      expect(res.status, JSON.stringify(reason)).toBe(200);
+      expect(storage.drafts.get(id)?.dismissReason).toBe(reason);
+    }
   });
 
   it('does not echo the submitted reason in a 400', async () => {
