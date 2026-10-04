@@ -149,13 +149,18 @@ describe('createDraftRetention', () => {
   });
 
   describe('while pinned at the cap (bdboard-krvf: a survey reads every draft.json, seconds at the 1 GiB worst case)', () => {
-    /** 開いている下書きだけで上限ちょうど: 測り直しても空けられない。 */
-    function pinnedAtCap(options: { resurveyGapMaxMs?: number } = {}) {
-      const storage = stubStorage({ drafts: [{ id: '1-aaaaaaaaaaaaaaaa', bytes: 100 }], totalBytes: 100, unmeasured: [] });
+    /**
+     * 既定は、開いている下書き 1 件だけで上限ちょうど (100 バイト): 測り直しても空けられない。
+     * drafts を渡すと一覧を差し替える (合計は大きさの和)。
+     */
+    function pinnedAtCap(options: { resurveyGapMaxMs?: number; maxTotalBytes?: number; drafts?: DraftFootprint[] } = {}) {
+      const { maxTotalBytes = 100, drafts = [{ id: '1-aaaaaaaaaaaaaaaa', bytes: 100 }], ...rest } = options;
+      const storage = stubStorage({ drafts, totalBytes: drafts.reduce((sum, draft) => sum + draft.bytes, 0), unmeasured: [] });
       let nowMs = NOW.getTime();
-      const retention = createDraftRetention({ storage, now: () => new Date(nowMs), maxTotalBytes: 100, warn: vi.fn(), ...options });
+      const retention = createDraftRetention({ storage, now: () => new Date(nowMs), maxTotalBytes, warn: vi.fn(), ...rest });
       return { storage, retention, at: (elapsedMs: number) => { nowMs = NOW.getTime() + elapsedMs; } };
     }
+    const HOUR = 60 * 60 * 1000;
 
     it('doubles the gap after each survey that could not make room, and stops at the maximum', async () => {
       const { storage, retention, at } = pinnedAtCap({ resurveyGapMaxMs: 300_000 });
@@ -180,7 +185,6 @@ describe('createDraftRetention', () => {
     it('stops doubling at one hour by default', async () => {
       const { storage, retention, at } = pinnedAtCap();
       const MINUTE = 60_000;
-      const HOUR = 60 * MINUTE;
       // 測る時刻: 0 → +2 分 → +4 分 → +8 分 → +16 分 → +32 分。その次は +64 分ではなく上限の +1 時間。
       const surveyAt = [0, 2 * MINUTE, 6 * MINUTE, 14 * MINUTE, 30 * MINUTE, 62 * MINUTE];
       for (const [index, elapsed] of surveyAt.entries()) {
@@ -250,6 +254,91 @@ describe('createDraftRetention', () => {
       at(180_000);
       expect(await retention.ensureRoom(10)).toBe(true);
       expect(storage.survey).toHaveBeenCalledTimes(3); // 失敗のあとは 1 分で試す
+    });
+
+    it('does not go back to the base gap for a write that fits at once: a small write passing must not undo the backoff of a large one', async () => {
+      const { storage, retention, at } = pinnedAtCap({ maxTotalBytes: 110 }); // 合計 100: 5 バイトは入り、20 バイトは入らない
+      expect(await retention.ensureRoom(20)).toBe(false); // 測る (1 回目): 張り付いた。次は 2 分後
+      at(1000);
+      expect(await retention.ensureRoom(5)).toBe(true); // 早い道: 測らずに通す。間隔は戻さない
+      at(60_000);
+      expect(await retention.ensureRoom(20)).toBe(false);
+      expect(storage.survey).toHaveBeenCalledTimes(1); // 戻していれば、ここで測り直している
+      at(120_000);
+      expect(await retention.ensureRoom(20)).toBe(false);
+      expect(storage.survey).toHaveBeenCalledTimes(2);
+    });
+
+    it('goes back to the base gap when room comes from the last survey list without a new survey', async () => {
+      const { storage, retention, at } = pinnedAtCap({
+        drafts: [dismissedFootprint('1-aaaaaaaaaaaaaaaa', 9, 50), { id: '2-bbbbbbbbbbbbbbbb', bytes: 50 }],
+      });
+      // 空けられるのは今書いている下書き自身だけ: 測ったのに空けられず、張り付いた (次は 2 分後)。
+      expect(await retention.ensureRoom(10, '1-aaaaaaaaaaaaaaaa')).toBe(false);
+      at(1000); // 2 分の間隔の内側: 測らない
+      expect(await retention.ensureRoom(10)).toBe(true); // 直近の一覧にある見送り済みを消して空ける (新しい測定なし)
+      expect(storage.survey).toHaveBeenCalledTimes(1);
+      expect(storage.remove).toHaveBeenCalledWith('1-aaaaaaaaaaaaaaaa');
+      retention.recordWrite(50); // また満杯
+
+      at(60_000); // 最初の測定から 1 分
+      await retention.ensureRoom(10);
+      expect(storage.survey).toHaveBeenCalledTimes(2); // 戻っていなければ 2 分待つはず
+    });
+
+    it('goes back to the base gap when the hourly prune finds the directory smaller than it was tracked (deleted by hand)', async () => {
+      const { storage, retention, at } = pinnedAtCap();
+      await retention.ensureRoom(10); // 測る (1 回目)
+      at(120_000);
+      await retention.ensureRoom(10); // 測る (2 回目): 次は 4 分後
+      // 手で消された: 掃除の棚卸しは、持っていた合計 (100) より小さい 50 を実測する。
+      storage.survey.mockResolvedValue({ drafts: [{ id: '1-aaaaaaaaaaaaaaaa', bytes: 50 }], totalBytes: 50, unmeasured: [] });
+      at(HOUR);
+      await retention.pruneNow();
+      expect(storage.survey).toHaveBeenCalledTimes(3);
+
+      // 暴走がまた満杯にした。
+      storage.survey.mockResolvedValue({ drafts: [{ id: '1-aaaaaaaaaaaaaaaa', bytes: 100 }], totalBytes: 100, unmeasured: [] });
+      retention.recordWrite(50);
+      at(HOUR + 60_000);
+      expect(await retention.ensureRoom(10)).toBe(false);
+      expect(storage.survey).toHaveBeenCalledTimes(4); // 戻っていなければ 4 分待つはず
+    });
+
+    it('goes back to the base gap when the prune removes an expired draft', async () => {
+      const { storage, retention, at } = pinnedAtCap({
+        drafts: [dismissedFootprint('1-aaaaaaaaaaaaaaaa', 40, 50), { id: '2-bbbbbbbbbbbbbbbb', bytes: 50 }],
+      });
+      expect(await retention.ensureRoom(10, '1-aaaaaaaaaaaaaaaa')).toBe(false); // 張り付いた (次は 2 分後)
+      at(60_000);
+      await retention.pruneNow(); // 期限 (30 日) を過ぎた 1 件を消す。実測の合計は持っていた合計と同じ 100
+      expect(storage.remove).toHaveBeenCalledWith('1-aaaaaaaaaaaaaaaa');
+      expect(storage.survey).toHaveBeenCalledTimes(2);
+
+      retention.recordWrite(50); // また満杯
+      at(120_000); // 掃除の測定から 1 分
+      await retention.ensureRoom(10);
+      expect(storage.survey).toHaveBeenCalledTimes(3); // 戻っていなければ、掃除の測定から 2 分待つはず
+    });
+
+    it('keeps the stretched gap after a prune that freed nothing, so the backoff does not restart every hour', async () => {
+      const { storage, retention, at } = pinnedAtCap();
+      await retention.ensureRoom(10); // 測る (1 回目)
+      at(120_000);
+      await retention.ensureRoom(10); // 測る (2 回目): 次は 4 分後
+      at(HOUR);
+      await retention.pruneNow(); // 測る (3 回目): 合計は 100 のまま、期限切れも無い
+      expect(storage.survey).toHaveBeenCalledTimes(3);
+
+      at(HOUR + 60_000);
+      expect(await retention.ensureRoom(10)).toBe(false);
+      expect(storage.survey).toHaveBeenCalledTimes(3); // 戻していれば、ここで測り直している
+      at(HOUR + 240_000 - 1);
+      await retention.ensureRoom(10);
+      expect(storage.survey).toHaveBeenCalledTimes(3);
+      at(HOUR + 240_000); // 間隔は 4 分のまま
+      await retention.ensureRoom(10);
+      expect(storage.survey).toHaveBeenCalledTimes(4);
     });
   });
 

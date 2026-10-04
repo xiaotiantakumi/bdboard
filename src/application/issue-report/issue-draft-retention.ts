@@ -29,7 +29,7 @@ export interface DraftRetentionOptions {
   readonly retentionMs?: number;
   /** 受け取りのついでの掃除の最短の間隔 (ms)。既定は 1 時間。 */
   readonly pruneIntervalMs?: number;
-  /** 容量を測り直す最短の間隔 (ms)。既定は 1 分。 */
+  /** 容量を測り直す最短の間隔 (ms)。既定は 1 分。0 にすると、張り付いたときの間隔の延長 (resurveyGapMaxMs) も効かない。 */
   readonly resurveyGapMs?: number;
   /** 測り直しても空けられないあいだ、間隔を倍々に伸ばす上限 (ms)。既定は 1 時間。resurveyGapMs より小さければ resurveyGapMs。 */
   readonly resurveyGapMaxMs?: number;
@@ -58,7 +58,7 @@ export interface DraftRetention {
   /** 書き込みに成功したあとの差分 (増えたバイト数。縮んだら負)。実測の合計をずらさず保つ。 */
   recordWrite(deltaBytes: number): void;
   /**
-   * 空けられる下書き (終端の状態) が増えたかもしれない操作 (見送り) のあとに呼ぶ。上限に張り付いて伸ばした
+   * 空けられる下書き (終端の状態) が増えたかもしれない操作 (見送り・投稿) のあとに呼ぶ。上限に張り付いて伸ばした
    * 測り直しの間隔を最短 (resurveyGapMs) に戻す。測り直し自体はここでは走らない。
    */
   noteFreeableDraft(): void;
@@ -97,8 +97,9 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
   /**
    * 続けて「測り直したのに空けられなかった」回数 (bdboard-krvf)。上限に張り付いて断り続けているあいだ、測り直しの間隔を
    * resurveyGapMs × 2^n (resurveyGapMaxMs まで) に伸ばす: 1 GiB の最悪の形では棚卸し 1 回が数秒かかり、その間
-   * 受け取りは mutex で待つので、結果の変わらない測り直しを毎分は繰り返さない。空いた・見送りがあった・測れなかった
-   * (fail-open) ときは 0 に戻す。
+   * 受け取りは mutex で待つので、結果の変わらない測り直しを毎分は繰り返さない。0 に戻すのは、ensureRoom で空けられた・
+   * 測れず通した (fail-open)・見送り (noteFreeableDraft)・掃除が空きを見つけた (pruneNow) とき。空き容量が十分で
+   * 通した場合 (ensureRoom の早い道) と、測らずに断っただけの場合は、数えも戻しもしない。
    */
   let pinnedSurveys = 0;
   /** 同じ警告を何度も出さない (上限に張り付いたまま受け取りが続くと、毎回同じ失敗をしうる)。 */
@@ -136,7 +137,8 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
     }
   }
 
-  async function removeAll(targets: readonly DraftFootprint[]): Promise<void> {
+  /** 消せたものの数を返す (消せなかったものは警告して残す)。 */
+  async function removeAll(targets: readonly DraftFootprint[]): Promise<number> {
     const removed = new Set<string>();
     for (const target of targets) {
       try {
@@ -148,6 +150,7 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
       }
     }
     snapshot = snapshot.filter((draft) => !removed.has(draft.id));
+    return removed.size;
   }
 
   /** いまの測り直しの間隔: 張り付いた回数だけ倍にして、resurveyGapMaxMs で止める。 */
@@ -155,7 +158,11 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
     return Math.min(resurveyGapMaxMs, resurveyGapMs * 2 ** Math.min(pinnedSurveys, MAX_GAP_DOUBLINGS));
   }
 
-  /** 測り終えた(または間隔内で測らなかった)あとの、上限に収めるための処理。収まれば true。 */
+  /**
+   * 測り終えた(または間隔内で測らなかった)あとの、上限に収めるための処理。収まれば true。
+   * 不変条件 (bdboard-krvf): snapshot は張り付き中、最長 1 時間古い。それでも消す相手の選択に使ってよいのは、終端の状態は
+   * 戻らない (終端の下書きには回数だけ足す) から。見送りの取り消しなど開き直す操作を足すなら、選ぶ前に測り直すこと。
+   */
   async function freeRoomFor(incomingBytes: number, keepId: string | undefined): Promise<boolean> {
     if (fits(incomingBytes)) return true;
     const candidates = keepId === undefined ? snapshot : snapshot.filter((draft) => draft.id !== keepId);
@@ -168,8 +175,15 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
   async function pruneNow(): Promise<void> {
     const nowMs = deps.now().getTime();
     lastPruneAtMs = nowMs;
+    const totalBefore = totalBytes;
     if (!(await takeSnapshot())) return;
-    await removeAll(selectExpiredDrafts(snapshot, nowMs, retentionMs));
+    // 棚卸し直後の実測 (期限切れを消す前)。持っていた合計より小さい = 外で手で消された。
+    const freedOutOfBand = totalBefore !== undefined && totalBytes !== undefined && totalBytes < totalBefore;
+    const removedCount = await removeAll(selectExpiredDrafts(snapshot, nowMs, retentionMs));
+    // 掃除の棚卸しが空きを見つけたときだけ、張り付いて伸ばした間隔を戻す: 期限切れを消せた、または外で消されていた
+    // (実測の合計が、書き込みの差分を足し続けた棚卸し前の合計より小さい)。何も空いていない掃除では戻さない
+    // (毎時戻すと、1 時間に 6 回測り直す元の木阿弥)。
+    if (removedCount > 0 || freedOutOfBand) pinnedSurveys = 0;
   }
 
   return {
