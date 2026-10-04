@@ -32,6 +32,10 @@ export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRout
 
   const issueReportsRouter = createIssueReportRoutes({ service, writeAccess: deps.writeAccess });
 
+  // 起動時の掃除 (bdboard-00qh): 見送り・投稿済みで 30 日を過ぎた下書きを画像ごと消す。待たない・失敗しても
+  // 起動は止めない (service が警告だけ出して投げない)。開いている (pending) 下書きは消さない。
+  void service.pruneOnStart();
+
   log(`Issue report drafts: storing under ${draftsDir}`);
 
   return { issueReportsRouter };

@@ -50,6 +50,12 @@ import {
 export const ISSUE_REPORT_BODY_MAX_BYTES = 1024 * 1024;
 const DISMISS_BODY_MAX_BYTES = 16 * 1024;
 
+/**
+ * 受け取りと画像の追加が、issue-drafts の合計容量の上限 (終端の下書きを消しても空かない) に当たったときの
+ * 本文 (507)。`code` は機械が読む固定の値 (bdboard-00qh、docs/ISSUE-REPORTING.md 4節)。
+ */
+const STORAGE_FULL_BODY = { error: 'issue draft storage is full', code: 'storage-full' } as const;
+
 const SINGLE_LINE_MESSAGE = 'must be a single line without control, invisible or format characters';
 
 /**
@@ -154,6 +160,7 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
 
     const result = await service.receive(parsed.data);
     if (!result.ok) {
+      if (result.reason === 'storage-full') return c.json(STORAGE_FULL_BODY, 507);
       return c.json(
         { error: 'catalogSlug (kind A) or source (kind B/C) is required to fingerprint the report' },
         400,
@@ -212,9 +219,19 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
 
     const result = await service.addImage(id, extensionForMimeType(mimeType), decoded);
     if (!result.ok) {
-      return result.reason === 'not-found'
-        ? c.json({ error: 'draft not found', id }, 404)
-        : c.json({ error: `image limit reached (max ${ISSUE_DRAFT_MAX_IMAGES} per draft)` }, 409);
+      switch (result.reason) {
+        case 'not-found':
+          return c.json({ error: 'draft not found', id }, 404);
+        case 'storage-full':
+          return c.json(STORAGE_FULL_BODY, 507);
+        case 'not-pending':
+          return c.json(
+            { error: 'images can only be added to a pending draft', code: 'draft-not-pending', status: result.status },
+            409,
+          );
+        case 'limit-reached':
+          return c.json({ error: `image limit reached (max ${ISSUE_DRAFT_MAX_IMAGES} per draft)` }, 409);
+      }
     }
     return c.json({ image: toImageDto(id, result.image) }, 201);
   });

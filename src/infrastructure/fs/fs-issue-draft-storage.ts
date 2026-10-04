@@ -5,6 +5,7 @@ import { ISSUE_DRAFT_MAX_JSON_BYTES, isDraftId, type IssueDraft } from '../../do
 import { draftJsonBytes, serializeDraft } from '../../domain/issue-draft-size.js';
 import { draftSchema } from './issue-draft-schema.js';
 import { DRAFT_READ_RETRY_DELAYS_MS, createDraftFileReader, sleepForMs } from './issue-draft-file-reader.js';
+import { DRAFT_FILE, IMAGES_DIR, createFsDraftFootprints } from './fs-issue-draft-footprint.js';
 import type {
   DraftListing,
   IssueDraftStoragePort,
@@ -22,8 +23,6 @@ import type {
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
-const DRAFT_FILE = 'draft.json';
-const IMAGES_DIR = 'images';
 /** このストアが採番する画像のファイル名 (<epochMs>-<16桁hex>.<ext>)。.DS_Store などの迷い込んだファイルは画像に数えない。 */
 const IMAGE_FILE_NAME_PATTERN = /^[0-9]{1,20}-[0-9a-f]{16}\.[a-z0-9]{1,8}$/;
 
@@ -176,6 +175,14 @@ export function createFsIssueDraftStorage(
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 
+  async function getDraft(id: string): Promise<IssueDraft | undefined> {
+    const result = await readAndReport(id);
+    return result.kind === 'ok' ? result.draft : undefined;
+  }
+
+  // 保持期限と容量のための棚卸しと削除 (bdboard-00qh)。draft.json を読むときの扱いは get と同じ。
+  const footprints = createFsDraftFootprints({ baseDir: resolvedBaseDir, draftDir, readDraft: getDraft });
+
   return {
     async list() {
       return (await scan()).drafts;
@@ -183,10 +190,9 @@ export function createFsIssueDraftStorage(
 
     scan,
 
-    async get(id) {
-      const result = await readAndReport(id);
-      return result.kind === 'ok' ? result.draft : undefined;
-    },
+    ...footprints,
+
+    get: getDraft,
 
     async save(draft) {
       const dir = draftDir(draft.id);
