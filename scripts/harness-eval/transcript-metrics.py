@@ -46,13 +46,28 @@ M11 (評価手順 v2 の「続行と結末」) の読み方:
     resumes とは違い、80 に届いていない区切りの後の再開は数えない。
   - ends_on_breaker = 最後の区切りがブレーカー到達か (結末の分類に使う)。
   - 結末 (マージ済みか・PR 未マージか・放棄か) は M4 の first-parent 一覧と bd comments が要り、transcript
-    だけでは出ない。ここでは description の `Worker: <短縮ID>` から ticket (bdboard-<短縮ID>、無ければ null)
-    と ends_on_breaker までを出し、分類は手順 B 側が行う。`Worker:` が付いた description は一部だけ。
+    だけでは出ない。ここでは ticket と ends_on_breaker までを出し、分類は手順 B 側が行う。
+  - ticket (確定) は description の `Worker: <短縮ID>` から (bdboard-<短縮ID>、無ければ null)。`Worker:` が付いた
+    description は一部だけなので、外れたときは先頭の短縮 ID を ticket_hint (未確認、bdboard-<短縮ID>、無ければ
+    null) に出す (bdboard-5iwh)。形は `<短縮ID>: …` と `Implement|Fix <短縮ID> …` (`bdboard-` 付きも可)。
+    語として ID の形をしているだけで bd に実在するかは見ていないので、手順 B 側が `bd show` で確かめてから分類する。
+    ticket が取れたときの ticket_hint は null (二重に出さない)。
+  - 注意 (bdboard-5iwh): bdboard-worker が 80 往復で打ち切られたあと、議長は「作業を進めず報告だけして終了して」と
+    SendMessage することがある (bdboard-worker.md の「budget 停止を受けた呼び出し元」)。これも isMeta の再開行と
+    して現れ、上の定義では continuations に数えられる。本物の続行 (作業を再開させる指示) と「報告だけ」の再開は
+    transcript の形では区別できないので、continuations は「ブレーカー到達の直後に再開が来た数」であって「作業を
+    続けさせた数」ではない (上限)。区別が要るときは bd のコメント (milestone / PR) と突き合わせる。
 
-拒否されたコマンドの先頭 2 語は許可リスト方式で伏せる。1 語目は ^[A-Za-z][A-Za-z0-9._-]{0,23}$、2 語目は
-^-{0,2}[a-z][a-z-]{0,19}$ に合うときだけ出し、合わない語は … にする (URL の userinfo、NAME=値、-pPASS、
-引用符付きの値、記号や数字を含むトークンは出ない)。小文字とハイフンだけの 2 語目はサブコマンド名と区別できない
-ので出る。3 語目以降は出さない。
+拒否されたコマンドの先頭 2 語は許可リスト方式で伏せる。1 語目は ^[a-z][a-z0-9._-]{0,23}$ に合い、かつ数字を 3 つ
+以上含まないときだけ出す。2 語目は ^(?:--[a-z][a-z-]{0,19}|-[A-Za-z]{1,3}|[a-z][a-z-]{0,19})$ に合い、かつフラグ
+形 (-x / --name)、または 1 語目が SUBCOMMAND_CLIS (git / npm / bd …) の語、または 2 語目自体が SUBCOMMAND_CLIS
+の語 (`VAR=値 npm …` のように 1 語目が伏せられたとき) のときだけ出す。合わない語は … にする (URL の userinfo、
+NAME=値、-pPASS (-p は 1〜3 字のフラグまで)、`printf <値>` のような自由な引数、引用符付きの値、記号や数字を含む
+トークン、AKIA… / sk-… / xoxb-… 形のキーは出ない)。3 語目以降は出さない。
+
+サブエージェントの description (meta.json) は 40 字に切る前に語ごとに伏せる。`://` / `@` / `=` を含む語と、
+16 字以上で英字と数字が混ざる語 (`bdboard-<ID>` の形は除く) は … にする。ticket / ticket_hint もこの伏せた後の
+description から取るので、`Worker: <キー>` のような形でも秘密は出ない。
 """
 
 import argparse
@@ -74,15 +89,24 @@ TIMEOUT_RE = re.compile(r"Command timed out after\s+((?:\d+(?:\.\d+)?(?:ms|h|m|s
 DURATION_RE = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)", re.I)
 DENY_RE = re.compile(r"^Permission to use (\S+)(?: with command (.*))? has been denied\.?\s*$", re.S)
 TICKET_RE = re.compile(r"\bWorker:\s*(?:bdboard-)?([A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)")
-FIRST_WORD_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,23}$")
-SECOND_WORD_RE = re.compile(r"^-{0,2}[a-z][a-z-]{0,19}$")
+# 先頭の短縮 ID (bdboard-5iwh)。`<ID>: …` と `Implement|Fix <ID> …` の形。実在の確認は手順 B が bd show で行う。
+HINT_RE = re.compile(r"^(?:(?i:implement|fix)\s+)?(?:bdboard-)?([a-z0-9]{3,6}(?:\.[0-9]+)*)(?=[:\s]|$)")
+FIRST_WORD_RE = re.compile(r"^[a-z][a-z0-9._-]{0,23}$")
+FIRST_WORD_MAX_DIGITS = 2  # 数字を 3 つ以上含む 1 語目 (sk-…123、xoxb-1234-…) は伏せる
+SECOND_WORD_RE = re.compile(r"^(?:--[a-z][a-z-]{0,19}|-[A-Za-z]{1,3}|[a-z][a-z-]{0,19})$")
+# 2 語目がサブコマンド名になる CLI。ここに無い 1 語目 (printf / echo / mysql …) の 2 語目は、フラグ形でなければ伏せる。
+SUBCOMMAND_CLIS = frozenset(("aimix", "bd", "brew", "cargo", "claude", "codex", "docker", "gh", "git", "make", "npm",
+                             "npx", "pnpm", "yarn"))
+# description (meta.json) の語を伏せる条件。`bdboard-<ID>[.N]` の形だけは長くても出す。
+LONG_MIXED_WORD_LENGTH = 16
+TICKET_WORD_RE = re.compile(r"^bdboard-[a-z0-9]{3,6}(?:\.[0-9]+)*$")
 TOOL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,59}$")
 UNIT_SECONDS = {"ms": 0.001, "s": 1, "m": 60, "h": 3600}
 USAGE_FIELDS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
 PUBLIC_KEYS = ("agent_id", "agent_type", "model", "requested_model", "spawn_depth", "description", "hours", "first",
                "last", "tokens", "input_tokens", "cache_creation_input_tokens", "output_tokens", "turns",
                "incomplete_responses")
-WORKER_KEYS = ("agent_id", "ticket", "description", "hours", "turns", "segments", "breakers", "resumes",
+WORKER_KEYS = ("agent_id", "ticket", "ticket_hint", "description", "hours", "turns", "segments", "breakers", "resumes",
                "continuations", "ends_on_breaker")
 
 
@@ -139,15 +163,40 @@ def duration_seconds(text):
     return sum(float(number) * UNIT_SECONDS[unit.lower()] for number, unit in tokens)
 
 
+def first_word_shown(word):
+    return FIRST_WORD_RE.fullmatch(word) is not None and sum(ch.isdigit() for ch in word) <= FIRST_WORD_MAX_DIGITS
+
+
+def second_word_shown(first, word):
+    """2 語目は語の形に合い、かつフラグ形か、サブコマンドを取る CLI の後ろか、CLI 名そのもののときだけ出す。
+    `printf <値>` のように 1 語目が自由な引数を取るコマンドのとき、小文字だけの値をサブコマンド名と区別できない。"""
+    if SECOND_WORD_RE.fullmatch(word) is None:
+        return False
+    return word.startswith("-") or first in SUBCOMMAND_CLIS or word in SUBCOMMAND_CLIS
+
+
 def command_prefix(command):
     """拒否されたコマンドの先頭 2 語。許可リストに合う語だけ出し、それ以外は … にする (3 語目以降は出さない)。"""
     words = (command or "").split()[:2]
     if not words:
         return "(none)"
-    shown = [words[0] if FIRST_WORD_RE.fullmatch(words[0]) else MASK]
+    first = words[0] if first_word_shown(words[0]) else MASK
+    shown = [first]
     if len(words) > 1:
-        shown.append(words[1] if SECOND_WORD_RE.fullmatch(words[1]) else MASK)
+        shown.append(words[1] if second_word_shown(first, words[1]) else MASK)
     return " ".join(shown)
+
+
+def redact_word(word):
+    """description の 1 語。URL・メール・NAME=値 (`://` / `@` / `=`) と、16 字以上で英字と数字が混ざる語を … にする。"""
+    if "://" in word or "@" in word or "=" in word:
+        return MASK
+    mixed = len(word) >= LONG_MIXED_WORD_LENGTH and any(ch.isdigit() for ch in word) and any(ch.isalpha() for ch in word)
+    return MASK if mixed and not TICKET_WORD_RE.fullmatch(word) else word
+
+
+def redact_description(text):
+    return re.sub(r"\S+", lambda match: redact_word(match.group(0)), text)
 
 
 def read_meta(path):
@@ -158,11 +207,14 @@ def read_meta(path):
         value = None
     value = value if isinstance(value, dict) else {}
     depth = value.get("spawnDepth")
-    description = str(value.get("description") or "")
+    # 伏せるのは 40 字に切る前。ticket / ticket_hint も伏せた後の本文から取る (`Worker: <キー>` の形で秘密を出さない)。
+    description = redact_description(str(value.get("description") or ""))
     ticket = TICKET_RE.search(description)
+    hint = None if ticket else HINT_RE.match(description.lstrip())
     return {"agent_type": value.get("agentType") or "unknown", "requested_model": value.get("model") or "unknown",
             "spawn_depth": depth if isinstance(depth, int) else None, "description": description[:40],
-            "ticket": "bdboard-" + ticket.group(1) if ticket else None}
+            "ticket": "bdboard-" + ticket.group(1) if ticket else None,
+            "ticket_hint": "bdboard-" + hint.group(1) if hint else None}
 
 
 class Totals:
@@ -314,6 +366,9 @@ def build_result(totals, since, until, top):
                                  "breakers": sum(x["breakers"] for x in workers),
                                  "continuations": sum(x["continuations"] for x in workers),
                                  "resumes": sum(x["resumes"] for x in workers),
+                                 "with_ticket": sum(x["ticket"] is not None for x in workers),
+                                 "with_ticket_hint": sum(x["ticket_hint"] is not None for x in workers),
+                                 "without_ticket": sum(x["ticket"] is None and x["ticket_hint"] is None for x in workers),
                                  "items": [pick(x, WORKER_KEYS) for x in workers]},
     }
 
@@ -350,12 +405,16 @@ def format_text(result, top):
                   denied["deny"], per(denied["deny_per_24h"]), denied["deny_unparsed"], denied["classifier"]),
               "  by prefix: " + (", ".join("%s x%d" % pair for pair in denied["by_prefix"].items()) or "-"),
               "  by tool: " + (", ".join("%s x%d" % pair for pair in denied["by_tool"].items()) or "-"),
-              "M11 bdboard-worker continuations (v2): workers=%d max_segment=%d breakers=%d continuations=%d resumes=%d" % (
-                  cont["workers"], cont["max_segment"], cont["breakers"], cont["continuations"], cont["resumes"])]
+              "M11 bdboard-worker continuations (v2): workers=%d max_segment=%d breakers=%d continuations=%d resumes=%d "
+              "ticket=%d ticket_hint=%d no_ticket=%d" % (
+                  cont["workers"], cont["max_segment"], cont["breakers"], cont["continuations"], cont["resumes"],
+                  cont["with_ticket"], cont["with_ticket_hint"], cont["without_ticket"])]
     for item in cont["items"]:
-        lines.append('  %s ticket=%s turns=%d segments=%s breakers=%d continuations=%d ends_on_breaker=%s "%s"' % (
-            item["agent_id"], item["ticket"] or "-", item["turns"], "+".join(str(n) for n in item["segments"]),
-            item["breakers"], item["continuations"], "yes" if item["ends_on_breaker"] else "no", item["description"]))
+        # ticket は Worker: から確定したもの、ticket_hint は先頭の短縮 ID (未確認。手順 B が bd show で確かめる)。
+        lines.append('  %s ticket=%s%s turns=%d segments=%s breakers=%d continuations=%d ends_on_breaker=%s "%s"' % (
+            item["agent_id"], item["ticket"] or "-", " ticket_hint=" + item["ticket_hint"] if item["ticket_hint"] else "",
+            item["turns"], "+".join(str(n) for n in item["segments"]), item["breakers"], item["continuations"],
+            "yes" if item["ends_on_breaker"] else "no", item["description"]))
     return "\n".join(lines)
 
 
