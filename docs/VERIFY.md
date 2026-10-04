@@ -289,8 +289,9 @@ What this means operationally:
   before propagating, and any verify that reads the slot directory reclaims a
   temporary file whose writer pid (the second one) is dead (a SIGKILL between write and
   rename); one whose writer is alive is left alone (bdboard-l3dh). If
-  the set of running holders does not change for 15 min (32 min in the
-  landed/pr cases under "Wait limits under this rule" below), the waiter exits
+  the set of running holders does not change for 15 min (32 min for a `landed`
+  waiter or a waiter with a blocked free slot, see "Wait limits under this
+  rule" below), the waiter exits
   **75** (`EX_TEMPFAIL`, `SLOT_WAIT_TIMEOUT_EXIT_CODE` in
   `scripts/verify-slot.mjs`) naming those pids — investigate them (hung
   verify?) rather than disabling the slot. (The timeout counts time without
@@ -440,12 +441,19 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
 - **Wait limits under this rule.** A `landed` waiter waits for a `pr` run to
   leave, and a `pr` waiter held up by a `landed` run or by a retry reservation
   (below) waits for that landed verify. A run slowed by load can take longer
-  than 15 min, so for `landed` and for any waiter held up by this rule the
+  than 15 min, so for `landed` and for a waiter with a blocked free slot the
   no-progress limit is `max(15 min, stale limit + 2 min)` = 32 min
   (`slotWaitLimitMs` in `scripts/verify-slot-wait.mjs`). By then the other run,
-  if it still holds the slot, has gone stale and stopped counting. Waiters
-  that only wait for a free slot keep 15 min and end with exit 75 as before.
-  An explicit `BDBOARD_VERIFY_SLOT_WAIT_MS` wins and is never extended. When
+  if it still holds the slot, has gone stale and stopped counting. "A waiter
+  with a blocked free slot" means a slot is free but this rule keeps the
+  waiter (or the blocked head it waits behind) off it (`plan.blocked` from
+  `pickStarters`). A `pr` waiter with no free slot at all, for example while
+  a `landed` and a `merge` verify fill both slots, is not blocked in that
+  sense: it only waits for a slot, keeps 15 min and ends with exit 75 as
+  before. That leaves a `pr` waiting behind a `landed` + `merge` pair at the
+  short limit even though the `landed` is the cause; the message still names
+  the running `landed` and calls it normal. An explicit
+  `BDBOARD_VERIFY_SLOT_WAIT_MS` wins and is never extended. When
   a `pr` waiter times out while a `landed` verify is running, or behind a
   retry reservation, the message says so and calls it normal: do not kill it
   (or merge-pr), retry after the landed verify finishes. It does not show the
@@ -477,10 +485,26 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   32 min limit above. The re-run still never runs beside it.
   merge-pr deletes the reservation on every path that does not re-run, and on
   exit. One left by a SIGKILL is reaped like any holder whose pid is dead. If
-  the re-run cannot delete it, the re-run logs a warning and goes on without
-  waiting behind it, and merge-pr deletes it when the re-run ends. The
+  the re-run cannot delete it (EPERM or the like, a Windows-style transient),
+  the re-run logs a warning and goes on without waiting behind it, and merge-pr
+  deletes it itself: as soon as it sees the re-run's holder (`retry: true`,
+  same `since`; merge-pr looks about every `BDBOARD_MERGE_POLL_MS`, 30 s by
+  default), and in any case, in a `finally`, when the re-run returns. The
   variable is internal: only another `holder-<pid>.json` in the same slot
   directory is ever deleted, never the verify's own holder.
+  Residual cost of a failed delete (bdboard-e8jj): until merge-pr removes it,
+  the reservation is still a waiting `landed` holder that never runs but takes
+  the second slot in other waiters' plans, so a `merge` or `pr` waiter usually
+  cannot take that slot. Normally that is at most one poll interval after the
+  re-run's holder appears, not the whole re-run. merge-pr's own delete can hit
+  the same transient, so it tries again on every poll until the file is gone;
+  if it keeps failing, the reservation stays until the re-run returns, where
+  the `finally` is the last attempt (the bound of the watch). If merge-pr
+  itself is stuck while alive (its pid does not die, so nothing reaps the file), the
+  reservation stays until it counts as stale 30 min after it was written
+  (`staleTtlMs` from its `joinedAt`). A `merge` waiter held up that way has
+  no free slot to be "blocked" on, keeps the 15 min limit, and can exit 75
+  before the reservation goes stale.
 - **Holder format.** New holders carry `v: 2`, `priority`, `queuedAt`, an
   optional `since`, and `acquiredAt` once running, and are written atomically
   (temp file + rename). A file that fails to parse is deleted only after 5 s (an

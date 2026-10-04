@@ -17,7 +17,7 @@ export const EXIT = Object.freeze({
   LANDED_FAILED: 6, // finish: マージ後の着地後検証が failure (§3.6 へ)
   NOT_MERGER: 7, // gate / finish: 議長以外はマージ手順を進めない
   REF_LOCKED: 8, // origin/main の ref が lock されている (stale lock の疑い)。人が確認する。待っても直らないので再試行しない
-  RETRY: 75, // EX_TEMPFAIL: CAS 負け / main が動いた / 枠が空かない / CI pending。prepare から並び直す
+  RETRY: 75, // EX_TEMPFAIL: CAS 負け / main が動いた / 枠が空かない / CI pending / 着地予定ツリーの verify が時間切れだけで落ちた (同じ PR head で 1 回だけ)。prepare から並び直す
 });
 
 export class MergePrError extends Error {

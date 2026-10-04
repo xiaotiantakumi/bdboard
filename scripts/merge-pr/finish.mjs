@@ -18,6 +18,7 @@ import { getLandedStatus, getPull } from './github.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { forgetLightFailure, lightLandedState, reportLightLanded } from './light-landed.mjs';
 import { brokenMainSteps, keptLightFailureSteps, mainBrokenSlotHeldSteps, mainBrokenSlotUnknownSteps, mainMovedOnSteps, unverifiedTipSteps } from './messages.mjs';
+import { forgetLoadInduced } from './predicted-timeouts.mjs';
 import { mainBrokenSlot, releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 import { clearVerifyRecord, guardAgainstRunningVerify, recordVerifyGroup, verifyingStamp } from './verify-guard.mjs';
@@ -157,6 +158,7 @@ export async function finish(ctx, pr) {
   }
   const landed = pull.mergeCommitSha;
   forgetQueueSince(ctx.cwd, pr); // 着地予定ツリーの verify に並んだ時刻 (bdboard-ulxa.6) はもう要らない
+  forgetLoadInduced(ctx.cwd, pr); // 時間切れだけで落ちた記録 (bdboard-e8jj) も
   // bdboard-ky9l: 自分の PID と開始時刻を刻む (次の finish が PID 再利用か同一プロセスかを見分ける)。
   writeState(ctx.cwd, pr, { ...state, newMain: landed, ...verifyingStamp() });
   refetchMain(ctx);
