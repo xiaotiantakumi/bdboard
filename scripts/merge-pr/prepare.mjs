@@ -16,6 +16,7 @@ import { EXIT, fail, fetchedMain, ticketIdFor } from './context.mjs';
 import { assertExternalRefLinked } from './external-ref.mjs';
 import { getLandedStatus, getPull, requiredChecks } from './github.mjs';
 import { brokenMainSteps, keptLightFailureSteps, rebaseSteps } from './messages.mjs';
+import { guardAgainstOrphanedPredictedVerify } from './predicted-guard.mjs';
 import { verifyPredicted } from './predicted.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 
@@ -121,6 +122,11 @@ function refuseBrokenBase(ctx, pr, predBase) {
 }
 
 export async function prepare(ctx, pr, { dryRun = false } = {}) {
+  if (!dryRun) {
+    // bdboard-h2fk: SIGKILL された前回の prepare が残した着地予定ツリーの verify が生きていれば、HEAD の detach を
+    // 戻す案内 (assertLocalHead) より先に止める。dry-run は verify を起こさないので対象外。
+    guardAgainstOrphanedPredictedVerify(ctx, pr);
+  }
   const mergeBase = run('git', ['merge-base', 'HEAD', ctx.mainRef], { cwd: ctx.cwd });
   if (mergeBase.status !== 0) {
     fail(

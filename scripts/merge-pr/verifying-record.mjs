@@ -12,7 +12,25 @@
 //   2. 開始時刻が不一致 → PID が再利用されている。記録は古い (時間は見ない)。
 //   3. 開始時刻を判定できない (記録に無い・ps が使えない・Windows) → 経過時間が maxAgeMs 以内なら実行中、
 //      超えたら古い。経過時間が読めない旧形式は PID の生存だけで実行中とみなす。
+// verify グループのリーダーが死んでいてメンバーだけが居る場合 (judgeVerifyGroup) は開始時刻を比べられない
+// (比べる相手のリーダーが居ない) ので、経過時間の上限 LEADERLESS_GROUP_MAX_AGE_MS で「実行中」と「不明」を分ける
+// (bdboard-h2fk)。
 import { compareStartTime, isProcessAlive, isProcessGroupAlive } from '../process-identity.mjs';
+
+// bdboard-h2fk: リーダーが死んでメンバーだけが居る verify グループを「元の verify の孤児」とみなす、verifyPgidAt
+// からの上限。これを超えたグループは「不明」として案内だけを出し、止めない (finish を 75 で止め続けない)。
+// 根拠: verify は親 (finish) が死ぬと自分で畳むので、リーダーの居ないグループが長く生きているなら、元の verify では
+// なく、番号を再利用した無関係の二重 fork デーモン (setsid して子を残して親が終わった) である可能性が高い。
+// それを元の verify と読み続けると 75 が永久に消えず、kill -TERM -<pgid> の案内が無関係のグループを指す。
+// 値は、verify が正規に走っていられる時間より十分長く取る。着地後検証の実測 (verify-guard.mjs の
+// VERIFYING_PID_MAX_AGE_MS のコメントと同じログ 133 件) は、通常 4〜5 分、スロット待ちが最大 685 秒、vitest が
+// 最大約 524 秒で、重い負荷の下でも長くて 10〜20 分。2 時間はその 6〜12 倍で、VERIFYING_PID_MAX_AGE_MS と同じ値。
+// 短すぎる害は、本当に走っている孤児の裏で 2 本目の verify が同じ worktree に並走すること (1 本目の
+// restoreBranch が 2 本目の途中で木を差し替える)。長すぎる害は、孤児でないグループのために待つだけで、しかも
+// 案内に pgrep の確認が付く。害が非対称なので、短くするより長めに倒した。
+// 受け入れている穴: 孤児が居る間にマシンが 2 時間以上スリープすると、壁時計の経過は上限を超えるが verify は
+// 進んでいない。ただしその孤児は親が死んでいるので、起き次第自分で畳む。案内の pgrep が最後の確認になる。
+export const LEADERLESS_GROUP_MAX_AGE_MS = 2 * 60 * 60_000;
 
 /** verifyingAt からの経過ミリ秒。時刻が無い・読めない記録は null (旧形式)。 */
 function recordAgeMs(writtenAtText, now) {
@@ -60,6 +78,12 @@ export function judgeVerifyingPid(record, maxAgeMs, deps) {
  * グループにまだ何か居ても、リーダーの PID が再利用されただけかもしれない (リーダーが死んでいて、
  * グループに他のメンバーが居る間は、その番号を別のプロセスが取ることはない — POSIX の規則なので
  * その場合は元のグループ。リーダーが生きているときだけ開始時刻で見分ける)。
+ *
+ * bdboard-h2fk: リーダー不在のグループは、それが同じ番号を別のプロセスが取って作った無関係のグループなのか、元の
+ * verify なのかを開始時刻で見分けられない (リーダーが居ない)。そこで verifyPgidAt からの経過時間が
+ * LEADERLESS_GROUP_MAX_AGE_MS (deps.leaderlessMaxAgeMs で差し替え可) 以内なら実行中、超えたら「不明」にする。
+ * 「不明」の返り値は { running: false, unknown: true, identity: 'leaderless', ageMs }: 止めずに案内だけを出す
+ * (verify-guard.mjs)。経過時間が読めない記録は、従来どおり実行中 (止める側) に倒す。
  */
 export function judgeVerifyGroup(record, maxAgeMs, deps) {
   const options = deps || {};
@@ -67,12 +91,17 @@ export function judgeVerifyGroup(record, maxAgeMs, deps) {
   const alive = options.alive || isProcessAlive;
   const groupAlive = options.groupAlive || isProcessGroupAlive;
   const compare = options.compare || compareStartTime;
+  const leaderlessMaxAgeMs = options.leaderlessMaxAgeMs === undefined ? LEADERLESS_GROUP_MAX_AGE_MS : options.leaderlessMaxAgeMs;
   const pgid = record.verifyPgid;
   if (!pgid || !groupAlive(pgid)) {
     return { running: false };
   }
+  const ageMs = recordAgeMs(record.verifyPgidAt, now);
   if (!alive(pgid)) {
-    return { running: true, identity: 'leaderless', ageMs: recordAgeMs(record.verifyPgidAt, now) };
+    if (ageMs !== null && ageMs > leaderlessMaxAgeMs) {
+      return { running: false, unknown: true, identity: 'leaderless', ageMs };
+    }
+    return { running: true, identity: 'leaderless', ageMs };
   }
-  return judge(compare(pgid, record.verifyPgidStart), recordAgeMs(record.verifyPgidAt, now), maxAgeMs);
+  return judge(compare(pgid, record.verifyPgidStart), ageMs, maxAgeMs);
 }

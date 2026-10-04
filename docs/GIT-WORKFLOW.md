@@ -448,7 +448,21 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   Kill the group (or wait for it), then rerun `finish`. A group whose leader has exited but which still
   has members is the original group (POSIX does not reuse the number while the group exists); a live
   leader is compared by start time like `verifyingPid`. There are no process groups on Windows, so
-  nothing is recorded or checked there.
+  nothing is recorded or checked there. A leaderless group is held only for 2 hours from `verifyPgidAt`
+  (`LEADERLESS_GROUP_MAX_AGE_MS`, bdboard-h2fk; a verify takes 10-20 minutes at worst, and it folds itself
+  when its parent dies). Past that it is reported as *unknown* — most likely an unrelated double-forked
+  daemon that took the number — and `finish` prints `pgrep -g <pgid> -l` (check first) and `kill -TERM
+  -<pgid>` (only if the check shows a leftover verify) as advice and goes on instead of exiting 75 forever.
+  When `verifyingPid` is judged stale but a live verify group still stops `finish`, the message says so
+  rather than announcing that the stale record is ignored.
+- **A `prepare` killed with SIGKILL during S2's predicted-tree verify likewise leaves its verify running**
+  (bdboard-h2fk). `prepare` removes the state file before the verify, so it stamps the verify's group in a
+  separate file next to it (`pr-<N>-predicted-verify.json`, same `verifyPgid` / `verifyPgidAt` /
+  `verifyPgidStart` fields and the same judgement as above) and deletes it when the verify returns. A rerun
+  of `prepare` that finds the group alive exits 75 *before* the detached-HEAD advice (`git checkout bd/<id>`),
+  because that checkout would swap the tree under the orphan; kill the group, `git checkout bd/<id>`, rerun.
+  `prepare --dry-run` starts no verify and is not stopped. A manual `merge-pr verify <sha>` records
+  nothing, so its orphan is still not detected.
 - **Never release someone else's slot.** If it stays held past `merge.slotWaitMinutes` (10),
   `gate` exits 75 and the agent reports the holder to the chair. A holder equal to
   `<id> / PR#<N>` (this PR's own interrupted gate) is taken over.

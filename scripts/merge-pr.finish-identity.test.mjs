@@ -55,6 +55,22 @@ function gatedAndMerged(extra) {
 /** 新しいセッション・プロセスグループのリーダー (= pgid が自分の pid) として、60 秒眠るだけの node を起こす。 */
 const spawnGroupLeader = () => spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { detached: true, stdio: 'ignore' });
 
+/**
+ * リーダーの居ないプロセスグループを作り、その pgid を返す。sh がバックグラウンドで sleep を残して終わる:
+ * pgid (= sh の pid) のリーダーは居ないが、グループには sleep が居る。終わらせるのは killGroupQuietly(pgid)。
+ */
+async function spawnLeaderlessGroup() {
+  const shell = spawn('sh', ['-c', 'sleep 60 & echo $!'], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+  let stdout = '';
+  shell.stdout.on('data', (chunk) => {
+    stdout += chunk.toString();
+  });
+  const exited = new Promise((resolve) => shell.once('exit', resolve));
+  await exited;
+  await waitUntil(() => stdout.trim() !== '');
+  return shell.pid;
+}
+
 function killGroupQuietly(pgid) {
   try {
     process.kill(-pgid, 'SIGKILL');
@@ -201,28 +217,109 @@ describe.skipIf(process.platform === 'win32' || !hasPs)('merge-pr finish: proces
       }
     });
 
-    it('a group whose leader has exited but still has a member is the original group, whatever the record says: 75', async () => {
-      // sh がバックグラウンドで sleep を残して終わる: pgid (= sh の pid) のリーダーは居ないが、グループには sleep が居る。
-      const shell = spawn('sh', ['-c', 'sleep 60 & echo $!'], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
-      let stdout = '';
-      shell.stdout.on('data', (chunk) => {
-        stdout += chunk.toString();
-      });
-      const exited = new Promise((resolve) => shell.once('exit', resolve));
-      const pgid = shell.pid;
+    it('a group whose leader has exited but still has a member is the original group while it is within the cap, whatever the start time says: 75', async () => {
+      const pgid = await spawnLeaderlessGroup();
       try {
-        await exited;
-        await waitUntil(() => stdout.trim() !== '');
         expect(pidAlive(pgid)).toBe(false);
         expect(isProcessGroupAlive(pgid)).toBe(true);
-        gatedAndMerged({ verifyPgid: pgid, verifyPgidAt: ago(3 * 60 * 60_000), verifyPgidStart: A_DIFFERENT_START });
+        gatedAndMerged({ verifyPgid: pgid, verifyPgidAt: ago(60 * 60_000), verifyPgidStart: A_DIFFERENT_START });
         const finished = run(['finish', String(PR)]);
         expect(finished.status).toBe(75);
         expect(finished.stderr).toContain(`verify のプロセスグループ ${pgid}`);
+        expect(finished.stderr).toContain('上限 120 分以内なので前回の verify の残りとみなして止めます'); // いつまで止まるかを言う
         expect(verified()).toEqual([]);
       } finally {
         killGroupQuietly(pgid);
       }
+    });
+
+    // bdboard-h2fk: verify は親が死ぬと自分で畳むので、リーダー不在のまま長く生きているグループは、番号を再利用した
+    // 無関係の二重 fork デーモンの可能性が高い。元の verify とは言い切れないので「不明」にして、案内だけを出して進む。
+    it('a leaderless group older than the cap is unknown: advice only, finish goes on (not 75 forever), and nothing is killed', async () => {
+      const pgid = await spawnLeaderlessGroup();
+      try {
+        const landed = gatedAndMerged({ verifyPgid: pgid, verifyPgidAt: ago(3 * 60 * 60_000), verifyPgidStart: A_DIFFERENT_START });
+        const finished = run(['finish', String(PR)]);
+        expect(finished.status).toBe(0);
+        expect(verified()).toEqual([landed]);
+        expect(finished.stderr).not.toContain('二重に走らせません');
+        expect(finished.stderr).toContain(`verify プロセスグループ ${pgid} は、リーダー (PID ${pgid}) が居ないままメンバーだけが残っていて`);
+        expect(finished.stderr).toContain('上限 120 分を超えています');
+        expect(finished.stderr).toContain('元の verify かは不明です');
+        expect(finished.stderr).toContain('止めずに、着地後検証を進めます');
+        // kill の案内は、中身を確かめる pgrep の後にだけ付く。確かめずに畳ませない。
+        const check = finished.stderr.indexOf(`pgrep -g ${pgid} -l`);
+        const kill = finished.stderr.indexOf(`kill -TERM -${pgid}`);
+        expect(check).toBeGreaterThan(-1);
+        expect(kill).toBeGreaterThan(check);
+        expect(finished.stderr).toContain('確かめずに kill しない');
+        expect(isProcessGroupAlive(pgid)).toBe(true); // 案内だけ: finish はグループに触れない
+        expect(existsSync(stateFile())).toBe(false);
+      } finally {
+        killGroupQuietly(pgid);
+      }
+    });
+
+    it('the cap is measured from verifyPgidAt: just inside it the same group still stops finish with 75', async () => {
+      const pgid = await spawnLeaderlessGroup();
+      try {
+        gatedAndMerged({ verifyPgid: pgid, verifyPgidAt: ago(2 * 60 * 60_000 - 5 * 60_000), verifyPgidStart: A_DIFFERENT_START });
+        const finished = run(['finish', String(PR)]);
+        expect(finished.status).toBe(75);
+        expect(finished.stderr).toContain('二重に走らせません');
+        expect(finished.stderr).not.toContain('元の verify かは不明です');
+        expect(verified()).toEqual([]);
+      } finally {
+        killGroupQuietly(pgid);
+      }
+    });
+  });
+
+  // PR #847 レビュー指摘 5: PID 再利用を検出したのに孤児グループが生きているとき、「古い記録を無視して進めます」と
+  // 出してから 75 で止まっていた (文言と挙動の食い違い)。進むと決まってから通知を出し、止まるときは止まる理由を言う。
+  describe('a reused verifyingPid together with a live verify group (bdboard-h2fk)', () => {
+    it('stops with 75 and says so: the stale pid record is not announced as ignored-and-proceeding', () => {
+      const leader = spawnGroupLeader();
+      try {
+        gatedAndMerged({
+          verifyingPid: process.pid, // 開始時刻が違う = PID が再利用された記録
+          verifyingAt: ago(0),
+          verifyingStart: A_DIFFERENT_START,
+          verifyPgid: leader.pid, // 元の verify のグループは生きている
+          verifyPgidAt: ago(0),
+          verifyPgidStart: processStartTime(leader.pid),
+        });
+        const finished = run(['finish', String(PR)]);
+        expect(finished.status).toBe(75);
+        expect(verified()).toEqual([]);
+        expect(finished.stderr).toContain(`verify のプロセスグループ ${leader.pid}`);
+        expect(finished.stderr).toContain('二重に走らせません');
+        // 止まる理由として、PID の記録が古いことと、それでも進まないことを言う。
+        expect(finished.stderr).toContain(`verifyingPid ${process.pid}`);
+        expect(finished.stderr).toContain('PID が再利用された古い記録です');
+        expect(finished.stderr).toContain('進まずここで止まります');
+        // 「無視して進める」とは言わない (止まるのだから)。
+        expect(finished.stderr).not.toContain('この記録は無視して、着地後検証を進めます');
+        expect(finished.stderr).not.toContain('着地後検証を進めます');
+      } finally {
+        killGroupQuietly(leader.pid);
+      }
+    });
+
+    it('proceeds and says so when the group is gone: the stale pid record is announced as ignored', () => {
+      const gone = spawnSync(process.execPath, ['-e', '']).pid;
+      const landed = gatedAndMerged({
+        verifyingPid: process.pid,
+        verifyingAt: ago(0),
+        verifyingStart: A_DIFFERENT_START,
+        verifyPgid: gone,
+        verifyPgidAt: ago(0),
+        verifyPgidStart: processStartTime(process.pid),
+      });
+      const finished = run(['finish', String(PR)]);
+      expect(finished.status).toBe(0);
+      expect(verified()).toEqual([landed]);
+      expect(finished.stderr).toContain('この記録は無視して、着地後検証を進めます');
     });
   });
 
