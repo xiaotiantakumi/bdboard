@@ -1,6 +1,7 @@
 import {
   ISSUE_DRAFT_DIR_MAX_BYTES,
   ISSUE_DRAFT_PRUNE_INTERVAL_MS,
+  ISSUE_DRAFT_RESURVEY_GAP_MAX_MS,
   ISSUE_DRAFT_RESURVEY_GAP_MS,
   ISSUE_DRAFT_RETENTION_MS,
   selectDraftsToFree,
@@ -30,6 +31,8 @@ export interface DraftRetentionOptions {
   readonly pruneIntervalMs?: number;
   /** 容量を測り直す最短の間隔 (ms)。既定は 1 分。 */
   readonly resurveyGapMs?: number;
+  /** 測り直しても空けられないあいだ、間隔を倍々に伸ばす上限 (ms)。既定は 1 時間。resurveyGapMs より小さければ resurveyGapMs。 */
+  readonly resurveyGapMaxMs?: number;
   /** issue-drafts 全体の上限 (バイト)。既定は 1 GiB。 */
   readonly maxTotalBytes?: number;
   /** 警告の出力 (既定は console.warn)。code と id だけを渡す。 */
@@ -54,7 +57,15 @@ export interface DraftRetention {
   ensureRoom(incomingBytes: number, keepId?: string): Promise<boolean>;
   /** 書き込みに成功したあとの差分 (増えたバイト数。縮んだら負)。実測の合計をずらさず保つ。 */
   recordWrite(deltaBytes: number): void;
+  /**
+   * 空けられる下書き (終端の状態) が増えたかもしれない操作 (見送り) のあとに呼ぶ。上限に張り付いて伸ばした
+   * 測り直しの間隔を最短 (resurveyGapMs) に戻す。測り直し自体はここでは走らない。
+   */
+  noteFreeableDraft(): void;
 }
+
+/** 間隔を倍にする回数の頭打ち (2 ** n が溢れないように。実際の上限は resurveyGapMaxMs)。 */
+const MAX_GAP_DOUBLINGS = 30;
 
 /** 経過時間が [0, windowMs) の中か。負 (時計が戻った) は外: 間隔が過ぎたものとして扱う。 */
 function isWithin(elapsedMs: number, windowMs: number): boolean {
@@ -70,6 +81,7 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
   const retentionMs = deps.retentionMs ?? ISSUE_DRAFT_RETENTION_MS;
   const pruneIntervalMs = deps.pruneIntervalMs ?? ISSUE_DRAFT_PRUNE_INTERVAL_MS;
   const resurveyGapMs = deps.resurveyGapMs ?? ISSUE_DRAFT_RESURVEY_GAP_MS;
+  const resurveyGapMaxMs = Math.max(resurveyGapMs, deps.resurveyGapMaxMs ?? ISSUE_DRAFT_RESURVEY_GAP_MAX_MS);
   const maxTotalBytes = deps.maxTotalBytes ?? ISSUE_DRAFT_DIR_MAX_BYTES;
   const warn = deps.warn ?? ((message: string) => console.warn(message));
 
@@ -82,6 +94,13 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
   let snapshot: readonly DraftFootprint[] = [];
   let lastSurveyAtMs: number | undefined;
   let lastPruneAtMs: number | undefined;
+  /**
+   * 続けて「測り直したのに空けられなかった」回数 (bdboard-krvf)。上限に張り付いて断り続けているあいだ、測り直しの間隔を
+   * resurveyGapMs × 2^n (resurveyGapMaxMs まで) に伸ばす: 1 GiB の最悪の形では棚卸し 1 回が数秒かかり、その間
+   * 受け取りは mutex で待つので、結果の変わらない測り直しを毎分は繰り返さない。空いた・見送りがあった・測れなかった
+   * (fail-open) ときは 0 に戻す。
+   */
+  let pinnedSurveys = 0;
   /** 同じ警告を何度も出さない (上限に張り付いたまま受け取りが続くと、毎回同じ失敗をしうる)。 */
   const warned = new Set<string>();
 
@@ -131,6 +150,21 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
     snapshot = snapshot.filter((draft) => !removed.has(draft.id));
   }
 
+  /** いまの測り直しの間隔: 張り付いた回数だけ倍にして、resurveyGapMaxMs で止める。 */
+  function currentResurveyGapMs(): number {
+    return Math.min(resurveyGapMaxMs, resurveyGapMs * 2 ** Math.min(pinnedSurveys, MAX_GAP_DOUBLINGS));
+  }
+
+  /** 測り終えた(または間隔内で測らなかった)あとの、上限に収めるための処理。収まれば true。 */
+  async function freeRoomFor(incomingBytes: number, keepId: string | undefined): Promise<boolean> {
+    if (fits(incomingBytes)) return true;
+    const candidates = keepId === undefined ? snapshot : snapshot.filter((draft) => draft.id !== keepId);
+    const targets = selectDraftsToFree(candidates, (totalBytes ?? 0) + incomingBytes - maxTotalBytes);
+    if (targets === undefined) return false;
+    await removeAll(targets);
+    return fits(incomingBytes);
+  }
+
   async function pruneNow(): Promise<void> {
     const nowMs = deps.now().getTime();
     lastPruneAtMs = nowMs;
@@ -151,19 +185,23 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
     async ensureRoom(incomingBytes, keepId) {
       if (incomingBytes <= 0) return true;
       if (totalBytes !== undefined && fits(incomingBytes)) return true;
-      // 上限を超えそうなときだけ実測する。ただし測り直しは resurveyGapMs に 1 回まで (時計が戻ったときは測り直す)。
+      // 上限を超えそうなときだけ実測する。ただし測り直しは currentResurveyGapMs() に 1 回まで (時計が戻ったときは測り直す)。
       const sinceSurveyMs = lastSurveyAtMs === undefined ? Infinity : deps.now().getTime() - lastSurveyAtMs;
-      if (!isWithin(sinceSurveyMs, resurveyGapMs)) await takeSnapshot();
-      if (fits(incomingBytes)) return true;
-      const candidates = keepId === undefined ? snapshot : snapshot.filter((draft) => draft.id !== keepId);
-      const targets = selectDraftsToFree(candidates, (totalBytes ?? 0) + incomingBytes - maxTotalBytes);
-      if (targets === undefined) return false;
-      await removeAll(targets);
-      return fits(incomingBytes);
+      const surveyed = !isWithin(sinceSurveyMs, currentResurveyGapMs());
+      if (surveyed) await takeSnapshot();
+      const room = await freeRoomFor(incomingBytes, keepId);
+      // 測ったのに空けられなかった = 張り付いている: 次の測り直しを遅らせる。空いた・測れず通した (fail-open) なら戻す。
+      if (room) pinnedSurveys = 0;
+      else if (surveyed) pinnedSurveys += 1;
+      return room;
     },
 
     recordWrite(deltaBytes) {
       if (totalBytes !== undefined) totalBytes = Math.max(0, totalBytes + deltaBytes);
+    },
+
+    noteFreeableDraft() {
+      pinnedSurveys = 0;
     },
   };
 }
