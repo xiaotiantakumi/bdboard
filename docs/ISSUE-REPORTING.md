@@ -40,7 +40,7 @@ interface IssueDraft {
   readonly localOnly: LocalOnlyContext;   // 手元だけの生データ(公開本文には使わない。4/5節参照)
   readonly occurredProjects: readonly OccurredProject[]; // 発生したプロジェクトの一覧(手元限定)
   occurrenceCount: number;                // 回数
-  readonly firstOccurredAt: string;       // ISO8601
+  readonly firstOccurredAt: string;       // ISO 8601 UTC (末尾 Z)
   lastOccurredAt: string;
   status: DraftStatus;
   dismissReason?: string;                 // 見送りの理由(status='dismissed' のときのみ)
@@ -197,10 +197,42 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 
 | 欄 | 入口での絞り |
 |---|---|
-| `source` / `catalogSlug`(`fingerprint`・`title`・`body` にも入る) | 1 行のみ(改行・制御文字・ゼロ幅・双方向制御・BOM は 400)。**`/Users/<名前>/`・`/home/<名前>/`・`X:\Users\<名前>\` は受け取りで `~/` に畳む**(400 にはしない: フックが自分の `$0` を出どころに入れて報告しても受け取れ、別の利用者・別の PC の同じフックが 1 件にまとまる)。`GET /api/x` のような API のパスは触らない。パス以外の秘密(引数のトークンなど)は見つけない |
+| `source` / `catalogSlug` / `envInfo` の版の文字列(`fingerprint`・`title`・`body` にも入る) | **識別子**。1 行のみ: 改行・制御文字・不可視の書式文字(下の「1 行の検査」)を含むと 400。ホーム配下の絶対パスは**受け取りで `~/` に畳む**(400 にはしない。畳む形は下の「ホーム配下のパス」)。`GET /api/x` のような API のパスは触らない。パス以外の秘密(引数のトークンなど)は見つけない |
+| `project.name`(`occurredProjects[].name`) | **表示用**。400 にせず整える: 1 行の検査で弾く文字(改行を含む)を取り除き、ホーム配下のパスを `~/` に畳み、前後の空白を落とす。`👩‍💻-tools` は受け取るが、ZWJ は取り除かれ `👩💻-tools` として保存される。整えた結果が空なら 400。手元限定の `project.path` は触らない |
 | `sourceTicketRef` | `^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$` だけ(`--db=/tmp/evil` は 400)。後で `bd` の引数になる(6節) |
-| `dismissReason` | 1 行・200 文字まで(PATCH の入口)。本文を書く欄ではない |
-| `occurredProjects[].name` / `envInfo` の版の文字列 | 1 行のみ |
+| `dismissReason` | 表示用の 1 行・200 文字まで(PATCH の入口)。貼り付けで混ざるゼロ幅スペース U+200B と BOM U+FEFF は取り除き、ZWJ U+200D・ZWNJ U+200C は許し、改行・制御文字・そのほかの不可視の書式文字は 400。取り除いた結果が空でも 400。パスは畳まない。本文を書く欄ではない |
+
+**1 行の検査**(`isSingleLineText`): 次の文字を 1 つでも含むと不可。制御文字(Cc: 改行・タブ・DEL・C1)、書式文字(Cf: ゼロ幅
+U+200B–200F、双方向制御 U+202A–202E と U+2066–2069、ALM U+061C、単語結合子と不可視の演算子 U+2060–2064、
+U+206A–206F、BOM U+FEFF、ソフトハイフン U+00AD、U+180E、注釈記号 U+FFF9–FFFB、タグ文字)、行・段落の区切り
+(Zl・Zp: U+2028・U+2029)、ハングルの見えない埋め字(U+115F・U+1160・U+3164・U+FFA0)、タグ文字の区画全体
+(U+E0000–E007F。割り当て前の番号を含む)。異体字選択子(日本語の IVS を含む)・結合文字(濁点の分解形)・全角スペース
+U+3000 は許す。孤立したサロゲートは見ない(4y8q.2)。これで防ぐのは行の数と見えない文字だけで、1 行でもリンク・`@`メンション・
+`#`参照・`<img>` は書ける(Markdown のエスケープと公開本文の置き換えは5節、4y8q.2)。
+
+**ホーム配下のパス**(`foldHomePaths`、`src/domain/issue-draft-identifier.ts`): 次の形だけを `~/` に畳む。ユーザー名の
+部分(と、その後ろの区切りまで)が `~/` になり、それより奥はそのまま残る。
+- `/Users/<名前>`(macOS)、`/home/<名前>`(Linux)、`/var/home/<名前>`、`/usr/home/<名前>`。`Users` は大文字小文字を区別しない
+  (`/users/<名前>`)
+- `/mnt/<ドライブ文字>/Users/<名前>`(WSL)、`/<ドライブ文字>/Users/<名前>`(Git Bash)、`/cygdrive/<ドライブ文字>/Users/<名前>`
+- `/System/Volumes/Data/Users/<名前>`、`/Volumes/<ディスク名>/Users/<名前>`(macOS)
+- `X:\Users\<名前>`、`X:/Users/<名前>`(JSON の中の `X:\\Users\\` も)、`\\?\X:\Users\<名前>`、`file:///X:/Users/<名前>`
+- `\\wsl$\<distro>\home\<名前>`、`\\wsl.localhost\<distro>\home\<名前>`
+
+パスとして読むのは、**直前が行頭・空白・`'` `"` `` ` `` `=` `:` `(` `,` `;` `|` `<` `>` `[` `{`・`file://`・`\\?\` のどれかのときだけ**
+(境界の規則)。だから `GET /api/home/x` や `POST /api/Users/42` のように途中に現れるものは触らない。逆に、行頭や空白の
+直後の `GET /Users/42` や `GET /home/settings` は区別できないので `GET ~/` になる。名前は区切り(`/` `\`)・空白・引用符・
+文字列の終わりで終わる。ただし Windows の名前だけは空白を含みうる(`John Smith`)ので、区切りか引用符か文字列の終わりまで
+を名前として読む: **`bash C:\Users\u --flag` は `bash ~/` になる**(引数を残すより、ユーザー名を残さないことを優先する)。
+共有の場所(`/Users/Shared`・`C:\Users\Public`・`/home/linuxbrew`)も同じ形なので畳まれる。見つけないもの: `x@/Users/u`
+のように `@` などの直前(境界でない文字)に続くもの、`~name/`、`\\server\share\Users\u` のような UNC、リポジトリの内側の相対パス、
+パス以外の秘密。
+
+**多層防御**: 名前や文を載せる欄(`fingerprint`・`catalogSlug`・`source`・`title`・`body`・`occurredProjects[].name`・
+`localOnly.envInfo` の版の文字列・`harnessVersionAtOccurrence`)は、応答を組むときに `foldHomePaths` をもう一度かける。受け取りで
+畳んであるはずの値だが、畳み方の漏れや、保存先へ直接書かれた値(受け取りを通らなかった古い下書きなど)があっても、ホーム配下のパスの
+ユーザー名を手元の外へ出さないため。`fingerprint` は `B:` などの種別の印を残して後ろだけ畳む。同じ畳み込みを一覧の `fingerprint` と
+`title` にもかける。ローカル直アクセスの応答は保存された値のまま返す。畳むのは上の形だけで、`dismissReason` や、ほかの秘密の除去ではない。
 
 トンネル側で落とす欄: `errorTextRaw`、**`errorTextHead` / `errorTextTail`**、`symptomRaw` / `causeRaw` /
 `preventionRaw` / `agentNoteRaw`、`foldedFingerprints`、`occurredProjects[].path`。
@@ -211,7 +243,7 @@ head/tail が置き換え後の文章から作られるようになったら、�
 応答は許可リストで組む(`toDetailDto`)ので、下書きに欄が増えても、足すまでは手元の外へ出ない。
 一覧(`GET .../drafts`)の応答には、もともと本文も `localOnly` も載せない。載せるのは `id`・`kind`・
 `fingerprint`・`title`・`status`・回数・時刻・プロジェクト数・`dismissReason`・`issueNumber`・`issueUrl`・
-`sourceTicketRef` で、`fingerprint` と `title` に入る `source` / `catalogSlug` は上の表の絞りを通った値。
+`sourceTicketRef` で、`fingerprint` と `title` に入る `source` / `catalogSlug` は上の表の絞りを通った値(さらに上の多層防御の畳み込みをかけて返す)。
 
 未対応で残るもの: 画像(`GET .../images/:fileName`)はトンネルの Basic 認証だけで読める。スクリーンショットに
 秘密が写りうるという点で同じ種類の問題だが、画像の扱いは 4y8q.3 の画面設計と合わせて決める。
@@ -294,14 +326,13 @@ function normalizeErrorText(text: string): string {
 「同じ症状を同じ1件にまとめる」ことであり、公開本文の安全性はここではなく5節が担う。
 上の関数は設計当初の例から変えてある(理由は下の「実装との差分」)。
 
-`source` と `catalogSlug`(と版の文字列・プロジェクト名)は題名・本文・応答にそのまま入るので、
-**改行・制御文字・Unicode の行区切り・不可視の書式文字(ゼロ幅 U+200B–200F、双方向制御 U+202A–202E と
-U+2066–2069、BOM U+FEFF)を含む値は受け取りで 400** にする。これで防ぐのは行の数と見えない文字だけで、
-1 行でもリンク・`@`メンション・`#`参照・`<img>` は書ける(インラインの Markdown のエスケープと公開本文の
-置き換えは5節、4y8q.2 の仕事)。`source` と `catalogSlug` のホーム配下の絶対パス
-(`/Users/<名前>/`・`/home/<名前>/`・`X:\Users\<名前>\`)は、**指紋を作る前に `~/` へ畳む**。400 にしなかった
-のは、フックが自分の `$0` を出どころに入れて報告しても受け取れ、別の利用者の同じフックが 1 件にまとまるため。
-パスの形かどうかはそれ以外は見ない(`source` は `GET /api/x` のような API のパスでもよい)。
+`source` と `catalogSlug`(と版の文字列)は題名・本文・応答にそのまま入るので、**改行・制御文字・不可視の書式文字
+(3節の「1 行の検査」)を含む値は受け取りで 400** にする。これで防ぐのは行の数と見えない文字だけで、1 行でもリンク・`@`メンション・
+`#`参照・`<img>` は書ける(インラインの Markdown のエスケープと公開本文の置き換えは5節、4y8q.2 の仕事)。
+`source`・`catalogSlug`・版の文字列・`project.name` のホーム配下の絶対パスは、**指紋を作る前に `~/` へ畳む**(畳む形と境界の規則は
+3節の「ホーム配下のパス」。**書いてある形だけ**で、コードもそれ以上は畳まない)。400 にしなかったのは、フックが自分の `$0` を
+出どころに入れて報告しても受け取れ、別の利用者の同じフックが 1 件にまとまるため。パスの形かどうかはそれ以外は見ない
+(`source` は `GET /api/x` のような API のパスでもよい)。`project.name` は表示用なので 400 にせず整える(3節の表)。
 
 ### 状態遷移(bdboard-4y8q.1 が実装するのは pending/dismissed だけ、posted 側は 4y8q.5)
 
@@ -390,8 +421,9 @@ U+2066–2069、BOM U+FEFF)を含む値は受け取りで 400** にする。こ�
 - **`source` / `catalogSlug` のパス(F2)**: 400 ではなく**受け取りで `~/` に畳む**ことにした(3節の表)。
   トンネルの読み手が見る欄の全部も3節に書いた。
 - **`sourceTicketRef`(F3)**: ticket id の形だけ受ける。6節の手順 8 で、実行側も `--` を前置する(4y8q.4)。
-- **時刻の形(F4)**: `firstOccurredAt` / `lastOccurredAt` / `firstSeenAt` / `lastSeenAt` は ISO 8601 でなければ
-  「使えない下書き」として飛ばす。以前は形の合わない値が受け取りの索引づくりで例外を起こし、以後の受け取りが
+- **時刻の形(F4)**: `firstOccurredAt` / `lastOccurredAt` / `firstSeenAt` / `lastSeenAt` は ISO 8601 の UTC で、
+  末尾が `Z` の形(`2026-10-04T12:00:00.000Z`)でなければ「使えない下書き」として飛ばす。`+09:00` のようなオフセット付きは
+  不可(ミリ秒は付いていても省いてもよい)。以前は形の合わない値が受け取りの索引づくりで例外を起こし、以後の受け取りが
   すべて失敗した。
 - **不可視文字(N2)**: ゼロ幅・双方向制御・BOM も 1 行の検査で弾く。孤立したサロゲートは見ない(4y8q.2 で扱う)。
 - **200KB を超える下書き(N3)**: 縮められる欄を削り切っても超える下書きは、保存層が書かずに投げる。題名・本文の
@@ -400,6 +432,30 @@ U+2066–2069、BOM U+FEFF)を含む値は受け取りで 400** にする。こ�
   EACCES・EPERM・不正な JSON・形や時刻の不正)ものだけを警告つきで飛ばし、EMFILE・EIO のような一時的なものは
   投げる。受け取りの索引は最初の 1 回だけ作るので、欠けた一覧を飛ばして作ると、プロセスの間ずっと既知の指紋が
   二重に作られる。投げれば索引は作り直される。警告には id と理由だけを出し、保存先のパスは出さない。
+
+**再レビュー(2026-10-04、3 回目)で決めたこと**
+
+- **ホーム配下のパスの形(R3-1)**: 畳む形と境界の規則を広げ、コードと同じ一覧を3節の「ホーム配下のパス」に書いた
+  (WSL の `/mnt/c/Users`・Git Bash の `/c/Users`・Cygwin・`/System/Volumes/Data/Users`・`/Volumes/<ディスク名>/Users`・
+  `/var/home`・`/usr/home`・`` ` [ , ; | < { `` の直後・`\\?\C:\Users`・`\\wsl$\<distro>\home`・小文字の `/users/`)。名前の終わりは
+  区切りか空白・引用符・文字列の終わり(以前は区切りか文字列の終わりだけで、`"/Users/u"` と `/Users/u --flag` を取りこぼした)。
+  割り切り: Windows の名前は空白を許す(`John Smith`)ので `bash C:\Users\u --flag` は `bash ~/` になり、`/Users/Shared`・
+  `C:\Users\Public`・`/home/linuxbrew` も畳まれる(引数や共有の場所より、ユーザー名を残さないことを優先)。`GET /Users/42` のような
+  行頭・空白の直後の形も区別できず畳まれる。`GET /api/home/x` と `POST /api/Users/42` は触らない。
+- **応答でも畳む(R3-1)**: トンネルの `GET drafts/:id` と一覧・受け取り・見送りの応答は、`fingerprint`・`title`(詳細はさらに
+  `catalogSlug`・`source`・`body`・`occurredProjects[].name`・版の文字列・`harnessVersionAtOccurrence`)にもう一度 `foldHomePaths` を
+  かける。保存先へ生のパスが直接書かれていても出ないことを、ストアへ直接書いた下書きで確かめている。
+- **`project.name` と版の文字列(R3-2)**: 受け取りで `project.name` と `envInfo` の各文字列にもホーム配下のパスの畳み込みをかける。
+- **1 行の検査の集合(R3-3)**: 文字を 1 つずつ並べる代わりに Unicode の分類(Cc・Cf・Zl・Zp)とハングルの埋め字で決める。
+  ALM・単語結合子と不可視の演算子・注釈記号・タグ文字・ソフトハイフン・U+180E が新たに不可。異体字選択子(IVS を含む)・
+  濁点の分解形・全角スペースは許す。タグ文字は区画全体(U+E0000–E007F)を閉じる(Cf でない割り当て前の番号も含める)。
+- **表示用の欄は弾きすぎない(R3-4)**: 識別子(`source`・`catalogSlug`・版の文字列・`sourceTicketRef`)は厳密に 400。`project.name` は
+  整えて受ける(取り除いてから畳む。見えない文字でパスの形を崩した `/Us<ZWSP>ers/…` も畳まれる。空なら 400)。`dismissReason` は
+  ZWSP と BOM を取り除き、ZWJ・ZWNJ を許す。400 の応答には `details`(欄の名前と理由。入力の値は含まない)を付けるようにした
+  (受け取りと見送り。メッセージは「1 行で、制御文字・不可視の書式文字を含まない」)。
+- **画像の stat(R3-5)**: 画像の数え上げ・一覧で、`readdir` のあとに消えたファイル(ENOENT)だけ飛ばし、EMFILE・EIO などは
+  投げる(飛ばすと少なく数え、上限を超えて足せてしまう)。
+- **時刻の形(R3-6)**: ISO 8601 の UTC で末尾 `Z` と明記した(オフセット付きは不可)。
 
 **この PR ではやらないこと**
 

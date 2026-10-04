@@ -7,7 +7,8 @@ import { isDraftId } from '../../domain/issue-draft.js';
  */
 
 /**
- * ISO 8601 の時刻 (toISOString の形を含む)。読み込みのときに確かめるのは、"not-a-date" のような値が
+ * ISO 8601 の UTC の時刻で、末尾が "Z" の形 (toISOString の形を含む。"+09:00" のようなオフセット付きは不可)。
+ * 読み込みのときに確かめるのは、"not-a-date" のような値が
  * 通ると、受け取りの索引づくり (hourBucketOf の toISOString) が RangeError で落ち、以後の受け取りが
  * すべて失敗するため。形が合わない下書きは「使えない下書き」として警告つきで飛ばす。
  */

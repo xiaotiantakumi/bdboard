@@ -177,6 +177,8 @@ describe('createFsIssueDraftStorage', () => {
       ['an empty firstOccurredAt', { firstOccurredAt: '' }],
       ['an impossible date in firstOccurredAt', { firstOccurredAt: '2026-13-45T00:00:00.000Z' }],
       ['a date without a time zone', { firstOccurredAt: '2026-10-04T12:00:00' }],
+      ['a +09:00 offset instead of the Z suffix (UTC only)', { lastOccurredAt: '2026-10-04T21:00:00+09:00' }],
+      ['a numeric offset of zero (only the Z suffix is UTC here)', { firstOccurredAt: '2026-10-04T12:00:00+00:00' }],
       [
         'occurredProjects[].firstSeenAt',
         { occurredProjects: [{ name: 'p', path: '/p', firstSeenAt: NOT_ISO, lastSeenAt: '2026-10-04T12:00:00.000Z' }] },
@@ -357,6 +359,53 @@ describe('createFsIssueDraftStorage', () => {
     const stored = await storage.saveImage(ID_1, 'png', new Uint8Array([1, 2, 3]));
     expect(await storage.countImages(ID_1)).toBe(1);
     expect((await storage.listImages(ID_1)).map((image) => image.fileName)).toEqual([stored.fileName]);
+  });
+
+  describe('stat on an image file while counting or listing images', () => {
+    async function withStatFailing<T>(
+      fileName: string,
+      error: Error,
+      run: () => Promise<T>,
+    ): Promise<T> {
+      const realStat = fs.stat.bind(fs) as unknown as (...args: unknown[]) => Promise<unknown>;
+      const spy = vi.spyOn(fs, 'stat').mockImplementation(((...args: unknown[]) => {
+        if (String(args[0]).endsWith(fileName)) return Promise.reject(error);
+        return realStat(...args);
+      }) as unknown as typeof fs.stat);
+      try {
+        return await run();
+      } finally {
+        spy.mockRestore();
+      }
+    }
+
+    // EMFILE や EIO はあとで通るかもしれない。飛ばすと画像を少なく数え、上限を超えて足せてしまう。投げる。
+    it.each(['EMFILE', 'EIO'])('%s makes countImages() and listImages() reject instead of undercounting', async (code) => {
+      const storage = createFsIssueDraftStorage(baseDir);
+      await storage.save(makeDraft(ID_1));
+      const first = await storage.saveImage(ID_1, 'png', new Uint8Array([1, 2, 3]));
+      await storage.saveImage(ID_1, 'png', new Uint8Array([4, 5, 6]));
+      const failure = Object.assign(new Error(`${code}: transient failure`), { code });
+
+      await withStatFailing(first.fileName, failure, async () => {
+        await expect(storage.countImages(ID_1)).rejects.toThrow(/transient failure/);
+        await expect(storage.listImages(ID_1)).rejects.toThrow(/transient failure/);
+      });
+      expect(await storage.countImages(ID_1)).toBe(2);
+    });
+
+    it('ENOENT (the image was removed after readdir) is skipped; the others are still counted', async () => {
+      const storage = createFsIssueDraftStorage(baseDir);
+      await storage.save(makeDraft(ID_1));
+      const gone = await storage.saveImage(ID_1, 'png', new Uint8Array([1, 2, 3]));
+      const kept = await storage.saveImage(ID_1, 'png', new Uint8Array([4, 5, 6]));
+      const missing = Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
+
+      await withStatFailing(gone.fileName, missing, async () => {
+        expect(await storage.countImages(ID_1)).toBe(1);
+        expect((await storage.listImages(ID_1)).map((image) => image.fileName)).toEqual([kept.fileName]);
+      });
+    });
   });
 
   it('returns an empty list before anything was saved, and undefined for an unknown or invalid draft', async () => {

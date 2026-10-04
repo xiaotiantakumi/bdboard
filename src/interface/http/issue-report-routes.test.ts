@@ -5,7 +5,7 @@ import {
   createInMemoryIssueDraftStorage,
   type InMemoryIssueDraftStorage,
 } from '../../application/issue-report/issue-draft-test-support.js';
-import { ISSUE_DRAFT_MAX_IMAGES } from '../../domain/issue-draft.js';
+import { ISSUE_DRAFT_MAX_IMAGES, type IssueDraft } from '../../domain/issue-draft.js';
 import { ATTACHMENT_MAX_COUNT_PER_TICKET } from './attachment-validation.js';
 import { createIssueReportRoutes, ISSUE_REPORT_BODY_MAX_BYTES } from './issue-report-routes.js';
 import type { WriteGuardDeps } from './write-guard.js';
@@ -166,8 +166,15 @@ describe('POST /api/issue-reports/drafts — fields that reach the public title 
     ['source with a bidi isolate', { kind: 'B', source: 'safe\u2066hidden' }],
     ['catalogSlug with a zero-width space', { kind: 'A', catalogSlug: 'slug\u200Bname' }],
     ['source with a byte order mark', { kind: 'B', source: '\uFEFFstop-ticket-gate.sh' }],
-    ['project.name with a newline', { kind: 'B', source: 's', project: { name: 'proj\n## injected', path: '/p' } }],
-    ['project.name with a bidi override', { kind: 'B', source: 's', project: { name: 'proj\u202Eevil', path: '/p' } }],
+    ['source with a word joiner', { kind: 'B', source: 'safe\u2060name.sh' }],
+    ['source with an Arabic letter mark', { kind: 'B', source: 'safe\u061Cname.sh' }],
+    ['source with a soft hyphen', { kind: 'B', source: 'stop-\u00ADgate.sh' }],
+    ['source with a Mongolian vowel separator', { kind: 'B', source: 'safe\u180Ename.sh' }],
+    ['source with a Hangul filler', { kind: 'B', source: 'safe\u3164name.sh' }],
+    ['source with a tag character', { kind: 'B', source: 'safe\u{E0061}name.sh' }],
+    ['catalogSlug with an interlinear annotation mark', { kind: 'A', catalogSlug: 'slug\uFFF9name' }],
+    ['envInfo.os with an invisible operator', { kind: 'B', source: 's', envInfo: { os: 'darwin\u2062' } }],
+    ['envInfo.bdVersion with a zero-width joiner (identifiers get no exception)', { kind: 'B', source: 's', envInfo: { bdVersion: '1\u200D0' } }],
   ])('400s a newline, control or invisible character in %s and stores nothing', async (_label, body) => {
     const { app, storage } = setup();
     const res = await app.request(DRAFTS, json(body), LOCAL_ENV);
@@ -215,11 +222,87 @@ describe('POST /api/issue-reports/drafts — fields that reach the public title 
     },
   );
 
+  it('says why: the 400 names the field and mentions invisible or format characters (never the value)', async () => {
+    const { app } = setup();
+    const res = await app.request(DRAFTS, json({ kind: 'B', source: 'secret-\u200Bvalue.sh' }), LOCAL_ENV);
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    const payload = JSON.parse(text) as { error: string; details: { fieldErrors: Record<string, string[]> } };
+    expect(payload.details.fieldErrors.source?.[0]).toMatch(/invisible or format characters/);
+    expect(text).not.toContain('secret-');
+  });
+
   it('still 400s an empty or too-long source / catalogSlug', async () => {
     const { app } = setup();
     expect((await app.request(DRAFTS, json({ kind: 'B', source: '' }), LOCAL_ENV)).status).toBe(400);
     expect((await app.request(DRAFTS, json({ kind: 'B', source: 'x'.repeat(201) }), LOCAL_ENV)).status).toBe(400);
     expect((await app.request(DRAFTS, json({ kind: 'A', catalogSlug: 'x'.repeat(201) }), LOCAL_ENV)).status).toBe(400);
+  });
+});
+
+describe('POST /api/issue-reports/drafts — project.name is a display field (cleaned, home paths folded)', () => {
+  const withProject = (name: string) => ({ kind: 'B', source: 's.sh', errorText: 'boom', project: { name, path: '/p/x' } });
+
+  it('accepts an emoji sequence in the name (no 400) and stores it without the invisible joiner', async () => {
+    const { app, storage } = setup();
+    const res = await app.request(DRAFTS, json(withProject('\u{1F469}\u200D\u{1F4BB}-tools')), LOCAL_ENV);
+    expect(res.status).toBe(201);
+    expect([...storage.drafts.values()][0].occurredProjects[0].name).toBe('\u{1F469}\u{1F4BB}-tools');
+  });
+
+  it.each([
+    ['a newline', 'proj\n## injected', 'proj## injected'],
+    ['a carriage return and a line separator', 'a\r\nb\u2028c', 'abc'],
+    ['a bidi override', 'proj\u202Eevil', 'projevil'],
+    ['a BOM and a zero-width space', '\uFEFFproj\u200B', 'proj'],
+    ['a Hangul filler', 'pro\u3164j', 'proj'],
+    ['surrounding spaces', '  proj  ', 'proj'],
+  ])('strips %s from the name instead of rejecting it', async (_label, name, expected) => {
+    const { app, storage } = setup();
+    const res = await app.request(DRAFTS, json(withProject(name)), LOCAL_ENV);
+    expect(res.status).toBe(201);
+    const stored = [...storage.drafts.values()][0].occurredProjects[0].name;
+    expect(stored).toBe(expected);
+    expect(stored).not.toContain('\n');
+  });
+
+  it.each([
+    ['empty', ''],
+    ['only spaces', '   '],
+    ['only invisible characters', '\u200B\uFEFF\u202E'],
+    ['only newlines', '\n\r\n'],
+  ])('400s a name that is %s once cleaned, and stores nothing', async (_label, name) => {
+    const { app, storage } = setup();
+    const res = await app.request(DRAFTS, json(withProject(name)), LOCAL_ENV);
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { details: { fieldErrors: Record<string, string[]> } };
+    expect(JSON.stringify(payload.details)).toContain('must not be empty');
+    expect(storage.drafts.size).toBe(0);
+  });
+
+  it('shows a home path used as the name as ~/proj to a tunnel reader (stored folded, not just on the way out)', async () => {
+    const { app, storage } = setup();
+    const { id } = await createDraft(app, withProject('/Users/example-user/proj'));
+    expect([...storage.drafts.values()][0].occurredProjects[0].name).toBe('~/proj');
+
+    const detail = await (await app.request(`${DRAFTS}/${id}`, { headers: { ...CF_HEADERS } }, TUNNEL_ENV)).text();
+    const payload = JSON.parse(detail) as { draft: { occurredProjects: Array<{ name: string }> } };
+    expect(payload.draft.occurredProjects.map((entry) => entry.name)).toEqual(['~/proj']);
+    expect(detail).not.toContain('example-user');
+  });
+
+  it('folds a home path inside an envInfo string too', async () => {
+    const { app, storage } = setup();
+    const body = {
+      kind: 'B',
+      source: 's.sh',
+      envInfo: { bdboardVersion: '0.1.2', os: 'darwin', nodeVersion: 'v22.14.0', bdVersion: 'bd 1.0 (/Users/example-user/bin/bd)' },
+    };
+    const { id } = await createDraft(app, body);
+    expect([...storage.drafts.values()][0].localOnly.envInfo.bdVersion).toBe('bd 1.0 (~/bin/bd)');
+    const detail = await (await app.request(`${DRAFTS}/${id}`, { headers: { ...CF_HEADERS } }, TUNNEL_ENV)).text();
+    expect(detail).toContain('bd 1.0 (~/bin/bd)');
+    expect(detail).not.toContain('example-user');
   });
 });
 
@@ -525,6 +608,91 @@ describe('GET /api/issue-reports/drafts and /:id — screen API', () => {
     });
   });
 
+  describe('a draft that already holds a raw home path (written to the store directly, not through the receive API)', () => {
+    // 受け取りが畳み損ねた値・古い版が書いた値・手で書き換えた値の想定。トンネルの応答の組み立てがもう一度畳む。
+    const RAW_ID = '1758812345678-aaaaaaaaaaaaaaaa';
+    const RAW = '/Users/example-user/example-project/.claude/hooks/stop-ticket-gate.sh';
+    const FOLDED = '~/example-project/.claude/hooks/stop-ticket-gate.sh';
+    const rawDraft: IssueDraft = {
+      id: RAW_ID,
+      kind: 'B',
+      fingerprint: `B:${RAW}:0123456789abcdef`,
+      source: RAW,
+      catalogSlug: '/home/example-user/.claude/failure-catalog/jq-missing',
+      title: `[hook] ${RAW}`,
+      body: `- source: ${RAW}\n- cwd: /mnt/c/Users/example-user/proj`,
+      titleEditedByUser: false,
+      bodyEditedByUser: false,
+      localOnly: {
+        symptomRaw: 'symptom',
+        causeRaw: 'cause',
+        preventionRaw: 'prevention',
+        errorTextRaw: 'boom',
+        errorTextHead: 'boom',
+        errorTextTail: '',
+        errorTextTruncated: false,
+        envInfo: { bdboardVersion: '0.1.2', os: 'darwin', nodeVersion: 'v22.14.0', bdVersion: '/Users/example-user/bin/bd' },
+      },
+      occurredProjects: [
+        { name: '/Users/example-user/proj', path: '/Users/example-user/proj', firstSeenAt: '2026-10-04T12:00:00.000Z', lastSeenAt: '2026-10-04T12:00:00.000Z' },
+      ],
+      occurrenceCount: 1,
+      firstOccurredAt: '2026-10-04T12:00:00.000Z',
+      lastOccurredAt: '2026-10-04T12:00:00.000Z',
+      status: 'pending',
+      harnessVersionAtOccurrence: 'C:\\Users\\example-user\\harness',
+      draftSchemaVersion: 1,
+    };
+
+    it('is folded to ~/… in a tunnel reader\'s list and detail, in every field that carries a name or a sentence', async () => {
+      const { app, storage } = setup();
+      storage.drafts.set(RAW_ID, rawDraft);
+
+      const list = await (await app.request(DRAFTS, { headers: { ...CF_HEADERS } }, TUNNEL_ENV)).text();
+      const detail = await (await app.request(`${DRAFTS}/${RAW_ID}`, { headers: { ...CF_HEADERS } }, TUNNEL_ENV)).text();
+      for (const text of [list, detail]) {
+        expect(text).not.toContain('example-user');
+        expect(text).not.toContain('/Users/');
+        expect(text).not.toContain('/home/');
+      }
+      const listed = (JSON.parse(list) as { drafts: Array<{ fingerprint: string; title: string }> }).drafts[0];
+      expect(listed.fingerprint).toBe(`B:${FOLDED}:0123456789abcdef`);
+      expect(listed.title).toBe(`[hook] ${FOLDED}`);
+
+      const { draft } = JSON.parse(detail) as {
+        draft: {
+          source: string;
+          catalogSlug: string;
+          fingerprint: string;
+          title: string;
+          body: string;
+          harnessVersionAtOccurrence: string;
+          occurredProjects: Array<{ name: string }>;
+          localOnly: { envInfo: { bdVersion: string } };
+        };
+      };
+      expect(draft.source).toBe(FOLDED);
+      expect(draft.catalogSlug).toBe('~/.claude/failure-catalog/jq-missing');
+      expect(draft.fingerprint).toBe(`B:${FOLDED}:0123456789abcdef`);
+      expect(draft.title).toBe(`[hook] ${FOLDED}`);
+      expect(draft.body).toBe(`- source: ${FOLDED}\n- cwd: ~/proj`);
+      expect(draft.occurredProjects.map((entry) => entry.name)).toEqual(['~/proj']);
+      expect(draft.localOnly.envInfo.bdVersion).toBe('~/bin/bd');
+      expect(draft.harnessVersionAtOccurrence).toBe('~/harness');
+    });
+
+    it('is not rewritten for the local reader (the stored value is shown as it is) and is not changed in the store', async () => {
+      const { app, storage } = setup();
+      storage.drafts.set(RAW_ID, rawDraft);
+      const res = await app.request(`${DRAFTS}/${RAW_ID}`, localGet(), LOCAL_ENV);
+      const { draft } = (await res.json()) as { draft: { source: string; restricted: boolean; occurredProjects: Array<{ path: string }> } };
+      expect(draft.restricted).toBe(false);
+      expect(draft.source).toBe(RAW);
+      expect(draft.occurredProjects[0].path).toBe('/Users/example-user/proj');
+      expect(storage.drafts.get(RAW_ID)?.source).toBe(RAW);
+    });
+  });
+
   it('404s an unknown id and 400s a malformed one', async () => {
     const { app } = setup();
     expect((await app.request(`${DRAFTS}/1758812345678-ffffffffffffffff`, localGet(), LOCAL_ENV)).status).toBe(404);
@@ -578,6 +746,33 @@ describe('PATCH /api/issue-reports/drafts/:id/dismiss', () => {
     }
     expect(storage.drafts.get(id)?.status).toBe('pending');
     expect(storage.drafts.get(id)?.dismissReason).toBeUndefined();
+  });
+
+  it('drops a pasted zero-width space or BOM from the reason, keeps the ZWJ / ZWNJ of emoji and Persian text', async () => {
+    const { app, storage } = setup();
+    const { id } = await createDraft(app);
+    const reason = '\uFEFFnot a\u200B bdboard problem \u{1F469}\u200D\u{1F4BB} \u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645';
+    const res = await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason }), LOCAL_ENV);
+    expect(res.status).toBe(200);
+    expect(storage.drafts.get(id)?.dismissReason).toBe(
+      'not a bdboard problem \u{1F469}\u200D\u{1F4BB} \u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645',
+    );
+  });
+
+  it('400s any other invisible or format character in the reason, and a reason that is only pasted zero-width characters', async () => {
+    const { app, storage } = setup();
+    const { id } = await createDraft(app);
+    const hostile = [
+      'a\u202Eb', 'a\u2066b', 'a\u2060b', 'a\u00ADb', 'a\u061Cb', 'a\u180Eb', 'a\u3164b', 'a\uFFF9b', 'a\u{E0061}b',
+      '\u200B\uFEFF', '\u200B',
+    ];
+    for (const reason of hostile) {
+      const res = await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason }), LOCAL_ENV);
+      expect(res.status, JSON.stringify(reason)).toBe(400);
+    }
+    const detail = await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason: 'a\u202Eb' }), LOCAL_ENV);
+    expect(JSON.stringify(await detail.json())).toContain('invisible or format characters');
+    expect(storage.drafts.get(id)?.status).toBe('pending');
   });
 
   it('follows the ordinary write-guard: a tunnel is refused by default, allowed with a strong-password session', async () => {

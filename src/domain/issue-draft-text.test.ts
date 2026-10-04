@@ -48,7 +48,7 @@ describe('buildProvisionalDraftText', () => {
 
   // 名前 (source・catalogSlug) と版は、渡された 1 行の文字列がそのまま入る。このビルダーは中身を
   // 検査しない。改行や制御文字を含む値を 400 で止めるのは HTTP の入口 (issue-report-routes.test.ts の
-  // "fields that reach the public title and body") と isSingleLineText (issue-draft.test.ts)。
+  // "fields that reach the public title and body") と isSingleLineText (issue-draft-identifier.test.ts)。
 });
 
 describe('buildMassOccurrenceText', () => {

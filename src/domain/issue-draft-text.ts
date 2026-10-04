@@ -10,9 +10,12 @@ import type { DraftEnvInfo, DraftKind } from './issue-draft.js';
  * 呼び出しを差し替える。
  *
  * ただし名前 (source・catalogSlug) と版の文字列は、呼び出し側が渡した値がそのまま入る。
- * このファイルは中身を検査しないので、1 行であること (改行・制御文字なし) は HTTP の入口が
- * 400 で保証する (issue-report-routes.ts、isSingleLineText)。パスの形かどうかは見ないため、
- * それらの置き換えも 4y8q.2 の仕事。
+ * このファイルは中身を検査しない。1 行であること (改行・制御文字・不可視の書式文字なし) は HTTP の
+ * 入口が 400 で保証し (issue-report-routes.ts、isSingleLineText)、ホーム配下の絶対パスは受け取りの
+ * 時点で "~/" に畳んでいる (canonicalizeReceiveInput)。トンネルの読み手への応答でも同じ畳み込みを
+ * もう一度かける (issue-report-dto.ts、foldHomePaths)。畳むのはホーム配下の絶対パスの決まった形だけ
+ * (issue-draft-identifier.ts の foldHomePaths に一覧) で、それ以外の置き換え (エラー文・トークン・
+ * リポジトリの内側の相対パスなど) と Markdown のエスケープは 4y8q.2 の仕事。
  */
 
 const KIND_LABEL: Readonly<Record<DraftKind, string>> = {

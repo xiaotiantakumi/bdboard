@@ -6,8 +6,13 @@ import {
   ISSUE_DRAFT_DISMISS_REASON_MAX_CHARS,
   ISSUE_DRAFT_MAX_IMAGES,
   isDraftId,
-  isSingleLineText,
 } from '../../domain/issue-draft.js';
+import {
+  isSingleLineDisplayText,
+  isSingleLineText,
+  sanitizeProjectName,
+  stripPasteArtifacts,
+} from '../../domain/issue-draft-identifier.js';
 import {
   ATTACHMENT_ALLOWED_MIME_TYPES,
   ATTACHMENT_BODY_MAX_BYTES,
@@ -44,19 +49,30 @@ import {
 export const ISSUE_REPORT_BODY_MAX_BYTES = 1024 * 1024;
 const DISMISS_BODY_MAX_BYTES = 16 * 1024;
 
-const SINGLE_LINE_MESSAGE = 'must be a single line without control characters';
+const SINGLE_LINE_MESSAGE = 'must be a single line without control, invisible or format characters';
 
 /**
- * 題名・本文・応答にそのまま入る欄 (source・catalogSlug・版の文字列・プロジェクト名) は、改行・
- * 制御文字・不可視の書式文字 (ゼロ幅・双方向制御・BOM) を含めない。含めると行を足して見出しや
- * リンクを公開本文へ紛れ込ませたり、見えない文字で別の値に見せかけたりできる。
+ * 識別子 (source・catalogSlug・版の文字列) は、改行・制御文字・不可視の書式文字 (ゼロ幅・双方向制御・
+ * BOM・タグ文字・ハングルの埋め字など) を含めない。含めると行を足して見出しやリンクを公開本文へ
+ * 紛れ込ませたり、見えない文字で別の値に見せかけたりできるので、厳密に 400 にする。
  * これで防ぐのは行の数と見えない文字だけ: 1 行でもリンク・@メンション・#参照・<img> は書ける。
  * インラインの Markdown のエスケープと公開本文の置き換えは 4y8q.2 の仕事。パスの形かどうかは
  * ここでは見ない (source は "GET /api/x" のような API のパスでもよい)。ホーム配下の絶対パスは
- * 受け取りのサービスが "~/" に畳む (canonicalizeIdentifier)。
+ * 受け取りのサービスが "~/" に畳む (canonicalizeReceiveInput)。
+ * 表示用の欄 (project.name・見送りの理由) は人が書くので、厳密に弾かずに整えて受ける (下の二つ)。
  */
 const singleLine = (max: number) => z.string().max(max).refine(isSingleLineText, SINGLE_LINE_MESSAGE);
 const versionString = singleLine(100);
+
+/**
+ * プロジェクト名 (表示用): 絵文字の連結 (👩‍💻-tools) などで 400 にしないよう、弾く文字は取り除いて受け、
+ * ホーム配下のパスは "~/" に畳む (sanitizeProjectName)。取り除いた結果が空なら 400。
+ */
+const projectNameSchema = z
+  .string()
+  .max(200)
+  .transform(sanitizeProjectName)
+  .pipe(z.string().min(1, 'must not be empty after removing control, invisible or format characters'));
 
 /**
  * 元チケットの参照 (bd の id)。トンネルの読み手へ返し、後で bd のコマンドの引数に使う (4y8q.4) ので、
@@ -83,15 +99,17 @@ const receiveBodySchema = z.object({
       ghVersion: versionString.optional(),
     })
     .optional(),
-  project: z.object({ name: singleLine(200), path: z.string().max(1000) }).optional(),
+  project: z.object({ name: projectNameSchema, path: z.string().max(1000) }).optional(),
   sourceTicketRef: z.string().regex(TICKET_REF_PATTERN, 'must look like a ticket id').optional(),
 });
 
-// 一言 (1 行)。前後の空白は落とすが、途中に改行や制御文字があれば 400 (末尾の改行も含めて生の値で見る)。
+// 一言 (1 行)。貼り付けで混ざるゼロ幅スペースと BOM は落とし、前後の空白も落とす。絵文字の連結 (ZWJ・ZWNJ) は
+// 許す。改行・制御文字・そのほかの不可視の書式文字が途中にあれば 400 (末尾の改行も含めて、整える前の値で見る)。
 const dismissBodySchema = z.object({
   reason: z
     .string()
-    .refine(isSingleLineText, SINGLE_LINE_MESSAGE)
+    .transform(stripPasteArtifacts)
+    .refine(isSingleLineDisplayText, SINGLE_LINE_MESSAGE)
     .pipe(z.string().trim().min(1).max(ISSUE_DRAFT_DISMISS_REASON_MAX_CHARS)),
 });
 
@@ -122,7 +140,8 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
   const localOnlyGuard = createPrivilegedApiGuardMiddleware({});
 
   app.post(ISSUE_DRAFTS_PATH, localOnlyGuard, limitBody(ISSUE_REPORT_BODY_MAX_BYTES), async (c) => {
-    const parsed = await parseJsonBody(c, receiveBodySchema);
+    // 400 の理由 (どの欄が、1 行・不可視の文字・空のどれで落ちたか) を details で返す。入力の値は返さない。
+    const parsed = await parseJsonBody(c, receiveBodySchema, { includeValidationDetails: true });
     if (!parsed.ok) return parsed.response;
 
     const result = await service.receive(parsed.data);
@@ -160,7 +179,7 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
   app.patch(`${ISSUE_DRAFTS_PATH}/:id/dismiss`, limitBody(DISMISS_BODY_MAX_BYTES), async (c) => {
     const id = c.req.param('id');
     if (!isDraftId(id)) return c.json({ error: 'invalid draft id' }, 400);
-    const parsed = await parseJsonBody(c, dismissBodySchema);
+    const parsed = await parseJsonBody(c, dismissBodySchema, { includeValidationDetails: true });
     if (!parsed.ok) return parsed.response;
 
     const result = await service.dismiss(id, parsed.data.reason);

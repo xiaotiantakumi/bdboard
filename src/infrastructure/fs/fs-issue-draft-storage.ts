@@ -144,8 +144,11 @@ export function createFsIssueDraftStorage(
         try {
           const stat = await fs.stat(path.join(dir, name));
           return stat.isFile() ? { fileName: name, byteLength: stat.size, createdAt: stat.mtime } : undefined;
-        } catch {
-          return undefined;
+        } catch (error) {
+          // readdir のあとで消えた画像だけ飛ばす。EMFILE・EIO など、あとで通るかもしれないエラーを飛ばすと、
+          // 画像の数を少なく数えて上限 (ISSUE_DRAFT_MAX_IMAGES) を超えて足せてしまう。投げる。
+          if (isNotFound(error)) return undefined;
+          throw error;
         }
       }),
     );

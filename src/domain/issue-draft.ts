@@ -128,55 +128,6 @@ export function isMassOccurrenceFingerprint(fingerprint: string): boolean {
 }
 
 /**
- * 1 行の文字列として扱えない文字か。C0 制御文字 (改行・タブを含む)、DEL と C1 制御文字 (NEL を含む)、
- * U+2028 / U+2029 (行区切り)、そして見た目を変える不可視の文字: ゼロ幅 (U+200B-U+200F)、
- * 双方向の制御 (U+202A-U+202E、U+2066-U+2069)、BOM (U+FEFF)。最後のものは、画面で
- * 並びを入れ替えたり、見えない文字で別の値に見せかけたりできる。
- */
-function isDisallowedInSingleLine(code: number): boolean {
-  return (
-    code < 0x20 ||
-    (code >= 0x7f && code <= 0x9f) ||
-    code === 0x2028 ||
-    code === 0x2029 ||
-    (code >= 0x200b && code <= 0x200f) ||
-    (code >= 0x202a && code <= 0x202e) ||
-    (code >= 0x2066 && code <= 0x2069) ||
-    code === 0xfeff
-  );
-}
-
-/**
- * 改行・制御文字・不可視の書式文字を含まない 1 行の文字列か。題名・本文にそのまま入る欄
- * (source・catalogSlug・版の文字列・プロジェクト名) と見送りの理由は、HTTP の入口でこれを
- * 満たさないものを 400 にする (行を足して見出しやリンクを紛れ込ませる経路を作らない)。
- * 1 行でもリンク・@メンション・#参照・<img> は書ける。インラインの Markdown のエスケープは
- * 公開本文を組む bdboard-4y8q.2 の仕事で、ここは行の数と見えない文字だけを見る。
- */
-export function isSingleLineText(value: string): boolean {
-  for (const char of value) {
-    if (isDisallowedInSingleLine(char.codePointAt(0) ?? 0)) return false;
-  }
-  return true;
-}
-
-/**
- * 利用者のホーム配下の絶対パス ("/Users/<name>/"、"/home/<name>/"、"X:\Users\<name>\") を "~/" に
- * 畳む。source (B/C の出どころ) と catalogSlug は題名・本文・指紋・トンネル向けの応答にそのまま出るので、
- * フックが自分の "$0" を source に入れて報告しても、ユーザー名が下書きに残らない。指紋の前に使うので、
- * 別の利用者・別の PC の同じフックが 1 件にまとまる。"GET /api/home/x/" のような API のパスは
- * 前が空白・引用符・"=" ":" "("・"file://" でないので触らない。パス以外の秘密 (引数のトークンなど) は見つけない。
- */
-// Windows のドライブ配下は大文字小文字を区別しない ("c:\users\…")。POSIX 側は区別する
-// ("GET /users/42" のような API のパスを巻き込まないため)。
-const HOME_PATH_PATTERN =
-  /(?<=^|[\s'"=:(]|file:\/\/)(?:[A-Za-z]:[\\/]+[Uu][Ss][Ee][Rr][Ss][\\/]+[^\\/'"]+|\/(?:Users|home)[\\/]+[^\\/\s'"]+)(?:[\\/]+|$)/g;
-
-export function canonicalizeIdentifier(value: string): string {
-  return value.trim().replace(HOME_PATH_PATTERN, '~/');
-}
-
-/**
  * エラー文を「同じ症状なら同じ文字列」に寄せる (設計 4節)。best-effort で、目的は 1 件に
  * まとめることだけ。公開本文の安全性はこの関数ではなく bdboard-4y8q.2 が担う。
  *
