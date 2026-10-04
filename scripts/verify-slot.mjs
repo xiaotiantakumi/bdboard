@@ -21,6 +21,10 @@
 // - bdboard-ulxa.6: 順番は FIFO から「優先度 + 仮想到着時刻」に変えた (landed > merge > pr、
 //   上限本数は不変)。決め方と旧形式の holder との混在の扱いは verify-slot-queue.mjs。
 //   走り出すときに holder file へ acquiredAt を書く (書き込みは一時ファイル + rename で原子的に)。
+// - bdboard-xdk8: landed (着地後検証) は独占して走る — 走っている holder が抜けるのを待ってから 1 本で
+//   走り、その間 (順番待ちの間も) 後ろの待ち手は始めない。負荷で着地後検証が偽の failure を出し、
+//   main-broken の枠で全マージが止まったため。独占の待ちも下の waitTimeoutMs の対象 (打ち切りは
+//   SLOT_WAIT_TIMEOUT_EXIT_CODE = 「verify は走っていない」で、merge-pr は failure と記録しない)。
 // - stale 処理: pid が死んだ holder は即回収 (SIGKILL された verify の後始末)。
 //   pid が生きていて staleTtlMs を超えた holder は枠のカウントから外す (ハング1本が
 //   枠を永久占有しない) が、ファイルは本人の後始末に任せて消さない。
@@ -36,7 +40,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { holderPath, readOthers, unlinkQuietly, writeHolderAtomically } from './verify-slot-files.mjs';
-import { HOLDER_FORMAT, MAX_SENIORITY_MS, normalizePriority, planSlots, TIER_STEP_MS } from './verify-slot-queue.mjs';
+import { EXCLUSIVE_PRIORITIES, HOLDER_FORMAT, MAX_SENIORITY_MS, normalizePriority, planSlots, TIER_STEP_MS } from './verify-slot-queue.mjs';
 
 export const DEFAULT_SLOT_OPTIONS = Object.freeze({
   slots: 2,
@@ -50,6 +54,7 @@ export const DEFAULT_SLOT_OPTIONS = Object.freeze({
   queueSince: undefined,
   tierStepMs: TIER_STEP_MS,
   maxSeniorityMs: MAX_SENIORITY_MS,
+  exclusivePriorities: EXCLUSIVE_PRIORITIES,
 });
 
 export class SlotWaitTimeoutError extends Error {}
@@ -96,6 +101,15 @@ export function envSlotOptions(env = process.env) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// 待ちの表示に足す独占 (bdboard-xdk8) の説明。自分が独占なら「抜けるのを待つ」、他の独占に止められて
+// いるならその pid。
+function exclusiveNote(plan, holder, options) {
+  if (options.exclusivePriorities.includes(holder.priority)) {
+    return '; landed verify runs alone, waiting for the running holders to finish';
+  }
+  return plan.exclusivePid === null ? '' : `; landed verify pid ${plan.exclusivePid} runs alone first`;
+}
 
 function newHolder(options) {
   const joinedAt = Date.now();
@@ -205,7 +219,7 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
         lastStatusAt = now;
         log(
           `verify: waiting for a verify slot (queue position ${plan.position}/${plan.queue.length}, priority ${holder.priority},` +
-            ` holders: pid ${holderPids}, waited ${Math.round((now - holder.queuedAt) / 1000)}s) — queueing, not a hang`,
+            ` holders: pid ${holderPids}, waited ${Math.round((now - holder.queuedAt) / 1000)}s${exclusiveNote(plan, holder, options)}) — queueing, not a hang`,
         );
       }
       await sleep(options.pollMs);

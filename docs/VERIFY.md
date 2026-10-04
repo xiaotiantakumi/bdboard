@@ -349,6 +349,29 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   the same simulation results, and the cap bounds how far a long-retrying
   `merge` run can jump the critical-path `landed` runs: it passes only those
   that queued less than 6 min before it.
+- **`landed` runs alone (bdboard-xdk8).** On 2026-10-04 two landed verifies of
+  a docs-only PR failed in a row under load average 48–111 on 10 cores (two
+  slot holders plus agents' one-off vitest runs outside the slot): web tests
+  hit `Test timed out in 5000ms`, a vitest worker failed to start, and the
+  `failure` on the ledger held the main-broken slot and stopped every merge
+  (the same SHA was green on GitHub CI and on a quiet re-run). So a `landed`
+  waiter whose turn comes does not start while any holder is running — it
+  waits for them to leave and then runs as the only one — and while it runs
+  or waits for its turn, no waiter behind it starts (`merge` and `pr` alike).
+  The order itself is unchanged: a waiter already ahead of it by virtual
+  arrival may still start first, and the landed waiter then waits for that
+  one too. The exclusive wait is an ordinary slot wait: 15 min without a
+  change in who is running ends it with exit 75, which `merge-pr` treats as
+  "could not run" (bdboard-wj9m), not `failure`. A running `landed` holder
+  past the 30 min stale limit stops blocking others. Holders written by a
+  script from before this change (a worktree not yet rebased) do not know
+  about exclusivity and may start beside a `landed` run — no worse than
+  before. The cost shows in the simulation below (which models neither
+  load-induced slowdowns nor false failures, so it shows only the waiting):
+  the next PR's predicted-tree verify no longer overlaps the previous landed
+  verify, so merges per 8 h drop from 45.8 to 28.4 and the mean merge latency
+  rises from 21 to 43 min. In exchange a landed verify never shares the
+  machine with another slot holder (`landedSharedMin` 248 → 0).
 - **Holder format.** New holders carry `v: 2`, `priority`, `queuedAt`, an
   optional `since`, and `acquiredAt` once running, and are written atomically
   (temp file + rename). A file that fails to parse is deleted only after 5 s (an
@@ -375,7 +398,8 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   | priority only, landed last | 24.5 | 1.6 | 2.1 / 14 | 50 / 285 | 17.6 | 2 |
   | priority only, landed first | 27.9 | 2.9 | 2.5 / 16 | 53 / 269 | 20.3 | 2 |
   | abandon only (FIFO) | 47.4 | 1.5 | 1.8 / 13 | 23 / 130 | 10.8 | 2 |
-  | **adopted**: priority + abandon + seniority | 45.8 | **1.2** | **1.4 / 6** | **21 / 75** | 19.0 | 2 |
+  | ulxa.6 adopted: priority + abandon + seniority (`sharedLanded`) | 45.8 | **1.2** | **1.4 / 6** | **21 / 75** | 19.0 | 2 |
+  | **adopted** (bdboard-xdk8): the above + `landed` runs alone (`after`) | 28.4 | **1.2** | 2.3 / 15 | 43 / 263 | 27.8 | 2 |
 
   "Abandon" is on the merge-pr side: see docs/GIT-WORKFLOW.md, S2.
 
@@ -399,7 +423,11 @@ birpc の外には固定のタイムアウトが残っている (worker の起�
 `[vitest-pool-runner]: Timeout waiting for worker to respond`、ランナー起動待ちの
 `[vitest-pool]: Timeout starting … runner.` など)。これらや teardown 時の
 `[vitest-worker]: Closing rpc while "…" was pending` で verify が落ちた場合は既知 flake と
-みなさず、実失敗として原因を調べる。Vitest を上げて `createRuntimeRpc` / PoolRunner が birpc に
+みなさず、実失敗として原因を調べる。例外は merge-pr の着地後検証だけで、落ちたステップが vitest で、
+エラーの見出しが全部時間切れの形 (`Test timed out in Nms`・`Hook timed out in Nms`・
+`[vitest-pool]: Timeout starting … runner.` 等。`scripts/merge-pr/load-retry.mjs` の `TIMEOUT_SHAPES`) の
+ときに限り 1 回だけ再実行してから台帳に書く (bdboard-xdk8。docs/GIT-WORKFLOW.md の Layer 3 ledger)。
+再実行でも落ちれば failure として記録されるので、そこから先は同じく実失敗として調べる。Vitest を上げて `createRuntimeRpc` / PoolRunner が birpc に
 渡す `timeout: -1` が変わったら、この節の前提を見直す。
 
 ## ローカル起動コマンドの違い

@@ -33,12 +33,22 @@
 //     新形式が旧 holder を追い越して走ると、旧プロセスの順位計算にその新形式が映らず、
 //     上限を 1 本超えうるため
 // 新形式は走り出すときに acquiredAt を書く (旧プロセスは知らないフィールドを無視する)。
+//
+// bdboard-xdk8: 独占 (exclusive)。landed は「何本で走るか」も変える — 順番が来ても、走っている holder が
+// 1 本でも残っていれば始めず (抜けるのを待つ)、走っている間は他の誰も始めない。2026-10-04 に、着地後検証が
+// verify スロット 2 本 + スロット外の負荷 (load average 48〜111、10 コア) のなかで 5000ms タイムアウト等の偽の
+// failure を 2 回出し、main-broken の枠で全マージが止まったため。並び順 (仮想到着時刻) は変えない: landed より
+// 前に並んでいる待ち手は従来どおり先に始めてよく、landed より後ろの待ち手は landed が終わるまで始めない。
+// 旧形式・この変更より前の新形式 (独占を知らないスクリプト = rebase していない worktree) は landed を 1 本と
+// 数えて隣で走りうる。その分は今日までと同じ (悪くはならない) ので、移行の手当てはしない。
 // verify.mjs の import graph に入るので、古い Node でもパースできる構文に保つこと (bdboard-eu2k)。
 export const HOLDER_FORMAT = 2;
 export const PRIORITY_RANK = Object.freeze({ landed: 0, merge: 1, pr: 2 });
 export const DEFAULT_PRIORITY = 'pr';
 export const TIER_STEP_MS = 4 * 60_000;
 export const MAX_SENIORITY_MS = 10 * 60_000;
+/** 独占して走る優先度 (bdboard-xdk8)。 */
+export const EXCLUSIVE_PRIORITIES = Object.freeze(['landed']);
 
 export function normalizePriority(value) {
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(PRIORITY_RANK, value) ? value : DEFAULT_PRIORITY;
@@ -80,11 +90,12 @@ function isFiniteNumber(value) {
 
 /**
  * holders (生きている holder の一覧。自分を含む) から、自分が今走ってよいかを決める。
- * @returns {{ acquire: boolean, running: object[], queue: object[], position: number, stale: object[] }}
+ * @returns {{ acquire: boolean, running: object[], queue: object[], position: number, stale: object[], exclusivePid: number | null }}
  *   running = 枠を使っているとみなす holder、queue = 待ち手の並び (先頭が次)、position = 自分の
- *   queue 内の順位 (1 始まり)、stale = staleTtlMs を超えて数から外した holder
+ *   queue 内の順位 (1 始まり)、stale = staleTtlMs を超えて数から外した holder、exclusivePid = 自分を
+ *   止めている独占の holder (走っている、または自分より前で順番を待っている。bdboard-xdk8) の pid (無ければ null)
  */
-export function planSlots(holders, { selfPid, slots, now, staleTtlMs, tierStepMs, maxSeniorityMs }) {
+export function planSlots(holders, { selfPid, slots, now, staleTtlMs, tierStepMs, maxSeniorityMs, exclusivePriorities = EXCLUSIVE_PRIORITIES }) {
   const running = [];
   const waiting = [];
   const legacyWaiting = [];
@@ -110,14 +121,44 @@ export function planSlots(holders, { selfPid, slots, now, staleTtlMs, tierStepMs
     .filter((holder) => !blockedByLegacy(holder))
     .sort((a, b) => queueKey(a, keyOptions) - queueKey(b, keyOptions) || byArrival(a, b));
   const queue = [...eligible, ...[...waiting.filter(blockedByLegacy), ...legacyWaiting].sort(byArrival)];
-  const selfIndex = eligible.findIndex((holder) => holder.pid === selfPid);
   // 他の holder から stale と見なされる年齢の待ち手は取らない (並び直してから)。
   const selfVisible = eligible.some((holder) => holder.pid === selfPid && now - holder.joinedAt <= staleTtlMs);
+  const isExclusive = (holder) => exclusivePriorities.includes(normalizePriority(holder.priority));
+  const starters = pickStarters(eligible, running, slots, isExclusive);
+  // 自分を止めている独占の holder (表示用): 走っているもの、または自分より前で順番を待っているもの。
+  const runningExclusive = running.find(isExclusive);
+  const exclusiveAhead = eligible.slice(0, Math.max(0, eligible.findIndex((holder) => holder.pid === selfPid))).find(isExclusive);
+  const blocker = runningExclusive ?? exclusiveAhead;
   return {
-    acquire: selfVisible && selfIndex < slots - running.length,
+    acquire: selfVisible && starters.includes(selfPid),
     running,
     queue,
     position: queue.findIndex((holder) => holder.pid === selfPid) + 1,
     stale,
+    exclusivePid: blocker ? blocker.pid : null,
   };
+}
+
+/**
+ * 並び順 (eligible) の先頭から「今始めてよい待ち手」を選ぶ。空き枠 = slots - 走っている数で、独占の
+ * holder が走っていれば 0。独占の待ち手は、走っている holder も先に始める待ち手も無いときだけ (= 1 本で)
+ * 始め、それより後ろの待ち手はその周には誰も始めない (bdboard-xdk8)。
+ */
+function pickStarters(eligible, running, slots, isExclusive) {
+  let free = running.some(isExclusive) ? 0 : slots - running.length;
+  const starters = [];
+  for (const holder of eligible) {
+    if (isExclusive(holder)) {
+      if (running.length === 0 && starters.length === 0) {
+        starters.push(holder.pid);
+      }
+      break;
+    }
+    if (free <= 0) {
+      break;
+    }
+    starters.push(holder.pid);
+    free -= 1;
+  }
+  return starters;
 }

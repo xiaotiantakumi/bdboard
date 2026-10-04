@@ -350,7 +350,26 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   `pending`, runs the contract's `verify` while re-posting `pending` every `leaseMinutes / 3` (so a
   verify queued behind the machine-wide verify slots does not look abandoned), posts `success` /
   `failure`, and checks the branch out again. It never touches the main checkout. The verify log
-  is `<git common dir>/bdboard-merge/landed-verify-<sha>.log`.
+  is `<git common dir>/bdboard-merge/landed-verify-<sha>.log`. The landed verify runs alone in the
+  machine-wide verify slots (`landed` is exclusive, docs/VERIFY.md "Priorities", bdboard-xdk8).
+- **One retry for a load-induced landed failure** (bdboard-xdk8; `finish`, manual `verify`, and the
+  gate self-heal — not S2's predicted-tree verify). On 2026-10-04 a docs-only PR's landed verify
+  failed twice under machine load and the main-broken slot stopped every merge. When the landed
+  verify fails, `scripts/merge-pr/load-retry.mjs` reads its log: only if the failing step is a
+  vitest run and *every* error headline is a timeout (`Test/Hook timed out in Nms`, vitest's pool
+  start/terminate timeouts, birpc call timeouts, `spawnSync … ETIMEDOUT`) does it rename the first
+  log to `landed-verify-<sha>.first-attempt-<UTC time>.log`, append `landed-verify-retry` (exit,
+  timeout count, 1-min load average, CPU count, kept log) to the audit log, post `pending`
+  ("retrying after load-induced failure"), and run the verify once more. The second result is
+  recorded as usual, with `(retried after load-induced failure: N timeouts)` in the status
+  description; a second failure is a `failure` (main-broken) as before, and a slot-wait timeout on
+  the retry is "could not run" (exit 75, nothing but `pending` recorded). Any other failure — an
+  assertion, a type error, a failing non-vitest step, an unrecognized headline, a test whose
+  `spawnSync` child was killed and so compares `null` to an exit code — is recorded right away, as
+  before. The decision uses the failure's shape only, not the load average: under high load a
+  real race can also fail with an assertion, and a load threshold would retry it too, while a
+  deterministic regression (including a hang that always times out) fails the retry and is still
+  recorded.
 - **The next merger's gate** reads that ledger for its PRED_BASE: `success` → go on; `failure` →
   do not merge; `pending` / none → wait (30 s polls) until `merge.leaseMinutes` (8) after the last
   update (or the commit time), then verify that SHA itself and post the result (self-heal —
