@@ -80,6 +80,9 @@ export function withoutSlotIdentity(env = process.env) {
   return copy;
 }
 
+// bdboard-72oy: verify 本体内の vitest を単発実行と区別する。スロット identity ではないため引き継ぐ。
+export const IN_VERIFY_ENV = 'BDBOARD_IN_VERIFY';
+
 export class SlotWaitTimeoutError extends Error {}
 
 // bdboard-wj9m: スロット待ちの打ち切りで `npm run verify` (scripts/verify.mjs) が返す終了コード。

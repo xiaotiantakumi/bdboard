@@ -18,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { SLOT_IDENTITY_ENV, SLOT_WAIT_TIMEOUT_EXIT_CODE, withoutSlotIdentity } from './verify-slot.mjs';
+import { IN_VERIFY_ENV, SLOT_IDENTITY_ENV, SLOT_WAIT_TIMEOUT_EXIT_CODE, withoutSlotIdentity } from './verify-slot.mjs';
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const tempDirs = [];
@@ -68,6 +68,7 @@ const runVerifyCopy = ({ npmExit = 0, slotEnv = {}, slotDir = makeTempDir('verif
   const fakeNpm = path.join(fakeBin, 'npm');
   // marker には、リーダー経由で本体ステップに渡ったスロットの素性 (bdboard-xdk8) を 1 行ずつ書く (無ければ -)。
   const identity = SLOT_IDENTITY_ENV.map((name) => `echo "${name}=\${${name}:--}"`);
+  identity.push(`echo "${IN_VERIFY_ENV}=\${${IN_VERIFY_ENV}:--}"`);
   fs.writeFileSync(
     fakeNpm,
     [
@@ -88,6 +89,7 @@ const runVerifyCopy = ({ npmExit = 0, slotEnv = {}, slotDir = makeTempDir('verif
     env: {
       // landed の着地後検証の中でこのテストが走っても、外側の素性を受け継がない (bdboard-xdk8)。
       ...withoutSlotIdentity(process.env),
+      [IN_VERIFY_ENV]: undefined, // この verify の中で走るテストでも、verify.mjs がフラグを立てることを確かめるため外す (bdboard-72oy)
       PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ''}`,
       FAKE_NPM_MARKER: marker,
       FAKE_NPM_ARGS: npmArgsFile,
@@ -173,7 +175,16 @@ describe.skipIf(process.platform === 'win32')('verify.mjs exit codes (real proce
       slotEnv: { BDBOARD_VERIFY_PRIORITY: 'landed', BDBOARD_VERIFY_QUEUE_SINCE: String(Date.now()), BDBOARD_VERIFY_SLOT_HANDOFF: '/nowhere/holder-1.json' },
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(stepEnv.trim().split('\n')).toEqual(SLOT_IDENTITY_ENV.map((name) => `${name}=-`));
+    expect(stepEnv.trim().split('\n').slice(0, SLOT_IDENTITY_ENV.length)).toEqual(SLOT_IDENTITY_ENV.map((name) => `${name}=-`));
+    expect(stepEnv.trim().split('\n').at(-1)).toBe(`${IN_VERIFY_ENV}=1`);
+  });
+
+  it('passes the verify flag even when slot identity is set', () => {
+    const { result, stepEnv } = runVerifyCopy({
+      slotEnv: { BDBOARD_VERIFY_PRIORITY: 'landed', BDBOARD_VERIFY_QUEUE_SINCE: String(Date.now()) },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(stepEnv.trim().split('\n').at(-1)).toBe(`${IN_VERIFY_ENV}=1`);
   });
 
   it('passes the verify steps exit code through unchanged (0 and a plain failure)', () => {

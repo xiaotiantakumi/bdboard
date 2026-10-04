@@ -328,6 +328,23 @@ What this means operationally:
   32 min instead of a few seconds. The tests that spawn `verify.mjs` or the slot
   scripts strip them as well, for a run started by hand with them exported.
 
+### Standalone vitest runs are not counted (bdboard-72oy)
+
+Verify slots count `npm run verify` runs only. A worker's standalone `npx vitest run` can add load while a landed
+verify is running, which caused false failures (bdboard-xdk8). `verify.mjs` marks its group leader with
+`BDBOARD_IN_VERIFY=1`; this flag is not slot identity, so `withoutSlotIdentity` preserves it for the steps.
+
+Both Vitest configs use `scripts/vitest-global-setup.mjs`, which dynamically calls
+`scripts/vitest-outside-verify.mjs`. Outside verify, if a landed holder is running, it reuses `readOthers` and
+`planSlots` to print a `vitest: warning:` line to stderr and append a `vitest-outside-verify` line to
+`$BDBOARD_MERGE_AUDIT_LOG` or `$TMPDIR/bdboard-merge-audit.log` (process, project, command, and landed holder
+fields). It warns and records only; the run is not delayed. Measure frequency first with
+`grep vitest-outside-verify "$TMPDIR/bdboard-merge-audit.log"`, then decide whether to add a bounded wait.
+
+The check fails open: errors are swallowed, and dead-pid holder files may be reclaimed as a side effect, as in the
+slot reader. It is silent inside verify, with no landed holder, and in CI when there is no slot directory. Only
+`landed` is warned about; running `pr` or `merge` verifies are not.
+
 ### Priorities (bdboard-ulxa.6)
 
 The limit never changes; only *which waiter gets a freed slot* does. Each

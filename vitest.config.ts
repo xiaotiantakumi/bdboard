@@ -1,5 +1,6 @@
 import { availableParallelism } from 'node:os';
 import { defineConfig } from 'vitest/config';
+import { fileURLToPath } from 'node:url';
 
 // mockReset / restoreMocks は意図的に設定しない (bdboard-cqur)。mockReset を有効にすると (restoreMocks
 // と併用しても同じ) 各テストの直前 (beforeAll の後) に reset が走り、モジュールトップの
@@ -17,6 +18,8 @@ const maxTestWorkers = Math.max(2, Math.ceil(availableParallelism() / 4));
 
 export default defineConfig({
   test: {
+    // bdboard-72oy: verify の外の単発実行が landed の走行中なら警告+監査ログ。待たせない。
+    globalSetup: [fileURLToPath(new URL('./scripts/vitest-global-setup.mjs', import.meta.url))],
     // scripts/ 側は運用スクリプト (verify 実行スロット等, bdboard-d48) のテスト。
     // test/e2e/*.test.ts は Playwright 補助 (ポート採番等) の vitest 単体テスト (bdboard-2ob0)。
     // ** を使わないのは fixtures/ 等の下位ディレクトリを構造的に除外するため — 将来そこに
