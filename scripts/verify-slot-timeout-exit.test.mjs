@@ -170,21 +170,14 @@ describe.skipIf(process.platform === 'win32')('verify.mjs exit codes (real proce
     expect(fs.existsSync(foreignReservation)).toBe(true); // 別の置き場の holder は予約として消さない
   });
 
-  it('does not pass its slot identity (priority, queue time, reservation) on to the verify steps', () => {
+  // bdboard-72oy: 素性 (上の 3 つ) は渡さないが、「verify の中」のフラグ (IN_VERIFY_ENV) は素性ではないので渡す。
+  // 偽の npm は素性を SLOT_IDENTITY_ENV の順に、最後にフラグを書く。
+  it('does not pass its slot identity (priority, queue time, reservation) on to the verify steps, but marks them as inside verify', () => {
     const { result, stepEnv } = runVerifyCopy({
       slotEnv: { BDBOARD_VERIFY_PRIORITY: 'landed', BDBOARD_VERIFY_QUEUE_SINCE: String(Date.now()), BDBOARD_VERIFY_SLOT_HANDOFF: '/nowhere/holder-1.json' },
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(stepEnv.trim().split('\n').slice(0, SLOT_IDENTITY_ENV.length)).toEqual(SLOT_IDENTITY_ENV.map((name) => `${name}=-`));
-    expect(stepEnv.trim().split('\n').at(-1)).toBe(`${IN_VERIFY_ENV}=1`);
-  });
-
-  it('passes the verify flag even when slot identity is set', () => {
-    const { result, stepEnv } = runVerifyCopy({
-      slotEnv: { BDBOARD_VERIFY_PRIORITY: 'landed', BDBOARD_VERIFY_QUEUE_SINCE: String(Date.now()) },
-    });
-    expect(result.status, result.stderr).toBe(0);
-    expect(stepEnv.trim().split('\n').at(-1)).toBe(`${IN_VERIFY_ENV}=1`);
+    expect(stepEnv.trim().split('\n')).toEqual([...SLOT_IDENTITY_ENV.map((name) => `${name}=-`), `${IN_VERIFY_ENV}=1`]);
   });
 
   it('passes the verify steps exit code through unchanged (0 and a plain failure)', () => {
