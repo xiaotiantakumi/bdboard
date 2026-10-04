@@ -97,9 +97,27 @@ describe('redactText: other classes and positions', () => {
 });
 
 describe('redactText: overlapping spans are merged into their union', () => {
-  it('turns a noun inside a token into one span of the stronger kind', () => {
+  it('turns a noun inside a token into one span labelled as the secret (the reviewer must see a token was there)', () => {
     const result = redactText('ghp_' + 'x'.repeat(20) + 'example-user' + 'y'.repeat(5), KEYS);
-    expect(result).toEqual({ text: '<user>yyyyy', marks: [{ kind: 'user', start: 0, end: 6 }] });
+    expect(result).toEqual({ text: '<redacted-token>yyyyy', marks: [{ kind: 'token', start: 0, end: 16 }] });
+  });
+
+  it.each([
+    ['a token that contains a home path', 'Bearer /Users/jdoe/' + 'x'.repeat(20), '<redacted-token>', 'token'],
+    ['a token that contains a project root', 'Bearer /work/example-project/' + 'x'.repeat(20), '<redacted-token>', 'token'],
+    ['a key block that contains a home path', `${BEGIN}\n/Users/jdoe/x\n${END}`, '<redacted-key-block>', 'key-block'],
+    ['a key block that contains a noun', `${BEGIN}\nexample-user\n${END}`, '<redacted-key-block>', 'key-block'],
+    ['a key block that contains a token', `${BEGIN}\nghp_${'x'.repeat(36)}\n${END}`, '<redacted-key-block>', 'key-block'],
+  ])('labels %s as the secret, not as the path or noun inside it', (_name, text, expected, kind) => {
+    const result = redactText(text, KEYS);
+    expect(result.text).toBe(expected);
+    expect(result.marks.map((mark) => mark.kind)).toEqual([kind]);
+    expectExactMarks(result);
+  });
+
+  it('keeps the secret label when the noun starts inside the token and ends after it', () => {
+    const result = redactText('ghp_' + 'x'.repeat(36) + 'example-user' + 'yyy', KEYS);
+    expect(result).toEqual({ text: '<redacted-token>yyy', marks: [{ kind: 'token', start: 0, end: 16 }] });
   });
 
   it('turns a noun inside a home path into one home-path span', () => {
@@ -114,7 +132,7 @@ describe('redactText: overlapping spans are merged into their union', () => {
     expect(result).toEqual({ text: '<project>/src/x.ts', marks: [{ kind: 'project-path', start: 0, end: 9 }] });
   });
 
-  it('uses the highest priority kind: project > user > host > branch > key-block > token > email', () => {
+  it('uses the highest priority kind: key-block > token > project-path > home-path > project > user > host > branch > email', () => {
     const prepared = prepareKeys({
       projectRoots: [],
       properNouns: [
@@ -139,6 +157,80 @@ describe('redactText: overlapping spans are merged into their union', () => {
     const prepared = prepareKeys({ projectRoots: [], properNouns: [{ category: 'host', value: 'redacted' }] });
     const result = redactText('ghp_' + 'x'.repeat(36), prepared);
     expect(result.text).toBe('<redacted-token>');
+  });
+});
+
+describe('redactText: second pass (a match that only appears once a neighbour became a placeholder)', () => {
+  const SK = 'sk-proj-' + 'x'.repeat(40);
+  const BEARER = 'Bearer ' + 'y'.repeat(30);
+
+  it.each([
+    ['an sk- key', 'example-project' + SK, '<project><redacted-token>', ['project', 'token']],
+    ['a Bearer credential', 'example-project' + BEARER, '<project><redacted-token>', ['project', 'token']],
+    ['a home path', 'example-project/Users/jdoe/x', '<project>~/x', ['project', 'home-path']],
+    ['a home path after a user noun', 'example-user/home/jdoe/x', '<user>~/x', ['user', 'home-path']],
+    ['a token after a home path', '/Users/jdoe/' + SK, '~/<redacted-token>', ['home-path', 'token']],
+  ])('redacts %s glued to a noun, with exact marks', (_name, text, expected, kinds) => {
+    const result = redactText(text, KEYS);
+    expect(result.text).toBe(expected);
+    expect(result.marks.map((mark) => mark.kind)).toEqual(kinds);
+    expectExactMarks(result);
+  });
+
+  it('reports the marks of both passes at their final positions', () => {
+    const result = redactText(`a example-user b example-project${SK} c ${BEARER}`, KEYS);
+    expect(result.text).toBe('a <user> b <project><redacted-token> c <redacted-token>');
+    expect(result.marks).toEqual([
+      { kind: 'user', start: 2, end: 8 },
+      { kind: 'project', start: 11, end: 20 },
+      { kind: 'token', start: 20, end: 36 },
+      { kind: 'token', start: 39, end: 55 },
+    ]);
+  });
+
+  it('does not run a second pass when the first found nothing (the text is returned as is)', () => {
+    const text = 'plain ' + SK.replace('sk-', 'sk_');
+    expect(redactText(text, KEYS)).toEqual({ text, marks: [] });
+  });
+
+  it('drops a second-pass match that sits inside a first-pass placeholder (a noun named like the placeholder)', () => {
+    const prepared = prepareKeys({
+      projectRoots: [],
+      properNouns: [
+        { category: 'project', value: 'project' },
+        { category: 'user', value: 'redacted' },
+        { category: 'host', value: 'email' },
+      ],
+    });
+    const result = redactText(`project email ${'ghp_' + 'x'.repeat(36)} user@example.com`, prepared);
+    expect(result.text).toBe('<project> <host> <redacted-token> <email>');
+    expectExactMarks(result);
+  });
+
+  it('merges a second-pass match that straddles a first-pass placeholder into one mark', () => {
+    // 2 回目の文字列 "<project>ab-user" の "ct>ab-user" は、1 回目の印 "<project>" の終わりにまたがる。
+    const prepared = prepareKeys({
+      projectRoots: [],
+      properNouns: [
+        { category: 'project', value: 'example-project' },
+        { category: 'user', value: 'ct>ab-user' },
+      ],
+    });
+    const result = redactText('example-projectab-user', prepared);
+    expect(result).toEqual({ text: '<project>', marks: [{ kind: 'project', start: 0, end: 9 }] });
+  });
+
+  it('handles a chain of two glued neighbours in two passes', () => {
+    const result = redactText('example-project' + 'example-user' + SK, KEYS);
+    expect(result.text).toBe('<project><user><redacted-token>');
+    expectExactMarks(result);
+  });
+
+  it('stops after two passes: a third glued link is left to the final net (which reports it)', () => {
+    // 1 回目: 名前 2 つ → 2 回目: sk- のトークン → 3 回目でないと見えない: トークンの直後に貼り付いた /Users/…
+    const result = redactText('example-project' + 'example-user' + SK + '/Users/jdoe/x', KEYS);
+    expect(result.text).toBe('<project><user><redacted-token>/Users/jdoe/x');
+    expectExactMarks(result);
   });
 });
 

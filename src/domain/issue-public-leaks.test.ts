@@ -33,9 +33,38 @@ describe('detectSuspectedLeaks: every class of leak is reported on raw (bypassed
     const text = `a example-user@example.com b ${token} c /home/example-user/x d /work/example-project/src e ${begin} secret`;
     const prepared = prepareKeys({ projectRoots: ['/work/example-project'], properNouns: [] });
     const leaks = detectSuspectedLeaks('body', text, [], prepared);
-    expect(leaks.map(({ kind }) => kind)).toEqual(['email', 'token', 'home-path', 'project-path', 'key-block']);
+    // 根のフォルダ名 (example-project) は project の固有名詞としても登録されるので、project-path の内側にもう 1 件出る。
+    expect(leaks.map(({ kind }) => kind)).toEqual(['email', 'token', 'home-path', 'project-path', 'project', 'key-block']);
     for (const leak of leaks) expect(text.slice(leak.start, leak.end)).toBe(leak.matched);
     expect(leaks.map(({ start }) => start)).toEqual([...leaks.map(({ start }) => start)].sort((x, y) => x - y));
+  });
+
+  describe('the report-only patterns are looser than the redactor (so a gap in the redactor does not blind the net)', () => {
+    const empty = prepareKeys({ projectRoots: [], properNouns: [] });
+    const sk = 'sk-proj-' + 'x'.repeat(40);
+    const bearer = 'Bearer ' + 'y'.repeat(30);
+
+    it.each([
+      ['an sk- key glued to an identifier', 'id1' + sk, sk],
+      ['a Bearer credential glued to a word', 'x' + bearer, bearer],
+      ['a lower-case AWS access key id', 'akia' + 'x'.repeat(16), 'akia' + 'x'.repeat(16)],
+    ])('reports %s', (_name, text, expected) => {
+      expect(detectSuspectedLeaks('body', text, [], empty).map((leak) => [leak.kind, leak.matched])).toEqual([['token', expected]]);
+    });
+
+    it('reports a lone key block marker (BEGIN without END, END without BEGIN)', () => {
+      for (const marker of [begin, '-----' + 'END PRIVATE KEY' + '-----']) {
+        const leaks = detectSuspectedLeaks('body', `log ${marker} tail`, [], empty);
+        expect(leaks.map((leak) => leak.kind)).toEqual(['key-block']);
+        expect(leaks[0]?.start).toBeLessThanOrEqual(4);
+        expect(leaks[0]?.end).toBeGreaterThanOrEqual(4 + marker.length);
+      }
+    });
+
+    it('over-reports a long hyphenated word that ends in sk- (by design: a person looks, nothing is rewritten)', () => {
+      const text = 'the task-force-coordination-with-a-very-long-team-name';
+      expect(detectSuspectedLeaks('body', text, [], empty).map((leak) => leak.kind)).toEqual(['token']);
+    });
   });
 
   it('reports nothing for clean text', () => {

@@ -15,6 +15,18 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
 const INLINE_BREAK = /\r\n|[\r\n\t\u2028\u2029\u0085\v\f]/g;
 const BLOCK_BREAK = /\r\n|[\r\u2028\u2029\u0085\v\f]/g;
 
+/**
+ * 画面には何も見えない文字 (Default_Ignorable_Code_Point): 結合文字 U+034F・異体字選択子 (U+FE00-FE0F、U+E0100-E01EF)・
+ * モンゴル語の自由異体字選択子 U+180B-180D など。stripNonLineText (Cc・Cf・行区切り・ハングルの埋め字) が取り除かない分で、
+ * 残すと "exam<U+034F>ple" が名前と同じに見えるのに文字列としては一致せず、置き換えをすり抜ける。
+ * 固有名詞・プロジェクトの根も同じ整形を通すので、両方から取り除いた後で比べる。
+ */
+const DEFAULT_IGNORABLE = /\p{Default_Ignorable_Code_Point}/gu;
+
+function stripInvisible(value: string): string {
+  return stripNonLineText(value).replace(DEFAULT_IGNORABLE, '');
+}
+
 /** 孤立サロゲートを取り除く。公開本文に出る前に必ず通す (JSON や UTF-8 にしたとき壊れた文字になる)。 */
 export function removeLoneSurrogates(value: string): string {
   return value.replace(LONE_SURROGATE, '');
@@ -25,7 +37,7 @@ export function removeLoneSurrogates(value: string): string {
  * 1 行の検査で弾く文字 (stripNonLineText) を取り除き、空白の連なりを 1 つにして前後を落とす。
  */
 export function normalizeInline(value: string): string {
-  return stripNonLineText(removeLoneSurrogates(value).replace(INLINE_BREAK, ' '))
+  return stripInvisible(removeLoneSurrogates(value).replace(INLINE_BREAK, ' '))
     .replace(/ +/g, ' ')
     .trim();
 }
@@ -41,7 +53,7 @@ export function normalizeBlock(value: string): string {
     .replace(BLOCK_BREAK, '\n')
     .replace(/\t/g, '  ')
     .split('\n')
-    .map((line) => stripNonLineText(line).trimEnd());
+    .map((line) => stripInvisible(line).trimEnd());
   let first = 0;
   while (first < lines.length && lines[first] === '') first += 1;
   let last = lines.length;

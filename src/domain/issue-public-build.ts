@@ -13,13 +13,16 @@
  *
  * 処理の順序 (動的な文字列ごと):
  *   (0) 孤立サロゲートの除去 → 行・不可視文字の整形 (1 行の値は 1 行にする) — issue-public-text.ts
- *   (1) 同じ整形後の文字列に全 finder をかけて一致を集め、重なりを統合し、印に置き換える — issue-public-redact.ts
+ *   (1) 同じ整形後の文字列に全 finder をかけて一致を集め、重なりを統合し、印に置き換える。置き換えの結果にもう一度
+ *       (最大 2 回) かけて、印に替わったことで新しく現れた一致 ("<project>sk-…") も置き換える — issue-public-redact.ts
  *   (2) 置換「後」にコードポイント単位で省略する (先に切ると、切れ目でトークンが半分になって形に一致しなくなる)
  *   (3) code context で包み、固定の文言と並べる。印の位置は組み立ての場所で最終の title / body の位置へずらす
  *   (4) 最後の網: 完成した title と body に detectSuspectedLeaks をかけ直す。(0)〜(3) とは独立 — issue-public-leaks.ts
  *
- * 意図して扱わないもの: 未知の形の秘密 (パスワード・独自の API キー・JWT)、全角や同形異字で書き換えた固有名詞、画像、
- * 文脈から分かる機密性。固有名詞でも 2〜3 文字のものは置換せず、単語として現れたときに検出だけする (issue-public-keys.ts)。
+ * 意図して扱わないもの: 未知の形の秘密 (パスワード・独自の API キー)、全角 (NFKC) や同形異字で書き換えた固有名詞、
+ * ドットの無いメール ("user@host")、CJK の文章に埋まった 2〜3 文字の名前、分割された名前、Turkish の大文字小文字、
+ * 画像、文脈から分かる機密性 (docs/ISSUE-REPORTING.md 5節「カバーしないもの」)。固有名詞でも 2〜3 文字のものは置換せず、
+ * 単語として現れたときに検出だけする (issue-public-keys.ts)。鍵が上限を超えたときは keysTruncated と 'key-overflow' で知らせる。
  * 固定の文言 (「bdboard 本体」など) が固有名詞に当たれば、最後の網が疑いとして出す (過検出。人が見る)。
  * これは best-effort の機械処理であり、唯一の防御ではない。投稿の前に人が見ることが本来の防御。
  */
@@ -36,6 +39,7 @@ import type {
   PublicBuildResult,
   PublicField,
   RedactionMark,
+  SuspectedLeak,
 } from './issue-public-types.js';
 
 const KIND_LABEL: Readonly<Record<DraftKind, string>> = {
@@ -105,17 +109,23 @@ function appendSection(composer: Composer, heading: string, piece: MarkdownPiece
   composer.appendStatic('\n');
 }
 
+/** 動的な 1 行の値を足す。整形後に空なら、空のコードスパンを出さず (GitHub では記号がそのまま見える)、固定の語を足す。 */
+function appendInline(composer: Composer, value: string, cap: number, prepared: PreparedKeys): void {
+  if (normalizeInline(value) === '') composer.appendStatic('(なし)');
+  else composer.appendDynamic(inline(value, cap, prepared));
+}
+
 function appendVersion(composer: Composer, label: string, value: string | undefined, prepared: PreparedKeys): void {
   const text = textOf(value);
   if (text === undefined) return;
   composer.appendStatic(`- ${label}: `);
-  composer.appendDynamic(inline(text, CAP.version, prepared));
+  appendInline(composer, text, CAP.version, prepared);
   composer.appendStatic('\n');
 }
 
 function appendTime(composer: Composer, label: string, value: string, prepared: PreparedKeys): void {
   composer.appendStatic(`${label}: `);
-  composer.appendDynamic(inline(textOf(value) ?? '', CAP.time, prepared));
+  appendInline(composer, textOf(value) ?? '', CAP.time, prepared);
   composer.appendStatic('\n');
 }
 
@@ -170,11 +180,17 @@ export function buildPublicIssueBody<I extends PublicBuildInput>(
   const body = bodyComposer.finish();
 
   const redactions = [...title.marks, ...body.marks];
+  // 鍵を探しきれていないときは、位置のない疑い 'key-overflow' を先頭に足す。「suspectedLeaks が空か」だけを見る呼び出し側も、
+  // 鍵を落とした結果を「漏れなし」と読まない (失敗側に倒れる)。
+  const overflow: SuspectedLeak[] = prepared.truncated
+    ? [{ field: 'body', kind: 'key-overflow', start: 0, end: 0, matched: '' }]
+    : [];
   const suspectedLeaks = [
+    ...overflow,
     ...detectSuspectedLeaks('title', title.text, redactions, prepared),
     ...detectSuspectedLeaks('body', body.text, redactions, prepared),
   ];
-  return { title: title.text, body: body.text, redactions, suspectedLeaks };
+  return { title: title.text, body: body.text, redactions, suspectedLeaks, keysTruncated: prepared.truncated };
 }
 
 export type { LocalOnlyKeys, PublicBuildInput, PublicBuildResult } from './issue-public-types.js';

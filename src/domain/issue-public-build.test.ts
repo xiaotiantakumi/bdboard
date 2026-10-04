@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { IssueDraft } from './issue-draft.js';
 import { buildPublicIssueBody } from './issue-public-build.js';
-import { findEmailSpans, findTokenSpans } from './issue-public-secrets.js';
+import { TOKEN_SHAPES, findEmailSpans, findTokenSpans } from './issue-public-secrets.js';
 import type { LocalOnlyKeys, PublicBuildInput, PublicBuildResult, RedactionKind } from './issue-public-types.js';
 
 // 孤立サロゲート・行区切りは実行時に組み立てる。トークンも実行時に組み立てる (シークレットスキャナに反応させない)。
@@ -12,6 +12,13 @@ const PS = String.fromCodePoint(0x2029);
 const ZWSP = String.fromCodePoint(0x200b);
 const TOKEN = 'ghp_' + 'x'.repeat(36);
 const AWS = 'AKIA' + 'X'.repeat(16);
+const SK = 'sk-proj-' + 'ab_-'.repeat(12);
+const BEARER_VALUE = 'y'.repeat(30);
+const BEARER = 'Bearer ' + BEARER_VALUE;
+const JWT = 'eyJ' + 'a'.repeat(20) + '.eyJ' + 'b'.repeat(20) + '.' + 'c'.repeat(20);
+const STRIPE = 'sk_live_' + 'x'.repeat(24);
+const GOOGLE_OAUTH = 'ya29.' + 'x'.repeat(30);
+const SLACK_APP = 'xapp-1-' + 'A'.repeat(30);
 const BEGIN = '-----' + 'BEGIN PRIVATE KEY' + '-----';
 const END = '-----' + 'END PRIVATE KEY' + '-----';
 
@@ -287,6 +294,13 @@ describe('redaction of every dynamic field', () => {
     AWS,
     'Example-Host',
     'feature-example',
+    JWT,
+    STRIPE,
+    GOOGLE_OAUTH,
+    SLACK_APP,
+    SK,
+    BEARER,
+    '/home/jdoe/x',
   ].join(' ');
   const fields: readonly (readonly [string, (value: string) => PublicBuildInput])[] = [
     ['source', (value) => ({ ...BASE, source: value })],
@@ -309,7 +323,8 @@ describe('redaction of every dynamic field', () => {
   it.each(fields)('removes paths, nouns, tokens and e-mail from %s', (_name, make) => {
     const result = buildPublicIssueBody(make(secretText), KEYS);
     const output = (result.title + result.body).toLowerCase();
-    for (const secret of [TOKEN, AWS, 'example-user', 'example-project', 'example-host', 'feature-example', '@example.com']) {
+    const secrets = [TOKEN, AWS, 'example-user', 'example-project', 'example-host', 'feature-example', '@example.com'];
+    for (const secret of [...secrets, JWT, STRIPE, GOOGLE_OAUTH, SLACK_APP, SK, BEARER_VALUE, 'jdoe']) {
       expect(output).not.toContain(secret.toLowerCase());
     }
     expect(result.redactions.length).toBeGreaterThan(0);
@@ -340,6 +355,209 @@ describe('redaction of every dynamic field', () => {
   it('keeps marks exact when the same text passes through every section (multi-section offsets)', () => {
     const result = buildPublicIssueBody(allFields(secretText), KEYS);
     expectMarksExact(result);
+    expect(result.suspectedLeaks).toEqual([]);
+  });
+});
+
+/** 1 つの自由記述に入れて組み立てる (title / body に残る文字列と、最後の網の報告を見る)。 */
+function fromSymptom(text: string, keys: LocalOnlyKeys = KEYS): PublicBuildResult {
+  return buildPublicIssueBody({ ...BASE, symptom: text }, keys);
+}
+
+describe('secrets after escapes and in other positions (they were silent in the first review)', () => {
+  const BS = '\\';
+  it.each([
+    ['sk- after a JSON \\n', `{"out":"line1${BS}n${SK}"}`, SK],
+    ['sk- after a JSON \\t', `"a${BS}t${SK}"`, SK],
+    ['sk- after a JSON \\r', `"a${BS}r${SK}"`, SK],
+    ['sk- after a %3D', `GET /x?key%3D${SK}`, SK],
+    ['sk- after a %20', `q=%20${SK}`, SK],
+    ['Bearer after a JSON \\n', `"x${BS}n${BEARER}"`, BEARER_VALUE],
+    ['Bearer after a %0A', `x%0A${BEARER}`, BEARER_VALUE],
+    ['Bearer with a %20 separator', `Authorization: Bearer%20${BEARER_VALUE}`, BEARER_VALUE],
+    ['a Stripe key', `key ${STRIPE}`, STRIPE],
+    ['a JWT in a cookie', `token=${JWT}`, JWT.slice(0, 30)],
+    ['a Google OAuth token', `access_token=${GOOGLE_OAUTH}`, GOOGLE_OAUTH],
+    ['a Slack app-level token', `SLACK=${SLACK_APP}`, SLACK_APP],
+    ['an sk- key glued to a noun', `example-project${SK}`, SK],
+    ['a Bearer credential glued to a noun', `example-project${BEARER}`, BEARER_VALUE],
+  ])('removes %s', (_name, text, secret) => {
+    const result = fromSymptom(text);
+    expect(result.body).not.toContain(secret);
+    expect(result.body).toContain('<redacted-token>');
+    expect(result.suspectedLeaks).toEqual([]);
+    expectMarksExact(result);
+  });
+
+  it.each([
+    ['CJK corner brackets', '「/Users/jdoe/work/x.ts」を開けない'],
+    ['a full-width colon', 'パス：/Users/jdoe/work/x.ts'],
+    ['CJK letters directly before', 'パス/home/jdoe/xで失敗'],
+    ['a JSON \\n', `{"o":"a${BS}n/Users/jdoe/x"}`],
+    ['a JSON \\r\\n', `{"o":"a${BS}r${BS}n/Users/jdoe/x"}`],
+    ['Vite /@fs/', 'at http://localhost:5173/@fs/Users/jdoe/lib/x.js'],
+    ['vscode://file', 'open vscode://file/Users/jdoe/x.ts:1'],
+    ['an upper-case FILE:///', 'FILE:///Users/jdoe/x.ts'],
+    ['a star', 'glob */Users/jdoe/x'],
+    ['an exclamation mark', 'x!/home/jdoe/x'],
+    ['a percent-encoded path', 'p=%2FUsers%2Fjdoe%2Fx'],
+    ['a Windows path after CJK', `パスC:${BS}Users${BS}jdoe${BS}x`],
+    ['a Windows path with slashes', 'C:/Users/jdoe/x'],
+    ['a JSON-escaped Windows path', `C:${BS}${BS}Users${BS}${BS}jdoe${BS}${BS}x`],
+  ])('removes the user name of a home path after %s', (_name, text) => {
+    const result = fromSymptom(text, { projectRoots: [], properNouns: [] });
+    expect(result.body).not.toContain('jdoe');
+    expect(result.body).toContain('~/');
+    expect(result.suspectedLeaks).toEqual([]);
+    expectMarksExact(result);
+  });
+
+  it.each([
+    ['a lower-case marker', `-----${'begin rsa private key'}-----\n${'Q'.repeat(64)}\n-----${'end rsa private key'}-----`],
+    ['the SSH2 form', `---- ${'BEGIN SSH2 ENCRYPTED PRIVATE KEY'} ----\n${'Q'.repeat(64)}\n---- ${'END SSH2 ENCRYPTED PRIVATE KEY'} ----`],
+    ['a PuTTY key file', `PuTTY-User-Key-File-3: ssh-ed25519\nPrivate-Lines: 1\n${'Q'.repeat(64)}`],
+    ['a JSON-escaped block', `{"k":"${BEGIN}${BS}n${'Q'.repeat(64)}${BS}n${END}${BS}n"}`],
+    ['a block cut off at the top (END without BEGIN)', `MIIEowIBAAKCAQEA${'Q'.repeat(64)}\n${END}\nafter`],
+    ['a block cut off at the bottom (BEGIN without END)', `before\n${BEGIN}\n${'Q'.repeat(64)}`],
+  ])('removes a private key written as %s', (_name, text) => {
+    for (const result of [fromSymptom(text), buildPublicIssueBody({ ...BASE, errorText: text }, KEYS)]) {
+      expect(result.body).toContain('<redacted-key-block>');
+      expect(result.body).not.toMatch(/QQQQ|MIIEow|BEGIN|END PRIVATE|PuTTY-User|Private-Lines/);
+      expect(result.suspectedLeaks).toEqual([]);
+      expectMarksExact(result);
+    }
+  });
+
+  it('keeps what follows a terminated block and a block cut off at the top', () => {
+    const result = fromSymptom(`MIIEowIBAAKCAQEA${'Q'.repeat(64)}\n${END}\nafter`);
+    expect(result.body).toContain('<redacted-key-block>\nafter\n```');
+  });
+
+  it('redacts a name that contains an invisible mark (Default_Ignorable) the way an unmarked name is', () => {
+    for (const mark of ['\u034F', '\uFE0F', '\u200D', '\u00AD', '\u2060', '\u180B', '\u{E0100}']) {
+      const result = fromSymptom(`exam${mark}ple${mark}-project failed`);
+      expect(result.body).toContain('<project> failed');
+      expect(result.body).not.toContain('-project');
+      expect(result.suspectedLeaks).toEqual([]);
+    }
+  });
+
+  it('redacts a root that contains a ZWJ emoji, with and without the joiner in the log', () => {
+    const keys: LocalOnlyKeys = { projectRoots: ['/work/\u{1F468}\u200D\u{1F4BB}-proj'], properNouns: [] };
+    for (const text of ['at /work/\u{1F468}\u200D\u{1F4BB}-proj/x', 'at /work/\u{1F468}\u{1F4BB}-proj/x']) {
+      const result = fromSymptom(text, keys);
+      expect(result.body).toContain('at <project>/x');
+      expect(result.suspectedLeaks).toEqual([]);
+    }
+  });
+
+  it('redacts percent-encoded names and roots (file:/// stack traces)', () => {
+    const keys: LocalOnlyKeys = {
+      projectRoots: ['/work/my proj'],
+      properNouns: [
+        { category: 'project', value: 'my example app' },
+        { category: 'project', value: '仕事のアプリ' },
+      ],
+    };
+    const text = [
+      'at file:///work/my%20example%20app/x.mjs:1:1',
+      `at file:///work/${encodeURIComponent('仕事のアプリ')}/x.mjs:1:1`,
+      `at file:///work/${encodeURIComponent('仕事のアプリ').toLowerCase()}/y.mjs`,
+      'at file:///work/my%20proj/z.mjs',
+    ].join('\n');
+    const result = fromSymptom(text, keys);
+    expect(result.body).not.toMatch(/my%20|%E4|%e4|my example|仕事/);
+    expect(result.body.match(/<project>/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(result.suspectedLeaks).toEqual([]);
+  });
+
+  it("redacts the project's folder name even when the log shows the root through another view", () => {
+    const keys: LocalOnlyKeys = { projectRoots: ['C:\\Users\\jdoe\\work\\example-project'], properNouns: [] };
+    for (const text of [
+      'at /mnt/c/Users/jdoe/work/example-project/x',
+      'at C:\\Users\\jdoe\\work/example-project/x',
+      'at {"p":"\\/work\\/example-project\\/x"}',
+    ]) {
+      const result = fromSymptom(text, keys);
+      expect(result.body).not.toMatch(/example-project|jdoe/);
+      expect(result.suspectedLeaks).toEqual([]);
+    }
+  });
+
+  it.each(['%40', String.fromCodePoint(0xff20)])('redacts an e-mail written with %s instead of an at sign', (at) => {
+    const result = fromSymptom(`GET /u?email=someone${at}example.com&x=1`, { projectRoots: [], properNouns: [] });
+    expect(result.body).toContain('email=<email>&x=1');
+    expect(result.suspectedLeaks).toEqual([]);
+  });
+
+  it('labels a token that swallowed a path as a token, so a reviewer sees that a credential was there', () => {
+    const result = fromSymptom('Authorization: Bearer /Users/jdoe/' + 'x'.repeat(20));
+    expect(result.body).toContain('Authorization: <redacted-token>');
+    expect(result.redactions.map((mark) => mark.kind)).toEqual(['token']);
+  });
+
+  it('is not changed by other code that used a RegExp built from an exported token shape', () => {
+    const shape = TOKEN_SHAPES.find(({ name }) => name === 'github');
+    const regex = new RegExp(shape?.source ?? '', shape?.flags);
+    regex.test('z'.repeat(120) + TOKEN);
+    expect(regex.lastIndex).toBeGreaterThan(100);
+    const result = buildPublicIssueBody({ ...BASE, source: 'hook ' + TOKEN }, KEYS);
+    expect(result.title).toBe('[hook・配布スクリプト] `hook <redacted-token>`');
+    expect(result.suspectedLeaks).toEqual([]);
+  });
+
+  it('reports what a third glued link would still hide (the second pass is the last pass)', () => {
+    // トークンの最後の文字が英数字 ('-' や '_' だと 2 回目でパスの直前の条件を満たす) なので、パスは 3 回目でないと見えない。
+    const result = fromSymptom('example-project' + 'example-user' + 'sk-proj-' + 'x'.repeat(40) + '/Users/jdoe/x');
+    expect(result.body).toContain('<project><user><redacted-token>/Users/jdoe/x');
+    expect(result.suspectedLeaks.map(({ kind, matched }) => [kind, matched])).toEqual([['home-path', '/Users/jdoe/']]);
+  });
+});
+
+describe('empty values render a fixed word, not an empty code span', () => {
+  it.each([
+    ['an empty version', { versions: { ...BASE.versions, os: '' } }, '- OS: (なし)\n'],
+    ['an invisible-only version', { versions: { ...BASE.versions, nodeVersion: ZWSP + '\u034F' } }, '- Node: (なし)\n'],
+    ['an empty start time', { firstOccurredAt: '' }, '- 最初に起きた時刻: (なし)\n'],
+    ['a blank end time', { lastOccurredAt: ' \n ' }, '- 最後に起きた時刻: (なし)\n'],
+  ])('writes (なし) for %s', (_name, patch, expected) => {
+    const result = buildPublicIssueBody({ ...BASE, ...patch }, KEYS);
+    expect(result.body).toContain(expected);
+    expect(result.body).not.toMatch(/: `+ ?`*\n/);
+    expect(result.suspectedLeaks).toEqual([]);
+  });
+
+  it('still omits a version that is absent, and keeps a real value in a code span', () => {
+    const result = buildPublicIssueBody({ ...BASE, versions: { ...BASE.versions, bdVersion: undefined } }, KEYS);
+    expect(result.body).not.toContain('- bd: ');
+    expect(result.body).toContain('- OS: `Example OS`\n');
+  });
+});
+
+describe('keys that were not fully searched are reported, not dropped silently', () => {
+  const shorts = Array.from({ length: 200 }, (_, index) => ({
+    category: 'branch' as const,
+    value: `b${index.toString(36).padStart(2, '0')}`,
+  }));
+
+  it('sets keysTruncated and puts a position-less key-overflow leak first', () => {
+    const keys: LocalOnlyKeys = { projectRoots: [], properNouns: [...shorts, { category: 'user', value: 'example-user' }] };
+    const result = fromSymptom('by example-user', keys);
+    expect(result.keysTruncated).toBe(true);
+    expect(result.suspectedLeaks[0]).toEqual({ field: 'body', kind: 'key-overflow', start: 0, end: 0, matched: '' });
+    expect(result.body).toContain('by <user>');
+  });
+
+  it('reports a 201st long name too, and a name over 512 code points', () => {
+    const many = Array.from({ length: 201 }, (_, index) => ({ category: 'user' as const, value: `name-${String(index).padStart(3, '0')}` }));
+    expect(fromSymptom('x', { projectRoots: [], properNouns: many }).keysTruncated).toBe(true);
+    const huge = { projectRoots: [], properNouns: [{ category: 'user' as const, value: 'z'.repeat(513) }] };
+    expect(fromSymptom('x', huge).suspectedLeaks.map(({ kind }) => kind)).toEqual(['key-overflow']);
+  });
+
+  it('does not report anything for keys that all fit', () => {
+    const result = fromSymptom('plain text');
+    expect(result.keysTruncated).toBe(false);
     expect(result.suspectedLeaks).toEqual([]);
   });
 });
@@ -441,10 +659,13 @@ describe('type split and local-only keys', () => {
   };
 
   it('rejects an IssueDraft, and every field that must never be public, at compile time', () => {
+    // IssueDraft に versions を足した変数: PublicBuildInput の必須の欄はすべて揃っているので、型エラーの原因は余分な欄
+    // (localOnly・occurredProjects・fingerprint など) だけになる (versions の欠落で誤って通らない)。
+    const draftWithVersions = { ...draft, versions: BASE.versions };
     const calls = [
       () =>
         // @ts-expect-error an IssueDraft (with localOnly / occurredProjects) cannot enter the public builder
-        buildPublicIssueBody(draft, KEYS),
+        buildPublicIssueBody(draftWithVersions, KEYS),
       () =>
         // @ts-expect-error projectName is not a public field
         buildPublicIssueBody({ ...BASE, projectName: 'x' }, KEYS),
@@ -585,14 +806,32 @@ describe('suspected leaks', () => {
     expect(result.suspectedLeaks).toEqual([]);
   });
 
-  it('catches a token that only becomes visible after a neighbouring noun was replaced', () => {
-    // "sk-" の直前が英数字なので、置換の前の文字列ではトークンの形に一致しない。隣の固有名詞が <project> になると一致する。
+  it('redacts a token that only becomes visible after a neighbouring noun was replaced (second pass)', () => {
+    // "sk-" の直前が英数字なので、1 回目の文字列ではトークンの形に一致しない。隣の固有名詞が <project> になると一致する。
+    // 2 回目の置き換えがそれを取り除くので、最後の網は何も報告しない。
     const token = 'sk-proj-' + 'ab_-'.repeat(12);
     const result = buildPublicIssueBody({ ...BASE, symptom: `example-project${token}` }, KEYS);
-    const at = result.body.indexOf(token);
-    expect(at).toBeGreaterThan(0);
-    expect(result.body).toContain(`<project>${token}`);
-    expect(result.suspectedLeaks).toEqual([{ field: 'body', kind: 'token', start: at, end: at + token.length, matched: token }]);
+    expect(result.body).toContain('<project><redacted-token>');
+    expect(result.body).not.toContain('sk-proj');
+    expect(result.suspectedLeaks).toEqual([]);
+    expectMarksExact(result);
+    const at = result.body.indexOf('<project><redacted-token>');
+    const marks = result.redactions.filter((mark) => mark.start >= at && mark.end <= at + 25);
+    expect(marks).toEqual([
+      { field: 'body', kind: 'project', start: at, end: at + 9 },
+      { field: 'body', kind: 'token', start: at + 9, end: at + 25 },
+    ]);
+  });
+
+  it.each([
+    ['Bearer', 'Bearer ' + 'y'.repeat(30), '<project><redacted-token>'],
+    ['sk-', 'sk-' + 'x'.repeat(40), '<project><redacted-token>'],
+    ['a home path', '/Users/jdoe/x', '<project>~/x'],
+  ])('redacts %s glued to a noun in the second pass', (_name, glued, expected) => {
+    const result = buildPublicIssueBody({ ...BASE, symptom: `example-project${glued}` }, KEYS);
+    expect(result.body).toContain(expected);
+    expect(result.suspectedLeaks).toEqual([]);
+    expectMarksExact(result);
   });
 
   it('runs the last net over the final text: static template words that equal a noun are reported', () => {
@@ -699,6 +938,60 @@ describe('seeded mixed-input safety properties', () => {
       expect(findTokenSpans(output)).toEqual([]);
       expect(findEmailSpans(output)).toEqual([]);
       expect(isWellFormed(output)).toBe(true);
+      expectMarksExact(result);
+    }
+  });
+
+  // 隣り合わせ・エスケープ・パーセント表記を混ぜる。ここでの性質は「秘密は、取り除かれているか、疑いとして報告されているかのどちらか」
+  // (黙って残らない)。判定には finder を使わず、秘密の文字列そのものが出力に残っているかで調べる。
+  it('removes every secret (and has nothing to report) when fragments are glued with escapes and encodings', () => {
+    let state = 0x7a31;
+    const next = (): number => {
+      state = (state * 1_664_525 + 1_013_904_223) >>> 0;
+      return state;
+    };
+    // 置換すると必ず "<…>" の印になる断片で、終わりが「名前」「メール」「鍵ブロックの END」のもの: 直後に何を貼り付けても境界が
+    // はっきりしている (印の直前は英数字ではないので、貼り付けたトークンは 2 回目の置き換えで見える)。
+    // トークンは含めない: トークンの直後に別の文字を貼り付けると、"ya29.xxxx" + "Bearer" のように前のトークンが後ろの
+    // キーワードを飲み込んで、どこまでが秘密か決められない入力になる (その入力は仕様の外)。トークンは空白・エスケープで区切る。
+    const replaced = [
+      'EXAMPLE-PROJECT',
+      'Example-Host',
+      'feature-EXAMPLE',
+      'someone%40example.org',
+      `${BEGIN}\n${'x'.repeat(40)}\n${END}`,
+    ];
+    const tokens = [TOKEN, AWS, SK, BEARER, JWT, STRIPE, GOOGLE_OAUTH, SLACK_APP];
+    // 置換しても英数字や記号が後ろに残る断片 (パス)。そのうしろには、エスケープ・パーセント表記・空白だけを置く。
+    const kept = [
+      '/work/example-project/src',
+      '/Users/example-user/x',
+      'C:\\Users\\example-user\\y',
+      '/home/jdoe/x',
+      'ordinary text 😀',
+      ZWSP + 'hidden' + HIGH,
+      '`',
+    ];
+    const afterKept = ['\n', ' ', '\r\n', LS, '\\n', '\\t', '\\r', '%0A', '%20', '%3D'];
+    const afterReplaced = [...afterKept, '', '', ''];
+    const cores = [TOKEN, AWS, SK, BEARER_VALUE, JWT, STRIPE, GOOGLE_OAUTH, SLACK_APP, 'jdoe', 'someone%40', 'PRIVATE KEY', '/work/', ...LONG_NOUNS];
+    for (let iteration = 0; iteration < 400; iteration += 1) {
+      let text = '';
+      for (let index = 0; index < 8; index += 1) {
+        const choice = next() % 3;
+        const pool = choice === 0 ? replaced : choice === 1 ? tokens : kept;
+        const after = choice === 0 ? afterReplaced : afterKept;
+        text += (pool[next() % pool.length] ?? '') + (after[next() % after.length] ?? '');
+      }
+      const result = buildPublicIssueBody({ ...allFields('x'), symptom: text, errorText: text }, KEYS);
+      const output = (result.title + result.body).toLowerCase();
+      const survivors = cores.filter((core) => output.includes(core.toLowerCase()));
+      // 弱い性質 (取り除かれているか、報告されているか) は、強い性質 (取り除かれていて、報告も要らない) に含まれる。
+      // これらの断片は第 2 の置き換えまでで必ず取り除けるので、強いほうを検査する: 第 2 の置き換えを外すと、貼り付いた
+      // "sk-"・"Bearer" は最後の網の報告に回り、ここで落ちる。
+      const leaks = result.suspectedLeaks.map((leak) => [leak.kind, leak.matched]);
+      expect({ text, survivors, leaks }).toEqual({ text, survivors: [], leaks: [] });
+      expect(isWellFormed(result.title + result.body)).toBe(true);
       expectMarksExact(result);
     }
   });

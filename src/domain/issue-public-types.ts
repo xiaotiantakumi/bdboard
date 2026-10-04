@@ -59,10 +59,17 @@ export interface RedactionMark {
   readonly end: number;
 }
 
+/**
+ * 疑いの種別: 置き換えの種別のほかに 'key-overflow' (手元の鍵が上限を超えて、一部を探していない。位置は無く
+ * start = end = 0、matched は空)。呼び出し側が「suspectedLeaks が空か」だけを見ても、鍵を落としたときは空にならない
+ * (失敗側に倒れる)。
+ */
+export type SuspectedLeakKind = RedactionKind | 'key-overflow';
+
 /** 置き換え漏れの疑い。位置は RedactionMark と同じ (最終文字列の UTF-16 オフセット)。matched は最終文字列の切り出し。 */
 export interface SuspectedLeak {
   readonly field: PublicField;
-  readonly kind: RedactionKind;
+  readonly kind: SuspectedLeakKind;
   readonly start: number;
   readonly end: number;
   readonly matched: string;
@@ -73,6 +80,8 @@ export interface PublicBuildResult {
   readonly body: string;
   readonly redactions: readonly RedactionMark[];
   readonly suspectedLeaks: readonly SuspectedLeak[];
+  /** 鍵 (固有名詞・プロジェクトの根) が上限を超えた・長すぎた・登録できなかったために、一部を探していない。 */
+  readonly keysTruncated: boolean;
 }
 
 /**

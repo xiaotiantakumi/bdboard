@@ -1,0 +1,124 @@
+/**
+ * 置き換えと最後の網が共有する「一致の集め方」 (bdboard-4y8q.2)。どの finder も同じ文字列を見て `{ kind, start, end }` を返す。
+ *
+ * 2 つの集め方がある (最後の網が置き換えと同じ finder だけだと、finder の穴は永久に見つからない — レビュー指摘):
+ *   - findRedactionSpans: 置き換える一致。厳しめの形 (誤検出が少ない) と、LONG の固有名詞だけ。
+ *   - findLeakSpans: 最後の網が報告する一致。置き換えと同じものに加えて、緩めた形 (sk-・Bearer の直前の条件なし、小文字の
+ *     akia)・SHORT の固有名詞・鍵ブロックの単独の印。報告するだけで書き換えない。
+ */
+import { findPublicHomeRanges } from './issue-public-home.js';
+import {
+  findDetectableNounSpans,
+  findProjectRootSpans,
+  findReplaceableNounSpans,
+  type PreparedKeys,
+} from './issue-public-keys.js';
+import { findKeyBlockSpans } from './issue-public-pem.js';
+import { findEmailSpans, findTokenSpans } from './issue-public-secrets.js';
+import type { RedactionKind } from './issue-public-types.js';
+
+export interface KindSpan {
+  readonly kind: RedactionKind;
+  readonly start: number;
+  readonly end: number;
+}
+
+/**
+ * 重なった一致を 1 つにまとめるとき、どの種別を残すか (大きいほど優先)。秘密 (鍵ブロック・トークン) が最優先:
+ * 名前やパスを含む秘密が <project> や ~/ に見えると、人が見て「鍵があった」と分からない (中身はどちらも残らない)。
+ * 次にパス (固有名詞より情報が多い)、固有名詞 (カテゴリが利用者に見える印になる)、メールの順。
+ */
+export const PRIORITY: Readonly<Record<RedactionKind, number>> = {
+  'key-block': 9,
+  token: 8,
+  'project-path': 7,
+  'home-path': 6,
+  project: 5,
+  user: 4,
+  host: 3,
+  branch: 2,
+  email: 1,
+};
+
+type SpanSource = readonly { readonly start: number; readonly end: number }[];
+
+function tagged(kind: RedactionKind, spans: SpanSource): KindSpan[] {
+  return spans.map((span) => ({ kind, start: span.start, end: span.end }));
+}
+
+function common(text: string, prepared: PreparedKeys): KindSpan[] {
+  return [
+    ...tagged('project-path', findProjectRootSpans(text, prepared)),
+    ...tagged('home-path', findPublicHomeRanges(text)),
+    ...tagged('key-block', findKeyBlockSpans(text)),
+    ...tagged('email', findEmailSpans(text)),
+  ];
+}
+
+/** 置き換える一致 (統合は mergeSpans)。 */
+export function findRedactionSpans(text: string, prepared: PreparedKeys): KindSpan[] {
+  return [
+    ...common(text, prepared),
+    ...findReplaceableNounSpans(text, prepared),
+    ...tagged('token', findTokenSpans(text)),
+  ];
+}
+
+/** 最後の網が報告する一致 (置き換えの一致の上位集合。印の内側の分は呼び出し側が除く)。 */
+export function findLeakSpans(text: string, prepared: PreparedKeys): KindSpan[] {
+  return [
+    ...common(text, prepared),
+    ...findDetectableNounSpans(text, prepared),
+    ...tagged('token', findTokenSpans(text, true)),
+  ];
+}
+
+/**
+ * 開始位置の順 (同じなら長いものが先) に並べ、重なる一致を和集合に統合する。接しているだけ (終わり = 次の始まり) の
+ * 一致は別のまま。統合した一致の種別は、PRIORITY が最も高いもの。
+ */
+export function mergeSpans(spans: readonly KindSpan[]): KindSpan[] {
+  const sorted = [...spans].sort((left, right) => left.start - right.start || right.end - left.end);
+  const merged: KindSpan[] = [];
+  for (const span of sorted) {
+    const previous = merged.at(-1);
+    if (previous === undefined || span.start >= previous.end) {
+      merged.push(span);
+      continue;
+    }
+    merged[merged.length - 1] = {
+      start: previous.start,
+      end: Math.max(previous.end, span.end),
+      kind: PRIORITY[span.kind] > PRIORITY[previous.kind] ? span.kind : previous.kind,
+    };
+  }
+  return merged;
+}
+
+/**
+ * 区間の被覆を二分探索で調べる。区間を開始位置の順に並べ、「その位置までの終了位置の最大値」を持っておけば、
+ * 候補 [start, end) を覆う区間があるかは「start 以前に始まる区間の最大の終了位置 >= end」で決まる
+ * (区間が重なっていても正しい)。区間が多い入力でも候補 1 件あたり O(log 区間の数)。
+ */
+export function coverage(ranges: readonly { readonly start: number; readonly end: number }[]): (start: number, end: number) => boolean {
+  const sorted = [...ranges].sort((left, right) => left.start - right.start);
+  const maxEnd: number[] = [];
+  let running = -1;
+  for (const range of sorted) {
+    running = Math.max(running, range.end);
+    maxEnd.push(running);
+  }
+  return (start, end) => {
+    let low = 0;
+    let high = sorted.length - 1;
+    let found = -1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      if ((sorted[middle]?.start ?? Number.POSITIVE_INFINITY) <= start) {
+        found = middle;
+        low = middle + 1;
+      } else high = middle - 1;
+    }
+    return found >= 0 && (maxEnd[found] ?? -1) >= end;
+  };
+}

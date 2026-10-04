@@ -4,13 +4,8 @@
  * 順序の理由 (docs/ISSUE-REPORTING.md 4節・5節): エラー文はこの置換を全文にかけてから先頭・末尾へ切る。
  * 先に切ると、トークンが切れ目で半分になり (正規表現は 20 文字以上などを求める)、断片が残る。
  */
-import { findHomePathRanges } from './issue-draft-identifier.js';
-import {
-  findProjectRootSpans,
-  findReplaceableNounSpans,
-  type PreparedKeys,
-} from './issue-public-keys.js';
-import { findEmailSpans, findPrivateKeySpans, findTokenSpans } from './issue-public-secrets.js';
+import type { PreparedKeys } from './issue-public-keys.js';
+import { coverage, findRedactionSpans, mergeSpans, type KindSpan } from './issue-public-spans.js';
 import {
   codePointLength,
   codeUnitIndexAfterCodePoints,
@@ -30,22 +25,6 @@ export interface RedactedText {
   readonly marks: readonly TextMark[];
 }
 
-/**
- * 重なった一致を 1 つにまとめるとき、どの種別を残すか (大きいほど優先)。
- * パスで残すほうが固有名詞より情報が多く、固有名詞はカテゴリが利用者に見える印になる。秘密の形は最後。
- */
-const PRIORITY: Readonly<Record<RedactionKind, number>> = {
-  'project-path': 9,
-  'home-path': 8,
-  project: 7,
-  user: 6,
-  host: 5,
-  branch: 4,
-  'key-block': 3,
-  token: 2,
-  email: 1,
-};
-
 /** 種別ごとの印。`~/` は foldHomePaths と同じ (ユーザー名とその後ろの区切りを置き換える)。 */
 const PLACEHOLDER: Readonly<Record<RedactionKind, string>> = {
   'project-path': '<project>',
@@ -59,54 +38,40 @@ const PLACEHOLDER: Readonly<Record<RedactionKind, string>> = {
   email: '<email>',
 };
 
-/**
- * 開始位置の順 (同じなら長いものが先) に並べ、重なる一致を和集合に統合する。接しているだけ (終わり = 次の始まり) の
- * 一致は別のまま。統合した一致の種別は、PRIORITY が最も高いもの。
- */
-function mergeSpans(spans: readonly TextMark[]): TextMark[] {
-  const sorted = [...spans].sort((left, right) => left.start - right.start || right.end - left.end);
-  const merged: TextMark[] = [];
-  for (const span of sorted) {
-    const previous = merged.at(-1);
-    if (previous === undefined || span.start >= previous.end) {
-      merged.push(span);
-      continue;
-    }
-    merged[merged.length - 1] = {
-      start: previous.start,
-      end: Math.max(previous.end, span.end),
-      kind: PRIORITY[span.kind] > PRIORITY[previous.kind] ? span.kind : previous.kind,
-    };
-  }
-  return merged;
-}
-
-/**
- * すべての finder を「同じ入力文字列」にかけて一致を集め、統合し、左から 1 回の走査で印に置き換える。
- * finder が同じ文字列を見るので、後の規則が先の規則の印の中に一致することはない。
- * 返す marks は出力 (text) の上での印の位置で、開始位置の順・重なりなし。
- */
-export function redactText(text: string, prepared: PreparedKeys): RedactedText {
-  const spans: TextMark[] = [
-    ...findProjectRootSpans(text, prepared).map((span) => ({ ...span, kind: 'project-path' as const })),
-    ...findHomePathRanges(text).map((span) => ({ ...span, kind: 'home-path' as const })),
-    ...findReplaceableNounSpans(text, prepared),
-    ...findPrivateKeySpans(text).map((span) => ({ ...span, kind: 'key-block' as const })),
-    ...findTokenSpans(text).map((span) => ({ ...span, kind: 'token' as const })),
-    ...findEmailSpans(text).map((span) => ({ ...span, kind: 'email' as const })),
-  ];
+/** 一致を統合し、左から 1 回の走査で印に置き換える。返す marks は出力 (text) の上での印の位置。 */
+function applySpans(text: string, spans: readonly KindSpan[]): RedactedText {
   let sourceOffset = 0;
   let output = '';
   const marks: TextMark[] = [];
   for (const span of mergeSpans(spans)) {
     output += text.slice(sourceOffset, span.start);
-    const placeholder = PLACEHOLDER[span.kind];
     const start = output.length;
-    output += placeholder;
+    output += PLACEHOLDER[span.kind];
     marks.push({ kind: span.kind, start, end: output.length });
     sourceOffset = span.end;
   }
   return { text: output + text.slice(sourceOffset), marks };
+}
+
+/**
+ * すべての finder を「同じ入力文字列」にかけて一致を集め、統合し、左から 1 回の走査で印に置き換える (1 回目)。
+ * finder が同じ文字列を見るので、後の規則が先の規則の印の中に一致することはない。
+ *
+ * 2 回目 (最大 2 回): 1 回目の結果にもう一度 finder をかける。固有名詞やパスが印に替わると、直前の文字が `>` や `/` に
+ * 変わり、それまで直前が英数字だったために見送られた一致が新しく現れる ("example-project" + "sk-proj-…" が
+ * "<project>sk-proj-…" になる、"example-project/Users/jdoe/x" が "<project>/Users/jdoe/x" になる)。
+ * 2 回目の一致のうち、1 回目の印の内側に収まるもの (名前がたまたま "project" のときの "<project>" の中身など) は捨て、
+ * 残りは 1 回目の印と一緒に統合し直す (印にまたがる一致は和集合になる)。印の位置は、統合し直した結果の位置。
+ * 1 回目で何も見つからなければ文字列は変わっていないので、2 回目はしない。3 回目以降は、最後の網が報告する。
+ * 返す marks は出力 (text) の上での印の位置で、開始位置の順・重なりなし。
+ */
+export function redactText(text: string, prepared: PreparedKeys): RedactedText {
+  const first = applySpans(text, findRedactionSpans(text, prepared));
+  if (first.marks.length === 0) return first;
+  const insideMark = coverage(first.marks);
+  const fresh = findRedactionSpans(first.text, prepared).filter((span) => !insideMark(span.start, span.end));
+  if (fresh.length === 0) return first;
+  return applySpans(first.text, [...first.marks, ...fresh]);
 }
 
 /**
