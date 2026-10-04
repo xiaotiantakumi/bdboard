@@ -116,6 +116,7 @@ function useThreadListsProbe(projectId: string) {
     setOpenThreadIds: threadLists.setOpenThreadIds,
     openThreadIdsRef: threadLists.openThreadIdsRef,
     restoredProjectsRef: threadLists.restoredProjectsRef,
+    provisionalEntryRef: threadLists.provisionalEntryRef,
     setSelectedAgentId,
     cancelThreadConfirmDelete,
   });
@@ -134,6 +135,7 @@ function useThreadListsProbe(projectId: string) {
     setSelectedThreadIds: key.setSelectedThreadIds,
     startNewDraftThread: launcher.startNewDraftThread,
     restoredProjectsRef: threadLists.restoredProjectsRef,
+    provisionalEntryRef: threadLists.provisionalEntryRef,
     threadListOrder: threadLists.threadListOrder,
   });
 
@@ -150,6 +152,7 @@ function useThreadListsProbe(projectId: string) {
     openThreads: threadLists.openThreads,
     openThreadIdsRef: threadLists.openThreadIdsRef,
     restoredProjectsRef: threadLists.restoredProjectsRef,
+    provisionalEntryRef: threadLists.provisionalEntryRef,
     setThreadLists: threadLists.setThreadLists,
     setOpenThreadIds: threadLists.setOpenThreadIds,
     threadListOrder: threadLists.threadListOrder,
@@ -170,6 +173,7 @@ function useThreadListsProbe(projectId: string) {
     setOpenThreadIds: threadLists.setOpenThreadIds,
     openThreadIdsRef: threadLists.openThreadIdsRef,
     restoredProjectsRef: threadLists.restoredProjectsRef,
+    provisionalEntryRef: threadLists.provisionalEntryRef,
     threadListOrder: threadLists.threadListOrder,
     setSelectedThreadIds: key.setSelectedThreadIds,
     selectedThreadIdsRef: key.selectedThreadIdsRef,

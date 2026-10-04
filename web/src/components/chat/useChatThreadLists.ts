@@ -58,6 +58,20 @@ export interface UseChatThreadListsResult {
    */
   restoredProjectsRef: MutableRefObject<Set<string>>;
   /**
+   * bdboard-rt6i: プロジェクトごとの「仮のエントリ(provisional entry)」マーカー。未復元のプロジェクトで
+   * 送信成功(chat/useChatSendCommits.ts の commitSuccess)か CLI セッションの採用
+   * (chat/useChatSessionLifecycle.ts の handleResumeDiscoveredSession)が最初の永続化エントリを書いたとき
+   * に立つ。そのエントリは利用者が開き閉じした記録ではなく、サーバー一覧と合わせる前の 1 件だけの
+   * 仮の値で、復元する側(E7 = chat/useThreadListSync.ts、turn-status 回収 = applyRecoveredTurn →
+   * chat/recoveredTurnPlan.ts)が読んで、永続化を正本にせずサーバー一覧を足して開く
+   * (chat/threadViewRestore.ts の isFirstVisitWritten)。利用者の明示的な意図(エージェント切替 =
+   * handleAgentChange、閉じる・削除 = closeThread / deleteThread)で下ろし、復元が一覧を足して
+   * 書き直した時点でも下ろす。E7 が成功で着地しなかった(取り消し・失敗)場合は立ったまま残り、
+   * 次の訪問の復元が同じ扱いをする(restoredProjectsRef と違い、E7 は訪問の頭で下ろさない)。
+   * どこにも永続化しない(リロードで消える)。
+   */
+  provisionalEntryRef: MutableRefObject<Set<string>>;
+  /**
    * bdboard-z9mn: サーバーの一覧 fetch の結果でスレッド一覧を書く 3 つの処理(E7・採用の取り直し・
    * 回収の hydrate)を、プロジェクトごとの fetch 開始順序で一本化するための状態
    * (chat/threadListFetchOrder.ts)。参照は安定している。リネーム・ピン留め・送信成功のような
@@ -166,6 +180,8 @@ export function useChatThreadLists({
   // プロジェクト単位の Set なので、useRef の初期値はこのフックの
   // 生存期間(ChatPanel 相当のマウント)を通じて1つだけ作られる。
   const restoredProjectsRef = useRef<Set<string>>(new Set());
+  // bdboard-rt6i: UseChatThreadListsResult.provisionalEntryRef 参照。
+  const provisionalEntryRef = useRef<Set<string>>(new Set());
   // bdboard-z9mn: UseChatThreadListsResult.threadListOrder 参照。
   const [threadListOrder] = useState(createThreadListFetchOrder);
 
@@ -198,6 +214,9 @@ export function useChatThreadLists({
   // を呼んだ時点で同期的に更新済み)なので、これらの ref を読む限り
   // stale になることは無い。
   const closeThread = (sessionId: string) => {
+    // bdboard-rt6i: 閉じる・削除(deleteThread もここを通る)は利用者の明示的な意図なので、これ以降の永続化は
+    // 仮のエントリではなく利用者の記録。復元する側が永続化を正本にするよう、マーカーを下ろす。
+    provisionalEntryRef.current.delete(selectedProjectId);
     const liveOpenThreads = openThreadIdsRef.current[selectedProjectId] ?? [];
     const liveSelectedSessionId = selectedThreadIdsRef.current[selectedProjectId];
     const next = liveOpenThreads.filter((id) => id !== sessionId);
@@ -330,10 +349,7 @@ export function useChatThreadLists({
     openThreadIds,
     setOpenThreadIds,
     openThreadIdsRef,
-    restoredProjectsRef,
-    threadListOrder,
-    openThreads,
-    threadById,
+    restoredProjectsRef, provisionalEntryRef, threadListOrder, openThreads, threadById,
     displayedOpenThreads,
     closedThreads,
     hasClosedThreads,

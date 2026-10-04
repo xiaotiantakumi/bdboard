@@ -155,6 +155,29 @@ describe('useChatThreadLists', () => {
     expect(drawer.closeDrawer).toHaveBeenCalledOnce();
   });
 
+  it('closeThread clears the provisional-entry mark of the selected project only (bdboard-rt6i)', () => {
+    const { result } = setup();
+    result.current.provisionalEntryRef.current.add('project-a');
+    result.current.provisionalEntryRef.current.add('project-b');
+    act(() => {
+      result.current.setOpenThreadIds((prev) => ({ ...prev, 'project-a': ['sess-1', 'sess-2'] }));
+    });
+    act(() => result.current.closeThread('sess-1'));
+    expect(result.current.provisionalEntryRef.current.has('project-a')).toBe(false);
+    expect(result.current.provisionalEntryRef.current.has('project-b')).toBe(true);
+  });
+
+  it('deleteThread clears the provisional-entry mark once the delete succeeds, and leaves it when the delete fails (bdboard-rt6i)', async () => {
+    deleteChatThreadMock.mockRejectedValueOnce(new Error('boom'));
+    const { result } = setup();
+    result.current.provisionalEntryRef.current.add('project-a');
+    await act(async () => result.current.deleteThread('sess-1'));
+    // 失敗では何も変わらない(閉じていない)ので、仮のエントリのまま。
+    expect(result.current.provisionalEntryRef.current.has('project-a')).toBe(true);
+    await act(async () => result.current.deleteThread('sess-1'));
+    expect(result.current.provisionalEntryRef.current.has('project-a')).toBe(false);
+  });
+
   it('deleteThread removes the thread on success and always cancels confirm-delete', async () => {
     const { result, setThreadError, drawer } = setup({ currentSessionId: 'sess-1' });
     act(() => {

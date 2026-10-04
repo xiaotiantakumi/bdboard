@@ -11,6 +11,7 @@ import { toAdoptionSeedMessages, toChatMessages } from './messages';
 import { pruneDeadOpenThreads } from './pruneDeadOpenThreads';
 import { planRecoveredTurn } from './recoveredTurnPlan';
 import { takeUnobservedOrigin, withHistoryLoaded, withoutKey, type ReplacedThreadMarks } from './replacedThread';
+import { isFirstVisitWritten } from './threadViewRestore';
 import type { UseChatAgentModelStateResult } from './useChatAgentModelState';
 import type { UseChatConversationsStateResult } from './useChatConversationsState';
 import type { UseChatThreadListsResult } from './useChatThreadLists';
@@ -24,7 +25,7 @@ export interface UseChatSessionLifecycleParams
     >,
     Pick<
       UseChatThreadListsResult,
-      'openThreads' | 'openThreadIdsRef' | 'restoredProjectsRef' | 'setThreadLists' | 'setOpenThreadIds' | 'threadListOrder'
+      'openThreads' | 'openThreadIdsRef' | 'restoredProjectsRef' | 'provisionalEntryRef' | 'setThreadLists' | 'setOpenThreadIds' | 'threadListOrder'
     >,
     Pick<UseChatAgentModelStateResult, 'setSelectedAgentId'> {
   selectedProjectId: string;
@@ -56,7 +57,7 @@ export interface UseChatSessionLifecycleParams
 export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
   const { selectedProjectId, selectedThreadIdsRef, setSelectedThreadIds } = params;
   const { historyRequestIdRef, setConversations, setHistoryLoadedFor, setLoadingHistoryFor, setThreadModelIds } = params;
-  const { openThreadIdsRef, restoredProjectsRef, setThreadLists, setOpenThreadIds, threadListOrder } = params;
+  const { openThreadIdsRef, restoredProjectsRef, provisionalEntryRef, setThreadLists, setOpenThreadIds, threadListOrder } = params;
   const { setSelectedAgentId, cancelThreadConfirmDelete, advanceDraftNonceAfterSessionGone, draftNoncesRef } = params;
   const { replacedMarksRef } = params;
 
@@ -126,12 +127,18 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       // 一覧に置き換わるので、gone の判定は要らない。
       // 引き取りは ref の書き換え(記録を消す)なので、引数のオブジェクトの中に隠さず先に読む。
       const origin = takeUnobservedOrigin(replacedMarksRef.current, selectedProjectId);
+      const persistedBefore = readPersistedChatThreads()[selectedProjectId];
+      // bdboard-rt6i: 永続化済みのエントリが、初回訪問の E7 の一覧 fetch が in-flight の間に送信成功・採用が書いた
+      // 仮のエントリなら、それを再訪の記録として扱わない(planRecoveredTurn が全スレッドを開く)。
+      const provisionalEntry = isFirstVisitWritten(provisionalEntryRef.current.has(selectedProjectId), persistedBefore);
       const { nextOpen, nextSelected, persistedSelected, replacedKey } = planRecoveredTurn({
         threads: orderedThreads ?? threads, sessionId: payload.sessionId, alreadyRestored, knownOpen, explicitDraftSelected: isExplicitDraftStillSelected,
         origin,
-        persisted: readPersistedChatThreads()[selectedProjectId],
+        persisted: persistedBefore, provisionalEntry,
         knownSelected: selectedThreadIdsRef.current[selectedProjectId],
       });
+      // bdboard-rt6i: 回収の hydrate も復元の 1 つ。一覧と合わせて書き直す(下の永続化)ので、仮のエントリは下ろす。
+      provisionalEntryRef.current.delete(selectedProjectId);
       if (orderedThreads !== undefined) {
         setThreadLists((prev) => ({ ...prev, [selectedProjectId]: orderedThreads }));
       }
@@ -172,7 +179,7 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     [
       selectedProjectId,
       openThreadIdsRef,
-      restoredProjectsRef,
+      restoredProjectsRef, provisionalEntryRef,
       selectedThreadIdsRef,
       setThreadLists,
       setOpenThreadIds,
@@ -315,14 +322,19 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     // bdboard-oaak: 未復元(初回の一覧 fetch が in-flight)のときだけ、基点が「サーバー一覧で
     // まだ絞っていない永続化 id」になる。下の fetch が届いたら、その基点のうち一覧に無い id を落とす。
     const usedPersistedBase = !restoredProjectsRef.current.has(projectId);
+    const persistedBefore = readPersistedChatThreads()[projectId];
     const baseOpenThreads = [...(usedPersistedBase
-      ? (readPersistedChatThreads()[projectId]?.activeSessionIds ?? [])
+      ? (persistedBefore?.activeSessionIds ?? [])
       : (openThreadIdsRef.current[projectId] ?? []))];
     const nextOpenThreads = baseOpenThreads.includes(sessionId)
       ? baseOpenThreads
       : [...baseOpenThreads, sessionId];
     setOpenThreadIds((prev) => ({ ...prev, [projectId]: nextOpenThreads }));
     restoredProjectsRef.current.add(projectId);
+    // bdboard-rt6i: 未復元のプロジェクトで、これが最初の永続化エントリ(それまでエントリが無い)なら、書くのは
+    // 利用者が開き閉じした記録ではなく仮のエントリ。復元する側(E7・回収の hydrate)がサーバー一覧を足して開くよう
+    // マーカーを立てる(chat/useChatSendCommits.ts の commitSuccess と同じ規則)。
+    if (usedPersistedBase && persistedBefore === undefined) provisionalEntryRef.current.add(projectId);
     writePersistedChatThreadState(projectId, {
       activeSessionIds: nextOpenThreads,
       selectedSessionId: sessionId,

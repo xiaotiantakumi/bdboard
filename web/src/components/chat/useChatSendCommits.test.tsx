@@ -81,6 +81,8 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
   // handleAgentChange のどれかが確立した)」のマーカー。本番は chat/useChatThreadLists.ts の
   // restoredProjectsRef。既定は空 = 未復元。
   const restoredProjectsRef = { current: new Set<string>() };
+  // bdboard-rt6i: 仮のエントリ(未復元で最初の永続化エントリを書いた)のマーカー。既定は空。
+  const provisionalEntryRef = { current: new Set<string>() };
   // bdboard-d7on(Opus レビュー B1/M1 対応): commitSuccess は selectedThreadIdsRef も
   // 同じ場所で同期する。setterForWithRef が同期するので、初期値は空で足りる。
   const selectedThreadIdsRef = { current: {} as Record<string, string | undefined> };
@@ -95,6 +97,7 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
     setOpenThreadIds: setterForWithRef(store, 'openThreadIds', openThreadIdsRef),
     openThreadIdsRef,
     restoredProjectsRef,
+    provisionalEntryRef,
     threadListOrder: createThreadListFetchOrder(),
     setSelectedThreadIds: setterForWithRef(store, 'selectedThreadIds', selectedThreadIdsRef),
     selectedThreadIdsRef,
@@ -168,6 +171,39 @@ describe('commitSuccess', () => {
     expect(params.openThreadIdsRef.current).toEqual({ 'proj-a': ['sess-new'] });
     expect(params.selectedThreadIdsRef.current).toEqual({ 'proj-a': 'sess-new' });
     expect(ackMock).toHaveBeenCalledWith('proj-a', 'sess-new');
+  });
+
+  describe('bdboard-rt6i: the first entry written before the project is restored is marked provisional', () => {
+    it('marks the project when the send writes the first persisted entry while unrestored', () => {
+      const { hook, params } = setup();
+      act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
+      expect(params.provisionalEntryRef.current.has('proj-a')).toBe(true);
+    });
+
+    it('keeps the mark on a second send into the same project', () => {
+      const { hook, params } = setup();
+      act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
+      act(() =>
+        hook.result.current.commitSuccess('new:proj-a:1', 'again', { reply: 'AI reply', sessionId: 'sess-two', agentId: 'claude' }),
+      );
+      expect(params.provisionalEntryRef.current.has('proj-a')).toBe(true);
+      expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-new', 'sess-two']);
+    });
+
+    it('does not mark a revisit: an entry already existed, so it is the user\'s own record', () => {
+      writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-a'], selectedSessionId: 'sess-a' });
+      const { hook, params } = setup();
+      act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
+      expect(params.provisionalEntryRef.current.has('proj-a')).toBe(false);
+    });
+
+    it('does not mark once the project is restored (E7, or an agent change that emptied the open set)', () => {
+      const { hook, params } = setup();
+      params.restoredProjectsRef.current.add('proj-a');
+      params.openThreadIdsRef.current = { 'proj-a': [] };
+      act(() => hook.result.current.commitSuccess('new:proj-a:1', 'hello', RESULT));
+      expect(params.provisionalEntryRef.current.has('proj-a')).toBe(false);
+    });
   });
 
   describe('bdboard-7feq: persisted open follows the live open once the project is restored', () => {

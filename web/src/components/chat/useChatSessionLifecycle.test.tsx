@@ -61,6 +61,7 @@ function setup(overrides: Partial<UseChatSessionLifecycleParams> = {}) {
     openThreads: [],
     openThreadIdsRef,
     restoredProjectsRef: { current: new Set() },
+    provisionalEntryRef: { current: new Set() },
     threadListOrder: createThreadListFetchOrder(),
     setThreadLists: vi.fn(),
     setOpenThreadIds,
@@ -565,6 +566,96 @@ describe('useChatSessionLifecycle', () => {
       expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
         'project-a': ['sess-other', 'sess-rec', 'sess-next'],
       });
+    });
+  });
+
+  describe('the provisional first entry (bdboard-rt6i)', () => {
+    const SERVER = [thread('sess-a', 'a'), thread('sess-b', 'b'), thread('sess-new', 'sent'), thread('sess-rec', 'recovered')];
+
+    it('widens a provisional [N] with the server list on a recovery, instead of treating it as a revisit (gap 1)', () => {
+      // 未復元(restoredProjectsRef 未マーク)で、送信成功が最初のエントリ [sess-new] を書き、マーカーを立てた。
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+      const provisionalEntryRef = { current: new Set(['project-a']) };
+      const { result, params } = setup({
+        provisionalEntryRef,
+        openThreadIdsRef: { current: { 'project-a': ['sess-new'] } },
+        selectedThreadIdsRef: { current: { 'project-a': 'sess-new' } },
+      });
+      act(() => result.current.applyRecoveredTurn(SERVER, RECOVERED));
+
+      expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-a', 'sess-b', 'sess-new', 'sess-rec'] });
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-a', 'sess-b', 'sess-new', 'sess-rec'],
+        selectedSessionId: 'sess-new',
+      });
+      // 回収の復元でマーカーは下りる(永続化は一覧と合わせた記録になった)。
+      expect(provisionalEntryRef.current.has('project-a')).toBe(false);
+      expect(params.restoredProjectsRef.current.has('project-a')).toBe(true);
+    });
+
+    it('still reads a persisted entry as the source of truth on a recovery when no provisional mark is set', () => {
+      // 再訪(開始時にエントリがある)や、閉じる・削除で書いた利用者の記録: マーカーは無い。
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+      const { result, params } = setup({
+        openThreadIdsRef: { current: { 'project-a': ['sess-new'] } },
+        selectedThreadIdsRef: { current: { 'project-a': 'sess-new' } },
+      });
+      act(() => result.current.applyRecoveredTurn(SERVER, RECOVERED));
+
+      expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-new', 'sess-rec'] });
+      expect(readPersistedChatThreads()['project-a']?.activeSessionIds).toEqual(['sess-new', 'sess-rec']);
+    });
+
+    it('widens an adopted open with the server list on a recovery too: the recovery supersedes the E7 response that would have', () => {
+      // 採用は restoredProjectsRef を立てるので alreadyRestored。それでも採用が書いた最初のエントリは仮のエントリ。
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+      const provisionalEntryRef = { current: new Set(['project-a']) };
+      const { result, params } = setup({
+        provisionalEntryRef,
+        restoredProjectsRef: { current: new Set(['project-a']) },
+        openThreadIdsRef: { current: { 'project-a': ['sess-new'] } },
+        selectedThreadIdsRef: { current: { 'project-a': 'sess-new' } },
+      });
+      act(() => result.current.applyRecoveredTurn(SERVER, RECOVERED));
+
+      expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-a', 'sess-b', 'sess-new', 'sess-rec'] });
+      expect(provisionalEntryRef.current.has('project-a')).toBe(false);
+    });
+
+    it('does not treat an agent change\'s empty entry as provisional on a recovery, even if the mark were left set', () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: [] });
+      const { result, params } = setup({
+        provisionalEntryRef: { current: new Set(['project-a']) },
+        restoredProjectsRef: { current: new Set(['project-a']) },
+        openThreadIdsRef: { current: { 'project-a': [] } },
+        selectedThreadIdsRef: { current: {} },
+      });
+      act(() => result.current.applyRecoveredTurn(SERVER, RECOVERED));
+
+      expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-rec'] });
+    });
+
+    it('marks the first entry an adoption writes before the project is restored', () => {
+      const { result, params } = setup();
+      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+      expect(params.provisionalEntryRef.current.has('project-a')).toBe(true);
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-new'],
+        selectedSessionId: 'sess-new',
+      });
+    });
+
+    it('does not mark an adoption on a revisit (an entry already existed)', () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-1'], selectedSessionId: 'sess-1' });
+      const { result, params } = setup();
+      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+      expect(params.provisionalEntryRef.current.has('project-a')).toBe(false);
+    });
+
+    it('does not mark an adoption after the project is restored (an agent change\'s explicit empty, or E7)', () => {
+      const { result, params } = setup({ restoredProjectsRef: { current: new Set(['project-a']) } });
+      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+      expect(params.provisionalEntryRef.current.has('project-a')).toBe(false);
     });
   });
 

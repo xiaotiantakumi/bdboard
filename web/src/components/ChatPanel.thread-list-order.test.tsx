@@ -44,6 +44,7 @@ import { resetPlatformSupportCache } from './PlatformLimitationNotice';
 import {
   PROJECT_A,
   CLAUDE_AGENT,
+  EXAMPLE_AGENT,
   createDeferred,
   getThreadDrawer,
   jsonResponse,
@@ -372,5 +373,151 @@ describe('ChatPanel: thread-list writers are ordered by fetch start (bdboard-z9m
     expect(switcherTitle(container)).toHaveTextContent('resumed title 1');
     expect(switcherCount(container)).toHaveTextContent('スレッド 3');
     expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'discovered-1']);
+  });
+});
+
+describe('ChatPanel: the provisional first entry is told apart from the user\'s own open/close record (bdboard-rt6i)', () => {
+  beforeEach(() => {
+    installFakeHistory({});
+    localStorage.clear();
+    resetPlatformSupportCache();
+    fetchPlatformSupportMock.mockResolvedValue({ platform: 'darwin', limitations: [] });
+    fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT, EXAMPLE_AGENT]);
+    fetchChatThreadsMock.mockResolvedValue([]);
+    fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
+    acknowledgeChatTurnMock.mockResolvedValue();
+    fetchDiscoveredChatSessionsMock.mockResolvedValue({ sessions: [] });
+  });
+
+  afterEach(() => {
+    try {
+      cleanup();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+    }
+  });
+
+  const SERVER_A = thread('sess-a', 'server thread a');
+  const SERVER_B = thread('sess-b', 'server thread b');
+
+  /** POST /api/chat/message に、呼び出し順に sessionIds の sessionId を返す(最後の値は繰り返す)。 */
+  function stubSends(sessionIds: readonly string[], agentId = 'claude') {
+    let posts = 0;
+    stubFetch((url, init) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        const sessionId = sessionIds[Math.min(posts, sessionIds.length - 1)];
+        posts += 1;
+        return jsonResponse({ reply: `AI reply ${posts}`, sessionId, agentId });
+      }
+      if (url.startsWith('/api/chat/sessions/sess-rec/messages')) return recoveredMessagesResponse();
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+  }
+
+  it('opens the server list when a turn-status recovery lands after a send wrote the first entry during the first list (gap 1)', async () => {
+    const user = userEvent.setup();
+    const firstList = createDeferred<ChatThreadDto[]>();
+    // 1 回目 = E7(保留)、2 回目 = 回収の hydrate(すぐ届く。サーバーは送信した会話と回収したセッションも持つ)。
+    scriptThreadLists([firstList, [SERVER_A, SERVER_B, thread('sess-new', 'hello from draft'), RECOVERED_THREAD]]);
+    // 回収の completed は、送信が済むまで(statusGate)返さない。sess-rec の ACK までは completed を返し続ける。
+    const statusGate = createDeferred<void>();
+    let recoveredAcked = false;
+    acknowledgeChatTurnMock.mockImplementation((_projectId, sessionId) => {
+      if (sessionId === 'sess-rec') recoveredAcked = true;
+      return Promise.resolve();
+    });
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      await statusGate.promise;
+      return recoveredAcked
+        ? { state: 'idle' }
+        : { state: 'completed', sessionId: 'sess-rec', agentId: 'claude', completedAt: '2026-08-18T12:00:00.000Z' };
+    });
+    stubSends(['sess-new']);
+
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+    // 永続化エントリの無い初回訪問。初回の一覧が in-flight のまま、ドラフトから送信する(最初の永続化エントリ [sess-new])。
+    await user.type(screen.getByLabelText('メッセージ'), 'hello from draft');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('AI reply 1');
+    expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+
+    // そのあと turn-status 回収の hydrate が走る(E7 の応答より先)。
+    await act(async () => {
+      statusGate.resolve();
+      await statusGate.promise;
+    });
+    await waitFor(() => expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-rec'));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // 仮の [sess-new] を再訪の記録として扱わない: サーバー一覧と、送信した会話・回収したセッションの和で開く。
+    expect(switcherCount(container)).toHaveTextContent('スレッド 4');
+    expect(switcherTitle(container)).toHaveTextContent('hello from draft');
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['sess-a', 'sess-b', 'sess-new', 'sess-rec'],
+      selectedSessionId: 'sess-new',
+    });
+
+    // 回収に追い越された E7 の応答は、何も当てない。
+    await resolveDeferred(firstList, [SERVER_A, SERVER_B]);
+    expect(switcherCount(container)).toHaveTextContent('スレッド 4');
+  });
+
+  it('keeps the open set the user emptied with an agent change when a send lands before the first list (gap 2)', async () => {
+    const user = userEvent.setup();
+    const firstList = createDeferred<ChatThreadDto[]>();
+    scriptThreadLists([firstList]);
+    stubSends(['sess-new'], 'example-agent');
+
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+    // 永続化エントリの無い初回訪問。初回の一覧が in-flight のまま、エージェントを切り替える(open は空に確定)。
+    await user.selectOptions(await screen.findByLabelText('チャットエージェント'), 'example-agent');
+    expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: [] });
+    await user.type(screen.getByLabelText('メッセージ'), 'hello after switch');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('AI reply 1');
+    expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+
+    await resolveDeferred(firstList, [SERVER_A, SERVER_B]);
+
+    // 利用者が明示した「空」から始めた open は、サーバー一覧で広げない(切替で閉じた A/B は閉じたまま)。
+    expect(switcherCount(container)).toHaveTextContent('スレッド 1');
+    expect(switcherTitle(container)).toHaveTextContent('hello after switch');
+    expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+  });
+
+  it('does not reopen a thread the user closed after two sends during the first list (gap 3, N1 -> N2 -> close N1)', async () => {
+    const user = userEvent.setup();
+    const firstList = createDeferred<ChatThreadDto[]>();
+    scriptThreadLists([firstList]);
+    stubSends(['sess-n1', 'sess-n2']);
+
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+    await user.type(screen.getByLabelText('メッセージ'), 'hello one');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('AI reply 1');
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
+    await user.type(screen.getByLabelText('メッセージ'), 'hello two');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('AI reply 2');
+    expect(switcherCount(container)).toHaveTextContent('スレッド 2');
+
+    // 1 つ目のスレッドを閉じる(明示の操作)。永続化は [sess-n2] になる。
+    const menu = await openThreadDrawerItemMenu(container, user, 'hello one');
+    await user.click(within(menu).getByRole('menuitem', { name: /タブから閉じる/ }));
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-n2']);
+
+    await resolveDeferred(firstList, [SERVER_A, SERVER_B]);
+
+    // 閉じた sess-n1 は、一覧に upsert として重なっていても開き直さない。永続化は利用者の記録のまま。
+    expect(switcherCount(container)).toHaveTextContent('スレッド 1');
+    expect(switcherTitle(container)).toHaveTextContent('hello two');
+    expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: ['sess-n2'], selectedSessionId: 'sess-n2' });
   });
 });
