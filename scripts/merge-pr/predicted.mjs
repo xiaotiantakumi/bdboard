@@ -13,6 +13,7 @@ import { git } from './exec.mjs';
 import { EXIT, fail, refetchMain, REMOTE } from './context.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { rebaseSteps } from './messages.mjs';
+import { forgetPredictedGroup, recordPredictedGroup } from './predicted-guard.mjs';
 import { audit, removeState } from './state.mjs';
 import { liveMainAsync, queueSinceFor } from './verify-queue.mjs';
 
@@ -89,7 +90,10 @@ export async function verifyPredicted(ctx, pr, id, { predBase, head, tree }, { k
       const live = await liveMainAsync(ctx.cwd, REMOTE, ctx.config.mainBranch, { signal });
       return live !== null && live !== predBase; // 読めないときは続ける (終わった後の refetch で判定)
     },
+    // bdboard-h2fk: prepare が SIGKILL されても残る verify のグループを、次の prepare が見つけられるように残す。
+    onSpawn: (child) => recordPredictedGroup(ctx, pr, child),
   });
+  forgetPredictedGroup(ctx, pr); // verify が戻った (どの結果でも) ので孤児は居ない。SIGKILL・クラッシュのときだけここに来ず残る
   const seconds = Math.round((Date.now() - startedAt) / 1000);
   const extra = kind === 'light' ? { command } : {};
   audit(spec.event, { pr, id, base: predBase, head, tree, commit, result: verified.result, secs: seconds, ...extra });
