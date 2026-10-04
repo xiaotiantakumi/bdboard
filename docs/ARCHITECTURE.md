@@ -105,6 +105,7 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `TunnelInterruptionStore` | `createFileTunnelInterruptionStore` | トンネル中断状態の記録と読み取り |
 | `ReleaseSource` | `createGithubReleaseSource` | リリース情報の取得 |
 | `AttachmentStoragePort` | `createFsAttachmentStorage` | チケット添付画像の保存/一覧/読み取り(bdboard-qw26) |
+| `IssueDraftStoragePort` | `createFsIssueDraftStorage` | 不具合報告の下書き(`draft.json` と画像)の保存/一覧/読み取り。`<基点>/issue-drafts/`、ディレクトリ `0700`・ファイル `0600`。キャッシュ DB には置かない。受け取り API(`POST /api/issue-reports/drafts`)はローカル直アクセスのみ(bdboard-4y8q.1、設計は `docs/ISSUE-REPORTING.md`) |
 
 表に載せないモジュール:
 

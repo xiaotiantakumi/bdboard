@@ -16,6 +16,7 @@ import { wireBoardLifecycle } from './bootstrap/wire-board-lifecycle.js';
 import { wireAuthAndTunnel } from './bootstrap/wire-auth-and-tunnel.js';
 import { wireBoardApi } from './bootstrap/wire-board-api.js';
 import { wireAttachments } from './bootstrap/wire-attachments.js';
+import { wireIssueReports } from './bootstrap/wire-issue-reports.js';
 import { wireHarness } from './bootstrap/wire-harness.js';
 import { wireMiscRoutes } from './bootstrap/wire-misc-routes.js';
 import { wireFeatureRoutes } from './bootstrap/wire-feature-routes.js';
@@ -94,6 +95,12 @@ async function main(): Promise<void> {
     writeAccess: auth.writeAccess,
   });
 
+  const issueReports = wireIssueReports({
+    repoRoot,
+    env: process.env,
+    writeAccess: auth.writeAccess,
+  });
+
   const harness = wireHarness({
     repoRoot,
     cache: infra.cache,
@@ -155,6 +162,7 @@ async function main(): Promise<void> {
     agentRunRouter: features.agentRunRouter,
     tunnelRouter: features.tunnelRouter,
     updateCheckRouter: features.updateCheckRouter,
+    issueReportsRouter: issueReports.issueReportsRouter,
     aiQuotaRouter: features.aiQuotaRouter,
     chatRouter: features.chatRouter,
     staticSpa: features.staticSpa,

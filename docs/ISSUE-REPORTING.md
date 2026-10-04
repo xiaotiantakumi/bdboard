@@ -31,6 +31,8 @@ interface IssueDraft {
   readonly id: string;
   readonly kind: DraftKind;
   readonly fingerprint: string;           // 4節
+  readonly catalogSlug?: string;          // A のみ。受け取った値(ホーム配下の絶対パスは ~/ に畳んだもの)を指紋とは別に持つ(4節「実装との差分」)
+  readonly source?: string;               // B/C のみ。同上
   title: string;                          // 公開題名(編集可。初期値は5節の組み立て関数の出力)
   body: string;                           // 公開本文(編集可、同上)
   titleEditedByUser: boolean;             // true なら次の同一指紋マージ時も自動再生成しない
@@ -38,13 +40,13 @@ interface IssueDraft {
   readonly localOnly: LocalOnlyContext;   // 手元だけの生データ(公開本文には使わない。4/5節参照)
   readonly occurredProjects: readonly OccurredProject[]; // 発生したプロジェクトの一覧(手元限定)
   occurrenceCount: number;                // 回数
-  readonly firstOccurredAt: string;       // ISO8601
+  readonly firstOccurredAt: string;       // ISO 8601 UTC (末尾 Z)
   lastOccurredAt: string;
   status: DraftStatus;
   dismissReason?: string;                 // 見送りの理由(status='dismissed' のときのみ)
   issueNumber?: number;                   // 投稿後の GitHub issue 番号
   issueUrl?: string;
-  sourceTicketRef?: string;               // harness-upstream 取り込み元のチケットID(4y8q.7)
+  sourceTicketRef?: string;               // harness-upstream 取り込み元のチケットID(4y8q.7)。/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/ だけ受け取る
   harnessVersionAtOccurrence?: string;    // A/Bのみ。注入先 .claude/bdboard-packs.json の version
   readonly draftSchemaVersion: 1;         // draft.json 自体のフォーマット版(将来の移行用)
 }
@@ -130,7 +132,7 @@ bdboard-727y(添付画像の保存先バグ)は PR #782 で 2026-09-25 にマー
 | 経路 | メソッド/パス | 呼び出し元 | 必要な認可 |
 |---|---|---|---|
 | 受け取り | `POST /api/issue-reports/drafts` | 各プロジェクトに注入される報告スクリプト(注入先では `.claude/skills/bdboard-harness/scripts/report-issue.sh`、パック正本は `harness/packs/bdboard-harness/scripts/report-issue.sh`。4y8q.12)、bdboard 自身のエラー捕捉(4y8q.6) | **ローカル直アクセスのみ**(トンネル不可) |
-| 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss` | 不具合報告タブの UI | PATCH は通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル)。GET は `createWriteGuardMiddleware` の対象外(メソッドで素通しする)なので、ほかの読み取り API と同じく、トンネルではトンネルの認証(Basic 認証)を通れば読める(パスワードの強度は問わない) |
+| 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss` | 不具合報告タブの UI | PATCH は通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル)。GET は `createWriteGuardMiddleware` の対象外(メソッドで素通しする)なので、ほかの読み取り API と同じく、トンネルではトンネルの認証(Basic 認証)を通れば読める(パスワードの強度は問わない)。**ただし `GET .../:id` だけは、全部を返すのはローカル直アクセスのみ**(下の「1 件の取得はトンネルでは絞る」) |
 | 投稿 | `POST /api/issue-reports/drafts/:id/publish` | 不具合報告タブの投稿ボタン | **ローカル直アクセスのみ** |
 
 エピック決定 4「投稿はローカル直アクセスからだけ。トンネル経由では、見る・直す・見送るまで」
@@ -173,6 +175,88 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 - なお `chat-agent-routes.ts:79` の `isLocalBasicAuthRequest` はレート制限を飛ばす判定で、
   ローカル限定のゲートではない。
 
+### 1 件の取得はトンネルでは絞る(bdboard-4y8q.1 のレビュー M-1)
+
+`GET /api/issue-reports/drafts/:id` は、下書きの `localOnly`(1節)をそのまま返すと、
+`errorTextRaw`(64Ki 文字までの生ログ。トークンを含みうる)と `occurredProjects[].path`(絶対パス)を、
+トンネルの Basic 認証を通っただけの読み手へ渡してしまう。生ログと cwd をローカル限定にした
+`GET /api/runs/:runId`(bdboard-54be.1 M-1、`agent-run-read-routes.ts`)と同じ理由で、
+`isLocalBasicAuthRequest(c)` で分ける:
+
+| 呼び出し | 応答 |
+|---|---|
+| ローカル直アクセス | 下書き全部 + `restricted: false` |
+| それ以外(トンネル、ループバックでない接続元、Host の不一致、接続情報なし=fail-closed) | `restricted: true`。**許可リスト**(`toDetailDto`)で組んだ次の欄だけ(下) |
+
+トンネル側が**見る欄の全部**: `id`、`kind`、`fingerprint`、`catalogSlug`、`source`、`title`、`body`、
+`titleEditedByUser`、`bodyEditedByUser`、`localOnly.errorTextTruncated`、`localOnly.envInfo`(版)、
+`occurredProjects[]` の `name` / `firstSeenAt` / `lastSeenAt`(パス無し)、`occurrenceCount`、
+`firstOccurredAt`、`lastOccurredAt`、`status`、`dismissReason`、`issueNumber`、`issueUrl`、
+`sourceTicketRef`、`harnessVersionAtOccurrence`、`draftSchemaVersion`、`restricted`。画像の一覧は別の API。
+このうち**呼び出し側・利用者の入力がほぼそのまま入る**のは次で、手元の外へ出てよい形に入口で絞る:
+
+| 欄 | 入口での絞り |
+|---|---|
+| `source` / `catalogSlug` / `envInfo` の版の文字列(`fingerprint`・`title`・`body` にも入る) | **識別子**。1 行のみ: 改行・制御文字・不可視の書式文字(下の「1 行の検査」)を含むと 400。ホーム配下の絶対パスは**受け取りで `~/` に畳む**(400 にはしない。畳む形は下の「ホーム配下のパス」)。`GET /api/x` のような API のパスは触らない。パス以外の秘密(引数のトークンなど)は見つけない |
+| `project.name`(`occurredProjects[].name`) | **表示用**。400 にせず整える。順番が大事: ① 改行・タブ・そのほかの制御文字・行区切り(U+2028/2029)・BOM は**空白に置き換える**(パスの手前の区切りにもなる文字なので、取り除くと前の語に繋がり、`proj<TAB>/Users/u/proj` のパスが畳めなくなる)、② 1 行の検査で弾くそれ以外の文字(ゼロ幅・双方向制御など)は取り除く、③ ホーム配下のパスを `~/` に畳む(②の後なので `/Us<ZWSP>ers/u` も畳まれる)、④ 空白の連なりを 1 つにして前後を落とす。`👩‍💻-tools` は受け取るが、ZWJ は取り除かれ `👩💻-tools` として保存される。整えた結果が空なら 400。手元限定の `project.path` は触らない |
+| `sourceTicketRef` | `^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$` だけ(`--db=/tmp/evil` は 400)。後で `bd` の引数になる(6節) |
+| `dismissReason` | 表示用の 1 行・200 文字まで(PATCH の入口)。貼り付けで混ざるゼロ幅スペース U+200B と BOM U+FEFF は取り除き、ZWJ U+200D・ZWNJ U+200C は許し、改行・制御文字・そのほかの不可視の書式文字は 400。取り除いたあとに見える文字が残らない(空白と ZWJ・ZWNJ だけ)ものも 400。パスは畳まない。本文を書く欄ではない |
+
+**1 行の検査**(`isSingleLineText`): 次の文字を 1 つでも含むと不可。制御文字(Cc: 改行・タブ・DEL・C1)、書式文字(Cf: ゼロ幅
+U+200B–200F、双方向制御 U+202A–202E と U+2066–2069、ALM U+061C、単語結合子と不可視の演算子 U+2060–2064、
+U+206A–206F、BOM U+FEFF、ソフトハイフン U+00AD、U+180E、注釈記号 U+FFF9–FFFB、タグ文字)、行・段落の区切り
+(Zl・Zp: U+2028・U+2029)、ハングルの見えない埋め字(U+115F・U+1160・U+3164・U+FFA0)、タグ文字の区画全体
+(U+E0000–E007F。割り当て前の番号を含む)。異体字選択子(日本語の IVS を含む)・結合文字(濁点の分解形)・全角スペース
+U+3000 は許す。孤立したサロゲートは見ない(4y8q.2)。これで防ぐのは行の数と見えない文字だけで、1 行でもリンク・`@`メンション・
+`#`参照・`<img>` は書ける(Markdown のエスケープと公開本文の置き換えは5節、4y8q.2)。
+
+**ホーム配下のパス**(`foldHomePaths`、`src/domain/issue-draft-identifier.ts`): 次の形だけを `~/` に畳む。ユーザー名の
+部分(と、その後ろの区切りまで)が `~/` になり、それより奥はそのまま残る。
+- `/Users/<名前>`(macOS)、`/home/<名前>`(Linux)、`/var/home/<名前>`、`/usr/home/<名前>`。`Users` は大文字小文字を区別しない
+  (`/users/<名前>`)
+- `/mnt/<ドライブ文字>/Users/<名前>`(WSL)、`/<ドライブ文字>/Users/<名前>`(Git Bash)、`/cygdrive/<ドライブ文字>/Users/<名前>`
+- `/System/Volumes/Data/Users/<名前>`、`/Volumes/<ディスク名>/Users/<名前>`(macOS)
+- `X:\Users\<名前>`、`X:/Users/<名前>`(JSON の中の `X:\\Users\\` も)、`\\?\X:\Users\<名前>`、`file:///X:/Users/<名前>`
+- `\\wsl$\<distro>\home\<名前>`、`\\wsl.localhost\<distro>\home\<名前>`
+
+パスとして読むのは、**直前が行頭・空白・`'` `"` `` ` `` `=` `:` `(` `,` `;` `|` `<` `>` `[` `{`・`file://`・`\\?\` のどれかのときだけ**
+(境界の規則)。だから `GET /api/home/x` や `POST /api/Users/42` のように途中に現れるものは触らない。逆に、行頭や空白の
+直後の `GET /Users/42` や `GET /home/settings` は区別できないので `GET ~/` になる。名前は区切り(`/` `\`)・空白・
+引用符・リストの区切りと括りの閉じ(`` ` `` `:` `;` `,` `|` `<` `>` `)` `]` `}` `=`)・改行・文字列の終わりで終わる。だから
+`/home/u:/home/u/bin` は `~/:~/bin`、`x=/Users/u;y=/Users/u/z` は `x=~/;y=~/z`、`C:\Users\u;C:\Users\u\bin` は `~/;~/bin`
+になり、区切りの先の次のパスも別々に畳まれる(名前の欄にこれらの文字は入らないので、巻き込まない)。ただし Windows の名前だけは
+半角スペースを含みうる(`John Smith`)ので、上の止まる文字・改行・文字列の終わりまでを名前として読む(改行は名前に入れない:
+複数行の本文で、次の行以降を巻き込んで消さない): **`bash C:\Users\u --flag` は `bash ~/` になる**(引数を残すより、
+ユーザー名を残さないことを優先する)。
+共有の場所(`/Users/Shared`・`C:\Users\Public`・`/home/linuxbrew`)も同じ形なので畳まれる。見つけないもの: `x@/Users/u`
+のように `@` などの直前(境界でない文字)に続くもの、`~name/`、`\\server\share\Users\u` のような UNC、リポジトリの内側の相対パス、
+パス以外の秘密。
+
+**多層防御**: 名前や文を載せる欄(`fingerprint`・`catalogSlug`・`source`・`title`・`body`・`occurredProjects[].name`・
+`localOnly.envInfo` の版の文字列・`harnessVersionAtOccurrence`)は、応答を組むときに `foldHomePaths` をもう一度かける。受け取りで
+畳んであるはずの値だが、畳み方の漏れや、保存先へ直接書かれた値(受け取りを通らなかった古い下書きなど)があっても、ホーム配下のパスの
+ユーザー名を手元の外へ出さないため。`fingerprint` は、頭の種別の印(`A:` `B:` `C:` `mass-occurrence:`)があればそれを残して後ろを畳み、そのあと全体をもう一度畳む(`B:/Users/u/x` の `B:` を Windows のドライブ文字と読んで印ごと消さないため。`C:\Users\u\x:abcd` のように印の形で始まるドライブ文字のパスや、印の無い `/Users/u/x:abcd` は、最初の `:` で切らず全体を畳む)。同じ畳み込みを一覧の `fingerprint` と
+`title` にもかける。畳むのは上の形だけで、`dismissReason` や、ほかの秘密の除去ではない。
+
+どの読み手に畳むか: **`toSummaryDto`(一覧・受け取り・見送りの応答)は、ローカル直アクセスにも畳んで返す**。受け取りを通した値は
+すでに畳んであって、畳み込みは何度かけても同じ結果(冪等)なので、受け取りで書いた値は同じ値で返る。違いが出るのは、
+受け取りを通らず保存先へ直接書かれた生の下書きだけ。1 件の取得 `GET drafts/:id` のローカル直アクセスの応答(`toDetailDto` の `local`)
+は畳まず、保存された値のまま返す。
+
+トンネル側で落とす欄: `errorTextRaw`、**`errorTextHead` / `errorTextTail`**、`symptomRaw` / `causeRaw` /
+`preventionRaw` / `agentNoteRaw`、`foldedFingerprints`、`occurredProjects[].path`。
+`errorTextHead` / `errorTextTail` を落とすのは、短いエラー文では先頭がそのまま生ログになり(2000 文字
+以下なら `errorTextHead` が全文)、残すと上の制限が意味を失うため。**判断**: 当初案は「head/tail は残す」
+だったが、4y8q.1 の時点では head/tail は置き換え(5節、4y8q.2)を通る前の生の切り出しである。4y8q.2 が入って
+head/tail が置き換え後の文章から作られるようになったら、トンネル側へ戻すかどうかを再判断する。
+応答は許可リストで組む(`toDetailDto`)ので、下書きに欄が増えても、足すまでは手元の外へ出ない。
+一覧(`GET .../drafts`)の応答には、もともと本文も `localOnly` も載せない。載せるのは `id`・`kind`・
+`fingerprint`・`title`・`status`・回数・時刻・プロジェクト数・`dismissReason`・`issueNumber`・`issueUrl`・
+`sourceTicketRef` で、`fingerprint` と `title` に入る `source` / `catalogSlug` は上の表の絞りを通った値(さらに上の多層防御の畳み込みをかけて返す)。
+
+未対応で残るもの: 画像(`GET .../images/:fileName`)はトンネルの Basic 認証だけで読める。スクリーンショットに
+秘密が写りうるという点で同じ種類の問題だが、画像の扱いは 4y8q.3 の画面設計と合わせて決める。
+
 ### 閲覧・編集(PATCH)側のフィールド範囲
 
 3節冒頭の表で「閲覧・編集・見送り」はトンネル経由(強パスワード+セッション Cookie)でも
@@ -180,7 +264,10 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 よい」という意味ではない。`PATCH /api/issue-reports/drafts/:id` が受け付けるフィールドは
 次に限定し、それ以外のキーを含むリクエストは 400 で拒否する:
 
-- `title`、`body`、`titleEditedByUser`、`bodyEditedByUser`(いずれも公開前の編集用)
+- `title`、`body`、`titleEditedByUser`、`bodyEditedByUser`(いずれも公開前の編集用)。**`title` と `body` の
+  長さは入口(4y8q.3)で上限を掛ける**: `draft.json` は 200KB まで(4節「上限」)で、縮めるのは
+  生ログ・一覧・メモなどだけ。題名・本文は縮める対象にしていないので、保存層は 200KB を超える下書きを
+  黙って書かずに断る(`save` が投げる)。入口で止めないと、編集の保存が 500 になる
 - `dismissReason`(`/dismiss` 経由。`status` を直接 `'dismissed'` に書き換えさせず、
   専用エンドポイント `PATCH .../:id/dismiss` に限定する)
 
@@ -227,11 +314,15 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 ```ts
 function normalizeErrorText(text: string): string {
   return text
+    .replace(/(?<![A-Za-z0-9])[A-Za-z]:[\\/]+Users[\\/]+[^\s'"]+/gi, '<path>') // Windows のユーザーパス
     .replace(/\/(Users|home)\/[^\s'"]+/g, '<path>')
     .replace(/~\/[^\s'"]*/g, '<path>')
-    .replace(/\b[0-9a-f]{8,}\b/gi, '<id>')          // hex/uuid 断片
-    .replace(/:\d+:\d+\b/g, ':<loc>:<loc>')          // line:col
-    .replace(/\b\d{4}-\d{2}-\d{2}T[\d:.Z-]+/g, '<time>') // ISO timestamp
+    .replace(/(?<![\w.~-])\/(?:private\/)?(?:var\/(?:folders|tmp)|tmp)\/[^\s'"]+/g, '<path>') // 実行ごとの一時ディレクトリ
+    .replace(/\b\d{4}-\d{2}-\d{2}T[\d:.Z-]+/g, '<time>')  // ISO timestamp(16進・行:列より先)
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<uuid>')
+    .replace(/\b[0-9a-f]{8,}\b/gi, '<id>')                  // hex 断片
+    .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{7}\b/gi, '<id>')    // 7 文字の短い SHA(数字を含むものだけ)
+    .replace(/:\d+:\d+\b/g, ':<loc>:<loc>')                  // line:col
     .replace(/\d+/g, '<n>')
     .toLowerCase()
     .trim();
@@ -242,6 +333,15 @@ function normalizeErrorText(text: string): string {
 
 正規化は best-effort(項目 e の置き換え漏れ検出と同じく、完全性を保証しない)。目的は
 「同じ症状を同じ1件にまとめる」ことであり、公開本文の安全性はここではなく5節が担う。
+上の関数は設計当初の例から変えてある(理由は下の「実装との差分」)。
+
+`source` と `catalogSlug`(と版の文字列)は題名・本文・応答にそのまま入るので、**改行・制御文字・不可視の書式文字
+(3節の「1 行の検査」)を含む値は受け取りで 400** にする。これで防ぐのは行の数と見えない文字だけで、1 行でもリンク・`@`メンション・
+`#`参照・`<img>` は書ける(インラインの Markdown のエスケープと公開本文の置き換えは5節、4y8q.2 の仕事)。
+`source`・`catalogSlug`・版の文字列・`project.name` のホーム配下の絶対パスは、**指紋を作る前に `~/` へ畳む**(畳む形と境界の規則は
+3節の「ホーム配下のパス」。**書いてある形だけ**で、コードもそれ以上は畳まない)。400 にしなかったのは、フックが自分の `$0` を
+出どころに入れて報告しても受け取れ、別の利用者の同じフックが 1 件にまとまるため。パスの形かどうかはそれ以外は見ない
+(`source` は `GET /api/x` のような API のパスでもよい)。`project.name` は表示用なので 400 にせず整える(3節の表)。
 
 ### 状態遷移(bdboard-4y8q.1 が実装するのは pending/dismissed だけ、posted 側は 4y8q.5)
 
@@ -253,6 +353,10 @@ function normalizeErrorText(text: string): string {
 | `posted` かつ issue が open(4y8q.5) | 新規作成しない。「その後 N 回起きた」を表示、issue へコメントを足すボタンを出す |
 | `posted` かつ issue が closed(4y8q.5) | 「再発(#N は閉じ済み)」として新規下書きを作る |
 
+「大量発生」の下書き(下の「上限」)も同じ表に従う。`dismissed`(と、4y8q.5 までの `posted`)の
+「大量発生」には、さらに丸め込まれる新規指紋が来ても `occurrenceCount+=1` だけで、題名・本文・
+`foldedFingerprints`・最終発生時刻・プロジェクトは触らず作り直しもしない。
+
 ### 上限
 
 - 1件のテキストサイズ: 手元保存の `errorTextRaw` 自体にも上限を設ける(64KB。超過分は
@@ -263,17 +367,130 @@ function normalizeErrorText(text: string): string {
   トークンが切り詰め境界でちょうど分断され、置換の正規表現(20文字以上を要求するものが
   多い)にマッチしなくなり、断片が置換されないまま公開本文に残る恐れがある。`draft.json`
   全体(画像を除く)は 200KB を上限とし、超過分は末尾から切り詰める(添付画像は別ファイル
-  なので影響しない)。
+  なので影響しない)。**200KB は、ディスクに書く形(整形しない 1 行の JSON + 改行)のバイト数で測る**
+  (`serializeDraft`。判定と書き込みが同じ文字列を使う)。削る順は、`errorTextRaw` の末尾 →
+  `occurredProjects` の古い行(`lastSeenAt` が古い順)→ `foldedFingerprints` の古い行 → `agentNoteRaw` →
+  `symptomRaw` → `causeRaw` → `preventionRaw` の末尾。回数と時刻は別に持つので、一覧の古い行を落としても
+  数は変わらない。見送りの理由を足すとき、見送り済みの回数を足すときにも同じ判定をかける。
 - 画像: 添付画像 API と同じ検査を流用 — マジックバイト判定、1枚 10MB、1下書きあたり
   20枚まで(`ATTACHMENT_MAX_BYTES`/`ATTACHMENT_MAX_COUNT_PER_TICKET` と同じ定数を共有するか、
   `issue-report` 用に複製して同じ値を持たせる)。
-- 新規下書きの件数: **1時間20件まで**。実装は UTC の暦時間バケツ
+- 新規下書きの件数: **1時間20件まで(種別 A/B/C をまたいだ合計)**。実装は UTC の暦時間バケツ
   (`mass-occurrence:<kind>:<yyyy-mm-ddTHH>`)で数える。21件目以降の新規指紋は個別の下書きを
   作らず、そのバケツの「大量発生」下書きへ丸め込む(`occurrenceCount` を増やし、`localOnly` に
   丸め込まれた元の指紋一覧を追記する。公開本文は「この時間に N 件の類似しない問題が集中発生」
   という一般的な文面に留め、個別の詳細は出さない)。暦時間区切りは実装が簡単な分、境界をまたぐ
   瞬間だけ実質的な上限が緩む(60分の壁時計窓ではなく1時間区切り)。厳密なスライディングウィンドウ
   が要るなら実装時に変更してよい(小さな決め事なので本ドキュメントではブロックしない)。
+
+### 実装との差分(bdboard-4y8q.1、PR #859)
+
+設計(本ドキュメント)と実装の食い違いと、実装中・レビューで決めたことの記録(4y8q.11 の受け入れ基準:
+食い違いは実装側の PR で書く)。設計が優先で、ここに無い点は設計どおり。
+
+**設計の文面からの差(PR 本文の 8 件)**
+
+| # | 項目 | 実装 |
+|---|---|---|
+| 1 | 1時間20件の数え方 | **種別 A/B/C をまたいだ合計**で 1 時間(UTC の暦時間バケツ)に 20 件。設計の文面が種別ごとか合計か曖昧だったので、枠を小さく保つほうを選んだ。「大量発生」は種別 × 時間で 1 件ずつ、20 件には数えない。**注意**: 合計なので、ある 1 種別が 20 件を使い切ると、同じ時間の他の種別の新規指紋は、その種別の個別の下書きが 1 件も無くても「大量発生」に丸められる(1 種別がほかを飢えさせうる)。種別ごとの枠にするかは、実際に起きてから決める |
+| 2 | 題名・本文 | 公開してよい題名・本文を作る 4y8q.2 がまだ無いので**暫定の組み立て**: 種別・名前(source / catalogSlug)・回数・時刻・版数だけ。症状・原因・エラー文・プロジェクト名は入れない。4y8q.2 が入ったら `domain/issue-draft-build.ts` の `finalize` を差し替える |
+| 3 | 題名・本文の編集(`PATCH .../:id`) | 4y8q.3 に回した。画面 API はチケットどおり一覧・取得・見送りだけ。`titleEditedByUser` / `bodyEditedByUser` は保存形式と再生成の判定には入っている |
+| 4 | 画像の追加 | 受け取りの本文を 1 MiB に抑えるため、**1 枚ずつ別のエンドポイント**(`POST .../:id/images`) |
+| 5 | `normalizeErrorText` の順 | 時刻の置換を 16 進・行:列の置換より**先**に行う。得られるのは、小数秒ありの `…56.789Z` と無しの `…56Z` が同じ値になること(同じ書式どうしは、どちらの順でも数字が `<n>` になって揃う) |
+| 6 | 64KB の生エラー文 | **文字数**で数え(64Ki 文字)、バイトの 200KB を別に掛ける |
+| 7 | `posted` への再発 | 4y8q.5 までは、回数を失わないよう `dismissed` と同じく回数だけ足す。`posted` になる経路はこの PR には無い |
+| 8 | 見送り(`PATCH .../:id/dismiss`) | 通常の write-guard(ローカル直、または強パスワード + セッション)。ローカル直アクセス限定にしたのは受け取りと画像追加だけ |
+
+**レビュー(Opus、2026-10-04)で決めたこと**
+
+- **1 件の取得はトンネルでは絞る(M-1)**: 3節の「1 件の取得はトンネルでは絞る」。`restricted: true`。
+- **ローカル限定のテスト(M-2)**: 画像 POST の「トンネルは 403」のテストは、書き込み許可つきの設定
+  (`TUNNEL_WRITE_ALLOWED`)で書く。許可なしだと汎用の write-guard が必ず 403 を返し、`localOnlyGuard` を
+  外してもテストが通ってしまう(外すとテストが落ちることを確認済み)。
+- **`normalizeErrorText` の拡張(M-3)**: UUID(4 文字の 16 進グループは `{8,}` の規則では残る)、数字を含む
+  7 文字の 16 進(短い SHA)、一時ディレクトリ(`/private/var/folders/…`・`/var/folders/…`・`/var/tmp/…`・`/tmp/…`)、
+  Windows のユーザーパスを足した。実行のたびに値が変わるものを 1 件にまとめるため。英字だけの 7 文字
+  ("defaced" など)は単語として残す。
+- **見送り・投稿済みの「大量発生」(m-2)**: 通常の下書きと同じ「回数だけ足す」にした(4節の状態遷移の下)。
+- **`source` / `catalogSlug` は下書き自身の欄**(m-1): 指紋から切り出し直さない。これらと版の文字列、見送りの
+  理由は、改行・制御文字を含むと 400。以前の「自由記述は一切入らない」という説明は正しくなかった
+  (名前と版は呼び出し側の値がそのまま入る)ので改めた。パスの形かどうかは見ない。
+- **200KB を硬い上限に(m-3)**: ディスクに書く形で測り(整形しない 1 行)、`occurredProjects` と
+  `foldedFingerprints` も古い行から落とす(4節「上限」)。
+- **小さな点(nit)**: 見送りの理由は 1 行(改行は 400)。読めない・壊れた下書き(権限、ディレクトリでない、不正な
+  JSON など)は警告して一覧と受け取りから飛ばす(同じ下書きの同じ理由の警告は 1 回)。受け取り本文の上限
+  (1048576 バイト)と見送り本文の上限(16384 バイト)はリテラルの数値でテストに固定した。画像の枚数は、
+  サーバーが採番した名前の画像だけ数える(`.DS_Store` などは数えない)。
+
+**再レビュー(2026-10-04、2 回目)で決めたこと**
+
+- **CI(verify-windows)**: Windows には POSIX のパーミッションが無いので、0700/0600 のテストは Windows では
+  実行しない。「下書きの id が普通のファイル」(ENOTDIR)の行も、Windows は ENOENT と報告して警告にならない
+  ので POSIX だけで確かめる。
+- **`source` / `catalogSlug` のパス(F2)**: 400 ではなく**受け取りで `~/` に畳む**ことにした(3節の表)。
+  トンネルの読み手が見る欄の全部も3節に書いた。
+- **`sourceTicketRef`(F3)**: ticket id の形だけ受ける。6節の手順 8 で、実行側も `--` を前置する(4y8q.4)。
+- **時刻の形(F4)**: `firstOccurredAt` / `lastOccurredAt` / `firstSeenAt` / `lastSeenAt` は ISO 8601 の UTC で、
+  末尾が `Z` の形(`2026-10-04T12:00:00.000Z`)でなければ「使えない下書き」として飛ばす。`+09:00` のようなオフセット付きは
+  不可(ミリ秒は付いていても省いてもよい)。以前は形の合わない値が受け取りの索引づくりで例外を起こし、以後の受け取りが
+  すべて失敗した。
+- **不可視文字(N2)**: ゼロ幅・双方向制御・BOM も 1 行の検査で弾く。孤立したサロゲートは見ない(4y8q.2 で扱う)。
+- **200KB を超える下書き(N3)**: 縮められる欄を削り切っても超える下書きは、保存層が書かずに投げる。題名・本文の
+  長さは入口で抑える(3節、4y8q.3 の仕事)。
+- **一時的な読み取りの失敗(N5)**: 一覧・取得は、種類が違う・読む権限が無い・壊れている(ENOTDIR・EISDIR・
+  EACCES・EPERM・不正な JSON・形や時刻の不正)ものだけを警告つきで飛ばし、EMFILE・EIO のような一時的なものは
+  投げる。受け取りの索引は最初の 1 回だけ作るので、欠けた一覧を飛ばして作ると、プロセスの間ずっと既知の指紋が
+  二重に作られる。投げれば索引は作り直される。警告には id と理由だけを出し、保存先のパスは出さない。
+
+**再レビュー(2026-10-04、3 回目)で決めたこと**
+
+- **ホーム配下のパスの形(R3-1)**: 畳む形と境界の規則を広げ、コードと同じ一覧を3節の「ホーム配下のパス」に書いた
+  (WSL の `/mnt/c/Users`・Git Bash の `/c/Users`・Cygwin・`/System/Volumes/Data/Users`・`/Volumes/<ディスク名>/Users`・
+  `/var/home`・`/usr/home`・`` ` [ , ; | < { `` の直後・`\\?\C:\Users`・`\\wsl$\<distro>\home`・小文字の `/users/`)。名前の終わりは
+  区切りか空白・引用符・文字列の終わり(以前は区切りか文字列の終わりだけで、`"/Users/u"` と `/Users/u --flag` を取りこぼした)。
+  割り切り: Windows の名前は空白を許す(`John Smith`)ので `bash C:\Users\u --flag` は `bash ~/` になり、`/Users/Shared`・
+  `C:\Users\Public`・`/home/linuxbrew` も畳まれる(引数や共有の場所より、ユーザー名を残さないことを優先)。`GET /Users/42` のような
+  行頭・空白の直後の形も区別できず畳まれる。`GET /api/home/x` と `POST /api/Users/42` は触らない。
+- **応答でも畳む(R3-1)**: トンネルの `GET drafts/:id` と一覧・受け取り・見送りの応答は、`fingerprint`・`title`(詳細はさらに
+  `catalogSlug`・`source`・`body`・`occurredProjects[].name`・版の文字列・`harnessVersionAtOccurrence`)にもう一度 `foldHomePaths` を
+  かける。保存先へ生のパスが直接書かれていても出ないことを、ストアへ直接書いた下書きで確かめている。
+- **`project.name` と版の文字列(R3-2)**: 受け取りで `project.name` と `envInfo` の各文字列にもホーム配下のパスの畳み込みをかける。
+- **1 行の検査の集合(R3-3)**: 文字を 1 つずつ並べる代わりに Unicode の分類(Cc・Cf・Zl・Zp)とハングルの埋め字で決める。
+  ALM・単語結合子と不可視の演算子・注釈記号・タグ文字・ソフトハイフン・U+180E が新たに不可。異体字選択子(IVS を含む)・
+  濁点の分解形・全角スペースは許す。タグ文字は区画全体(U+E0000–E007F)を閉じる(Cf でない割り当て前の番号も含める)。
+- **表示用の欄は弾きすぎない(R3-4)**: 識別子(`source`・`catalogSlug`・版の文字列・`sourceTicketRef`)は厳密に 400。`project.name` は
+  整えて受ける(第 3 回の時点では「取り除いてから畳む」としたが、取り除くとパスの手前の区切りが消えて畳めない場合があったため、
+  第 4 回で「改行・タブなどは空白に替えてから、残りを取り除いて畳む」に改めた。見えない文字でパスの形を崩した
+  `/Us<ZWSP>ers/…` も畳まれる。空なら 400)。`dismissReason` は ZWSP と BOM を取り除き、ZWJ・ZWNJ を許す。
+  400 の応答に `details` を付けたのは第 3 回の変更だが、zod の既定の文言は入力の値を含むため、第 4 回で外した(下の R4-2)。
+- **画像の stat(R3-5)**: 画像の数え上げ・一覧で、`readdir` のあとに消えたファイル(ENOENT)だけ飛ばし、EMFILE・EIO などは
+  投げる(飛ばすと少なく数え、上限を超えて足せてしまう)。
+- **時刻の形(R3-6)**: ISO 8601 の UTC で末尾 `Z` と明記した(オフセット付きは不可)。
+
+**再レビュー(2026-10-04、4 回目)で決めたこと**
+
+- **`project.name` は、区切りになる文字を空白に替えてから整える(R4-1)**: 第 3 回の「取り除いてから畳む」は、改行・タブ・U+2028/2029・BOM を取り除くと
+  パスの手前の区切りが消えて前の語に貼り付き、畳まれない(`proj<TAB>/Users/u/proj` が `proj/Users/u/proj` のまま保存された)。
+  これらは取り除かず空白に置き換え、残りの弾く文字を取り除いてから畳み、空白の連なりを 1 つにする(3節の表)。
+- **400 に `details` を付けない(R4-2)**: 受け取り・見送りの 400 は固定の `{"error":"invalid request body"}` だけにする。zod の既定の文言は
+  入力の値をそのまま含み(`z.enum` の不一致は `received '<値>'`)、`{"kind":"/Users/u/secret"}` の値が 400 の本文に戻った。
+  どの欄が落ちたかを返す利点より、トンネルの書き込み側へ値を戻さないことを取る。
+- **名前は区切りで止まる(R4-3)**: ホーム配下のパスの名前に、バッククォート・`:` `;` `,` `|` `<` `>` `)` `]` `}` `=` と改行を含めない(3節の「ホーム配下のパス」)。
+  以前は `/home/u:/home/u/bin` が `~/home/u/bin`(1 つ目の名前が `:` をまたいで 2 つ目の `/home` まで飲み込んだ)、
+  `C:\Users\u;C:\Users\u\bin` が `~/Users\u\bin` になり、Windows の名前が改行も受けるため、複数行の本文では畳んだ行以降を消した。
+  Windows の名前の半角スペースは残す(`John Smith`)。
+- **指紋の畳み方(R4-4)**: 種別の印の形(`A:` `B:` `C:` `mass-occurrence:`)に一致するときだけ印を分けて後ろを畳み、そのあと全体をもう一度畳む。
+  最初の `:` で切っていたため、印の無い指紋や `C:\Users\u\x:abcd` のようなドライブ文字のパスは畳み損ねていた。
+- **畳み込みの対象の言い直し(R4-5)**: `toSummaryDto` の畳み込みは、ローカル直アクセスにも掛かる(一覧・受け取り・見送り)。冪等なので
+  受け取りで書いた値は同じ値で返り、違うのは保存先へ直接書かれた生の下書きだけ(3節の「多層防御」)。コードは変えていない。
+- **見送りの理由の見える文字(R4-7)**: ZWSP と BOM を取り除いたあと、空白と ZWJ・ZWNJ だけが残るもの(`"\u200D"` など)は 400。
+- 見送ったもの(R4-6): `//Users/u`・`#!/Users/u`・`-I/Users/u`・`file://localhost/Users/u`・全角の句読点の直後・`/data/home/u` のような形は、
+  3節に書いた形以外は見つけない方針どおり、畳む形を広げない。
+
+**この PR ではやらないこと**
+
+- 保存期間・ディスク総量の上限(m-4)。下書きと画像は増え続ける。後続チケットで扱う。
+- 手元の `envInfo` を、マージのたびに最新へ更新すること(m-6)。4y8q.3 で扱う。
 
 ## 5. 公開本文の組み立てと置き換え(項目 e、bdboard-4y8q.2)
 
@@ -464,7 +681,10 @@ bdboard サーバープロセスや、それを叩く何らかのローカルプ
    手順8で元チケットへの `bd comment`/`bd close` を起こす書き込み操作のため。
 8. URL 確認(手順7)が完了した直後、`sourceTicketRef` があれば(4y8q.7 由来)、
    元プロジェクトの bd チケットへ `bd comment <ref> "issue: <url>"` → `bd close <ref>` を
-   実行する。
+   実行する。**ref の前に `--` を置く**(`bd comment -- <ref> "issue: <url>"`、`bd close -- <ref>`)。
+   受け取りの入口で `sourceTicketRef` は `^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$` に絞ってある(3節)が、
+   手元のファイルを直接書き換えられた場合や将来の入口の変更に備え、ref がオプション
+   (`--db=/tmp/evil` など)として解釈される余地を、実行側でも残さない。
 9. gh 呼び出しはすべて `--repo xiaotiantakumi/bdboard` を明示し(実行時の `cwd` の git
    remote に依存しない)、非対話実行であることを保証するため環境変数
    `GH_PROMPT_DISABLED=1` を付ける(`CommandRunner` の `env` は子プロセスの環境変数を
