@@ -16,7 +16,7 @@
 // (警告 1 行を出して null を返す)。投げると本来の exit (6 / 4) が「想定外のエラー」(exit 1) に化ける。
 import { readCommit } from './exec.mjs';
 import { lightSlipSteps } from './messages.mjs';
-import { audit, listStates, removeState, say } from './state.mjs';
+import { audit, auditLogPath, listStates, removeState, say } from './state.mjs';
 import { VERIFYING_PID_MAX_AGE_MS } from './verify-guard.mjs';
 import { judgeVerifyingPid } from './verifying-record.mjs';
 
@@ -80,14 +80,18 @@ function newestGateFirst(a, b) {
 /**
  * 手動の再検証 (merge-pr verify <sha>) が success になったとき、フレークと確かめられた L の failure の記録を消す
  * (bdboard-ulxa.7)。消すのは finish が failure で残した記録 (newMain === sha かつ landedResult === 'failure') だけで、
- * finish がまだ検証を実行中の記録 (verifyingPid が生きている) は残す。何があっても投げない。
+ * finish がまだ検証を実行中の記録 (verifyingPid が生きている) は残す (印の付いた記録は常に verifyingPid: null なので実際には発火しない防御)。何があっても投げない。
  */
-export function forgetLightFailure(root, state, sha) {
+export function forgetLightFailure(root, state, sha, { recorded = true } = {}) {
   try {
     if (state?.class !== 'L' || state.newMain !== sha || state.landedResult !== 'failure' || !Number.isInteger(state.pr)) {
       return;
     }
     if (judgeVerifyingPid(state, VERIFYING_PID_MAX_AGE_MS).running) {
+      return;
+    }
+    if (recorded !== true) {
+      say(`警告: 監査ログ (${auditLogPath()}) に light-landed の success 行を追記できなかったので、PR #${state.pr} のクラス L の failure の記録は残しました。監査ログを直して BDBOARD_MERGER=chair npm run merge-pr -- verify ${sha} をやり直してください (記録が無いと failure の行が最後の行のまま、すり抜けに数えられます)。`);
       return;
     }
     removeState(root, state.pr);
@@ -105,7 +109,7 @@ export function forgetLightFailure(root, state, sha) {
  */
 export function reportLightLanded(state, landed, result, by, retried = false) {
   try {
-    reportOrThrow(state, landed, result, by, retried);
+    return reportOrThrow(state, landed, result, by, retried);
   } catch (error) {
     warnLight('着地後検証の報告', error);
   }
@@ -114,16 +118,17 @@ export function reportLightLanded(state, landed, result, by, retried = false) {
 
 function reportOrThrow(state, landed, result, by, retried) {
   if (state?.class !== 'L') {
-    return;
+    return null;
   }
-  audit('light-landed', { pr: state.pr, id: state.id, new: landed, result, by, retried: retried ? 1 : undefined });
+  const recorded = audit('light-landed', { pr: state.pr, id: state.id, new: landed, result, by, retried: retried ? 1 : undefined });
   if (result === 'failure') {
     say(...lightSlipSteps(landed));
   }
   if (result === 'error') {
     say(
       `${landed.slice(0, 12)} はクラス L (軽量チェックだけで着地) ですが、着地後検証を実行できませんでした (結果なし)。`,
-      `直して npm run merge-pr -- verify ${landed} を実行し、failure なら S3 のすり抜けとして扱います (verify は状態ファイルからクラス L を見分けて同じ案内を出します)。`,
+      `直して BDBOARD_MERGER=chair npm run merge-pr -- verify ${landed} を実行し、failure なら S3 のすり抜けとして扱います (verify は状態ファイルからクラス L を見分けて同じ案内を出します)。`,
     );
   }
+  return recorded === true ? true : null;
 }
