@@ -53,6 +53,10 @@ export interface IssueDraft {
   readonly id: string;
   readonly kind: DraftKind;
   readonly fingerprint: string;
+  /** A のみ: failure-catalog の短い名前 (指紋から取り直さず、そのまま持つ)。 */
+  readonly catalogSlug?: string;
+  /** B/C のみ: 出どころ (hook 名・スクリプト名・API のパスなど)。 */
+  readonly source?: string;
   readonly title: string;
   readonly body: string;
   /** true なら同一指紋のマージで自動再生成しない。 */
@@ -76,7 +80,11 @@ export interface IssueDraft {
 export const ISSUE_DRAFT_ERROR_TEXT_RAW_MAX_CHARS = 64 * 1024;
 /** 表示用の先頭・末尾それぞれの文字数。 */
 export const ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS = 1000;
-/** draft.json 全体 (画像を除く) の上限バイト数。 */
+/**
+ * draft.json 全体 (画像を除く) の上限バイト数。ディスクに書く形 (serializeDraft) の長さで測る。
+ * 手元の外から来る欄はすべて入口か fitDraftToByteLimit のどちらかで頭打ちにするので、
+ * 敵対的な入力でもこの値は超えない。
+ */
 export const ISSUE_DRAFT_MAX_JSON_BYTES = 200 * 1024;
 /**
  * 症状・原因・対策・エージェントのメモ 1 欄あたりの文字数。設計は個別の上限を決めていない。
@@ -120,17 +128,47 @@ export function isMassOccurrenceFingerprint(fingerprint: string): boolean {
 }
 
 /**
+ * 改行・制御文字・Unicode の行区切りを含まない 1 行の文字列か。題名・本文にそのまま入る欄
+ * (source・catalogSlug・版の文字列) と見送りの理由は、HTTP の入口でこれを満たさないものを
+ * 400 にする (行を足して見出しやリンクを紛れ込ませる経路を作らない)。
+ */
+export function isSingleLineText(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    // C0 制御文字 (改行・タブを含む)、DEL と C1 制御文字 (NEL を含む)、U+2028 / U+2029。
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * エラー文を「同じ症状なら同じ文字列」に寄せる (設計 4節)。best-effort で、目的は 1 件に
  * まとめることだけ。公開本文の安全性はこの関数ではなく bdboard-4y8q.2 が担う。
- * 設計の例と順序を一つだけ変えた: ISO 時刻を行:列の置換より先に行う (後だと時刻の
- * "12:34:56" が先に行:列として食われ、時刻の置換が効かなくなるため)。
+ *
+ * 設計の例から二つ変えた:
+ * - ISO 時刻の置換を 16 進・行:列の置換より先に行う。後だと "12:34:56.789Z" のように小数秒が
+ *   あるときだけ ":34:56" が行:列に食われ、"…56.789Z" と "…56Z" が別の文字列になる
+ *   (同じ書式の時刻どうしは、どちらの順でも数字が <n> になって同じ値に揃う)。
+ * - 設計の例に無かったものを足した (bdboard-4y8q.1 のレビュー): UUID、7 文字の短い SHA、
+ *   OS が実行ごとに作る一時ディレクトリ、Windows のユーザーパス。これらは実行のたびに値が
+ *   変わるので、そのままだと同じ症状が 1 時間 20 件の枠を使い切る。
  */
 export function normalizeErrorText(text: string): string {
   return text
+    // C:\Users\name\…, C:/Users/name/…。JSON 文字列の中の C:\\Users\\… も拾う。
+    // 次の "/Users/…" の規則より先に置く (後だと "D:/Users/…" の "D:" を残して食ってしまう)。
+    .replace(/(?<![A-Za-z0-9])[A-Za-z]:[\\/]+Users[\\/]+[^\s'"]+/gi, '<path>')
     .replace(/\/(Users|home)\/[^\s'"]+/g, '<path>')
     .replace(/~\/[^\s'"]*/g, '<path>')
+    // /private/var/folders/…/T/…, /var/folders/…, /var/tmp/…, /tmp/…。別のパスの途中の "/tmp/" は食わない。
+    .replace(/(?<![\w.~-])\/(?:private\/)?(?:var\/(?:folders|tmp)|tmp)\/[^\s'"]+/g, '<path>')
     .replace(/\b\d{4}-\d{2}-\d{2}T[\d:.Z-]+/g, '<time>')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<uuid>')
     .replace(/\b[0-9a-f]{8,}\b/gi, '<id>')
+    // 7 文字の短い git SHA。数字を 1 つ以上含むものだけ (英字だけの 7 文字は普通の単語でありうる)。
+    .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{7}\b/gi, '<id>')
     .replace(/:\d+:\d+\b/g, ':<loc>:<loc>')
     .replace(/\d+/g, '<n>')
     .toLowerCase()
@@ -198,46 +236,4 @@ export function capFreeText(text: string): string {
   return text.length > ISSUE_DRAFT_FREE_TEXT_MAX_CHARS
     ? text.slice(0, ISSUE_DRAFT_FREE_TEXT_MAX_CHARS)
     : text;
-}
-
-type ShrinkableField = 'errorTextRaw' | 'agentNoteRaw' | 'symptomRaw' | 'causeRaw' | 'preventionRaw';
-// 設計 4節: draft.json 全体の超過分は末尾から切る。いちばん大きくなりうる生ログから順に削る。
-const SHRINK_ORDER: readonly ShrinkableField[] = [
-  'errorTextRaw',
-  'agentNoteRaw',
-  'symptomRaw',
-  'causeRaw',
-  'preventionRaw',
-];
-
-function jsonBytes(draft: IssueDraft): number {
-  return Buffer.byteLength(JSON.stringify(draft), 'utf8');
-}
-
-/**
- * draft.json (画像を除く) を maxBytes に収める。収まっていればそのまま返す。収まらなければ
- * 自由記述の欄を SHRINK_ORDER の順に、末尾から削って収める。文字数ではなくバイト数で
- * 判定する (多バイト文字だけの入力で文字数上限を守っても超えるため)。
- */
-export function fitDraftToByteLimit(
-  draft: IssueDraft,
-  maxBytes: number = ISSUE_DRAFT_MAX_JSON_BYTES,
-): IssueDraft {
-  let current = draft;
-  let size = jsonBytes(current);
-  for (const field of SHRINK_ORDER) {
-    while (size > maxBytes) {
-      const value = current.localOnly[field];
-      if (value === undefined || value.length === 0) break;
-      // 1 文字は最大 3 バイト (BMP) として、超過分を削るのに足りる文字数を一度に落とす。
-      const cut = Math.max(1, Math.ceil((size - maxBytes) / 3));
-      current = {
-        ...current,
-        localOnly: { ...current.localOnly, [field]: value.slice(0, Math.max(0, value.length - cut)) },
-      };
-      size = jsonBytes(current);
-    }
-    if (size <= maxBytes) break;
-  }
-  return current;
 }

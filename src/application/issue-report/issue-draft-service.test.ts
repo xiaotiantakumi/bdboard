@@ -1,3 +1,4 @@
+import { randomBytes, randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS,
@@ -9,6 +10,7 @@ import {
   isMassOccurrenceFingerprint,
   type IssueDraft,
 } from '../../domain/issue-draft.js';
+import { draftJsonBytes } from '../../domain/issue-draft-size.js';
 import {
   createIssueDraftService,
   type IssueDraftService,
@@ -209,6 +211,27 @@ describe('receive: fingerprint merge', () => {
     expect([...storage.drafts.values()][0].occurrenceCount).toBe(8);
   });
 
+  it('keeps source and catalogSlug as fields of their own and rebuilds the title from them', async () => {
+    const { service, setNow } = createHarness();
+    const b = await expectOk(
+      service.receive({ kind: 'B', source: '  hook:with:colons.sh ', errorText: 'boom', envInfo: ENV }),
+    );
+    expect(b.draft.source).toBe('hook:with:colons.sh');
+    expect(b.draft).not.toHaveProperty('catalogSlug');
+    expect(b.draft.title).toBe('[hook・配布スクリプト] hook:with:colons.sh');
+
+    const a = await expectOk(service.receive(catalogInput(' slug-a ')));
+    expect(a.draft.catalogSlug).toBe('slug-a');
+    expect(a.draft).not.toHaveProperty('source');
+
+    setNow('2026-10-04T12:30:00.000Z');
+    const merged = await expectOk(
+      service.receive({ kind: 'B', source: 'hook:with:colons.sh', errorText: 'boom', envInfo: ENV }),
+    );
+    expect(merged.draft.title).toBe('[hook・配布スクリプト] hook:with:colons.sh');
+    expect(merged.draft.source).toBe('hook:with:colons.sh');
+  });
+
   it('finds drafts that were saved before this process started (restart)', async () => {
     const first = createHarness();
     const created = await expectOk(first.service.receive(catalogInput('slug-restart')));
@@ -217,6 +240,25 @@ describe('receive: fingerprint merge', () => {
     expect(merged.outcome).toBe('merged');
     expect(merged.draft.id).toBe(created.draft.id);
     expect(first.storage.drafts.size).toBe(1);
+  });
+});
+
+describe('receive: values that change on every run still merge', () => {
+  it('folds 25 receives of one error with a random UUID, short SHA and temp dir into one draft', async () => {
+    const { service, storage } = createHarness();
+    const outcomes: string[] = [];
+    for (let index = 0; index < 25; index += 1) {
+      const sha = `${index % 10}${randomBytes(3).toString('hex')}`; // 7 文字、数字を含む
+      const errorText = [
+        `deploy ${randomUUID()} failed at commit ${sha}`,
+        `in /private/var/folders/${randomBytes(2).toString('hex')}/T/tmp.${randomBytes(3).toString('hex')}/out.log`,
+      ].join(' ');
+      const result = await expectOk(service.receive({ kind: 'B', source: 'deploy.sh', errorText, envInfo: ENV }));
+      outcomes.push(result.outcome);
+    }
+    expect(outcomes).toEqual(['created', ...Array.from({ length: 24 }, () => 'merged')]);
+    expect(storage.drafts.size).toBe(1);
+    expect([...storage.drafts.values()][0].occurrenceCount).toBe(25);
   });
 });
 
@@ -232,7 +274,7 @@ describe('receive: size caps', () => {
     expect(localOnly.errorTextHead?.startsWith('HEAD')).toBe(true);
     expect(localOnly.errorTextTruncated).toBe(true);
     const stored = storage.drafts.get(result.draft.id);
-    expect(Buffer.byteLength(JSON.stringify(stored), 'utf8')).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
+    expect(draftJsonBytes(stored as IssueDraft)).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
   });
 
   it('caps each free-text field and keeps the whole draft.json within 200KB even for multibyte text', async () => {
@@ -253,7 +295,7 @@ describe('receive: size caps', () => {
     expect(result.draft.localOnly.symptomRaw).toHaveLength(ISSUE_DRAFT_FREE_TEXT_MAX_CHARS);
     expect(result.draft.localOnly.agentNoteRaw).toHaveLength(ISSUE_DRAFT_FREE_TEXT_MAX_CHARS);
     const stored = storage.drafts.get(result.draft.id);
-    expect(Buffer.byteLength(JSON.stringify(stored), 'utf8')).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
+    expect(draftJsonBytes(stored as IssueDraft)).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
   });
 });
 
@@ -301,6 +343,36 @@ describe('receive: at most 20 new drafts per hour', () => {
     expect(mass(storage)[0].status).toBe('pending');
   });
 
+  it.each(['dismissed', 'posted'] as const)(
+    'adds to a %s 大量発生 draft only by count: no new text, fingerprints, time or project',
+    async (status) => {
+      const { service, storage, setNow } = createHarness();
+      await receiveDistinct(service, ISSUE_DRAFT_NEW_PER_HOUR, 'fp');
+      const first = await expectOk(
+        service.receive(catalogInput('fp-over-1', { project: { name: 'alpha', path: '/p/alpha' } })),
+      );
+      expect(first.outcome).toBe('folded');
+      const massId = first.draft.id;
+      if (status === 'dismissed') {
+        expect((await service.dismiss(massId, 'noise')).ok).toBe(true);
+      } else {
+        storage.drafts.set(massId, { ...(storage.drafts.get(massId) as IssueDraft), status: 'posted' });
+      }
+      const before = structuredClone(storage.drafts.get(massId)) as IssueDraft;
+
+      setNow('2026-10-04T12:30:00.000Z');
+      const again = await expectOk(
+        service.receive(catalogInput('fp-over-2', { project: { name: 'beta', path: '/p/beta' } })),
+      );
+      expect(again.outcome).toBe('folded');
+      expect(again.draft.id).toBe(massId);
+      // 回数のほかは 1 バイトも変わらない (題名・本文・指紋の一覧・最終時刻・プロジェクト)。
+      expect(again.draft).toEqual({ ...before, occurrenceCount: before.occurrenceCount + 1 });
+      expect(storage.drafts.get(massId)).toEqual(again.draft);
+      expect(mass(storage)).toHaveLength(1);
+    },
+  );
+
   it('still merges a known fingerprint into its existing draft after the cap is reached', async () => {
     const { service, storage } = createHarness();
     await receiveDistinct(service, ISSUE_DRAFT_NEW_PER_HOUR, 'fp');
@@ -337,6 +409,93 @@ describe('receive: at most 20 new drafts per hour', () => {
     expect(foldedC.draft.fingerprint).toBe('mass-occurrence:C:2026-10-04T12');
     expect(mass(storage)).toHaveLength(2);
     expect(individual(storage)).toHaveLength(20);
+  });
+});
+
+describe('draft.json stays within 200KB however hostile the input', () => {
+  // JSON で 1 文字が 2〜6 バイトに膨らむ文字 (引用符・バックスラッシュ・制御文字) と 3 バイト文字。
+  const NASTY = '"\\\u0001あ';
+  const bytesOf = (storage: InMemoryIssueDraftStorage, id: string) =>
+    draftJsonBytes(storage.drafts.get(id) as IssueDraft);
+
+  it('drops the oldest projects instead of growing past the cap (100 long names and paths)', async () => {
+    const { service, storage, setNow } = createHarness();
+    let id = '';
+    for (let index = 0; index < 100; index += 1) {
+      setNow(`2026-10-04T12:${String(index % 60).padStart(2, '0')}:00.000Z`);
+      const result = await expectOk(
+        service.receive({
+          kind: 'B',
+          source: 'hostile.sh',
+          errorText: 'same error',
+          envInfo: ENV,
+          project: { name: `${index}-${NASTY.repeat(49)}`, path: `/${index}/${NASTY.repeat(249)}` },
+        }),
+      );
+      id = result.draft.id;
+      expect(bytesOf(storage, id)).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
+    }
+    const stored = storage.drafts.get(id) as IssueDraft;
+    expect(stored.occurrenceCount).toBe(100);
+    // 全部は入らないので古い行から落ちている。いちばん新しいプロジェクトは残る。
+    expect(stored.occurredProjects.length).toBeGreaterThan(0);
+    expect(stored.occurredProjects.length).toBeLessThan(100);
+    expect(stored.occurredProjects.at(-1)?.name.startsWith('99-')).toBe(true);
+    expect(stored.occurredProjects.some((entry) => entry.name.startsWith('0-'))).toBe(false);
+  });
+
+  it('keeps a 大量発生 draft within the cap with 200 long folded fingerprints plus hostile projects', async () => {
+    const { service, storage } = createHarness();
+    for (let index = 0; index < ISSUE_DRAFT_NEW_PER_HOUR; index += 1) {
+      await expectOk(service.receive({ kind: 'C', source: `ok-${index}`, errorText: 'e', envInfo: ENV }));
+    }
+    let massId = '';
+    for (let index = 0; index < 220; index += 1) {
+      const result = await expectOk(
+        service.receive({
+          kind: 'C',
+          source: `${index}-${'あ'.repeat(190)}`,
+          errorText: 'e',
+          envInfo: ENV,
+          project: { name: `${index}-${NASTY.repeat(49)}`, path: `/${index}/${NASTY.repeat(249)}` },
+        }),
+      );
+      expect(result.outcome).toBe('folded');
+      massId = result.draft.id;
+      expect(bytesOf(storage, massId)).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
+    }
+    const stored = storage.drafts.get(massId) as IssueDraft;
+    expect(stored.occurrenceCount).toBe(220);
+    expect(stored.localOnly.foldedFingerprints).toHaveLength(200);
+  });
+
+  it('keeps the cap when a reason is added by dismiss or a count digit is added to a dismissed draft', async () => {
+    const { service, storage } = createHarness();
+    const input = { kind: 'B', source: 'cap.sh', errorText: 'boom', envInfo: ENV } as const;
+    const created = await expectOk(service.receive(input));
+
+    // ちょうど 200KB まで詰めた下書きを仕込む (ASCII で埋めて、バイト数をぴったり合わせる)。
+    const empty: IssueDraft = { ...created.draft, localOnly: { ...created.draft.localOnly, errorTextRaw: '' } };
+    const pad = ISSUE_DRAFT_MAX_JSON_BYTES - draftJsonBytes(empty);
+    const atCap = (extra: Partial<IssueDraft>): IssueDraft => {
+      const draft = { ...empty, ...extra, localOnly: { ...empty.localOnly, errorTextRaw: 'x'.repeat(pad) } };
+      // 回数などで桁が変わる分は、埋める量で吸収して常にちょうど上限にする。
+      const diff = draftJsonBytes(draft) - ISSUE_DRAFT_MAX_JSON_BYTES;
+      return { ...draft, localOnly: { ...draft.localOnly, errorTextRaw: 'x'.repeat(pad - diff) } };
+    };
+
+    storage.drafts.set(created.draft.id, atCap({}));
+    expect(bytesOf(storage, created.draft.id)).toBe(ISSUE_DRAFT_MAX_JSON_BYTES);
+    const dismissed = await service.dismiss(created.draft.id, 'う'.repeat(200));
+    expect(dismissed.ok).toBe(true);
+    expect(bytesOf(storage, created.draft.id)).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
+
+    // 見送り済みで回数が 9 -> 10 (桁が増えて 1 バイト増える) のとき。
+    storage.drafts.set(created.draft.id, atCap({ status: 'dismissed', occurrenceCount: 9 }));
+    expect(bytesOf(storage, created.draft.id)).toBe(ISSUE_DRAFT_MAX_JSON_BYTES);
+    const again = await expectOk(service.receive(input));
+    expect(again.draft.occurrenceCount).toBe(10);
+    expect(bytesOf(storage, created.draft.id)).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
   });
 });
 

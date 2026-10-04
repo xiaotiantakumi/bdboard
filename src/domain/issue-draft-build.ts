@@ -3,7 +3,6 @@ import {
   ISSUE_DRAFT_MAX_PROJECTS,
   capErrorTextRaw,
   capFreeText,
-  fitDraftToByteLimit,
   isMassOccurrenceFingerprint,
   summarizeErrorText,
   type DraftEnvInfo,
@@ -12,6 +11,7 @@ import {
   type LocalOnlyContext,
   type OccurredProject,
 } from './issue-draft.js';
+import { fitDraftToByteLimit } from './issue-draft-size.js';
 import {
   buildMassOccurrenceText,
   buildProvisionalDraftText,
@@ -48,6 +48,16 @@ function normalizeEnvInfo(env: Partial<DraftEnvInfo> | undefined): DraftEnvInfo 
     ...(env?.bdVersion !== undefined ? { bdVersion: env.bdVersion } : {}),
     ...(env?.ghVersion !== undefined ? { ghVersion: env.ghVersion } : {}),
   };
+}
+
+/** 指紋の材料にしたのと同じ (前後の空白を除いた) 値を、下書き自身の欄として持つ。 */
+function identifierFields(input: ReceiveDraftInput): Pick<IssueDraft, 'catalogSlug' | 'source'> {
+  if (input.kind === 'A') {
+    const catalogSlug = input.catalogSlug?.trim();
+    return catalogSlug === undefined || catalogSlug === '' ? {} : { catalogSlug };
+  }
+  const source = input.source?.trim();
+  return source === undefined || source === '' ? {} : { source };
 }
 
 function buildLocalOnly(input: ReceiveDraftInput): LocalOnlyContext {
@@ -94,13 +104,11 @@ function textFor(draft: IssueDraft): DraftText {
       lastOccurredAt: draft.lastOccurredAt,
     });
   }
-  // 指紋は "A:<slug>" / "<B|C>:<source>:<hash>"。対象の名前は指紋から取り直す
-  // (マージのたびに入力を持ち回らなくて済む)。
-  const rest = draft.fingerprint.slice(2);
-  const name = draft.kind === 'A' ? rest : rest.slice(0, rest.lastIndexOf(':'));
+  // 名前は下書きが持っている source / catalogSlug を使う (指紋から切り出し直さない)。
   return buildProvisionalDraftText({
     kind: draft.kind,
-    ...(draft.kind === 'A' ? { catalogSlug: name } : { source: name }),
+    ...(draft.catalogSlug !== undefined ? { catalogSlug: draft.catalogSlug } : {}),
+    ...(draft.source !== undefined ? { source: draft.source } : {}),
     versions: draft.localOnly.envInfo,
     occurrenceCount: draft.occurrenceCount,
     firstOccurredAt: draft.firstOccurredAt,
@@ -128,6 +136,7 @@ export function createDraftFromReport(
     id: meta.id,
     kind: input.kind,
     fingerprint: meta.fingerprint,
+    ...identifierFields(input),
     title: '',
     body: '',
     titleEditedByUser: false,
@@ -147,6 +156,14 @@ export function createDraftFromReport(
 }
 
 /**
+ * 回数だけ足す (見送り・投稿済みの下書き)。時刻・プロジェクト・題名・本文・丸め込んだ指紋は
+ * 触らない。回数の桁が増えても 200KB を超えないよう、大きさの確認はかける。
+ */
+function countOnly(existing: IssueDraft): IssueDraft {
+  return fitDraftToByteLimit({ ...existing, occurrenceCount: existing.occurrenceCount + 1 });
+}
+
+/**
  * 既存の下書きへ 1 回分の発生を足す (設計 4節の表)。
  * pending: 回数・最終発生時刻・プロジェクト一覧を更新し、編集されていなければ題名・本文を作り直す。
  * dismissed: 回数を足すだけ (エピック決定どおり)。
@@ -154,9 +171,7 @@ export function createDraftFromReport(
  * 回数を失わないよう dismissed と同じく足すだけにする (現時点では posted になる経路が無い)。
  */
 export function addOccurrence(existing: IssueDraft, input: ReceiveDraftInput, nowIso: string): IssueDraft {
-  if (existing.status !== 'pending') {
-    return { ...existing, occurrenceCount: existing.occurrenceCount + 1 };
-  }
+  if (existing.status !== 'pending') return countOnly(existing);
   return finalize({
     ...existing,
     occurrenceCount: existing.occurrenceCount + 1,
@@ -168,6 +183,8 @@ export function addOccurrence(existing: IssueDraft, input: ReceiveDraftInput, no
 /**
  * 1 時間 20 件の枠を超えた新規指紋を、その時間バケツの「大量発生」下書きへ丸め込む。
  * existing が無ければ新しく作る。公開本文は一般的な文面に留め、元の指紋は localOnly にだけ残す。
+ * existing が pending でなければ (見送り・投稿済み)、通常の下書きと同じく回数だけ足す:
+ * 題名・本文・時刻・プロジェクト・丸め込んだ指紋は触らず、作り直しもしない。
  */
 export function foldIntoMassDraft(
   existing: IssueDraft | undefined,
@@ -179,6 +196,7 @@ export function foldIntoMassDraft(
     readonly nowIso: string;
   },
 ): IssueDraft {
+  if (existing !== undefined && existing.status !== 'pending') return countOnly(existing);
   const base: IssueDraft = existing ?? {
     id: meta.id,
     kind: input.kind,

@@ -31,6 +31,8 @@ interface IssueDraft {
   readonly id: string;
   readonly kind: DraftKind;
   readonly fingerprint: string;           // 4節
+  readonly catalogSlug?: string;          // A のみ。受け取った値を指紋とは別に持つ(4節「実装との差分」)
+  readonly source?: string;               // B/C のみ。同上
   title: string;                          // 公開題名(編集可。初期値は5節の組み立て関数の出力)
   body: string;                           // 公開本文(編集可、同上)
   titleEditedByUser: boolean;             // true なら次の同一指紋マージ時も自動再生成しない
@@ -130,7 +132,7 @@ bdboard-727y(添付画像の保存先バグ)は PR #782 で 2026-09-25 にマー
 | 経路 | メソッド/パス | 呼び出し元 | 必要な認可 |
 |---|---|---|---|
 | 受け取り | `POST /api/issue-reports/drafts` | 各プロジェクトに注入される報告スクリプト(注入先では `.claude/skills/bdboard-harness/scripts/report-issue.sh`、パック正本は `harness/packs/bdboard-harness/scripts/report-issue.sh`。4y8q.12)、bdboard 自身のエラー捕捉(4y8q.6) | **ローカル直アクセスのみ**(トンネル不可) |
-| 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss` | 不具合報告タブの UI | PATCH は通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル)。GET は `createWriteGuardMiddleware` の対象外(メソッドで素通しする)なので、ほかの読み取り API と同じく、トンネルではトンネルの認証(Basic 認証)を通れば読める(パスワードの強度は問わない) |
+| 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss` | 不具合報告タブの UI | PATCH は通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル)。GET は `createWriteGuardMiddleware` の対象外(メソッドで素通しする)なので、ほかの読み取り API と同じく、トンネルではトンネルの認証(Basic 認証)を通れば読める(パスワードの強度は問わない)。**ただし `GET .../:id` だけは、全部を返すのはローカル直アクセスのみ**(下の「1 件の取得はトンネルでは絞る」) |
 | 投稿 | `POST /api/issue-reports/drafts/:id/publish` | 不具合報告タブの投稿ボタン | **ローカル直アクセスのみ** |
 
 エピック決定 4「投稿はローカル直アクセスからだけ。トンネル経由では、見る・直す・見送るまで」
@@ -172,6 +174,31 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
   `discoverySessionsLocalOnlyGuard`。CSRF は前段の `chatGuard` が見る。
 - なお `chat-agent-routes.ts:79` の `isLocalBasicAuthRequest` はレート制限を飛ばす判定で、
   ローカル限定のゲートではない。
+
+### 1 件の取得はトンネルでは絞る(bdboard-4y8q.1 のレビュー M-1)
+
+`GET /api/issue-reports/drafts/:id` は、下書きの `localOnly`(1節)をそのまま返すと、
+`errorTextRaw`(64Ki 文字までの生ログ。トークンを含みうる)と `occurredProjects[].path`(絶対パス)を、
+トンネルの Basic 認証を通っただけの読み手へ渡してしまう。生ログと cwd をローカル限定にした
+`GET /api/runs/:runId`(bdboard-54be.1 M-1、`agent-run-read-routes.ts`)と同じ理由で、
+`isLocalBasicAuthRequest(c)` で分ける:
+
+| 呼び出し | 応答 |
+|---|---|
+| ローカル直アクセス | 下書き全部 + `restricted: false` |
+| それ以外(トンネル、ループバックでない接続元、Host の不一致、接続情報なし=fail-closed) | `restricted: true`。残すのは題名・本文・回数・時刻・状態・プロジェクト名(パス無し)・版(`envInfo`)・`errorTextTruncated`・画像の一覧だけ |
+
+トンネル側で落とす欄: `errorTextRaw`、**`errorTextHead` / `errorTextTail`**、`symptomRaw` / `causeRaw` /
+`preventionRaw` / `agentNoteRaw`、`foldedFingerprints`、`occurredProjects[].path`。
+`errorTextHead` / `errorTextTail` を落とすのは、短いエラー文では先頭がそのまま生ログになり(2000 文字
+以下なら `errorTextHead` が全文)、残すと上の制限が意味を失うため。**判断**: 当初案は「head/tail は残す」
+だったが、4y8q.1 の時点では head/tail は置き換え(5節、4y8q.2)を通る前の生の切り出しである。4y8q.2 が入って
+head/tail が置き換え後の文章から作られるようになったら、トンネル側へ戻すかどうかを再判断する。
+応答は許可リストで組む(`toDetailDto`)ので、下書きに欄が増えても、足すまでは手元の外へ出ない。
+一覧(`GET .../drafts`)の応答には、もともと本文も `localOnly` も載せない。
+
+未対応で残るもの: 画像(`GET .../images/:fileName`)はトンネルの Basic 認証だけで読める。スクリーンショットに
+秘密が写りうるという点で同じ種類の問題だが、画像の扱いは 4y8q.3 の画面設計と合わせて決める。
 
 ### 閲覧・編集(PATCH)側のフィールド範囲
 
@@ -227,11 +254,15 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 ```ts
 function normalizeErrorText(text: string): string {
   return text
+    .replace(/(?<![A-Za-z0-9])[A-Za-z]:[\\/]+Users[\\/]+[^\s'"]+/gi, '<path>') // Windows のユーザーパス
     .replace(/\/(Users|home)\/[^\s'"]+/g, '<path>')
     .replace(/~\/[^\s'"]*/g, '<path>')
-    .replace(/\b[0-9a-f]{8,}\b/gi, '<id>')          // hex/uuid 断片
-    .replace(/:\d+:\d+\b/g, ':<loc>:<loc>')          // line:col
-    .replace(/\b\d{4}-\d{2}-\d{2}T[\d:.Z-]+/g, '<time>') // ISO timestamp
+    .replace(/(?<![\w.~-])\/(?:private\/)?(?:var\/(?:folders|tmp)|tmp)\/[^\s'"]+/g, '<path>') // 実行ごとの一時ディレクトリ
+    .replace(/\b\d{4}-\d{2}-\d{2}T[\d:.Z-]+/g, '<time>')  // ISO timestamp(16進・行:列より先)
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<uuid>')
+    .replace(/\b[0-9a-f]{8,}\b/gi, '<id>')                  // hex 断片
+    .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{7}\b/gi, '<id>')    // 7 文字の短い SHA(数字を含むものだけ)
+    .replace(/:\d+:\d+\b/g, ':<loc>:<loc>')                  // line:col
     .replace(/\d+/g, '<n>')
     .toLowerCase()
     .trim();
@@ -242,6 +273,11 @@ function normalizeErrorText(text: string): string {
 
 正規化は best-effort(項目 e の置き換え漏れ検出と同じく、完全性を保証しない)。目的は
 「同じ症状を同じ1件にまとめる」ことであり、公開本文の安全性はここではなく5節が担う。
+上の関数は設計当初の例から変えてある(理由は下の「実装との差分」)。
+
+`source` と `catalogSlug`(と版の文字列)は題名・本文にそのまま入るので、**改行・制御文字・Unicode の
+行区切りを含む値は受け取りで 400** にする。パスの形かどうかは見ない(`source` は `GET /api/x` のような
+API のパスでもよいため)。それらの置き換えは5節(4y8q.2)。
 
 ### 状態遷移(bdboard-4y8q.1 が実装するのは pending/dismissed だけ、posted 側は 4y8q.5)
 
@@ -253,6 +289,10 @@ function normalizeErrorText(text: string): string {
 | `posted` かつ issue が open(4y8q.5) | 新規作成しない。「その後 N 回起きた」を表示、issue へコメントを足すボタンを出す |
 | `posted` かつ issue が closed(4y8q.5) | 「再発(#N は閉じ済み)」として新規下書きを作る |
 
+「大量発生」の下書き(下の「上限」)も同じ表に従う。`dismissed`(と、4y8q.5 までの `posted`)の
+「大量発生」には、さらに丸め込まれる新規指紋が来ても `occurrenceCount+=1` だけで、題名・本文・
+`foldedFingerprints`・最終発生時刻・プロジェクトは触らず作り直しもしない。
+
 ### 上限
 
 - 1件のテキストサイズ: 手元保存の `errorTextRaw` 自体にも上限を設ける(64KB。超過分は
@@ -263,17 +303,65 @@ function normalizeErrorText(text: string): string {
   トークンが切り詰め境界でちょうど分断され、置換の正規表現(20文字以上を要求するものが
   多い)にマッチしなくなり、断片が置換されないまま公開本文に残る恐れがある。`draft.json`
   全体(画像を除く)は 200KB を上限とし、超過分は末尾から切り詰める(添付画像は別ファイル
-  なので影響しない)。
+  なので影響しない)。**200KB は、ディスクに書く形(整形しない 1 行の JSON + 改行)のバイト数で測る**
+  (`serializeDraft`。判定と書き込みが同じ文字列を使う)。削る順は、`errorTextRaw` の末尾 →
+  `occurredProjects` の古い行(`lastSeenAt` が古い順)→ `foldedFingerprints` の古い行 → `agentNoteRaw` →
+  `symptomRaw` → `causeRaw` → `preventionRaw` の末尾。回数と時刻は別に持つので、一覧の古い行を落としても
+  数は変わらない。見送りの理由を足すとき、見送り済みの回数を足すときにも同じ判定をかける。
 - 画像: 添付画像 API と同じ検査を流用 — マジックバイト判定、1枚 10MB、1下書きあたり
   20枚まで(`ATTACHMENT_MAX_BYTES`/`ATTACHMENT_MAX_COUNT_PER_TICKET` と同じ定数を共有するか、
   `issue-report` 用に複製して同じ値を持たせる)。
-- 新規下書きの件数: **1時間20件まで**。実装は UTC の暦時間バケツ
+- 新規下書きの件数: **1時間20件まで(種別 A/B/C をまたいだ合計)**。実装は UTC の暦時間バケツ
   (`mass-occurrence:<kind>:<yyyy-mm-ddTHH>`)で数える。21件目以降の新規指紋は個別の下書きを
   作らず、そのバケツの「大量発生」下書きへ丸め込む(`occurrenceCount` を増やし、`localOnly` に
   丸め込まれた元の指紋一覧を追記する。公開本文は「この時間に N 件の類似しない問題が集中発生」
   という一般的な文面に留め、個別の詳細は出さない)。暦時間区切りは実装が簡単な分、境界をまたぐ
   瞬間だけ実質的な上限が緩む(60分の壁時計窓ではなく1時間区切り)。厳密なスライディングウィンドウ
   が要るなら実装時に変更してよい(小さな決め事なので本ドキュメントではブロックしない)。
+
+### 実装との差分(bdboard-4y8q.1、PR #859)
+
+設計(本ドキュメント)と実装の食い違いと、実装中・レビューで決めたことの記録(4y8q.11 の受け入れ基準:
+食い違いは実装側の PR で書く)。設計が優先で、ここに無い点は設計どおり。
+
+**設計の文面からの差(PR 本文の 8 件)**
+
+| # | 項目 | 実装 |
+|---|---|---|
+| 1 | 1時間20件の数え方 | **種別 A/B/C をまたいだ合計**で 1 時間(UTC の暦時間バケツ)に 20 件。設計の文面が種別ごとか合計か曖昧だったので、枠を小さく保つほうを選んだ。「大量発生」は種別 × 時間で 1 件ずつ、20 件には数えない。**注意**: 合計なので、ある 1 種別が 20 件を使い切ると、同じ時間の他の種別の新規指紋は、その種別の個別の下書きが 1 件も無くても「大量発生」に丸められる(1 種別がほかを飢えさせうる)。種別ごとの枠にするかは、実際に起きてから決める |
+| 2 | 題名・本文 | 公開してよい題名・本文を作る 4y8q.2 がまだ無いので**暫定の組み立て**: 種別・名前(source / catalogSlug)・回数・時刻・版数だけ。症状・原因・エラー文・プロジェクト名は入れない。4y8q.2 が入ったら `domain/issue-draft-build.ts` の `finalize` を差し替える |
+| 3 | 題名・本文の編集(`PATCH .../:id`) | 4y8q.3 に回した。画面 API はチケットどおり一覧・取得・見送りだけ。`titleEditedByUser` / `bodyEditedByUser` は保存形式と再生成の判定には入っている |
+| 4 | 画像の追加 | 受け取りの本文を 1 MiB に抑えるため、**1 枚ずつ別のエンドポイント**(`POST .../:id/images`) |
+| 5 | `normalizeErrorText` の順 | 時刻の置換を 16 進・行:列の置換より**先**に行う。得られるのは、小数秒ありの `…56.789Z` と無しの `…56Z` が同じ値になること(同じ書式どうしは、どちらの順でも数字が `<n>` になって揃う) |
+| 6 | 64KB の生エラー文 | **文字数**で数え(64Ki 文字)、バイトの 200KB を別に掛ける |
+| 7 | `posted` への再発 | 4y8q.5 までは、回数を失わないよう `dismissed` と同じく回数だけ足す。`posted` になる経路はこの PR には無い |
+| 8 | 見送り(`PATCH .../:id/dismiss`) | 通常の write-guard(ローカル直、または強パスワード + セッション)。ローカル直アクセス限定にしたのは受け取りと画像追加だけ |
+
+**レビュー(Opus、2026-10-04)で決めたこと**
+
+- **1 件の取得はトンネルでは絞る(M-1)**: 3節の「1 件の取得はトンネルでは絞る」。`restricted: true`。
+- **ローカル限定のテスト(M-2)**: 画像 POST の「トンネルは 403」のテストは、書き込み許可つきの設定
+  (`TUNNEL_WRITE_ALLOWED`)で書く。許可なしだと汎用の write-guard が必ず 403 を返し、`localOnlyGuard` を
+  外してもテストが通ってしまう(外すとテストが落ちることを確認済み)。
+- **`normalizeErrorText` の拡張(M-3)**: UUID(4 文字の 16 進グループは `{8,}` の規則では残る)、数字を含む
+  7 文字の 16 進(短い SHA)、一時ディレクトリ(`/private/var/folders/…`・`/var/folders/…`・`/var/tmp/…`・`/tmp/…`)、
+  Windows のユーザーパスを足した。実行のたびに値が変わるものを 1 件にまとめるため。英字だけの 7 文字
+  ("defaced" など)は単語として残す。
+- **見送り・投稿済みの「大量発生」(m-2)**: 通常の下書きと同じ「回数だけ足す」にした(4節の状態遷移の下)。
+- **`source` / `catalogSlug` は下書き自身の欄**(m-1): 指紋から切り出し直さない。これらと版の文字列、見送りの
+  理由は、改行・制御文字を含むと 400。以前の「自由記述は一切入らない」という説明は正しくなかった
+  (名前と版は呼び出し側の値がそのまま入る)ので改めた。パスの形かどうかは見ない。
+- **200KB を硬い上限に(m-3)**: ディスクに書く形で測り(整形しない 1 行)、`occurredProjects` と
+  `foldedFingerprints` も古い行から落とす(4節「上限」)。
+- **小さな点(nit)**: 見送りの理由は 1 行(改行は 400)。読めない・壊れた下書き(権限、ディレクトリでない、不正な
+  JSON など)は警告して一覧と受け取りから飛ばす(同じ下書きの同じ理由の警告は 1 回)。受け取り本文の上限
+  (1048576 バイト)と見送り本文の上限(16384 バイト)はリテラルの数値でテストに固定した。画像の枚数は、
+  サーバーが採番した名前の画像だけ数える(`.DS_Store` などは数えない)。
+
+**この PR ではやらないこと**
+
+- 保存期間・ディスク総量の上限(m-4)。下書きと画像は増え続ける。後続チケットで扱う。
+- 手元の `envInfo` を、マージのたびに最新へ更新すること(m-6)。4y8q.3 で扱う。
 
 ## 5. 公開本文の組み立てと置き換え(項目 e、bdboard-4y8q.2)
 

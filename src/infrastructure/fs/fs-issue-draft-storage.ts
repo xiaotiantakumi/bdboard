@@ -1,8 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { z } from 'zod';
 import { isDraftId, type IssueDraft } from '../../domain/issue-draft.js';
+import { serializeDraft } from '../../domain/issue-draft-size.js';
+import { draftSchema } from './issue-draft-schema.js';
 import type {
   IssueDraftStoragePort,
   StoredDraftImage,
@@ -21,57 +22,8 @@ const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 const DRAFT_FILE = 'draft.json';
 const IMAGES_DIR = 'images';
-
-const envInfoSchema = z.object({
-  bdboardVersion: z.string(),
-  harnessVersion: z.string().optional(),
-  os: z.string(),
-  nodeVersion: z.string(),
-  bdVersion: z.string().optional(),
-  ghVersion: z.string().optional(),
-});
-
-const localOnlySchema = z.object({
-  symptomRaw: z.string(),
-  causeRaw: z.string(),
-  preventionRaw: z.string(),
-  errorTextRaw: z.string().optional(),
-  errorTextHead: z.string().optional(),
-  errorTextTail: z.string().optional(),
-  errorTextTruncated: z.boolean(),
-  agentNoteRaw: z.string().optional(),
-  envInfo: envInfoSchema,
-  foldedFingerprints: z.array(z.string()).optional(),
-});
-
-const occurredProjectSchema = z.object({
-  name: z.string(),
-  path: z.string(),
-  firstSeenAt: z.string(),
-  lastSeenAt: z.string(),
-});
-
-const draftSchema = z.object({
-  id: z.string().refine(isDraftId),
-  kind: z.enum(['A', 'B', 'C']),
-  fingerprint: z.string().min(1),
-  title: z.string(),
-  body: z.string(),
-  titleEditedByUser: z.boolean(),
-  bodyEditedByUser: z.boolean(),
-  localOnly: localOnlySchema,
-  occurredProjects: z.array(occurredProjectSchema),
-  occurrenceCount: z.number().int().nonnegative(),
-  firstOccurredAt: z.string(),
-  lastOccurredAt: z.string(),
-  status: z.enum(['pending', 'posted', 'dismissed']),
-  dismissReason: z.string().optional(),
-  issueNumber: z.number().int().optional(),
-  issueUrl: z.string().optional(),
-  sourceTicketRef: z.string().optional(),
-  harnessVersionAtOccurrence: z.string().optional(),
-  draftSchemaVersion: z.literal(1),
-});
+/** このストアが採番する画像のファイル名 (<epochMs>-<16桁hex>.<ext>)。.DS_Store などの迷い込んだファイルは画像に数えない。 */
+const IMAGE_FILE_NAME_PATTERN = /^[0-9]{1,20}-[0-9a-f]{16}\.[a-z0-9]{1,8}$/;
 
 function isNotFound(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT';
@@ -82,8 +34,31 @@ function within(parent: string, target: string): boolean {
   return target.startsWith(withSep);
 }
 
-export function createFsIssueDraftStorage(baseDir: string): IssueDraftStoragePort {
+export interface FsIssueDraftStorageOptions {
+  /** 読めない下書きを飛ばしたときの警告 (既定は console.warn)。中身は渡さない: 理由と id だけ。 */
+  readonly warn?: (message: string) => void;
+}
+
+type DraftRead =
+  | { readonly kind: 'ok'; readonly draft: IssueDraft }
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'unusable'; readonly reason: string };
+
+export function createFsIssueDraftStorage(
+  baseDir: string,
+  options: FsIssueDraftStorageOptions = {},
+): IssueDraftStoragePort {
   const resolvedBaseDir = path.resolve(baseDir);
+  const warn = options.warn ?? ((message: string) => console.warn(message));
+  /** 同じ下書きの同じ理由は 1 回だけ警告する (一覧は画面から何度も呼ばれる)。 */
+  const warned = new Set<string>();
+
+  function warnUnusable(id: string, reason: string): void {
+    const key = `${id}:${reason}`;
+    if (warned.has(key)) return;
+    warned.add(key);
+    warn(`issue draft ${id} is skipped: ${reason}`);
+  }
 
   /** id は呼び出し側が検証済みの前提だが、ここでも形とパス閉じ込めを確かめる (defense in depth)。 */
   function draftDir(id: string): string {
@@ -108,23 +83,39 @@ export function createFsIssueDraftStorage(baseDir: string): IssueDraftStoragePor
     await fs.mkdir(dir, { recursive: true, mode: DIR_MODE });
   }
 
-  async function readDraftFile(id: string): Promise<IssueDraft | undefined> {
+  /**
+   * 存在しない (missing) と、あるが使えない (unusable: 読めない・壊れている・id が食い違う) を
+   * 分ける。使えない下書き 1 件のせいで一覧や受け取り全体を落とさない (ポートの約束)。
+   */
+  async function readDraftFile(id: string): Promise<DraftRead> {
+    // 不正な id は読み取りの失敗ではなくプログラムの誤りなので、try の外で投げる。
+    const file = path.join(draftDir(id), DRAFT_FILE);
     let raw: string;
     try {
-      raw = await fs.readFile(path.join(draftDir(id), DRAFT_FILE), 'utf8');
+      raw = await fs.readFile(file, 'utf8');
     } catch (error) {
-      if (isNotFound(error)) return undefined;
-      throw error;
+      if (isNotFound(error)) return { kind: 'missing' };
+      const code = (error as NodeJS.ErrnoException).code ?? 'unknown error';
+      return { kind: 'unusable', reason: `unreadable (${code})` };
     }
     let parsedJson: unknown;
     try {
       parsedJson = JSON.parse(raw);
     } catch {
-      return undefined;
+      return { kind: 'unusable', reason: 'not valid JSON' };
     }
     const parsed = draftSchema.safeParse(parsedJson);
+    if (!parsed.success) return { kind: 'unusable', reason: 'does not match the draft format' };
     // ファイル名の id と中身の id が食い違うものは、別の下書きとして扱わず読まない。
-    return parsed.success && parsed.data.id === id ? parsed.data : undefined;
+    if (parsed.data.id !== id) return { kind: 'unusable', reason: 'id does not match its directory' };
+    return { kind: 'ok', draft: parsed.data };
+  }
+
+  async function readUsableDraft(id: string): Promise<IssueDraft | undefined> {
+    const result = await readDraftFile(id);
+    if (result.kind === 'ok') return result.draft;
+    if (result.kind === 'unusable') warnUnusable(id, result.reason);
+    return undefined;
   }
 
   async function imageEntries(id: string): Promise<StoredDraftImage[]> {
@@ -136,8 +127,9 @@ export function createFsIssueDraftStorage(baseDir: string): IssueDraftStoragePor
       if (isNotFound(error)) return [];
       throw error;
     }
+    const imageNames = names.filter((name) => IMAGE_FILE_NAME_PATTERN.test(name));
     const entries = await Promise.all(
-      names.map(async (name): Promise<StoredDraftImage | undefined> => {
+      imageNames.map(async (name): Promise<StoredDraftImage | undefined> => {
         try {
           const stat = await fs.stat(path.join(dir, name));
           return stat.isFile() ? { fileName: name, byteLength: stat.size, createdAt: stat.mtime } : undefined;
@@ -160,11 +152,11 @@ export function createFsIssueDraftStorage(baseDir: string): IssueDraftStoragePor
         if (isNotFound(error)) return [];
         throw error;
       }
-      const drafts = await Promise.all(names.filter(isDraftId).map((name) => readDraftFile(name)));
+      const drafts = await Promise.all(names.filter(isDraftId).map((name) => readUsableDraft(name)));
       return drafts.filter((draft): draft is IssueDraft => draft !== undefined);
     },
 
-    get: (id) => readDraftFile(id),
+    get: (id) => readUsableDraft(id),
 
     async save(draft) {
       const dir = draftDir(draft.id);
@@ -173,7 +165,8 @@ export function createFsIssueDraftStorage(baseDir: string): IssueDraftStoragePor
       // 途中まで書いた draft.json を読ませないよう、同じディレクトリの一時ファイルへ書いて rename する。
       const temp = path.join(dir, `${DRAFT_FILE}.${randomBytes(6).toString('hex')}.tmp`);
       try {
-        await fs.writeFile(temp, `${JSON.stringify(draft, null, 2)}\n`, { flag: 'wx', mode: FILE_MODE });
+        // 200KB の上限は serializeDraft の長さで測っている。整形せず同じ文字列をそのまま書く。
+        await fs.writeFile(temp, serializeDraft(draft), { flag: 'wx', mode: FILE_MODE });
         await fs.rename(temp, path.join(dir, DRAFT_FILE));
       } catch (error) {
         await fs.rm(temp, { force: true });

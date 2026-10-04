@@ -16,9 +16,12 @@ export interface StoredDraftImage {
 }
 
 export interface IssueDraftStoragePort {
-  /** 全下書き。壊れた draft.json は黙って読み飛ばす (1件の破損で一覧全体を落とさない)。 */
+  /**
+   * 全下書き。読めない・壊れている下書き (権限、ディレクトリでないもの、不正な JSON など) は
+   * 警告を出して読み飛ばす (1件の破損で一覧や受け取り全体を落とさない)。
+   */
   list(): Promise<readonly IssueDraft[]>;
-  /** 1件取得。存在しない・壊れているときは undefined。 */
+  /** 1件取得。存在しない・読めない・壊れているときは undefined (読めない・壊れているときは警告)。 */
   get(id: string): Promise<IssueDraft | undefined>;
   /** 新規作成または上書き。途中状態を読ませないよう原子的に書く。 */
   save(draft: IssueDraft): Promise<void>;

@@ -19,8 +19,7 @@ describe('buildProvisionalDraftText', () => {
     expect(text.body).toContain('v22.14.0');
   });
 
-  it('never carries free text: no symptom, error text, path or project name can reach the body', () => {
-    // 入力型にそれらを受ける口が無いことを、出力に紛れ込めないことで確かめる。
+  it('builds the body from a fixed set of lines: no symptom, error text, path or project name can be passed in', () => {
     const text = buildProvisionalDraftText({
       kind: 'B',
       source: 'stop-ticket-gate.sh',
@@ -29,9 +28,27 @@ describe('buildProvisionalDraftText', () => {
       firstOccurredAt: '2026-10-04T12:00:00.000Z',
       lastOccurredAt: '2026-10-04T12:00:00.000Z',
     });
-    expect(text.title).toContain('stop-ticket-gate.sh');
-    expect(`${text.title}\n${text.body}`).not.toMatch(/\/Users\/|\/home\//);
+    expect(text.title).toBe('[hook・配布スクリプト] stop-ticket-gate.sh');
+    expect(text.body.split('\n')).toEqual([
+      '種類: hook・配布スクリプト',
+      '対象: stop-ticket-gate.sh',
+      '発生回数: 1',
+      '最初に起きた時刻: 2026-10-04T12:00:00.000Z',
+      '最後に起きた時刻: 2026-10-04T12:00:00.000Z',
+      '',
+      '版:',
+      '- bdboard: 0.1.2',
+      '- ハーネス: 0.56.0',
+      '- OS: darwin',
+      '- Node: v22.14.0',
+      '',
+      '(症状・原因・エラー文は、公開本文の組み立てが入るまでこの本文に含めていません。手元の情報にあります。)',
+    ]);
   });
+
+  // 名前 (source・catalogSlug) と版は、渡された 1 行の文字列がそのまま入る。このビルダーは中身を
+  // 検査しない。改行や制御文字を含む値を 400 で止めるのは HTTP の入口 (issue-report-routes.test.ts の
+  // "fields that reach the public title and body") と isSingleLineText (issue-draft.test.ts)。
 });
 
 describe('buildMassOccurrenceText', () => {

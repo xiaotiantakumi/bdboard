@@ -1,8 +1,9 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { IssueDraft } from '../../domain/issue-draft.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createIssueDraftService } from '../../application/issue-report/issue-draft-service.js';
+import { ISSUE_DRAFT_MAX_JSON_BYTES, type IssueDraft } from '../../domain/issue-draft.js';
 import { createFsIssueDraftStorage } from './fs-issue-draft-storage.js';
 
 function makeDraft(id: string, overrides: Partial<IssueDraft> = {}): IssueDraft {
@@ -93,6 +94,135 @@ describe('createFsIssueDraftStorage', () => {
 
     const ids = (await storage.list()).map((draft) => draft.id).sort();
     expect(ids).toEqual([ID_1, ID_2]);
+  });
+
+  describe('an unreadable or broken draft is skipped with a warning, never thrown', () => {
+    const BROKEN_ID = '1758812345680-c1b2c3d4e5f6a7b8';
+
+    it.each([
+      ['a draft id that is a plain file (ENOTDIR)', async () => fs.writeFile(path.join(baseDir, BROKEN_ID), 'not a directory'), 'ENOTDIR'],
+      [
+        'a draft.json that is a directory (EISDIR)',
+        async () => fs.mkdir(path.join(baseDir, BROKEN_ID, 'draft.json'), { recursive: true }),
+        'EISDIR',
+      ],
+      [
+        'a draft.json that is not JSON',
+        async () => {
+          await fs.mkdir(path.join(baseDir, BROKEN_ID), { recursive: true });
+          await fs.writeFile(path.join(baseDir, BROKEN_ID, 'draft.json'), '{ not json SECRET-CONTENT');
+        },
+        'not valid JSON',
+      ],
+      [
+        'a draft.json of the wrong shape',
+        async () => {
+          await fs.mkdir(path.join(baseDir, BROKEN_ID), { recursive: true });
+          await fs.writeFile(path.join(baseDir, BROKEN_ID, 'draft.json'), JSON.stringify({ id: BROKEN_ID, kind: 'Z' }));
+        },
+        'does not match the draft format',
+      ],
+      [
+        'a draft.json whose id is another draft',
+        async () => {
+          await fs.mkdir(path.join(baseDir, BROKEN_ID), { recursive: true });
+          await fs.writeFile(path.join(baseDir, BROKEN_ID, 'draft.json'), JSON.stringify(makeDraft(ID_1)));
+        },
+        'id does not match its directory',
+      ],
+    ])('%s', async (_label, breakIt, reason) => {
+      const warn = vi.fn();
+      const storage = createFsIssueDraftStorage(baseDir, { warn });
+      await storage.save(makeDraft(ID_1));
+      await breakIt();
+
+      expect((await storage.list()).map((draft) => draft.id)).toEqual([ID_1]);
+      expect(await storage.get(BROKEN_ID)).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+      const message = String(warn.mock.calls[0][0]);
+      expect(message).toContain(BROKEN_ID);
+      expect(message).toContain(reason);
+      // 警告に下書きの中身は出さない。
+      expect(message).not.toContain('SECRET-CONTENT');
+      // 同じ下書きの同じ理由は繰り返し警告しない (一覧は何度も呼ばれる)。
+      await storage.list();
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+      'a draft directory without permission (EACCES)',
+      async () => {
+        const warn = vi.fn();
+        const storage = createFsIssueDraftStorage(baseDir, { warn });
+        await storage.save(makeDraft(ID_1));
+        await storage.save(makeDraft(ID_2));
+        await fs.chmod(path.join(baseDir, ID_2), 0o000);
+        try {
+          expect((await storage.list()).map((draft) => draft.id)).toEqual([ID_1]);
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('EACCES'));
+        } finally {
+          await fs.chmod(path.join(baseDir, ID_2), 0o700);
+        }
+      },
+    );
+
+    it('the service still starts up and receives when a draft on disk is broken', async () => {
+      const warn = vi.fn();
+      const storage = createFsIssueDraftStorage(baseDir, { warn });
+      await storage.save(makeDraft(ID_1, { fingerprint: 'A:known' }));
+      await fs.writeFile(path.join(baseDir, BROKEN_ID), 'not a directory');
+
+      const service = createIssueDraftService({
+        storage,
+        now: () => new Date('2026-10-04T12:00:00.000Z'),
+        newId: () => '1758812345999-d1b2c3d4e5f6a7b8',
+      });
+      // 索引の読み込み (最初の受け取り) も、壊れた 1 件で落ちない。既知の指紋はマージされる。
+      const merged = await service.receive({ kind: 'A', catalogSlug: 'known' });
+      expect(merged).toMatchObject({ ok: true, outcome: 'merged' });
+      const created = await service.receive({ kind: 'A', catalogSlug: 'new-one' });
+      expect(created).toMatchObject({ ok: true, outcome: 'created' });
+      expect((await service.list()).map((draft) => draft.id).sort()).toEqual([ID_1, '1758812345999-d1b2c3d4e5f6a7b8']);
+    });
+  });
+
+  it('writes draft.json as exactly what the 200KB cap measures, and a hostile receive stays under it on disk', async () => {
+    const storage = createFsIssueDraftStorage(baseDir);
+    const service = createIssueDraftService({
+      storage,
+      now: () => new Date('2026-10-04T12:00:00.000Z'),
+      newId: () => ID_1,
+    });
+    const nasty = '"\\\u0001あ';
+    for (let index = 0; index < 100; index += 1) {
+      await service.receive({
+        kind: 'B',
+        source: 'hostile.sh',
+        errorText: 'same error',
+        symptom: nasty.repeat(2000),
+        project: { name: `${index}-${nasty.repeat(49)}`, path: `/${index}/${nasty.repeat(249)}` },
+      });
+    }
+    const file = path.join(baseDir, ID_1, 'draft.json');
+    const onDisk = await fs.readFile(file, 'utf8');
+    expect((await fs.stat(file)).size).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
+    // 整形せず 1 行で書く (判定に使う文字列と同じ)。
+    expect(onDisk.trimEnd()).not.toContain('\n');
+    expect(JSON.parse(onDisk).occurrenceCount).toBe(100);
+  });
+
+  it('does not count stray non-image files (.DS_Store, notes) in images/ as images', async () => {
+    const storage = createFsIssueDraftStorage(baseDir);
+    await storage.save(makeDraft(ID_1));
+    const stored = await storage.saveImage(ID_1, 'png', new Uint8Array([1, 2, 3]));
+    const imagesDir = path.join(baseDir, ID_1, 'images');
+    await fs.writeFile(path.join(imagesDir, '.DS_Store'), 'junk');
+    await fs.writeFile(path.join(imagesDir, 'notes.txt'), 'junk');
+    await fs.writeFile(path.join(imagesDir, '1758812345678-nothex.png'), 'junk');
+    await fs.mkdir(path.join(imagesDir, '1758812345678-a1b2c3d4e5f6a7b8.png.d'));
+
+    expect(await storage.countImages(ID_1)).toBe(1);
+    expect((await storage.listImages(ID_1)).map((image) => image.fileName)).toEqual([stored.fileName]);
   });
 
   it('returns an empty list before anything was saved, and undefined for an unknown or invalid draft', async () => {

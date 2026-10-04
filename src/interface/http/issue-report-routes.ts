@@ -6,6 +6,7 @@ import {
   ISSUE_DRAFT_DISMISS_REASON_MAX_CHARS,
   ISSUE_DRAFT_MAX_IMAGES,
   isDraftId,
+  isSingleLineText,
 } from '../../domain/issue-draft.js';
 import {
   ATTACHMENT_ALLOWED_MIME_TYPES,
@@ -14,7 +15,8 @@ import {
   decodeAttachmentImage,
   extensionForMimeType,
 } from './attachment-validation.js';
-import { ISSUE_DRAFTS_PATH, toImageDto, toSummaryDto } from './issue-report-dto.js';
+import { ISSUE_DRAFTS_PATH, toDetailDto, toImageDto, toSummaryDto } from './issue-report-dto.js';
+import { isLocalBasicAuthRequest } from './local-request.js';
 import { parseJsonBody } from './request-body.js';
 import {
   createPrivilegedApiGuardMiddleware,
@@ -29,8 +31,10 @@ import {
  *   - 受け取り (POST drafts) と画像の追加 (POST drafts/:id/images): ローカル直アクセスのみ。
  *     createPrivilegedApiGuardMiddleware にトンネル用の依存を渡さないことで、
  *     「強パスワード + セッション Cookie のトンネル」でも通さない (設計 3節の1行)。
- *   - 一覧・取得・画像の取得 (GET): ほかの読み取り API と同じ。トンネルではトンネルの
+ *   - 一覧・画像の取得 (GET): ほかの読み取り API と同じ。トンネルではトンネルの
  *     認証 (Basic 認証) を通れば読める。
+ *   - 1 件の取得 (GET drafts/:id): 全部を返すのはローカル直アクセスだけ。トンネル経由は
+ *     生ログ・自由記述の生の文・絶対パスを除いた形 (`restricted: true`、toDetailDto)。
  *   - 見送り (PATCH dismiss): 通常の write-guard (ローカル直、または強パスワード + セッション)。
  *
  * このルーターは何も外へ送らない。投稿 (bdboard-4y8q.4) は別の経路。
@@ -40,12 +44,20 @@ import {
 export const ISSUE_REPORT_BODY_MAX_BYTES = 1024 * 1024;
 const DISMISS_BODY_MAX_BYTES = 16 * 1024;
 
-const versionString = z.string().max(100);
+const SINGLE_LINE_MESSAGE = 'must be a single line without control characters';
+
+/**
+ * 題名・本文にそのまま入る欄 (source・catalogSlug・版の文字列) は、改行や制御文字を含めない。
+ * 含めると行を足して見出しやリンクを公開本文へ紛れ込ませられる。パスの形かどうかまでは見ない
+ * (source は "GET /api/x" のような API のパスでもよい)。公開本文の置き換えは 4y8q.2。
+ */
+const singleLine = (max: number) => z.string().max(max).refine(isSingleLineText, SINGLE_LINE_MESSAGE);
+const versionString = singleLine(100);
 
 const receiveBodySchema = z.object({
   kind: z.enum(['A', 'B', 'C']),
-  catalogSlug: z.string().min(1).max(200).optional(),
-  source: z.string().min(1).max(200).optional(),
+  catalogSlug: singleLine(200).pipe(z.string().min(1)).optional(),
+  source: singleLine(200).pipe(z.string().min(1)).optional(),
   symptom: z.string().optional(),
   cause: z.string().optional(),
   prevention: z.string().optional(),
@@ -65,8 +77,12 @@ const receiveBodySchema = z.object({
   sourceTicketRef: z.string().max(200).optional(),
 });
 
+// 一言 (1 行)。前後の空白は落とすが、途中に改行や制御文字があれば 400 (末尾の改行も含めて生の値で見る)。
 const dismissBodySchema = z.object({
-  reason: z.string().trim().min(1).max(ISSUE_DRAFT_DISMISS_REASON_MAX_CHARS),
+  reason: z
+    .string()
+    .refine(isSingleLineText, SINGLE_LINE_MESSAGE)
+    .pipe(z.string().trim().min(1).max(ISSUE_DRAFT_DISMISS_REASON_MAX_CHARS)),
 });
 
 const imageBodySchema = z.object({
@@ -123,7 +139,12 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
     const draft = await service.get(id);
     if (draft === undefined) return c.json({ error: 'draft not found', id }, 404);
     const images = (await service.listImages(id)) ?? [];
-    return c.json({ draft, images: images.map((image) => toImageDto(id, image)) });
+    // 全部を返すのはローカル直アクセスだけ。判定できない・疑わしいときは絞った形 (fail-closed)。
+    const local = isLocalBasicAuthRequest(c);
+    return c.json({
+      draft: toDetailDto(draft, { local }),
+      images: images.map((image) => toImageDto(id, image)),
+    });
   });
 
   app.patch(`${ISSUE_DRAFTS_PATH}/:id/dismiss`, limitBody(DISMISS_BODY_MAX_BYTES), async (c) => {

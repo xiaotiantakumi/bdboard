@@ -5,17 +5,21 @@ import {
   ISSUE_DRAFT_MAX_JSON_BYTES,
   capErrorTextRaw,
   computeDraftFingerprint,
-  fitDraftToByteLimit,
   hourBucketOf,
   isDraftId,
   isMassOccurrenceFingerprint,
+  isSingleLineText,
   massOccurrenceFingerprint,
   normalizeErrorText,
   summarizeErrorText,
   type IssueDraft,
 } from './issue-draft.js';
+import { draftJsonBytes, fitDraftToByteLimit, serializeDraft } from './issue-draft-size.js';
 
-function makeDraft(overrides: Partial<IssueDraft['localOnly']> = {}): IssueDraft {
+function makeDraft(
+  overrides: Partial<IssueDraft['localOnly']> = {},
+  topLevel: Partial<IssueDraft> = {},
+): IssueDraft {
   return {
     id: '1758812345678-a1b2c3d4e5f6a7b8',
     kind: 'B',
@@ -38,6 +42,7 @@ function makeDraft(overrides: Partial<IssueDraft['localOnly']> = {}): IssueDraft
     lastOccurredAt: '2026-10-04T12:00:00.000Z',
     status: 'pending',
     draftSchemaVersion: 1,
+    ...topLevel,
   };
 }
 
@@ -82,6 +87,68 @@ describe('normalizeErrorText', () => {
 
   it('keeps genuinely different messages distinct', () => {
     expect(normalizeErrorText('connection refused')).not.toBe(normalizeErrorText('permission denied'));
+  });
+
+  it('collapses an ISO time with and without fractional seconds to one value', () => {
+    // 時刻の置換を先に行う理由。後に回すと小数秒のあるほうだけ ":34:56" が行:列に食われて別の文字列になる。
+    expect(normalizeErrorText('failed at 2026-10-04T12:34:56.789Z')).toBe(
+      normalizeErrorText('failed at 2027-01-02T03:04:05Z'),
+    );
+  });
+
+  it('collapses UUIDs, including the 4-hex groups that the long-hex rule alone would leave behind', () => {
+    const first = normalizeErrorText('job 3f2b8c1e-9a4d-4e7b-8c21-5d6f0a1b2c3d not found');
+    const second = normalizeErrorText('job 0b9e7d52-1c3a-4f68-9e04-a7c8d9e0f1b2 not found');
+    expect(first).toBe(second);
+    expect(first).not.toMatch(/[0-9a-f]{4}-/);
+  });
+
+  it('collapses 7-character git short SHAs that contain a digit, but not plain words', () => {
+    expect(normalizeErrorText('merge a1b2c3d failed')).toBe(normalizeErrorText('merge 9f8e7d6 failed'));
+    expect(normalizeErrorText('merge 1234567 failed')).toBe(normalizeErrorText('merge fedcba9 failed'));
+    // 英字だけで 16 進に見える 7 文字の単語 ("defaced" "acceded") は消さない。
+    expect(normalizeErrorText('site defaced')).toBe('site defaced');
+    expect(normalizeErrorText('acceded to request')).toBe('acceded to request');
+  });
+
+  it('collapses per-run temp directories (macOS /private/var/folders, /var/folders, /var/tmp, /tmp)', () => {
+    const variants = [
+      'cannot open /private/var/folders/zz/abc123def/T/tmp.AbCdEf/out.log',
+      'cannot open /var/folders/q1/xyz789/T/tmp.123456/out.log',
+      'cannot open /var/tmp/run-998877/out.log',
+      'cannot open /tmp/build-4f9a2c/out.log',
+    ].map(normalizeErrorText);
+    expect(new Set(variants).size).toBe(1);
+    expect(variants[0]).toBe('cannot open <path>');
+  });
+
+  it('does not eat "/tmp/" in the middle of another path segment', () => {
+    expect(normalizeErrorText('see /srv/app/tmp/cache.txt')).toContain('/srv/app/tmp/cache.txt');
+  });
+
+  it('collapses Windows user paths in either slash style and in JSON-escaped form', () => {
+    const variants = [
+      'ENOENT C:\\Users\\example-user\\proj\\a.ts',
+      'ENOENT D:/Users/someone-else/work/a.ts',
+      'ENOENT c:\\users\\third-user\\x\\a.ts',
+      'ENOENT C:\\\\Users\\\\fourth-user\\\\a.ts',
+    ].map(normalizeErrorText);
+    expect(new Set(variants).size).toBe(1);
+    expect(variants[0]).toBe('enoent <path>');
+  });
+});
+
+describe('isSingleLineText', () => {
+  it('accepts ordinary one-line text, including API paths and non-ASCII', () => {
+    for (const value of ['stop-ticket-gate.sh', 'GET /api/runs/:id', '0.1.2-beta+build.5', '日本語の名前', '']) {
+      expect(isSingleLineText(value)).toBe(true);
+    }
+  });
+
+  it('rejects newlines, other control characters and Unicode line separators', () => {
+    for (const value of ['a\nb', 'a\r\nb', 'a\rb', 'a\tb', 'a\u0000b', 'a\u001bb', 'a\u007fb', 'a\u0085b', 'a\u2028b', 'a\u2029b', 'tail\n']) {
+      expect(isSingleLineText(value)).toBe(false);
+    }
   });
 });
 
@@ -156,8 +223,19 @@ describe('error text limits', () => {
   });
 });
 
+describe('serializeDraft', () => {
+  it('is one compact line plus a newline, and draftJsonBytes is exactly its UTF-8 length', () => {
+    const draft = makeDraft({ symptomRaw: 'line one\nline two あ' });
+    const text = serializeDraft(draft);
+    expect(text.endsWith('\n')).toBe(true);
+    expect(text.slice(0, -1)).not.toContain('\n');
+    expect(JSON.parse(text)).toEqual(draft);
+    expect(draftJsonBytes(draft)).toBe(Buffer.byteLength(text, 'utf8'));
+  });
+});
+
 describe('fitDraftToByteLimit', () => {
-  const byteLength = (draft: IssueDraft): number => Buffer.byteLength(JSON.stringify(draft), 'utf8');
+  const byteLength = (draft: IssueDraft): number => draftJsonBytes(draft);
 
   it('leaves a draft under the cap untouched', () => {
     const draft = makeDraft({ errorTextRaw: 'small' });
@@ -181,5 +259,91 @@ describe('fitDraftToByteLimit', () => {
     // 切り詰めの対象は errorTextRaw が先。ほかの自由記述は無事なまま。
     expect(fitted.localOnly.agentNoteRaw).toBe(draft.localOnly.agentNoteRaw);
     expect(fitted.localOnly.symptomRaw).toBe(draft.localOnly.symptomRaw);
+  });
+
+  const project = (name: string, lastSeenAt: string) => ({
+    name,
+    path: `/p/${name}`,
+    firstSeenAt: '2026-10-04T00:00:00.000Z',
+    lastSeenAt,
+  });
+
+  it('measures the way the file is written: control characters that JSON escapes to 6 bytes count in full', () => {
+    // 1 文字が 6 バイトに膨らむ。文字数 (200 字 x 100 件) だけで見ると 200KB 未満に見える。
+    const nasty = '\u0001'.repeat(200);
+    const projects = Array.from({ length: 100 }, (_, index) =>
+      project(`${nasty}${index}`, `2026-10-04T${String(index % 24).padStart(2, '0')}:00:00.000Z`),
+    );
+    const draft = makeDraft({}, { occurredProjects: projects });
+    expect(byteLength(draft)).toBeGreaterThan(ISSUE_DRAFT_MAX_JSON_BYTES);
+    expect(fitDraftToByteLimit(draft).occurredProjects.length).toBeLessThan(100);
+  });
+
+  it('drops the project with the oldest lastSeenAt first and keeps the rest in order', () => {
+    const projects = [
+      project('seen-long-ago', '2026-10-01T00:00:00.000Z'),
+      project('seen-recently', '2026-10-04T11:00:00.000Z'),
+      project('seen-last-week', '2026-09-27T00:00:00.000Z'),
+      project('seen-today', '2026-10-04T12:00:00.000Z'),
+    ];
+    const draft = makeDraft({}, { occurredProjects: projects });
+    // 1 件ぶんだけ超えている状況: 上限を現在の大きさより 1 バイト小さくする。
+    const fitted = fitDraftToByteLimit(draft, byteLength(draft) - 1);
+    expect(fitted.occurredProjects.map((entry) => entry.name)).toEqual([
+      'seen-long-ago',
+      'seen-recently',
+      'seen-today',
+    ]);
+  });
+
+  it('shrinks the raw error text, then project rows, then folded fingerprints, then the written fields', () => {
+    const folded = Array.from({ length: 50 }, (_, index) => `C:source-${index}:0123456789abcdef`);
+    const projects = Array.from({ length: 10 }, (_, index) =>
+      project(`p${index}`, `2026-10-04T0${index}:00:00.000Z`),
+    );
+    const draft = makeDraft(
+      { errorTextRaw: 'e'.repeat(2000), foldedFingerprints: folded, symptomRaw: 's'.repeat(2000) },
+      { occurredProjects: projects },
+    );
+
+    const noRaw = fitDraftToByteLimit(draft, byteLength(draft) - 1500);
+    expect(noRaw.localOnly.errorTextRaw?.length).toBeLessThan(2000);
+    expect(noRaw.occurredProjects).toHaveLength(10);
+
+    const noRawAndProjects = fitDraftToByteLimit(draft, byteLength(draft) - 2000 - 400);
+    expect(noRawAndProjects.localOnly.errorTextRaw).toBe('');
+    expect(noRawAndProjects.occurredProjects.length).toBeLessThan(10);
+    expect(noRawAndProjects.localOnly.foldedFingerprints).toHaveLength(50);
+
+    const foldedToo = fitDraftToByteLimit(draft, byteLength(draft) - 2000 - 900 - 500);
+    expect(foldedToo.occurredProjects).toHaveLength(0);
+    expect(foldedToo.localOnly.foldedFingerprints?.length).toBeLessThan(50);
+    // 古いほう (先頭) から落とし、新しい指紋が残る。
+    expect(foldedToo.localOnly.foldedFingerprints?.at(-1)).toBe(folded.at(-1));
+    expect(foldedToo.localOnly.symptomRaw).toBe('s'.repeat(2000));
+  });
+
+  it('stays within the cap for a hostile mix of every growable field', () => {
+    const nasty = '"\\\u0001あ'.repeat(50);
+    const draft = makeDraft(
+      {
+        errorTextRaw: nasty.repeat(400),
+        agentNoteRaw: nasty.repeat(60),
+        symptomRaw: nasty.repeat(60),
+        causeRaw: nasty.repeat(60),
+        preventionRaw: nasty.repeat(60),
+        foldedFingerprints: Array.from({ length: 200 }, (_, index) => `C:${nasty}${index}:0123456789abcdef`),
+      },
+      {
+        occurredProjects: Array.from({ length: 100 }, (_, index) => ({
+          name: `${nasty}${index}`,
+          path: `/${nasty}/${index}`,
+          firstSeenAt: '2026-10-04T00:00:00.000Z',
+          lastSeenAt: `2026-10-04T00:${String(index % 60).padStart(2, '0')}:00.000Z`,
+        })),
+      },
+    );
+    expect(byteLength(draft)).toBeGreaterThan(ISSUE_DRAFT_MAX_JSON_BYTES * 3);
+    expect(byteLength(fitDraftToByteLimit(draft))).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
   });
 });

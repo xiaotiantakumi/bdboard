@@ -147,6 +147,97 @@ describe('POST /api/issue-reports/drafts — receive', () => {
   });
 });
 
+describe('POST /api/issue-reports/drafts — fields that reach the public title and body', () => {
+  // 題名・本文にそのまま入る欄。行を足して見出しやパスを紛れ込ませる値は 400。
+  const HOSTILE = 'stop-ticket-gate.sh\n## injected\n/Users/example-user/example-project/secret.sh';
+
+  it.each([
+    ['source', { kind: 'B', source: HOSTILE }],
+    ['catalogSlug', { kind: 'A', catalogSlug: HOSTILE }],
+    ['envInfo.bdboardVersion', { kind: 'B', source: 's', envInfo: { bdboardVersion: `0.1.2${'\n'}## injected` } }],
+    ['envInfo.harnessVersion', { kind: 'B', source: 's', envInfo: { harnessVersion: `0.56.0${'\n'}## injected` } }],
+    ['envInfo.os', { kind: 'B', source: 's', envInfo: { os: 'darwin\r\n- [x] injected' } }],
+    ['envInfo.nodeVersion', { kind: 'B', source: 's', envInfo: { nodeVersion: 'v22\u2028## injected' } }],
+    ['envInfo.bdVersion', { kind: 'B', source: 's', envInfo: { bdVersion: 'bd\u0000' } }],
+    ['envInfo.ghVersion', { kind: 'B', source: 's', envInfo: { ghVersion: 'gh\ttab' } }],
+    ['source with a trailing newline', { kind: 'B', source: 'stop-ticket-gate.sh\n' }],
+  ])('400s a newline or control character in %s and stores nothing', async (_label, body) => {
+    const { app, storage } = setup();
+    const res = await app.request(DRAFTS, json(body), LOCAL_ENV);
+    expect(res.status).toBe(400);
+    expect(storage.drafts.size).toBe(0);
+  });
+
+  it('keeps a one-line source such as an API path, and puts it into one title line only', async () => {
+    const { app, storage } = setup();
+    const res = await app.request(DRAFTS, json({ kind: 'C', source: 'GET /api/x', errorText: 'boom' }), LOCAL_ENV);
+    expect(res.status).toBe(201);
+    const [draft] = [...storage.drafts.values()];
+    expect(draft.source).toBe('GET /api/x');
+    expect(draft.title).toBe('[bdboard 本体] GET /api/x');
+    expect(draft.title).not.toContain('\n');
+    // 本文の行は固定の項目だけ (見出しの "#" で始まる行は無い)。
+    expect(draft.body.split('\n').filter((line) => line.startsWith('#'))).toEqual([]);
+  });
+
+  it('still 400s an empty or too-long source / catalogSlug', async () => {
+    const { app } = setup();
+    expect((await app.request(DRAFTS, json({ kind: 'B', source: '' }), LOCAL_ENV)).status).toBe(400);
+    expect((await app.request(DRAFTS, json({ kind: 'B', source: 'x'.repeat(201) }), LOCAL_ENV)).status).toBe(400);
+    expect((await app.request(DRAFTS, json({ kind: 'A', catalogSlug: 'x'.repeat(201) }), LOCAL_ENV)).status).toBe(400);
+  });
+});
+
+describe('request body limits (pinned to the literal byte counts)', () => {
+  /** JSON の本文がちょうど totalBytes バイトになるよう、errorText を ASCII で埋める。 */
+  function receiveBodyOfBytes(totalBytes: number): string {
+    const prefix = '{"kind":"C","source":"s","errorText":"';
+    const suffix = '"}';
+    return prefix + 'x'.repeat(totalBytes - prefix.length - suffix.length) + suffix;
+  }
+  const post = (body: string): RequestInit => ({
+    method: 'POST',
+    headers: { 'content-type': 'application/json', host: LOCAL_HOST },
+    body,
+  });
+
+  it('the receive POST accepts 1048576 bytes (1 MiB) and refuses 1048577 with 413', async () => {
+    const { app, storage } = setup();
+    const atLimit = receiveBodyOfBytes(1_048_576);
+    expect(Buffer.byteLength(atLimit)).toBe(1_048_576);
+    expect((await app.request(DRAFTS, post(atLimit), LOCAL_ENV)).status).toBe(201);
+    expect(storage.drafts.size).toBe(1);
+
+    const overLimit = receiveBodyOfBytes(1_048_577);
+    expect(Buffer.byteLength(overLimit)).toBe(1_048_577);
+    expect((await app.request(DRAFTS, post(overLimit), LOCAL_ENV)).status).toBe(413);
+  });
+
+  it('the dismiss PATCH accepts 16384 bytes (16 KiB) past the limiter and refuses 16385 with 413', async () => {
+    const { app } = setup();
+    const { id } = await createDraft(app);
+    const bodyOfBytes = (totalBytes: number): string => {
+      const prefix = '{"reason":"';
+      const suffix = '"}';
+      return prefix + 'x'.repeat(totalBytes - prefix.length - suffix.length) + suffix;
+    };
+    const patch = (body: string): RequestInit => ({ ...post(body), method: 'PATCH' });
+
+    // 上限ちょうどは本文の制限を通る (理由が 200 字を超えるので、中身の検査で 400)。
+    const atLimit = bodyOfBytes(16_384);
+    expect(Buffer.byteLength(atLimit)).toBe(16_384);
+    expect((await app.request(`${DRAFTS}/${id}/dismiss`, patch(atLimit), LOCAL_ENV)).status).toBe(400);
+
+    const overLimit = bodyOfBytes(16_385);
+    expect(Buffer.byteLength(overLimit)).toBe(16_385);
+    expect((await app.request(`${DRAFTS}/${id}/dismiss`, patch(overLimit), LOCAL_ENV)).status).toBe(413);
+  });
+
+  it('exports the receive cap as 1 MiB too', () => {
+    expect(ISSUE_REPORT_BODY_MAX_BYTES).toBe(1_048_576);
+  });
+});
+
 describe('POST /api/issue-reports/drafts — local direct access only (tunnel is rejected)', () => {
   it.each([
     ['a cf-ray header (cloudflared forwards from 127.0.0.1)', json(DRAFT_BODY, CF_HEADERS), TUNNEL_ENV],
@@ -183,8 +274,10 @@ describe('POST /api/issue-reports/drafts — local direct access only (tunnel is
     expect(storage.drafts.size).toBe(0);
   });
 
-  it('applies to the image upload as well', async () => {
-    const { app, storage } = setup();
+  it('applies to the image upload as well, even when write-guard would let that tunnel session write', async () => {
+    // 書き込み許可つきの setup にする。許可なしだと汎用の write-guard がどのみち 403 を返すので、
+    // 画像 POST から localOnlyGuard を外してもこのテストが通ってしまう。
+    const { app, storage } = setup(TUNNEL_WRITE_ALLOWED);
     const { id } = await createDraft(app);
     const res = await app.request(
       `${DRAFTS}/${id}/images`,
@@ -192,7 +285,16 @@ describe('POST /api/issue-reports/drafts — local direct access only (tunnel is
       TUNNEL_ENV,
     );
     expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'local access only' });
     expect(await storage.countImages(id)).toBe(0);
+
+    // 同じ設定で、ローカル直アクセスの画像は通る (許可つきの setup 自体が画像を止めていない)。
+    const local = await app.request(
+      `${DRAFTS}/${id}/images`,
+      json({ mimeType: 'image/png', data: PNG_BASE64 }),
+      LOCAL_ENV,
+    );
+    expect(local.status).toBe(201);
   });
 });
 
@@ -224,22 +326,110 @@ describe('GET /api/issue-reports/drafts and /:id — screen API', () => {
     expect(res.status).toBe(200);
   });
 
-  it('gets one draft with its hand-only context and images', async () => {
+  // 手元限定の中身に入れておく値。トンネル側の応答には現れてはいけない。
+  const TOKEN_LIKE = 'example-canary-' + 'token-0123456789abcdef';
+  const SECRET_BODY = {
+    kind: 'B',
+    source: 'stop-ticket-gate.sh',
+    symptom: `symptom mentions ${TOKEN_LIKE}-symptom`,
+    cause: `cause mentions ${TOKEN_LIKE}-cause`,
+    prevention: `prevention mentions ${TOKEN_LIKE}-prevention`,
+    agentNote: `note mentions ${TOKEN_LIKE}-note`,
+    // 短いエラー文: 表示用の先頭 (errorTextHead) は生ログそのものになる。
+    errorText: `curl failed: Authorization: Bearer ${TOKEN_LIKE} at /Users/example-user/example-project/run.sh`,
+    envInfo: { bdboardVersion: '0.1.2', os: 'darwin', nodeVersion: 'v22.14.0' },
+    project: { name: 'example-project', path: '/Users/example-user/example-project' },
+  };
+
+  type DetailPayload = {
+    draft: {
+      id: string;
+      restricted?: boolean;
+      title: string;
+      body: string;
+      occurrenceCount: number;
+      localOnly: Record<string, unknown>;
+      occurredProjects: Array<Record<string, unknown>>;
+    };
+    images: Array<{ fileName: string; url: string; byteLength: number }>;
+  };
+
+  it('gets one draft with its hand-only context and images (local direct access: the full draft)', async () => {
     const { app } = setup();
-    const { id } = await createDraft(app);
+    const { id } = await createDraft(app, SECRET_BODY);
     await app.request(`${DRAFTS}/${id}/images`, json({ mimeType: 'image/png', data: PNG_BASE64 }), LOCAL_ENV);
 
     const res = await app.request(`${DRAFTS}/${id}`, localGet(), LOCAL_ENV);
     expect(res.status).toBe(200);
-    const payload = (await res.json()) as {
-      draft: { id: string; localOnly: { errorTextRaw: string }; body: string };
-      images: Array<{ fileName: string; url: string; byteLength: number }>;
-    };
+    const payload = (await res.json()) as DetailPayload;
     expect(payload.draft.id).toBe(id);
-    expect(payload.draft.localOnly.errorTextRaw).toBe('jq: command not found');
+    expect(payload.draft.restricted).toBe(false);
+    expect(payload.draft.localOnly).toMatchObject({
+      errorTextRaw: SECRET_BODY.errorText,
+      errorTextHead: SECRET_BODY.errorText,
+      symptomRaw: SECRET_BODY.symptom,
+      causeRaw: SECRET_BODY.cause,
+      preventionRaw: SECRET_BODY.prevention,
+      agentNoteRaw: SECRET_BODY.agentNote,
+    });
+    expect(payload.draft.occurredProjects).toEqual([
+      expect.objectContaining({ name: 'example-project', path: '/Users/example-user/example-project' }),
+    ]);
     expect(payload.images).toHaveLength(1);
     expect(payload.images[0].url).toBe(`${DRAFTS}/${id}/images/${payload.images[0].fileName}`);
     expect(payload.images[0].byteLength).toBe(PNG_BYTES.length);
+  });
+
+  it.each([
+    ['a cf-ray header (cloudflared forwards from 127.0.0.1)', { headers: { ...CF_HEADERS } }, TUNNEL_ENV],
+    ['a cf-connecting-ip header on a loopback Host', localGet({ 'cf-connecting-ip': '203.0.113.9' }), LOCAL_ENV],
+    ['a non-loopback TCP source', localGet(), REMOTE_ENV],
+    ['a Host header that is not loopback (DNS rebinding)', localGet({ host: 'attacker.example:8787' }), LOCAL_ENV],
+    ['no socket information at all', localGet(), {}],
+  ])('through %s: a restricted view with no raw log, free text or absolute path', async (_label, init, env) => {
+    const { app } = setup();
+    const { id } = await createDraft(app, SECRET_BODY);
+
+    const res = await app.request(`${DRAFTS}/${id}`, init, env);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const payload = JSON.parse(text) as DetailPayload;
+
+    expect(payload.draft.restricted).toBe(true);
+    // トークン・絶対パス・ユーザー名は、どの欄にも現れない。
+    expect(text).not.toContain(TOKEN_LIKE);
+    expect(text).not.toContain('Bearer');
+    expect(text).not.toContain('/Users/');
+    expect(text).not.toContain('example-user');
+    // 生ログ・先頭と末尾・自由記述の生の文の欄そのものが無い。
+    for (const key of [
+      'errorTextRaw', 'errorTextHead', 'errorTextTail', 'symptomRaw', 'causeRaw', 'preventionRaw', 'agentNoteRaw',
+    ]) {
+      expect(payload.draft.localOnly).not.toHaveProperty(key);
+    }
+    expect(payload.draft.occurredProjects).toEqual([
+      { name: 'example-project', firstSeenAt: expect.any(String), lastSeenAt: expect.any(String) },
+    ]);
+    // 表示に要る項目は残る: 題名・本文・回数・版。
+    expect(payload.draft.title).toContain('stop-ticket-gate.sh');
+    expect(payload.draft.body).toContain('stop-ticket-gate.sh');
+    expect(payload.draft.occurrenceCount).toBe(1);
+    expect(payload.draft.localOnly).toMatchObject({
+      errorTextTruncated: false,
+      envInfo: { bdboardVersion: '0.1.2' },
+    });
+  });
+
+  it('keeps the restricted view for a very long error text too (head and tail are cuts of the raw log)', async () => {
+    const { app } = setup();
+    const { id } = await createDraft(app, {
+      ...SECRET_BODY,
+      errorText: `${TOKEN_LIKE}-head ${'m'.repeat(5000)} ${TOKEN_LIKE}-tail`,
+    });
+    const res = await app.request(`${DRAFTS}/${id}`, { headers: { ...CF_HEADERS } }, TUNNEL_ENV);
+    const text = await res.text();
+    expect(text).not.toContain(TOKEN_LIKE);
+    expect((JSON.parse(text) as DetailPayload).draft.localOnly.errorTextTruncated).toBe(true);
   });
 
   it('404s an unknown id and 400s a malformed one', async () => {
@@ -284,6 +474,17 @@ describe('PATCH /api/issue-reports/drafts/:id/dismiss', () => {
 
     expect((await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason: 'first' }), LOCAL_ENV)).status).toBe(200);
     expect((await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason: 'second' }), LOCAL_ENV)).status).toBe(409);
+  });
+
+  it('400s a reason that is not one line (newline, carriage return, other control characters)', async () => {
+    const { app, storage } = setup();
+    const { id } = await createDraft(app);
+    for (const reason of ['first\nsecond', 'first\r\nsecond', 'first\rsecond', 'tab\tseparated', 'nul\u0000', 'ls\u2028ps', 'trailing\n']) {
+      const res = await app.request(`${DRAFTS}/${id}/dismiss`, patchJson({ reason }), LOCAL_ENV);
+      expect(res.status).toBe(400);
+    }
+    expect(storage.drafts.get(id)?.status).toBe('pending');
+    expect(storage.drafts.get(id)?.dismissReason).toBeUndefined();
   });
 
   it('follows the ordinary write-guard: a tunnel is refused by default, allowed with a strong-password session', async () => {

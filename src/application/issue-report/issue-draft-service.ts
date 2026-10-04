@@ -9,6 +9,7 @@ import {
   type DraftStatus,
   type IssueDraft,
 } from '../../domain/issue-draft.js';
+import { fitDraftToByteLimit } from '../../domain/issue-draft-size.js';
 import {
   addOccurrence,
   createDraftFromReport,
@@ -169,7 +170,8 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
         const draft = isDraftId(id) ? await deps.storage.get(id) : undefined;
         if (draft === undefined) return { ok: false, reason: 'not-found' };
         if (draft.status !== 'pending') return { ok: false, reason: 'not-pending', status: draft.status };
-        const dismissed: IssueDraft = { ...draft, status: 'dismissed', dismissReason: reason };
+        // 理由のぶんだけ大きくなるので、200KB の上限はここでもかける。
+        const dismissed = fitDraftToByteLimit({ ...draft, status: 'dismissed', dismissReason: reason });
         await deps.storage.save(dismissed);
         return { ok: true, draft: dismissed };
       }),
