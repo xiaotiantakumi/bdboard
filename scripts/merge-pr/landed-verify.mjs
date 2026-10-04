@@ -19,7 +19,7 @@ import { installInterruptHandler } from './interrupt.mjs';
 import { retryLoadInduced } from './load-retry.mjs';
 import { audit, readInstalledFor, say, stateDir, writeInstalledFor } from './state.mjs';
 import { postQuietly, runContractVerify, stoppedEarly, tail } from './verify-run.mjs';
-import { downgradeForVerify, holdWorktree, lockFds, setPhase } from './worktree-hold.mjs';
+import { downgradeForVerify, holdWorktree, isLinkedWorktree, lockFds, setPhase } from './worktree-hold.mjs';
 import { restoreAfterInterrupt, restoreUnderLock } from './worktree-restore.mjs';
 
 const LOCKFILES = [
@@ -33,13 +33,6 @@ function lockfileChanged(root, from, to, file) {
   }
   const diff = run('git', ['diff', '--quiet', from, to, '--', file], { cwd: root });
   return diff.status !== 0;
-}
-
-/** linked worktree (git worktree add で作ったもの) か。main checkout は git-dir = common-dir。 */
-function isLinkedWorktree(root) {
-  const dirs = run('git', ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], { cwd: root });
-  const [gitDir, commonDir] = dirs.stdout.trim().split('\n');
-  return dirs.status === 0 && gitDir !== commonDir;
 }
 
 /**
@@ -130,7 +123,8 @@ export async function runLandedVerify(
   const originalHead = git(['rev-parse', 'HEAD'], { cwd: root });
   const restoreTo = branch.status === 0 ? branch.stdout.trim() : originalHead;
   setPhase(hold, 'checkout'); // detach の前に持ち主の行 (書けなければ致命的)
-  const checkout = run('git', ['checkout', '--quiet', '--detach', sha], { cwd: root });
+  // lock の記述を渡す: checkout の途中で merge-pr が SIGKILL されても、書き終えるまで lock が残る (#876 レビュー N2)。
+  const checkout = run('git', ['checkout', '--quiet', '--detach', sha], { cwd: root, stdio: ['ignore', 'pipe', 'pipe', ...lockFds(hold)] });
   if (checkout.status !== 0) {
     setPhase(hold, 'done', { fatal: false });
     say(`git checkout --detach ${sha} に失敗しました: ${checkout.stderr.trim()}`);

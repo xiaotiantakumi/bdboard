@@ -12,7 +12,7 @@ vi.mock('./merge-pr/exec.mjs', () => ({
 }));
 
 const { run } = await import('./merge-pr/exec.mjs');
-const { contractVerifyBlocker } = await import('./merge-pr/worktree-hold.mjs');
+const { contractVerifyBlocker, downgradeForVerify } = await import('./merge-pr/worktree-hold.mjs');
 const { restoreAfterInterrupt, restoreUnderLock } = await import('./merge-pr/worktree-restore.mjs');
 
 let dir;
@@ -104,6 +104,14 @@ describe('restoreUnderLock (decision a: keep SH between attempts, read the owner
     expect(said()).toContain('が空になったら git checkout bd/demo-1 で戻してください');
   });
 
+  it('a foreign merge-pr line already in phase done is not "lost": merge-pr keeps waiting and restores (#876 review M1c)', async () => {
+    const { hold, calls } = fakeHold([{ ok: false, intruder: { ...otherMergePr, phase: 'done' } }, { ok: true }, { ok: true }]);
+    await restoreUnderLock(hold, target);
+    expect(calls).toEqual(['EX', 'SH', 'EX']);
+    expect(hold.lost).toBe(false);
+    expect(checkouts()).toEqual(['bd/demo-1']);
+  });
+
   it('an EX that never comes within BDBOARD_MERGE_RESTORE_WAIT_MS → release and a pending line, the branch is not restored', async () => {
     vi.stubEnv('BDBOARD_MERGE_RESTORE_WAIT_MS', '0');
     const { hold, calls } = fakeHold([{ ok: false }, { ok: true }]);
@@ -119,6 +127,28 @@ describe('restoreUnderLock (decision a: keep SH between attempts, read the owner
     hold.lost = true;
     await restoreUnderLock(hold, target);
     expect(calls).toEqual([]);
+    expect(checkouts()).toEqual([]);
+  });
+});
+
+describe('downgradeForVerify refused (#876 review M9)', () => {
+  it('a refused EX→SH exits 75, marks the hold lost, and the restore then touches neither the lock nor the tree', async () => {
+    const { hold, calls } = fakeHold([{ ok: false }]);
+    hold.lock.mode = 'EX';
+    hold.phase = 'checkout';
+    let thrown;
+    try {
+      downgradeForVerify(hold);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown?.code).toBe(75);
+    expect(thrown?.lines.join('\n')).toContain('作業ツリーは戻しません (detach したまま)');
+    expect(hold.lost).toBe(true);
+    expect(calls).toEqual(['SH']);
+    await restoreUnderLock(hold, target);
+    restoreAfterInterrupt(hold, target);
+    expect(calls).toEqual(['SH']);
     expect(checkouts()).toEqual([]);
   });
 });

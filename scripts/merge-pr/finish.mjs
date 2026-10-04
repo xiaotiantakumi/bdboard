@@ -14,6 +14,7 @@
 // L が light-tree (S2 の指標・戻し規則が数える predicted-tree に L を混ぜない)。
 import { git, run, shellQuote } from './exec.mjs';
 import { EXIT, REMOTE, fail, liveMain, refetchMain } from './context.mjs';
+import { holdOrReturnSlot, releaseFirst } from './finish-entry.mjs';
 import { getLandedStatus, getPull } from './github.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { forgetLightFailure, lightLandedState, reportLightLanded } from './light-landed.mjs';
@@ -22,7 +23,6 @@ import { forgetLoadInduced } from './predicted-timeouts.mjs';
 import { mainBrokenSlot, releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 import { forgetQueueSince } from './verify-queue.mjs';
-import { holdWorktree } from './worktree-hold.mjs';
 
 function holdBrokenMain(ctx, id, sha) {
   // 設計 §3.6 手順 1: 壊れた main を見つけた者が枠を取り、修復まで握る (S0 の merger も止める)。
@@ -116,19 +116,6 @@ function comparePredicted(ctx, pr, state, landed) {
   return match;
 }
 
-/** 通常の PR は最初に枠を返す (二度目の finish では返さない)。 */
-function releaseFirst(ctx, pr, state) {
-  if (state.repair || state.releasedAt) {
-    return state;
-  }
-  releaseSlot(ctx.cwd, state.holder);
-  const released = { ...state, releasedAt: new Date().toISOString() };
-  writeState(ctx.cwd, pr, released);
-  const heldS = Math.round((Date.parse(released.releasedAt) - Date.parse(state.gateAt)) / 1000);
-  audit('finish-released', { pr, id: state.id, held_s: heldS, base: state.predBase });
-  return released;
-}
-
 export async function finish(ctx, pr) {
   const initial = readState(ctx.cwd, pr);
   if (initial === null || !initial.gateAt) {
@@ -138,9 +125,7 @@ export async function finish(ctx, pr) {
     // bdboard-ulxa.7: クラス L の failure で残した記録 (下)。やり直すと直った後の main に main-broken の枠を取り直す。
     fail(EXIT.PRECONDITION, ...keptLightFailureSteps(pr, initial));
   }
-  // bdboard-wea0.2: 走っている finish・その孤児の verify・手動の verify が居れば、worktree lock が塞がっていて 75
-  // (枠を返す前に止まるので、副作用の順序は記録で止めていた頃と同じ)。
-  holdWorktree(ctx);
+  holdOrReturnSlot(ctx, pr);
   const state = releaseFirst(ctx, pr, initial);
   const kept = `main は壊れたままなので枠 (${state.holder}) は保持しています。`;
   const pull = getPull(ctx, pr);

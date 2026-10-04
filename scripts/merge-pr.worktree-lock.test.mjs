@@ -12,16 +12,20 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { VERIFY_JS } from './merge-pr.test-support-verify-js.mjs';
-import { advanceMain, env, git, mainCheckout, posted, PR, readState, registerTempRepoHooks, run, SCRIPT, setup, simulateMerge, tmp, verified, work } from './merge-pr.test-support.mjs';
+import { advanceMain, env, git, mainCheckout, posted, PR, readFake, readState, registerTempRepoHooks, run, SCRIPT, setup, simulateMerge, tmp, verified, work } from './merge-pr.test-support.mjs';
 import { readOwner } from './worktree-lock-owner.mjs';
 import { isAlive, probeLock, realProcessLockTestsSkipped, waitFor } from './worktree-lock.test-support.mjs';
 import { openWorktreeLock } from './worktree-lock.mjs';
 
+// release のファイルか、テストのプロセス (FAKE_VERIFY_TEST_PID) が居なくなるまで待つ。時計では終わらない (#876 レビュー N5)。
+const WAIT_FOR_RELEASE = `
+const testAlive = () => { try { process.kill(Number(process.env.FAKE_VERIFY_TEST_PID), 0); return true; } catch { return false; } };
+while (process.env.FAKE_VERIFY_RELEASE && !fs.existsSync(process.env.FAKE_VERIFY_RELEASE) && testAlive()) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+`;
 const GATED = `{
   const fs = require('node:fs');
   if (process.env.FAKE_VERIFY_STARTED) fs.appendFileSync(process.env.FAKE_VERIFY_STARTED, process.pid + '\\n');
-  const release = process.env.FAKE_VERIFY_RELEASE;
-  for (const end = Date.now() + 60000; release && !fs.existsSync(release) && Date.now() < end; ) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  ${WAIT_FOR_RELEASE}
 }
 `;
 // verify.mjs の外側が lock を取る手順 (verify-worktree-claim.mjs) をそのまま契約の verify にする: merge-pr が持つ lock を共有できれば 0。
@@ -44,8 +48,7 @@ let isLock = false;
 try { const held = fs.fstatSync(3); const onDisk = fs.statSync(process.env.FAKE_NPM_LOCK_PATH); isLock = held.dev === onDisk.dev && held.ino === onDisk.ino; } catch {}
 fs.writeFileSync(process.env.FAKE_NPM_MARKER + '.tmp', JSON.stringify({ isLock, pid: process.pid, args: process.argv.slice(2) }));
 fs.renameSync(process.env.FAKE_NPM_MARKER + '.tmp', process.env.FAKE_NPM_MARKER);
-for (const end = Date.now() + 60000; !fs.existsSync(process.env.FAKE_VERIFY_RELEASE) && Date.now() < end; ) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-`;
+${WAIT_FOR_RELEASE}`;
 
 const children = [];
 const orphans = [];
@@ -54,11 +57,11 @@ const lockPath = () => path.join(git(work, ['rev-parse', '--absolute-git-dir']),
 const mergeDir = () => path.join(mainCheckout, '.git', 'bdboard-merge');
 const startedFile = () => path.join(tmp, 'started.log');
 const releaseFile = () => path.join(tmp, 'release');
-const gateEnv = () => ({ FAKE_VERIFY_STARTED: startedFile(), FAKE_VERIFY_RELEASE: releaseFile() });
+const gateEnv = () => ({ FAKE_VERIFY_STARTED: startedFile(), FAKE_VERIFY_RELEASE: releaseFile(), FAKE_VERIFY_TEST_PID: String(process.pid) });
 const releaseVerify = () => writeFileSync(releaseFile(), '');
 const started = () => (existsSync(startedFile()) ? readFileSync(startedFile(), 'utf8').split('\n').filter(Boolean).map(Number) : []);
 const onBranch = () => spawnSync('git', ['symbolic-ref', '-q', '--short', 'HEAD'], { cwd: work, encoding: 'utf8' }).stdout.trim();
-const WAIT_MS = 30_000;
+const WAIT_MS = 120_000; // 条件が成り立てばすぐ返るので、速い実行では何も失わない (#876 レビュー N5)
 
 function spawnMergePr(args, extraEnv = {}) {
   const child = spawn(process.execPath, [SCRIPT, ...args], { cwd: work, env: { ...env, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -94,7 +97,7 @@ function gatedAndMerged(verifyJs = GATED + VERIFY_JS) {
   return simulateMerge();
 }
 
-describe.skipIf(realProcessLockTestsSkipped)('merge-pr holds the worktree lock (bdboard-wea0.2)', { timeout: 90_000 }, () => {
+describe.skipIf(realProcessLockTestsSkipped)('merge-pr holds the worktree lock (bdboard-wea0.2)', { timeout: 600_000 }, () => {
   registerTempRepoHooks();
   afterEach(() => {
     children.splice(0).filter((child) => child.exitCode === null && child.signalCode === null).forEach((child) => child.kill('SIGKILL'));
@@ -135,6 +138,7 @@ describe.skipIf(realProcessLockTestsSkipped)('merge-pr holds the worktree lock (
     const second = run(['finish', String(PR)], gateEnv());
     expect(second.status).toBe(75);
     expect(second.stderr).toContain(`merge-pr finish ${PR} (pid ${first.pid}, phase verify`);
+    expect(second.stderr).toContain('枠は前の finish で返してあります');
     releaseVerify();
     const { code } = await first.done;
     expect(code, first.stderrText).toBe(0);
@@ -181,6 +185,23 @@ describe.skipIf(realProcessLockTestsSkipped)('merge-pr holds the worktree lock (
     const finished = run(['finish', String(PR)]);
     expect(finished.status, finished.stderr).toBe(0);
     expect(verified()).toEqual([`${landed} claim=locked`]);
+  });
+
+  it('a first finish that finds the worktree busy returns the merge slot before exiting 75, and says to rerun the same finish (#876 review 1)', () => {
+    const landed = gatedAndMerged();
+    expect(readFake().slot.holder).not.toBeNull();
+    const mine = holdShared(); // 手動の verify がこの worktree で並んでいる
+    const busy = run(['finish', String(PR)], gateEnv());
+    expect(busy.status).toBe(75);
+    expect(busy.stderr).toContain('枠は返しました (着地後検証はまだです)');
+    expect(busy.stderr).toContain(`finish ${PR} をやり直してください (prepare ではありません)`);
+    expect(readFake().slot.holder).toBeNull();
+    expect(posted()).toEqual([]);
+    mine.release();
+    releaseVerify();
+    const again = run(['finish', String(PR)], gateEnv());
+    expect(again.status, again.stderr).toBe(0);
+    expect(verified()).toEqual([landed]);
   });
 
   it('T4a: two concurrent prepares of one PR → the second exits 75 naming the first, the first exits 0', async () => {
@@ -240,7 +261,7 @@ describe.skipIf(realProcessLockTestsSkipped)('merge-pr holds the worktree lock (
     const fakeNpm = path.join(tmp, 'fake-npm-ci.cjs');
     writeFileSync(fakeNpm, FAKE_NPM_CI);
     const marker = path.join(tmp, 'npm-ci.json');
-    const npmEnv = { BDBOARD_MERGE_NPM: JSON.stringify([process.execPath, fakeNpm]), FAKE_NPM_LOCK_PATH: lockPath(), FAKE_NPM_MARKER: marker, FAKE_VERIFY_RELEASE: releaseFile() };
+    const npmEnv = { ...gateEnv(), BDBOARD_MERGE_NPM: JSON.stringify([process.execPath, fakeNpm]), FAKE_NPM_LOCK_PATH: lockPath(), FAKE_NPM_MARKER: marker };
     const first = spawnMergePr(['prepare', String(PR)], npmEnv);
     await waitFor(() => existsSync(marker), WAIT_MS, 'npm ci started');
     const seen = JSON.parse(readFileSync(marker, 'utf8'));
@@ -268,14 +289,25 @@ describe.skipIf(realProcessLockTestsSkipped)('merge-pr holds the worktree lock (
     expect(readdirSync(mergeDir()).filter((name) => name.includes('predicted-verify'))).toEqual([]);
   });
 
-  it('refuses (exit 1) without a working flock helper, and when the self-check finds a lock that does not exclude a second descriptor', () => {
+  it('refuses (exit 1) without a working flock helper, when the self-check finds a lock that does not exclude a second descriptor, and in the main checkout', () => {
     setup();
     const none = run(['prepare', String(PR)], { BDBOARD_FLOCK_HELPER: JSON.stringify([path.join(tmp, 'no-such-helper')]) });
     expect(none.status).toBe(1);
     expect(none.stderr).toContain('worktree lock を使えないので merge-pr は動きません');
     // 何もせず 0 で終わるヘルパー = lock を取ったと言うが何も排他しない (NFS の偽の lock の代わり)。
-    const fake = run(['prepare', String(PR)], { BDBOARD_FLOCK_HELPER: JSON.stringify([process.execPath, '-e', '']) });
+    const noLock = { BDBOARD_FLOCK_HELPER: JSON.stringify([process.execPath, '-e', '']) };
+    const fake = run(['prepare', String(PR)], noLock);
     expect(fake.status).toBe(1);
     expect(fake.stderr).toContain('worktree lock の自己検査に失敗しました');
+    const probe = run(['prepare', String(PR), '--dry-run'], noLock); // --dry-run の試しも自己検査する
+    expect(probe.status).toBe(1);
+    expect(probe.stderr).toContain('worktree lock の自己検査に失敗しました');
+    // #876 レビュー N1: main checkout では lock を取らずに止まる (常時稼働サーバーの deploy --verify を拒否させない)。
+    for (const args of [['prepare', String(PR)], ['prepare', String(PR), '--dry-run']]) {
+      const fromMain = run(args, {}, mainCheckout);
+      expect(fromMain.status).toBe(1);
+      expect(fromMain.stderr).toContain('merge-pr は PR の worktree (git worktree add で作った作業ツリー) で実行します');
+    }
+    expect(existsSync(path.join(mainCheckout, '.git', 'bdboard-worktree.lock'))).toBe(false);
   });
 });

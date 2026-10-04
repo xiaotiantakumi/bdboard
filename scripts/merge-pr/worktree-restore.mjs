@@ -6,11 +6,12 @@
 // (200 ms) は SH を持ったままにする (隙間はヘルパー 2 回分だけになり、待っている間に来た verify は持ち主の行を見て
 // 拒否する) (2) 取り直すたびに持ち主の行を読み、自分の行でなくなっていたら上書きされたと分かる: 別の merge-pr なら
 // この木はそちらのものなので戻さず手放す、verify ならその verify が detach した木で走っていると 1 行知らせて待ち続ける。
+// darwin では拒否された SH→EX の後も SH が残る (worktree-lock.mjs、#876 レビュー 4) ので、(1) の取り直しは helper を呼ばない。
 // 最後まで EX が取れなければ戻さず、保留の行 (lsof -t と git checkout) を出す。
 import { describeOwner, lsofHint, readOwner } from '../worktree-lock-owner.mjs';
 import { run } from './exec.mjs';
 import { say } from './state.mjs';
-import { isMergePr, isOurs, setPhase } from './worktree-hold.mjs';
+import { isMergePr, isOurs, lockFds, setPhase } from './worktree-hold.mjs';
 
 const RESTORE_POLL_MS = 200;
 const INTERRUPT_RESTORE_WAIT_MS = 2_000;
@@ -48,7 +49,7 @@ function restoreStep(hold, notes) {
 }
 
 function restoreBranch(hold, restoreTo) {
-  const back = run('git', ['checkout', '--quiet', restoreTo], { cwd: hold.cwd });
+  const back = run('git', ['checkout', '--quiet', restoreTo], { cwd: hold.cwd, stdio: ['ignore', 'pipe', 'pipe', ...lockFds(hold)] });
   if (back.status !== 0) {
     say(`元の ${restoreTo} に戻れませんでした: ${back.stderr.trim()}`);
   }

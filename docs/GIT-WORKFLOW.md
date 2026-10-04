@@ -442,33 +442,54 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
 - **Worktree lock: one tree switcher per worktree, and a busy worktree exits 75** (bdboard-wea0.2; the
   lock itself is bdboard-wea0.1, [VERIFY.md "Worktree lock"](VERIFY.md)). `prepare` and `finish` take the
   worktree's lock (`flock` on `<git-dir>/bdboard-worktree.lock`, where `<git-dir>` is
-  `git rev-parse --absolute-git-dir` in the PR worktree) exclusively at entry, before anything else, and
-  keep it until they exit; a manual `verify <sha>` and `gate`'s self-heal take it when they start a landed
-  verify. Around the contract verify they hold it shared: detach under the exclusive lock,
+  `git rev-parse --absolute-git-dir` in the PR worktree) exclusively near entry and keep it until they
+  exit — `prepare` before anything else, `finish` right after reading the state file (the gate record and
+  the `landedResult` check) and before it returns the slot; a manual `verify <sha>` and `gate`'s self-heal
+  take it when they start a landed verify. `prepare` and `finish` refuse to run in the main checkout (exit
+  1), so they never leave a `merge-pr` owner line in the main checkout's lock, where it would make the
+  always-on server's `deploy --verify` refuse. Around the contract verify they hold it shared: detach under the exclusive lock,
   downgrade, run `npm ci` and the verify (both get the lock's descriptor as fd 3), upgrade again, restore
   the branch. A second `merge-pr` or a manual `npm run verify` in the same worktree therefore never runs on
   a tree being switched, and the answer to "is something still using this worktree?" is the kernel's, not a
   guess from a PID, a start time or an age (the old `verifyingPid` / `verifyPgid` stamps and
   `pr-<N>-predicted-verify.json` are gone; `prepare` deletes a leftover `pr-<N>-predicted-verify.json`
   and the old fields in an existing state file are ignored).
-  - **Exit 75 when the lock is busy** — a second `finish` / `prepare` of the same worktree, a manual
-    `npm run verify` there, or the verify of a `merge-pr` that was killed with SIGKILL (its verify keeps
-    the inherited descriptor, so the lock stays held until the last of those processes exits; the same is
-    true of an `npm ci` in progress). Nothing is started, nothing is checked out, and `prepare` says nothing
-    about a detached HEAD until the lock is free. `prepare --dry-run` only probes the lock (exit 75 while
-    it is busy, no owner line written) so a read-only run never makes a verify wait.
+  - **The lock is per worktree, not per PR.** Never run `finish` (or `verify`) for one PR from two
+    worktrees: each worktree has its own lock, so nothing stops two landed verifies of the same commit
+    from running side by side and both writing the ledger, the audit log and the state file (one can
+    drop the other's class-L `landedResult: "failure"` mark). The old `verifyingPid` in the shared state
+    file used to catch this; the lock deliberately does not (design bdboard-wea0 §3).
+  - **A worktree-lock 75 comes in two forms; both mean "rerun the same command later", never `prepare`**:
+    - *使用中* — `この worktree は worktree lock で使用中なので…`: at entry, the lock is held by a second
+      `finish` / `prepare` of the same worktree, a manual `npm run verify` there, or the verify (or
+      `npm ci`) of a `merge-pr` that was killed with SIGKILL — those keep the inherited descriptor, so the
+      lock stays held until the last of them exits. Nothing is started and nothing is checked out, and
+      `prepare` says nothing about a detached HEAD until the lock is free. `prepare --dry-run` only probes
+      the lock (exit 75 while it is busy, no owner line written) so a read-only run never makes a verify
+      wait.
+    - *EX→SH が拒否* — `worktree lock の EX→SH が拒否されました … 作業ツリーは戻しません (detach したまま)`:
+      between the detach and the verify, someone took the lock in the non-atomic downgrade gap. Nothing
+      was verified or recorded, and the tree is left detached on purpose (restoring it would switch the
+      tree under that holder).
+    - **Recovery for both**: wait until `lsof -t '<lock path>'` is empty → if the tree is still detached,
+      `git checkout bd/<id>` → rerun the **same** command (`finish` stays `finish`; rerunning `prepare` on
+      a merged PR is wrong).
+    - **The merge slot on a `finish` 75 (or 1) at entry**: a first `finish` that cannot take the lock
+      returns the slot before it exits and says `枠は返しました (着地後検証はまだです)`; a later one says
+      `枠は前の finish で返してあります`; a `--repair` finish keeps the slot (`保持したままです`). The
+      landing stays unverified until the rerun `finish` (or the next `gate`'s self-heal) verifies it.
   - **How to read the 75.** It prints the owner line — `by`, `pid`, `phase`, `sha`, `at` of whoever last
     took the lock exclusively, e.g. `merge-pr finish 123 (pid 4242, phase verify, …)` or `npm run verify
     (…)` — and `lsof -t '<lock path>'`. The owner line is advice and may be stale (`owner unreadable: …`
     if the file holds garbage, which changes nothing about the locking); `lsof -t` lists the processes
-    that hold the lock now. Wait for them to finish (or stop the one you started), then rerun the same
-    command; after a SIGKILL, `git checkout bd/<id>` once `lsof -t` is empty and rerun.
+    that hold the lock now. Wait for them to finish (or stop the one you started), then recover as above.
   - **The lock file is never deleted** — not by `merge-pr`, not by hand (deleting it lets a second holder
     lock a new file at the same path while the first still holds the old one). There is no record to
     delete any more: the h2fk-era "delete `pr-<N>-predicted-verify.json` by hand" escape no longer exists.
   - **Restore under a shared holder.** After the verify, `merge-pr` upgrades back to exclusive before
     `git checkout bd/<id>`, retrying every 200 ms for up to 2 minutes while holding the shared lock in
-    between. If something still holds it then (a manual verify started on the detached tree), it reports
+    between (on macOS the kernel keeps the shared lock through a refused upgrade, so there is no gap; on
+    Linux it is re-taken at once). If something still holds it then (a manual verify started on the detached tree), it reports
     the verify result normally and prints `restore を保留しました: … detach したままです` with the
     `lsof -t` line: restore by hand once that is empty. The SIGINT/SIGTERM cleanup (above) does the same
     upgrade, with a 2-second budget.

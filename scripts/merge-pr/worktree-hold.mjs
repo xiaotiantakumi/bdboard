@@ -33,6 +33,21 @@ export function busyLines(lockPath, what) {
   ];
 }
 
+/** linked worktree (git worktree add で作ったもの) か。main checkout は git-dir = common-dir。 */
+export function isLinkedWorktree(root) {
+  const dirs = run('git', ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], { cwd: root });
+  const [gitDir, commonDir] = dirs.stdout.trim().split('\n');
+  return dirs.status === 0 && gitDir !== commonDir;
+}
+
+// #876 レビュー N1: main checkout で lock を取ると、そこに merge-pr の行が残り、常時稼働サーバーの deploy --verify
+// (main checkout の npm run verify) が拒否される。手順 (docs/GIT-WORKFLOW.md) どおり PR の worktree でだけ動く。
+function refuseMainCheckout(ctx) {
+  if (!isLinkedWorktree(ctx.cwd)) {
+    fail(EXIT.USAGE, 'merge-pr は PR の worktree (git worktree add で作った作業ツリー) で実行します。main checkout の worktree lock は取らないので、ここでは進みません。', 'PR の worktree に移ってやり直してください。');
+  }
+}
+
 function openLock(ctx) {
   const dir = run('git', ['rev-parse', '--absolute-git-dir'], { cwd: ctx.cwd });
   if (dir.status !== 0) {
@@ -109,6 +124,7 @@ export function holdWorktree(ctx) {
     return current;
   }
   if (current === null || current.lock.fd === null) {
+    refuseMainCheckout(ctx);
     if (current === null) {
       process.once('exit', markDoneOnExit);
     }
@@ -132,6 +148,7 @@ function probeWorktree(ctx) {
   if (current !== null) {
     return;
   }
+  refuseMainCheckout(ctx);
   const lock = openLock(ctx);
   try {
     if (lock.supported) {
