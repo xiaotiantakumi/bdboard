@@ -98,6 +98,20 @@ export function mainMovedOnSteps(landed, tip, ledger, repo, context) {
   ];
 }
 
+/**
+ * bdboard-89jv: 着地後検証が failure で、origin/main の先頭 T が着地コミット L ではないのに、T が L の子孫か調べられなかった
+ * (fetch が失敗して T のオブジェクトが手元に無い等) ときの案内。枠は L の名前で取ったまま (安全側) だが、T が本当に子孫なら
+ * 修復 PR の gate --repair はその枠を引き継げない (枠の名前は PRED_BASE = T で決まる) ので、返す手順を添える。
+ */
+export function unverifiedTipSteps(landed, tip, holder) {
+  const short = landed.slice(0, 12);
+  const tipShort = tip.slice(0, 12);
+  return [
+    `注意: origin/main の先頭は ${tipShort} で、着地コミット ${short} の子孫かどうかを調べられませんでした (git fetch に失敗して ${tipShort} のオブジェクトが手元に無い等)。枠 (${holder}) は取ったままにしています。`,
+    `  fetch が通るようになって git merge-base --is-ancestor ${landed} ${tip} が 0 で終われば main は先へ進んでいます: この枠は誰も引き継げないので bd merge-slot release --holder ${shellQuote(holder)} で返し、先頭 ${tipShort} の台帳 (gh api repos/<owner>/<repo>/commits/${tip}/status) を確かめてください。`,
+  ];
+}
+
 export function rebaseSteps(mainRef, reason = 'S1 では main が動いたら rebase') {
   return [
     `main が PR のベース以降に進んでいます (クラス R: ${reason})。枠の外で取り込んでから並び直してください:`,

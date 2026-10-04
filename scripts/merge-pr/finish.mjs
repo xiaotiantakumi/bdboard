@@ -12,12 +12,12 @@
 // (light-landed) に残し、failure は S3 のすり抜け (S2 に戻す合図) として知らせる (light-landed.mjs。error の
 // ときも L であることを残し、後の merge-pr verify が同じ扱いをする)。木の突き合わせは F が predicted-tree、
 // L が light-tree (S2 の指標・戻し規則が数える predicted-tree に L を混ぜない)。
-import { git, gitOk, run, shellQuote } from './exec.mjs';
-import { EXIT, REMOTE, fail, fetchedMain, liveMain, refetchMain } from './context.mjs';
+import { git, run, shellQuote } from './exec.mjs';
+import { EXIT, REMOTE, fail, liveMain, refetchMain } from './context.mjs';
 import { getLandedStatus, getPull } from './github.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { forgetLightFailure, lightLandedState, reportLightLanded } from './light-landed.mjs';
-import { brokenMainSteps, keptLightFailureSteps, mainBrokenSlotHeldSteps, mainBrokenSlotUnknownSteps, mainMovedOnSteps } from './messages.mjs';
+import { brokenMainSteps, keptLightFailureSteps, mainBrokenSlotHeldSteps, mainBrokenSlotUnknownSteps, mainMovedOnSteps, unverifiedTipSteps } from './messages.mjs';
 import { mainBrokenSlot, releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 import { clearVerifyRecord, guardAgainstRunningVerify, recordVerifyGroup, verifyingStamp } from './verify-guard.mjs';
@@ -35,27 +35,42 @@ function holdBrokenMain(ctx, id, sha) {
       ? `枠を ${holder} で取りました。修復 PR は prepare → BDBOARD_MERGER=chair npm run merge-pr -- gate --repair → gh pr merge → BDBOARD_MERGER=chair npm run merge-pr -- finish (success で枠が返ります)。`
       : `枠を取れませんでした (${got.stderr.trim()})。他の merger は台帳の failure を見て止まります。`,
   );
+  return holder;
 }
 
 /**
  * bdboard-89jv: 着地後検証が failure のときの締め。「main は先へ進んだ」と言えるのは、先頭が着地コミットの厳密な子孫と
  * 確かめられたときだけ。そのときは main-broken の枠を取らない — 修復が先に着地した後に古い SHA の枠を取ると、誰も返さないまま
- * 全 gate を止める。それ以外 (先頭 == 着地コミット・祖先・無関係・読めない) は従来どおり枠を取る (設計 §3.6)。
+ * 全 gate を止める。それ以外 (先頭 == 着地コミット・祖先・無関係) は従来どおり枠を取る (設計 §3.6)。
  *
- * 先頭は ls-remote (liveMain) で読む。fetch に使う手元の origin/main は、stale な ref lock が残っていると fetch がオブジェクトは
- * 落としても ref を動かせず、マージ前の PRED_BASE (着地コミットの祖先) のままになる (bdboard-1syo、finish は allowOffline で続ける)。
- * それを「先へ進んだ」と読むと、壊れた main に枠を取らず、先頭の台帳 success の案内まで出してしまう。ls-remote は lock の影響を受けない。
- * refetchMain は祖先判定のためにオブジェクトを手元に落とす目的でも呼ぶ。
+ * 先頭は ls-remote (liveMain) と fetch 済みの origin/main の両方を見て、どちらかが着地コミットの厳密な子孫なら「進んだ」とする。
+ * fetch に使う手元の origin/main は、stale な ref lock が残っていると fetch がオブジェクトは落としても ref を動かせず、マージ前の
+ * PRED_BASE (着地コミットの祖先) のままになる (bdboard-1syo、finish は allowOffline で続ける)。それだけを見て「進んだ」と読むと、
+ * 壊れた main に枠を取らず、先頭の台帳 success の案内まで出してしまう。ls-remote は lock の影響を受けないので祖先判定を必ず挟む。
+ * ls-remote は fetch より先に読む: fetch がいま読んだ先頭のオブジェクトを落とし、間に着地が挟まる隙も閉じる。
+ * 先頭が着地コミットでないのに祖先を調べられない (fetch が失敗してオブジェクトが無い等。exit 128) ときは、枠は取ったまま
+ * (安全側) 先頭 T の名前を出し、T が子孫と分かったら枠を返す手順を添える (unverifiedTipSteps)。
  */
 function failedLanding(ctx, pr, id, landed) {
-  refetchMain(ctx);
-  const tip = liveMain(ctx) ?? fetchedMain(ctx);
-  if (tip === landed || !gitOk(['merge-base', '--is-ancestor', landed, tip], { cwd: ctx.cwd })) {
-    holdBrokenMain(ctx, id, landed);
-    return brokenMainSteps(landed, ctx.repo, ctx.statusContext);
+  const live = liveMain(ctx);
+  const fetched = refetchMain(ctx);
+  const tips = [live, fetched].filter((sha, i, all) => sha !== null && sha !== landed && all.indexOf(sha) === i);
+  const checked = tips.map((sha) => ({ sha, relation: relationToLanded(ctx, landed, sha) }));
+  const moved = checked.find((c) => c.relation === 'descendant');
+  if (moved !== undefined) {
+    audit('finish-main-moved-on', { pr, id, landed, tip: moved.sha });
+    return mainMovedOnSteps(landed, moved.sha, tipLedger(ctx, moved.sha), ctx.repo, ctx.statusContext);
   }
-  audit('finish-main-moved-on', { pr, id, landed, tip });
-  return mainMovedOnSteps(landed, tip, tipLedger(ctx, tip), ctx.repo, ctx.statusContext);
+  const holder = holdBrokenMain(ctx, id, landed);
+  const unchecked = checked.find((c) => c.relation === 'unknown');
+  const caveat = unchecked === undefined ? [] : unverifiedTipSteps(landed, unchecked.sha, holder);
+  return [...caveat, ...brokenMainSteps(landed, ctx.repo, ctx.statusContext)];
+}
+
+/** 着地コミットから見た先頭: 'descendant' (厳密な子孫) / 'other' (祖先・無関係) / 'unknown' (祖先を調べられない = exit 0/1 以外)。 */
+function relationToLanded(ctx, landed, tip) {
+  const { status } = run('git', ['merge-base', '--is-ancestor', landed, tip], { cwd: ctx.cwd });
+  return status === 0 ? 'descendant' : status === 1 ? 'other' : 'unknown';
 }
 
 /** 案内の文面を選ぶためだけに先頭の台帳を読む。読めなくても落とさない。 */

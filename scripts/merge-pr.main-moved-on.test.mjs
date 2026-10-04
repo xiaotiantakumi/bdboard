@@ -3,11 +3,12 @@
 //   F2 holder の印字を shellQuote する / F4 枠を読めないとき 1 行出す / F5 枠の言い方
 //   F6 印字する議長専用コマンドに BDBOARD_MERGER=chair を前置する / F7 success 行を追記できたときだけ L の記録を消す
 // 一時リポジトリ + 偽の gh / bd / npm の harness は merge-pr.test-support.mjs と共有する。
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import { lightSlipSteps, mainBrokenSlotHeldSteps } from './merge-pr/messages.mjs';
+import { shellQuote } from './merge-pr/exec.mjs';
+import { lightSlipSteps, mainBrokenSlotHeldSteps, unverifiedTipSteps } from './merge-pr/messages.mjs';
 import { audit } from './merge-pr/state.mjs';
 import {
   advanceMain,
@@ -214,6 +215,86 @@ describe.skipIf(process.platform === 'win32')('merge-pr: landed failure after ma
     const finished = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' });
     expectHeldForLanded(finished, landed);
     expect(finished.stderr).toContain('手元の origin/main で続けます');
+  });
+
+  // P1 (re-review): 先頭 T を別の clone で作り、この clone には T のオブジェクトが無い状態にする (ls-remote は T を返す)。
+  function landTipInOtherClone(landed) {
+    const other = path.join(tmp, 'other');
+    git(tmp, ['clone', '-q', path.join(tmp, 'origin.git'), other]);
+    const next = git(other, ['commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'fix(demo-2): repair']);
+    git(other, ['push', '-q', 'origin', `${next}:refs/heads/main`]);
+    expect(git(other, ['merge-base', landed, next])).toBe(landed);
+    green(next);
+    return next;
+  }
+  const hasObject = (sha) => {
+    try {
+      git(work, ['cat-file', '-e', `${sha}^{commit}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  function landedReadyToFinish() {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    return simulateMerge();
+  }
+
+  it('P1: ls-remote works but the fetch fails (objects dir read-only), so T is unreadable: finish keeps the L slot and names T plus how to release it', () => {
+    const landed = landedReadyToFinish();
+    const tip = landTipInOtherClone(landed);
+    expect(hasObject(tip)).toBe(false);
+    const dirs = [];
+    const walk = (dir) => {
+      dirs.push(dir);
+      for (const entry of readdirSync(dir)) {
+        const child = path.join(dir, entry);
+        if (statSync(child).isDirectory()) {
+          walk(child);
+        }
+      }
+    };
+    walk(path.join(mainCheckout, '.git', 'objects'));
+    let finished;
+    try {
+      dirs.forEach((dir) => chmodSync(dir, 0o555));
+      finished = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' });
+    } finally {
+      dirs.forEach((dir) => chmodSync(dir, 0o755));
+    }
+    const holder = `demo-1 / main-broken ${short(landed)}`;
+    expect(hasObject(tip)).toBe(false); // fetch は本当に失敗していた (T のオブジェクトは手元に無いまま)
+    expect(finished.status).toBe(6);
+    expect(readFake().slot.holder).toBe(holder); // 安全側: L の名前で枠を握る
+    expect(finished.stderr).toContain('この上にマージしません');
+    expect(finished.stderr).toContain(`先頭は ${short(tip)}`);
+    expect(finished.stderr).toContain(`git merge-base --is-ancestor ${landed} ${tip}`);
+    expect(finished.stderr).toContain(`bd merge-slot release --holder ${shellQuote(holder)}`);
+    expect(auditText()).not.toContain('finish-main-moved-on');
+  });
+
+  it('P1: the caveat quotes an apostrophe in the holder and is not printed when the tip is checkable', () => {
+    expect(unverifiedTipSteps(LONG, 'b'.repeat(40), "o'brien / main-broken abc").join('\n')).toContain("--holder 'o'\\''brien / main-broken abc'");
+    const landed = landedReadyToFinish();
+    const finished = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' }); // 先頭 == 着地コミット: 調べられないものは無い
+    expect(finished.status).toBe(6);
+    expect(finished.stderr).not.toContain('調べられませんでした');
+    expect(readFake().slot.holder).toBe(`demo-1 / main-broken ${short(landed)}`);
+  });
+
+  it('P3: under the stale lock, the fetch still brings T objects from another clone, so T is proven a descendant (moved on)', () => {
+    const landed = landedReadyToFinish();
+    const tip = landTipInOtherClone(landed);
+    expect(hasObject(tip)).toBe(false);
+    writeFileSync(path.join(mainCheckout, '.git', 'refs', 'remotes', 'origin', 'main.lock'), '');
+    const finished = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' });
+    expect(finished.status).toBe(6);
+    expect(hasObject(tip)).toBe(true); // lock で ref は動かなくても、fetch はオブジェクトを落とす
+    expect(readFake().slot.holder).toBeNull();
+    expect(finished.stderr).toContain(`origin/main は既に ${short(tip)} まで進んでいます`);
+    expect(finished.stderr).not.toContain('調べられませんでした');
   });
 
   it('F1 late recovery finish: after the merger crashed and others landed on top, a failing verify of the old SHA takes no slot', () => {

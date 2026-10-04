@@ -383,12 +383,18 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   deterministic regression (including a hang that always times out) fails the retry and is still
   recorded.
 - **`finish` takes `main-broken` only for the tip (bdboard-89jv).** On a landed-verify
-  `failure`, `finish` fetches `origin/main` again, reads the tip with `git ls-remote`, and takes
-  `<id> / main-broken <sha12>` unless the tip is **proven a strict descendant** of the landed commit
+  `failure`, `finish` reads the tip with `git ls-remote` (before the fetch, so the fetch brings in that
+  tip's objects), fetches `origin/main` again, and takes `<id> / main-broken <sha12>` unless the
+  `ls-remote` tip **or** the fetched `origin/main` is **proven a strict descendant** of the landed commit
   (`git merge-base --is-ancestor`). Only then has main moved on: it takes no slot, exits 6, and
   writes a `finish-main-moved-on` audit row (with `pr=`). Anything else - the tip is the landed commit,
-  an ancestor or unrelated commit, or unreadable - takes the slot as before. The `ls-remote` read and
-  the descendant check matter because a stale `refs/remotes/origin/main.lock` (bdboard-1syo; `finish`
+  or an ancestor or unrelated commit - takes the slot as before. When `ls-remote` fails, the tip falls
+  back to the fetched `origin/main`. If the tip is not the landed commit but its ancestry cannot be
+  checked (the objects are missing, e.g. the fetch failed; `merge-base` exits 128), it also takes the
+  slot (fail-safe) but the advice names the tip and says: once the fetch works again and
+  `git merge-base --is-ancestor <landed> <tip>` exits 0, main has moved on, so release the slot with
+  `bd merge-slot release --holder '<holder>'` and check the tip's ledger (otherwise `gate --repair`
+  could not inherit the landed-SHA slot). The `ls-remote` read and the descendant check matter because a stale `refs/remotes/origin/main.lock` (bdboard-1syo; `finish`
   carries on from the local ref) leaves the fetched `origin/main` at the pre-merge PRED_BASE, an
   *ancestor* of the landed commit, which must not be read as "moved on" (it would skip the slot on a
   broken main and report the old tip healthy). Its advice uses the tip ledger only to choose wording:
