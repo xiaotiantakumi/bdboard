@@ -47,12 +47,22 @@ const DISMISS_BODY_MAX_BYTES = 16 * 1024;
 const SINGLE_LINE_MESSAGE = 'must be a single line without control characters';
 
 /**
- * 題名・本文にそのまま入る欄 (source・catalogSlug・版の文字列) は、改行や制御文字を含めない。
- * 含めると行を足して見出しやリンクを公開本文へ紛れ込ませられる。パスの形かどうかまでは見ない
- * (source は "GET /api/x" のような API のパスでもよい)。公開本文の置き換えは 4y8q.2。
+ * 題名・本文・応答にそのまま入る欄 (source・catalogSlug・版の文字列・プロジェクト名) は、改行・
+ * 制御文字・不可視の書式文字 (ゼロ幅・双方向制御・BOM) を含めない。含めると行を足して見出しや
+ * リンクを公開本文へ紛れ込ませたり、見えない文字で別の値に見せかけたりできる。
+ * これで防ぐのは行の数と見えない文字だけ: 1 行でもリンク・@メンション・#参照・<img> は書ける。
+ * インラインの Markdown のエスケープと公開本文の置き換えは 4y8q.2 の仕事。パスの形かどうかは
+ * ここでは見ない (source は "GET /api/x" のような API のパスでもよい)。ホーム配下の絶対パスは
+ * 受け取りのサービスが "~/" に畳む (canonicalizeIdentifier)。
  */
 const singleLine = (max: number) => z.string().max(max).refine(isSingleLineText, SINGLE_LINE_MESSAGE);
 const versionString = singleLine(100);
+
+/**
+ * 元チケットの参照 (bd の id)。トンネルの読み手へ返し、後で bd のコマンドの引数に使う (4y8q.4) ので、
+ * 先頭は英数字、あとは英数字と . _ - だけ。"--db=/tmp/x" のようなオプションの形は通さない。
+ */
+const TICKET_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
 
 const receiveBodySchema = z.object({
   kind: z.enum(['A', 'B', 'C']),
@@ -73,8 +83,8 @@ const receiveBodySchema = z.object({
       ghVersion: versionString.optional(),
     })
     .optional(),
-  project: z.object({ name: z.string().max(200), path: z.string().max(1000) }).optional(),
-  sourceTicketRef: z.string().max(200).optional(),
+  project: z.object({ name: singleLine(200), path: z.string().max(1000) }).optional(),
+  sourceTicketRef: z.string().regex(TICKET_REF_PATTERN, 'must look like a ticket id').optional(),
 });
 
 // 一言 (1 行)。前後の空白は落とすが、途中に改行や制御文字があれば 400 (末尾の改行も含めて生の値で見る)。

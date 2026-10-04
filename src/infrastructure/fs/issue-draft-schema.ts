@@ -6,6 +6,13 @@ import { isDraftId } from '../../domain/issue-draft.js';
  * 形が合わないファイルは「使えない下書き」として飛ばされる。
  */
 
+/**
+ * ISO 8601 の時刻 (toISOString の形を含む)。読み込みのときに確かめるのは、"not-a-date" のような値が
+ * 通ると、受け取りの索引づくり (hourBucketOf の toISOString) が RangeError で落ち、以後の受け取りが
+ * すべて失敗するため。形が合わない下書きは「使えない下書き」として警告つきで飛ばす。
+ */
+const isoTimeSchema = z.string().datetime();
+
 const envInfoSchema = z.object({
   bdboardVersion: z.string(),
   harnessVersion: z.string().optional(),
@@ -31,8 +38,8 @@ const localOnlySchema = z.object({
 const occurredProjectSchema = z.object({
   name: z.string(),
   path: z.string(),
-  firstSeenAt: z.string(),
-  lastSeenAt: z.string(),
+  firstSeenAt: isoTimeSchema,
+  lastSeenAt: isoTimeSchema,
 });
 
 export const draftSchema = z.object({
@@ -48,8 +55,8 @@ export const draftSchema = z.object({
   localOnly: localOnlySchema,
   occurredProjects: z.array(occurredProjectSchema),
   occurrenceCount: z.number().int().nonnegative(),
-  firstOccurredAt: z.string(),
-  lastOccurredAt: z.string(),
+  firstOccurredAt: isoTimeSchema,
+  lastOccurredAt: isoTimeSchema,
   status: z.enum(['pending', 'posted', 'dismissed']),
   dismissReason: z.string().optional(),
   issueNumber: z.number().int().optional(),

@@ -12,6 +12,7 @@ import {
 import { fitDraftToByteLimit } from '../../domain/issue-draft-size.js';
 import {
   addOccurrence,
+  canonicalizeReceiveInput,
   createDraftFromReport,
   foldIntoMassDraft,
   type ReceiveDraftInput,
@@ -113,7 +114,9 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
     return indexPromise;
   }
 
-  async function receiveLocked(input: ReceiveDraftInput): Promise<ReceiveDraftResult> {
+  async function receiveLocked(rawInput: ReceiveDraftInput): Promise<ReceiveDraftResult> {
+    // 指紋より前に、source・catalogSlug のユーザーのホームのパスを畳む (トンネルの読み手へ名前を出さない)。
+    const input = canonicalizeReceiveInput(rawInput);
     const fingerprint = computeDraftFingerprint(input);
     if (fingerprint === undefined) return { ok: false, reason: 'missing-identifier' };
 

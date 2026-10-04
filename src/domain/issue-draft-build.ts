@@ -6,38 +6,25 @@ import {
   isMassOccurrenceFingerprint,
   summarizeErrorText,
   type DraftEnvInfo,
-  type DraftKind,
   type IssueDraft,
   type LocalOnlyContext,
   type OccurredProject,
 } from './issue-draft.js';
 import { fitDraftToByteLimit } from './issue-draft-size.js';
+import type { ReceiveDraftInput } from './issue-draft-input.js';
 import {
   buildMassOccurrenceText,
   buildProvisionalDraftText,
   type DraftText,
 } from './issue-draft-text.js';
 
+export type { ReceiveDraftInput } from './issue-draft-input.js';
+export { canonicalizeReceiveInput } from './issue-draft-input.js';
+
 /**
  * 受け取った 1 回分の報告から下書きを作る・足す純粋関数 (bdboard-4y8q.1、設計 4節の状態遷移の表)。
  * 保存や排他は application の IssueDraftService が受け持つ。
  */
-
-export interface ReceiveDraftInput {
-  readonly kind: DraftKind;
-  /** A のみ必須: failure-catalog の短い名前。 */
-  readonly catalogSlug?: string;
-  /** B/C のみ必須: 出どころ (hook 名・スクリプト名・API のパスなど)。 */
-  readonly source?: string;
-  readonly symptom?: string;
-  readonly cause?: string;
-  readonly prevention?: string;
-  readonly errorText?: string;
-  readonly agentNote?: string;
-  readonly envInfo?: Partial<DraftEnvInfo>;
-  readonly project?: { readonly name: string; readonly path: string };
-  readonly sourceTicketRef?: string;
-}
 
 function normalizeEnvInfo(env: Partial<DraftEnvInfo> | undefined): DraftEnvInfo {
   return {

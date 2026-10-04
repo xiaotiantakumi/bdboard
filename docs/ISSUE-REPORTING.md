@@ -31,7 +31,7 @@ interface IssueDraft {
   readonly id: string;
   readonly kind: DraftKind;
   readonly fingerprint: string;           // 4節
-  readonly catalogSlug?: string;          // A のみ。受け取った値を指紋とは別に持つ(4節「実装との差分」)
+  readonly catalogSlug?: string;          // A のみ。受け取った値(ホーム配下の絶対パスは ~/ に畳んだもの)を指紋とは別に持つ(4節「実装との差分」)
   readonly source?: string;               // B/C のみ。同上
   title: string;                          // 公開題名(編集可。初期値は5節の組み立て関数の出力)
   body: string;                           // 公開本文(編集可、同上)
@@ -46,7 +46,7 @@ interface IssueDraft {
   dismissReason?: string;                 // 見送りの理由(status='dismissed' のときのみ)
   issueNumber?: number;                   // 投稿後の GitHub issue 番号
   issueUrl?: string;
-  sourceTicketRef?: string;               // harness-upstream 取り込み元のチケットID(4y8q.7)
+  sourceTicketRef?: string;               // harness-upstream 取り込み元のチケットID(4y8q.7)。/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/ だけ受け取る
   harnessVersionAtOccurrence?: string;    // A/Bのみ。注入先 .claude/bdboard-packs.json の version
   readonly draftSchemaVersion: 1;         // draft.json 自体のフォーマット版(将来の移行用)
 }
@@ -186,7 +186,21 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 | 呼び出し | 応答 |
 |---|---|
 | ローカル直アクセス | 下書き全部 + `restricted: false` |
-| それ以外(トンネル、ループバックでない接続元、Host の不一致、接続情報なし=fail-closed) | `restricted: true`。残すのは題名・本文・回数・時刻・状態・プロジェクト名(パス無し)・版(`envInfo`)・`errorTextTruncated`・画像の一覧だけ |
+| それ以外(トンネル、ループバックでない接続元、Host の不一致、接続情報なし=fail-closed) | `restricted: true`。**許可リスト**(`toDetailDto`)で組んだ次の欄だけ(下) |
+
+トンネル側が**見る欄の全部**: `id`、`kind`、`fingerprint`、`catalogSlug`、`source`、`title`、`body`、
+`titleEditedByUser`、`bodyEditedByUser`、`localOnly.errorTextTruncated`、`localOnly.envInfo`(版)、
+`occurredProjects[]` の `name` / `firstSeenAt` / `lastSeenAt`(パス無し)、`occurrenceCount`、
+`firstOccurredAt`、`lastOccurredAt`、`status`、`dismissReason`、`issueNumber`、`issueUrl`、
+`sourceTicketRef`、`harnessVersionAtOccurrence`、`draftSchemaVersion`、`restricted`。画像の一覧は別の API。
+このうち**呼び出し側・利用者の入力がほぼそのまま入る**のは次で、手元の外へ出てよい形に入口で絞る:
+
+| 欄 | 入口での絞り |
+|---|---|
+| `source` / `catalogSlug`(`fingerprint`・`title`・`body` にも入る) | 1 行のみ(改行・制御文字・ゼロ幅・双方向制御・BOM は 400)。**`/Users/<名前>/`・`/home/<名前>/`・`X:\Users\<名前>\` は受け取りで `~/` に畳む**(400 にはしない: フックが自分の `$0` を出どころに入れて報告しても受け取れ、別の利用者・別の PC の同じフックが 1 件にまとまる)。`GET /api/x` のような API のパスは触らない。パス以外の秘密(引数のトークンなど)は見つけない |
+| `sourceTicketRef` | `^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$` だけ(`--db=/tmp/evil` は 400)。後で `bd` の引数になる(6節) |
+| `dismissReason` | 1 行・200 文字まで(PATCH の入口)。本文を書く欄ではない |
+| `occurredProjects[].name` / `envInfo` の版の文字列 | 1 行のみ |
 
 トンネル側で落とす欄: `errorTextRaw`、**`errorTextHead` / `errorTextTail`**、`symptomRaw` / `causeRaw` /
 `preventionRaw` / `agentNoteRaw`、`foldedFingerprints`、`occurredProjects[].path`。
@@ -195,7 +209,9 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 だったが、4y8q.1 の時点では head/tail は置き換え(5節、4y8q.2)を通る前の生の切り出しである。4y8q.2 が入って
 head/tail が置き換え後の文章から作られるようになったら、トンネル側へ戻すかどうかを再判断する。
 応答は許可リストで組む(`toDetailDto`)ので、下書きに欄が増えても、足すまでは手元の外へ出ない。
-一覧(`GET .../drafts`)の応答には、もともと本文も `localOnly` も載せない。
+一覧(`GET .../drafts`)の応答には、もともと本文も `localOnly` も載せない。載せるのは `id`・`kind`・
+`fingerprint`・`title`・`status`・回数・時刻・プロジェクト数・`dismissReason`・`issueNumber`・`issueUrl`・
+`sourceTicketRef` で、`fingerprint` と `title` に入る `source` / `catalogSlug` は上の表の絞りを通った値。
 
 未対応で残るもの: 画像(`GET .../images/:fileName`)はトンネルの Basic 認証だけで読める。スクリーンショットに
 秘密が写りうるという点で同じ種類の問題だが、画像の扱いは 4y8q.3 の画面設計と合わせて決める。
@@ -207,7 +223,10 @@ head/tail が置き換え後の文章から作られるようになったら、�
 よい」という意味ではない。`PATCH /api/issue-reports/drafts/:id` が受け付けるフィールドは
 次に限定し、それ以外のキーを含むリクエストは 400 で拒否する:
 
-- `title`、`body`、`titleEditedByUser`、`bodyEditedByUser`(いずれも公開前の編集用)
+- `title`、`body`、`titleEditedByUser`、`bodyEditedByUser`(いずれも公開前の編集用)。**`title` と `body` の
+  長さは入口(4y8q.3)で上限を掛ける**: `draft.json` は 200KB まで(4節「上限」)で、縮めるのは
+  生ログ・一覧・メモなどだけ。題名・本文は縮める対象にしていないので、保存層は 200KB を超える下書きを
+  黙って書かずに断る(`save` が投げる)。入口で止めないと、編集の保存が 500 になる
 - `dismissReason`(`/dismiss` 経由。`status` を直接 `'dismissed'` に書き換えさせず、
   専用エンドポイント `PATCH .../:id/dismiss` に限定する)
 
@@ -275,9 +294,14 @@ function normalizeErrorText(text: string): string {
 「同じ症状を同じ1件にまとめる」ことであり、公開本文の安全性はここではなく5節が担う。
 上の関数は設計当初の例から変えてある(理由は下の「実装との差分」)。
 
-`source` と `catalogSlug`(と版の文字列)は題名・本文にそのまま入るので、**改行・制御文字・Unicode の
-行区切りを含む値は受け取りで 400** にする。パスの形かどうかは見ない(`source` は `GET /api/x` のような
-API のパスでもよいため)。それらの置き換えは5節(4y8q.2)。
+`source` と `catalogSlug`(と版の文字列・プロジェクト名)は題名・本文・応答にそのまま入るので、
+**改行・制御文字・Unicode の行区切り・不可視の書式文字(ゼロ幅 U+200B–200F、双方向制御 U+202A–202E と
+U+2066–2069、BOM U+FEFF)を含む値は受け取りで 400** にする。これで防ぐのは行の数と見えない文字だけで、
+1 行でもリンク・`@`メンション・`#`参照・`<img>` は書ける(インラインの Markdown のエスケープと公開本文の
+置き換えは5節、4y8q.2 の仕事)。`source` と `catalogSlug` のホーム配下の絶対パス
+(`/Users/<名前>/`・`/home/<名前>/`・`X:\Users\<名前>\`)は、**指紋を作る前に `~/` へ畳む**。400 にしなかった
+のは、フックが自分の `$0` を出どころに入れて報告しても受け取れ、別の利用者の同じフックが 1 件にまとまるため。
+パスの形かどうかはそれ以外は見ない(`source` は `GET /api/x` のような API のパスでもよい)。
 
 ### 状態遷移(bdboard-4y8q.1 が実装するのは pending/dismissed だけ、posted 側は 4y8q.5)
 
@@ -357,6 +381,25 @@ API のパスでもよいため)。それらの置き換えは5節(4y8q.2)。
   JSON など)は警告して一覧と受け取りから飛ばす(同じ下書きの同じ理由の警告は 1 回)。受け取り本文の上限
   (1048576 バイト)と見送り本文の上限(16384 バイト)はリテラルの数値でテストに固定した。画像の枚数は、
   サーバーが採番した名前の画像だけ数える(`.DS_Store` などは数えない)。
+
+**再レビュー(2026-10-04、2 回目)で決めたこと**
+
+- **CI(verify-windows)**: Windows には POSIX のパーミッションが無いので、0700/0600 のテストは Windows では
+  実行しない。「下書きの id が普通のファイル」(ENOTDIR)の行も、Windows は ENOENT と報告して警告にならない
+  ので POSIX だけで確かめる。
+- **`source` / `catalogSlug` のパス(F2)**: 400 ではなく**受け取りで `~/` に畳む**ことにした(3節の表)。
+  トンネルの読み手が見る欄の全部も3節に書いた。
+- **`sourceTicketRef`(F3)**: ticket id の形だけ受ける。6節の手順 8 で、実行側も `--` を前置する(4y8q.4)。
+- **時刻の形(F4)**: `firstOccurredAt` / `lastOccurredAt` / `firstSeenAt` / `lastSeenAt` は ISO 8601 でなければ
+  「使えない下書き」として飛ばす。以前は形の合わない値が受け取りの索引づくりで例外を起こし、以後の受け取りが
+  すべて失敗した。
+- **不可視文字(N2)**: ゼロ幅・双方向制御・BOM も 1 行の検査で弾く。孤立したサロゲートは見ない(4y8q.2 で扱う)。
+- **200KB を超える下書き(N3)**: 縮められる欄を削り切っても超える下書きは、保存層が書かずに投げる。題名・本文の
+  長さは入口で抑える(3節、4y8q.3 の仕事)。
+- **一時的な読み取りの失敗(N5)**: 一覧・取得は、種類が違う・読む権限が無い・壊れている(ENOTDIR・EISDIR・
+  EACCES・EPERM・不正な JSON・形や時刻の不正)ものだけを警告つきで飛ばし、EMFILE・EIO のような一時的なものは
+  投げる。受け取りの索引は最初の 1 回だけ作るので、欠けた一覧を飛ばして作ると、プロセスの間ずっと既知の指紋が
+  二重に作られる。投げれば索引は作り直される。警告には id と理由だけを出し、保存先のパスは出さない。
 
 **この PR ではやらないこと**
 
@@ -552,7 +595,10 @@ bdboard サーバープロセスや、それを叩く何らかのローカルプ
    手順8で元チケットへの `bd comment`/`bd close` を起こす書き込み操作のため。
 8. URL 確認(手順7)が完了した直後、`sourceTicketRef` があれば(4y8q.7 由来)、
    元プロジェクトの bd チケットへ `bd comment <ref> "issue: <url>"` → `bd close <ref>` を
-   実行する。
+   実行する。**ref の前に `--` を置く**(`bd comment -- <ref> "issue: <url>"`、`bd close -- <ref>`)。
+   受け取りの入口で `sourceTicketRef` は `^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$` に絞ってある(3節)が、
+   手元のファイルを直接書き換えられた場合や将来の入口の変更に備え、ref がオプション
+   (`--db=/tmp/evil` など)として解釈される余地を、実行側でも残さない。
 9. gh 呼び出しはすべて `--repo xiaotiantakumi/bdboard` を明示し(実行時の `cwd` の git
    remote に依存しない)、非対話実行であることを保証するため環境変数
    `GH_PROMPT_DISABLED=1` を付ける(`CommandRunner` の `env` は子プロセスの環境変数を

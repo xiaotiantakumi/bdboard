@@ -161,7 +161,14 @@ describe('POST /api/issue-reports/drafts — fields that reach the public title 
     ['envInfo.bdVersion', { kind: 'B', source: 's', envInfo: { bdVersion: 'bd\u0000' } }],
     ['envInfo.ghVersion', { kind: 'B', source: 's', envInfo: { ghVersion: 'gh\ttab' } }],
     ['source with a trailing newline', { kind: 'B', source: 'stop-ticket-gate.sh\n' }],
-  ])('400s a newline or control character in %s and stores nothing', async (_label, body) => {
+    // 見えない文字: 画面の並びを入れ替える (右から左への上書き)・ゼロ幅・BOM。
+    ['source with a right-to-left override', { kind: 'B', source: 'safe\u202Egnp.sh' }],
+    ['source with a bidi isolate', { kind: 'B', source: 'safe\u2066hidden' }],
+    ['catalogSlug with a zero-width space', { kind: 'A', catalogSlug: 'slug\u200Bname' }],
+    ['source with a byte order mark', { kind: 'B', source: '\uFEFFstop-ticket-gate.sh' }],
+    ['project.name with a newline', { kind: 'B', source: 's', project: { name: 'proj\n## injected', path: '/p' } }],
+    ['project.name with a bidi override', { kind: 'B', source: 's', project: { name: 'proj\u202Eevil', path: '/p' } }],
+  ])('400s a newline, control or invisible character in %s and stores nothing', async (_label, body) => {
     const { app, storage } = setup();
     const res = await app.request(DRAFTS, json(body), LOCAL_ENV);
     expect(res.status).toBe(400);
@@ -179,6 +186,34 @@ describe('POST /api/issue-reports/drafts — fields that reach the public title 
     // 本文の行は固定の項目だけ (見出しの "#" で始まる行は無い)。
     expect(draft.body.split('\n').filter((line) => line.startsWith('#'))).toEqual([]);
   });
+
+  it.each([
+    ['an option-shaped ref (--db=/tmp/evil)', '--db=/tmp/evil'],
+    ['a ref that starts with a dash', '-x'],
+    ['a path', '../../etc/passwd'],
+    ['a ref with a space', 'bdboard abc'],
+    ['a ref with a newline', 'bdboard-abc\n--db=/tmp/evil'],
+    ['a ref with a trailing newline', 'bdboard-abc\n'],
+    ['a ref that starts with a dot', '.hidden'],
+    ['an empty ref', ''],
+    ['a ref over 200 characters', 'a'.repeat(201)],
+  ])('400s a sourceTicketRef that is %s and stores nothing', async (_label, ref) => {
+    const { app, storage } = setup();
+    const res = await app.request(DRAFTS, json({ ...DRAFT_BODY, sourceTicketRef: ref }), LOCAL_ENV);
+    expect(res.status).toBe(400);
+    expect(storage.drafts.size).toBe(0);
+  });
+
+  it.each(['bdboard-4y8q.1', 'bdboard-abc', 'a', `a${'b'.repeat(199)}`, 'proj_x.1-2'])(
+    'accepts the ticket-id-shaped sourceTicketRef %s and returns it as given',
+    async (ref) => {
+      const { app, storage } = setup();
+      const res = await app.request(DRAFTS, json({ ...DRAFT_BODY, sourceTicketRef: ref }), LOCAL_ENV);
+      expect(res.status).toBe(201);
+      expect(((await res.json()) as { draft: { sourceTicketRef: string } }).draft.sourceTicketRef).toBe(ref);
+      expect([...storage.drafts.values()][0].sourceTicketRef).toBe(ref);
+    },
+  );
 
   it('still 400s an empty or too-long source / catalogSlug', async () => {
     const { app } = setup();
@@ -430,6 +465,64 @@ describe('GET /api/issue-reports/drafts and /:id — screen API', () => {
     const text = await res.text();
     expect(text).not.toContain(TOKEN_LIKE);
     expect((JSON.parse(text) as DetailPayload).draft.localOnly.errorTextTruncated).toBe(true);
+  });
+
+  describe('a source that is a path to the reporter\'s own script', () => {
+    // フックが自分の "$0" を source にして報告した場合。ユーザー名は題名・本文・指紋・source のどこにも残らない。
+    const HOOK = '/Users/example-user/example-project/.claude/hooks/stop-ticket-gate.sh';
+    const CANONICAL = '~/example-project/.claude/hooks/stop-ticket-gate.sh';
+
+    it('is stored as ~/…; no name, /Users/ or /home/ reaches a tunnel reader in the list, the detail or the receive response', async () => {
+      const { app, storage } = setup();
+      const receive = await app.request(DRAFTS, json({ ...DRAFT_BODY, source: HOOK }), LOCAL_ENV);
+      expect(receive.status).toBe(201);
+      const receiveText = await receive.text();
+      const { id } = (JSON.parse(receiveText) as { draft: { id: string } }).draft;
+      const kindAHook = await app.request(
+        DRAFTS,
+        json({ kind: 'A', catalogSlug: '/home/example-user/.claude/failure-catalog/jq-missing' }),
+        LOCAL_ENV,
+      );
+      expect(kindAHook.status).toBe(201);
+
+      const list = await (await app.request(DRAFTS, { headers: { ...CF_HEADERS } }, TUNNEL_ENV)).text();
+      const detail = await (await app.request(`${DRAFTS}/${id}`, { headers: { ...CF_HEADERS } }, TUNNEL_ENV)).text();
+      for (const text of [receiveText, list, detail, await kindAHook.clone().text()]) {
+        expect(text).not.toContain('example-user');
+        expect(text).not.toContain('/Users/');
+        expect(text).not.toContain('/home/');
+      }
+      const payload = JSON.parse(detail) as { draft: { source: string; fingerprint: string; title: string; body: string } };
+      expect(payload.draft.source).toBe(CANONICAL);
+      expect(payload.draft.fingerprint.startsWith(`B:${CANONICAL}:`)).toBe(true);
+      expect(payload.draft.title).toContain(CANONICAL);
+      expect(payload.draft.body).toContain(CANONICAL);
+      expect(storage.drafts.get(id)?.source).toBe(CANONICAL);
+    });
+
+    it('merges the same hook reported from another user\'s home into one draft', async () => {
+      const { app, storage } = setup();
+      expect((await app.request(DRAFTS, json({ ...DRAFT_BODY, source: HOOK }), LOCAL_ENV)).status).toBe(201);
+      const other = await app.request(
+        DRAFTS,
+        json({ ...DRAFT_BODY, source: HOOK.replace('example-user', 'example-other-user') }),
+        LOCAL_ENV,
+      );
+      expect(other.status).toBe(200);
+      expect(((await other.json()) as { outcome: string }).outcome).toBe('merged');
+      expect(storage.drafts.size).toBe(1);
+    });
+
+    it('leaves an API path that merely contains /home/ or /Users/ alone', async () => {
+      const { app, storage } = setup();
+      for (const source of ['GET /api/home/x', 'POST /api/Users/42/profile']) {
+        expect((await app.request(DRAFTS, json({ kind: 'C', source, errorText: 'boom' }), LOCAL_ENV)).status).toBe(201);
+      }
+      expect([...storage.drafts.values()].map((draft) => draft.source).sort()).toEqual([
+        'GET /api/home/x',
+        'POST /api/Users/42/profile',
+      ]);
+    });
   });
 
   it('404s an unknown id and 400s a malformed one', async () => {

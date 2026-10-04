@@ -3,6 +3,7 @@ import {
   ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS,
   ISSUE_DRAFT_ERROR_TEXT_RAW_MAX_CHARS,
   ISSUE_DRAFT_MAX_JSON_BYTES,
+  canonicalizeIdentifier,
   capErrorTextRaw,
   computeDraftFingerprint,
   hourBucketOf,
@@ -149,6 +150,65 @@ describe('isSingleLineText', () => {
     for (const value of ['a\nb', 'a\r\nb', 'a\rb', 'a\tb', 'a\u0000b', 'a\u001bb', 'a\u007fb', 'a\u0085b', 'a\u2028b', 'a\u2029b', 'tail\n']) {
       expect(isSingleLineText(value)).toBe(false);
     }
+  });
+
+  it('rejects zero-width, bidirectional-control and BOM characters (they reorder or hide text on screen)', () => {
+    const invisible = [
+      '\u200b', '\u200c', '\u200d', '\u200e', '\u200f', // ゼロ幅・左右の印
+      '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', // 双方向の埋め込み・上書き
+      '\u2066', '\u2067', '\u2068', '\u2069', // 双方向の孤立
+      '\ufeff', // BOM / ゼロ幅の非改行スペース
+    ];
+    for (const char of invisible) {
+      expect(isSingleLineText(`a${char}b`)).toBe(false);
+      expect(isSingleLineText(char)).toBe(false);
+    }
+  });
+
+  it('accepts the characters just outside those ranges and ordinary non-ASCII', () => {
+    for (const value of ['a\u200ab', 'a\u2010b', 'a\u2030b', 'a\u2065b', 'a\u206ab', 'a\ufefeb', 'a\uff00b', 'a b', 'ａｂｃ', '😀 ok']) {
+      expect(isSingleLineText(value)).toBe(true);
+    }
+  });
+});
+
+describe('canonicalizeIdentifier', () => {
+  it.each([
+    ['/Users/example-user/proj/.claude/hooks/stop.sh', '~/proj/.claude/hooks/stop.sh'],
+    ['/home/example-user/.claude/hooks/stop.sh', '~/.claude/hooks/stop.sh'],
+    ['C:\\Users\\example-user\\proj\\stop.sh', '~/proj\\stop.sh'],
+    ['D:/Users/example-user/proj/stop.sh', '~/proj/stop.sh'],
+    ['c:\\users\\example-user\\stop.sh', '~/stop.sh'],
+    ['C:\\Users\\John Smith\\stop.sh', '~/stop.sh'],
+    ['/Users/example-user', '~/'],
+    ['bash /home/example-user/x.sh --flag', 'bash ~/x.sh --flag'],
+    ['--script=/Users/example-user/x.sh', '--script=~/x.sh'],
+    ['"/Users/example-user/x.sh"', '"~/x.sh"'],
+    ['file:///Users/example-user/x.sh', 'file://~/x.sh'],
+    ['  stop.sh  ', 'stop.sh'],
+  ])('%s -> %s', (input, expected) => {
+    expect(canonicalizeIdentifier(input)).toBe(expected);
+    expect(canonicalizeIdentifier(expected)).toBe(expected);
+  });
+
+  it.each([
+    'stop-ticket-gate.sh',
+    'GET /api/runs/:id',
+    'GET /api/home/x/y',
+    'POST /api/Users/42/profile',
+    '~/proj/stop.sh',
+    './hooks/stop.sh',
+    'jq-missing',
+  ])('leaves %s alone', (value) => {
+    expect(canonicalizeIdentifier(value)).toBe(value);
+  });
+
+  it('gives two users running the same script the same fingerprint', () => {
+    const fingerprintFor = (source: string) =>
+      computeDraftFingerprint({ kind: 'B', source: canonicalizeIdentifier(source), errorText: 'boom' });
+    expect(fingerprintFor('/Users/example-user/proj/stop.sh')).toBe(
+      fingerprintFor('/home/example-other/proj/stop.sh'),
+    );
   });
 });
 
@@ -345,5 +405,14 @@ describe('fitDraftToByteLimit', () => {
     );
     expect(byteLength(draft)).toBeGreaterThan(ISSUE_DRAFT_MAX_JSON_BYTES * 3);
     expect(byteLength(fitDraftToByteLimit(draft))).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
+  });
+
+  it('stays over the cap when nothing shrinkable is left (a fixed field such as the body is huge); the storage then refuses', () => {
+    const draft = { ...makeDraft(), body: 'あ'.repeat(ISSUE_DRAFT_MAX_JSON_BYTES) };
+    const fitted = fitDraftToByteLimit(draft);
+    // 縮められる欄は削り切っている。それでも超える分は固定の欄 (題名・本文) のせい。
+    expect([fitted.localOnly.symptomRaw, fitted.localOnly.causeRaw, fitted.localOnly.preventionRaw]).toEqual(['', '', '']);
+    expect(fitted.body).toBe(draft.body);
+    expect(byteLength(fitted)).toBeGreaterThan(ISSUE_DRAFT_MAX_JSON_BYTES);
   });
 });

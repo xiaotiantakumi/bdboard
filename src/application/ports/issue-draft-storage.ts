@@ -17,13 +17,19 @@ export interface StoredDraftImage {
 
 export interface IssueDraftStoragePort {
   /**
-   * 全下書き。読めない・壊れている下書き (権限、ディレクトリでないもの、不正な JSON など) は
-   * 警告を出して読み飛ばす (1件の破損で一覧や受け取り全体を落とさない)。
+   * 全下書き。読めない・壊れている下書き (権限、ディレクトリでないもの、不正な JSON、形や時刻の
+   * 不正など。あとで通る見込みの無いもの) は警告を出して読み飛ばす (1件の破損で一覧や受け取り全体を
+   * 落とさない)。あとで通るかもしれない一時的な読み取りの失敗 (EMFILE・EIO など) は読み飛ばさず
+   * 投げる。欠けた一覧を「全部」として使い続けないため (受け取りの索引は最初の 1 回だけ作る)。
    */
   list(): Promise<readonly IssueDraft[]>;
   /** 1件取得。存在しない・読めない・壊れているときは undefined (読めない・壊れているときは警告)。 */
   get(id: string): Promise<IssueDraft | undefined>;
-  /** 新規作成または上書き。途中状態を読ませないよう原子的に書く。 */
+  /**
+   * 新規作成または上書き。途中状態を読ませないよう原子的に書く。draft.json が 200KB
+   * (ISSUE_DRAFT_MAX_JSON_BYTES) を超える下書きは、何も書かずに投げる (縮められる欄は呼び出し側が
+   * fitDraftToByteLimit で先に縮める。題名・本文など固定の欄の長さは入口で抑える)。
+   */
   save(draft: IssueDraft): Promise<void>;
   /** 下書きに付いている画像の枚数。上限チェックに使う。 */
   countImages(id: string): Promise<number>;

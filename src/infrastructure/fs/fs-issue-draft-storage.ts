@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { isDraftId, type IssueDraft } from '../../domain/issue-draft.js';
-import { serializeDraft } from '../../domain/issue-draft-size.js';
+import { ISSUE_DRAFT_MAX_JSON_BYTES, isDraftId, type IssueDraft } from '../../domain/issue-draft.js';
+import { draftJsonBytes, serializeDraft } from '../../domain/issue-draft-size.js';
 import { draftSchema } from './issue-draft-schema.js';
 import type {
   IssueDraftStoragePort,
@@ -24,6 +24,14 @@ const DRAFT_FILE = 'draft.json';
 const IMAGES_DIR = 'images';
 /** このストアが採番する画像のファイル名 (<epochMs>-<16桁hex>.<ext>)。.DS_Store などの迷い込んだファイルは画像に数えない。 */
 const IMAGE_FILE_NAME_PATTERN = /^[0-9]{1,20}-[0-9a-f]{16}\.[a-z0-9]{1,8}$/;
+
+/**
+ * 読めない下書きとして飛ばしてよい、その場で直らないエラー (種類が違う・読む権限が無い)。
+ * これ以外 (EMFILE・EIO・ENOMEM など、あとで通るかもしれない一時的なもの) は飛ばさず投げる。
+ * 飛ばすと、起動後の最初の受け取りが作る索引 (issue-draft-service の loadIndex) が欠けたまま
+ * プロセスの間ずっと使われ、既知の指紋が新規として二重に作られる。
+ */
+const PERMANENT_READ_ERROR_CODES: ReadonlySet<string> = new Set(['ENOTDIR', 'EISDIR', 'EACCES', 'EPERM']);
 
 function isNotFound(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT';
@@ -95,8 +103,11 @@ export function createFsIssueDraftStorage(
       raw = await fs.readFile(file, 'utf8');
     } catch (error) {
       if (isNotFound(error)) return { kind: 'missing' };
-      const code = (error as NodeJS.ErrnoException).code ?? 'unknown error';
-      return { kind: 'unusable', reason: `unreadable (${code})` };
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== undefined && PERMANENT_READ_ERROR_CODES.has(code)) {
+        return { kind: 'unusable', reason: `unreadable (${code})` };
+      }
+      throw error;
     }
     let parsedJson: unknown;
     try {
@@ -160,6 +171,14 @@ export function createFsIssueDraftStorage(
 
     async save(draft) {
       const dir = draftDir(draft.id);
+      // 縮められる欄 (fitDraftToByteLimit) を削っても 200KB に収まらない下書き (題名・本文などの
+      // 固定の欄が大きい) は、黙って書かずに断る。何も作らない (ディレクトリも一時ファイルも)。
+      const bytes = draftJsonBytes(draft);
+      if (bytes > ISSUE_DRAFT_MAX_JSON_BYTES) {
+        throw new Error(
+          `issue draft ${draft.id} is ${bytes} bytes as written, over the ${ISSUE_DRAFT_MAX_JSON_BYTES} byte limit: refusing to save`,
+        );
+      }
       await ensureDir(resolvedBaseDir);
       await ensureDir(dir);
       // 途中まで書いた draft.json を読ませないよう、同じディレクトリの一時ファイルへ書いて rename する。
