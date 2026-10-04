@@ -1,6 +1,7 @@
 import { availableParallelism } from 'node:os';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
+import { fileURLToPath } from 'node:url';
 import rootPackage from '../package.json';
 
 // mockReset / restoreMocks は意図的に設定しない (bdboard-cqur)。mockReset を有効にすると (restoreMocks
@@ -25,6 +26,8 @@ export default defineConfig({
     __BDBOARD_VERSION__: JSON.stringify(rootPackage.version),
   },
   test: {
+    // bdboard-72oy: verify の外の単発実行が landed の走行中なら警告+監査ログ。待たせない。
+    globalSetup: [fileURLToPath(new URL('../scripts/vitest-global-setup.mjs', import.meta.url))],
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./vitest.setup.ts'],
