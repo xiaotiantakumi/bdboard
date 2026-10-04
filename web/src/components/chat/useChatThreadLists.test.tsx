@@ -269,6 +269,68 @@ describe('useChatThreadLists', () => {
       expect(order.admit('project-a', seq, [])).toEqual([]);
     });
 
+    // bdboard-gtv0: 削除前に始まった一覧取得(E7・採用の取り直し・回収の hydrate は、どれも begin → fetch → admit)の
+    // 応答が削除の後に届いても、削除したスレッドを一覧に戻さない。
+    it('deleteThread keeps a list that started before the delete from bringing the thread back (bdboard-gtv0)', async () => {
+      const { result } = setup();
+      const order = result.current.threadListOrder;
+      const seq = order.begin('project-a');
+      act(() => {
+        result.current.setThreadLists((prev) => ({
+          ...prev,
+          'project-a': [thread({ sessionId: 'sess-1' }), thread({ sessionId: 'sess-2' })],
+        }));
+      });
+      await act(async () => result.current.deleteThread('sess-1'));
+      expect(result.current.threadLists['project-a']).toEqual([thread({ sessionId: 'sess-2' })]);
+      // 削除の前にサーバーが組み立てた一覧(sess-1 入り)が遅れて届く。
+      const admitted = order.admit('project-a', seq, [thread({ sessionId: 'sess-1' }), thread({ sessionId: 'sess-2' })]);
+      expect(admitted).toEqual([thread({ sessionId: 'sess-2' })]);
+      expect(order.appliedList('project-a')).toEqual([thread({ sessionId: 'sess-2' })]);
+    });
+
+    it('deleteThread keeps the thread out of every list that started before the delete', async () => {
+      const { result } = setup();
+      const order = result.current.threadListOrder;
+      // 初回の一覧(E7)と採用の取り直しが、どちらも削除の前に始まっている。
+      const e7Seq = order.begin('project-a');
+      const adoptionSeq = order.begin('project-a');
+      await act(async () => result.current.deleteThread('sess-1'));
+      expect(order.admit('project-a', e7Seq, [thread({ sessionId: 'sess-1' })])).toEqual([]);
+      expect(order.admit('project-a', adoptionSeq, [thread({ sessionId: 'sess-1' }), thread({ sessionId: 'sess-2' })])).toEqual([
+        thread({ sessionId: 'sess-2' }),
+      ]);
+    });
+
+    it('deleteThread trusts a list that started after the delete', async () => {
+      const { result } = setup();
+      const order = result.current.threadListOrder;
+      order.begin('project-a');
+      await act(async () => result.current.deleteThread('sess-1'));
+      const later = order.begin('project-a');
+      expect(order.admit('project-a', later, [thread({ sessionId: 'sess-1' })])).toEqual([thread({ sessionId: 'sess-1' })]);
+    });
+
+    it('deleteThread does not record a delete that failed on the server', async () => {
+      deleteChatThreadMock.mockRejectedValueOnce(new Error('boom'));
+      const { result } = setup();
+      const order = result.current.threadListOrder;
+      const seq = order.begin('project-a');
+      await act(async () => result.current.deleteThread('sess-1'));
+      expect(order.admit('project-a', seq, [thread({ sessionId: 'sess-1' })])).toEqual([thread({ sessionId: 'sess-1' })]);
+    });
+
+    it('deleteThread also removes a thread whose rename response landed after the delete (bdboard-gtv0)', async () => {
+      updateChatThreadMock.mockResolvedValueOnce(thread({ sessionId: 'sess-1', title: 'renamed' }));
+      const { result } = setup({ renameDraft: 'renamed' });
+      const order = result.current.threadListOrder;
+      const seq = order.begin('project-a');
+      await act(async () => result.current.deleteThread('sess-1'));
+      // 削除より前に送ったリネームの応答が、削除の後に届いて replace の書き込みを記録した。
+      await act(async () => result.current.renameThread('sess-1'));
+      expect(order.admit('project-a', seq, [thread({ sessionId: 'sess-1', title: 'old title' })])).toEqual([]);
+    });
+
     it('keeps the order object stable across renders', () => {
       const { result, rerender, params } = setup();
       const before = result.current.threadListOrder;

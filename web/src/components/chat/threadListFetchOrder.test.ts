@@ -62,6 +62,14 @@ describe('createThreadListFetchOrder (bdboard-z9mn)', () => {
       const fourth = order.begin('a');
       expect(order.admit('a', fourth, [thread('s4')])).toEqual([thread('s4')]);
     });
+
+    it('drops a second admit of the same seq as stale (one admit per seq)', () => {
+      const order = createThreadListFetchOrder();
+      const seq = order.begin('a');
+      expect(order.admit('a', seq, [thread('s1')])).toEqual([thread('s1')]);
+      expect(order.admit('a', seq, [thread('s1'), thread('s2')])).toBeUndefined();
+      expect(order.appliedList('a')).toEqual([thread('s1')]);
+    });
   });
 
   describe('noteEntryWrite', () => {
@@ -146,6 +154,155 @@ describe('createThreadListFetchOrder (bdboard-z9mn)', () => {
       order.admit('a', order.begin('a'), [thread('s1'), thread('s2')]);
       order.forgetEntry('a', 's2');
       expect(order.appliedList('a')).toEqual([thread('s1')]);
+    });
+  });
+
+  // bdboard-gtv0: 削除前に始まった fetch の一覧に、削除したスレッドが入っていても一覧へ戻さない。
+  describe('forgetEntry tombstone (bdboard-gtv0)', () => {
+    it('removes the forgotten thread from a list that started before the delete', () => {
+      const order = createThreadListFetchOrder();
+      const seq = order.begin('a');
+      order.forgetEntry('a', 's2');
+      expect(order.admit('a', seq, [thread('s1'), thread('s2'), thread('s3')])).toEqual([thread('s1'), thread('s3')]);
+    });
+
+    it('keeps the forgotten thread out of the applied list as well', () => {
+      const order = createThreadListFetchOrder();
+      const seq = order.begin('a');
+      order.forgetEntry('a', 's2');
+      order.admit('a', seq, [thread('s1'), thread('s2')]);
+      expect(order.appliedList('a')).toEqual([thread('s1')]);
+    });
+
+    it('trusts a list that started after the delete, even if it has the same id', () => {
+      const order = createThreadListFetchOrder();
+      order.begin('a');
+      order.forgetEntry('a', 's2');
+      const later = order.begin('a');
+      // 削除より後に始まった fetch はサーバーが削除を反映済みのはず。応答に同じ id があるなら、それが現実(再作成など)。
+      expect(order.admit('a', later, [thread('s1'), thread('s2')])).toEqual([thread('s1'), thread('s2')]);
+    });
+
+    it('removes the thread from every list that started before the delete, while they are still allowed to land', () => {
+      const order = createThreadListFetchOrder();
+      const first = order.begin('a');
+      const second = order.begin('a');
+      order.forgetEntry('a', 's2');
+      expect(order.admit('a', first, [thread('s1'), thread('s2')])).toEqual([thread('s1')]);
+      expect(order.admit('a', second, [thread('s1'), thread('s2')])).toEqual([thread('s1')]);
+    });
+
+    it('trusts a list that started after the delete when every earlier fetch had already landed', () => {
+      const order = createThreadListFetchOrder();
+      order.admit('a', order.begin('a'), [thread('s1'), thread('s2')]);
+      order.forgetEntry('a', 's2');
+      // 未着の fetch が無いときの削除。そのあとに始まった fetch の一覧に同じ id があれば、そのまま当たる。
+      const later = order.begin('a');
+      expect(order.admit('a', later, [thread('s1'), thread('s2')])).toEqual([thread('s1'), thread('s2')]);
+    });
+
+    it('still drops an older outstanding list after a delete when a newer list was already applied', () => {
+      const order = createThreadListFetchOrder();
+      const older = order.begin('a');
+      const newer = order.begin('a');
+      expect(order.admit('a', newer, [thread('s1'), thread('s2')])).toBeDefined();
+      order.forgetEntry('a', 's2');
+      // older は newer が当たっているので、削除のあとも捨てられる(一覧は書かれず、s2 は戻らない)。
+      expect(order.admit('a', older, [thread('s1'), thread('s2')])).toBeUndefined();
+      expect(order.appliedList('a')).toEqual([thread('s1')]);
+    });
+
+    it('applies a list that started after the delete as is once the pre-delete list has landed', () => {
+      const order = createThreadListFetchOrder();
+      const early = order.begin('a');
+      order.forgetEntry('a', 's2');
+      // 削除前に始まった early の一覧は s2 を除いて当たる。そのあとに始まった fetch の一覧は応答のまま。
+      expect(order.admit('a', early, [thread('s1'), thread('s2')])).toEqual([thread('s1')]);
+      const after = order.begin('a');
+      expect(order.admit('a', after, [thread('s1'), thread('s2')])).toEqual([thread('s1'), thread('s2')]);
+    });
+
+    it('does not bring the forgotten thread back on a second admit of the same seq', () => {
+      const order = createThreadListFetchOrder();
+      const seq = order.begin('a');
+      order.forgetEntry('a', 's2');
+      expect(order.admit('a', seq, [thread('s1'), thread('s2')])).toEqual([thread('s1')]);
+      // 同じ seq の 2 回目は stale。削除済みの id を含む応答でも、一覧へ戻らない。
+      expect(order.admit('a', seq, [thread('s1'), thread('s2')])).toBeUndefined();
+      expect(order.appliedList('a')).toEqual([thread('s1')]);
+    });
+
+    it('keeps the record while a list that started before the delete is still outstanding', () => {
+      const order = createThreadListFetchOrder();
+      const first = order.begin('a');
+      const second = order.begin('a');
+      order.forgetEntry('a', 's2');
+      // first が当たっても、削除点(second まで払い出し済み)に届いていないので記録は残り、second の一覧からも除く。
+      expect(order.admit('a', first, [thread('s1'), thread('s2')])).toEqual([thread('s1')]);
+      expect(order.admit('a', second, [thread('s1'), thread('s2')])).toEqual([thread('s1')]);
+      // second が当たって記録が捨てられた後に始まった fetch は応答のまま。
+      expect(order.admit('a', order.begin('a'), [thread('s1'), thread('s2')])).toEqual([thread('s1'), thread('s2')]);
+    });
+
+    it('does not drop the record by a dropped (stale) list', () => {
+      const order = createThreadListFetchOrder();
+      const first = order.begin('a');
+      const second = order.begin('a');
+      const third = order.begin('a');
+      expect(order.admit('a', second, [thread('s1')])).toBeDefined();
+      order.forgetEntry('a', 's2');
+      // first は second が当たっているので捨てられる。third は削除前に始まっているので除く。
+      expect(order.admit('a', first, [thread('s1'), thread('s2')])).toBeUndefined();
+      expect(order.admit('a', third, [thread('s1'), thread('s2')])).toEqual([thread('s1')]);
+    });
+
+    it('keeps a thread out when a rename response (replace write) lands after the delete', () => {
+      const order = createThreadListFetchOrder();
+      const seq = order.begin('a');
+      order.forgetEntry('a', 's2');
+      // 削除後にリネームの応答が届いて replace の書き込みが入っても、replace は一覧に無い行を足さないので、
+      // 削除前に始まった一覧では除かれたまま(リネームの置き換えが削除済みの行を蘇らせない)。
+      order.noteEntryWrite('a', thread('s2', 'renamed'), 'replace');
+      expect(order.admit('a', seq, [thread('s1'), thread('s2', 'old')])).toEqual([thread('s1')]);
+    });
+
+    it('keeps a row upserted after the delete: the local write is newer than the delete', () => {
+      const order = createThreadListFetchOrder();
+      const seq = order.begin('a');
+      order.noteEntryWrite('a', thread('new', 'sent title'), 'upsert');
+      order.forgetEntry('a', 'new');
+      // 削除のあとで同じ id を送信成功で足し直した(削除より新しい手元の事実)。削除前に始まった一覧にも重なる。
+      order.noteEntryWrite('a', thread('new', 'sent again'), 'upsert');
+      expect(order.admit('a', seq, [thread('s1')])).toEqual([thread('s1'), thread('new', 'sent again')]);
+    });
+
+    it('lets an upsert after the delete replace the stale row the pre-delete list carries', () => {
+      const order = createThreadListFetchOrder();
+      const seq = order.begin('a');
+      order.forgetEntry('a', 'new');
+      order.noteEntryWrite('a', thread('new', 'sent again'), 'upsert');
+      // 応答にある古い行は削除の除去で消え、削除後の upsert が末尾へ足される(古い行のタイトルには戻らない)。
+      expect(order.admit('a', seq, [thread('s1'), thread('new', 'stale')])).toEqual([thread('s1'), thread('new', 'sent again')]);
+    });
+
+    it('records per thread and per project', () => {
+      const order = createThreadListFetchOrder();
+      const a = order.begin('a');
+      const b = order.begin('b');
+      order.forgetEntry('a', 's2');
+      expect(order.admit('b', b, [thread('s1'), thread('s2')])).toEqual([thread('s1'), thread('s2')]);
+      expect(order.admit('a', a, [thread('s1'), thread('s2'), thread('s3')])).toEqual([thread('s1'), thread('s3')]);
+    });
+
+    it('re-records the delete point when the same id is forgotten again', () => {
+      const order = createThreadListFetchOrder();
+      const first = order.begin('a');
+      order.forgetEntry('a', 's2');
+      const second = order.begin('a');
+      order.forgetEntry('a', 's2');
+      // 2 回目の削除は second の開始より後。second の一覧からも除く。
+      expect(order.admit('a', first, [thread('s1'), thread('s2')])).toEqual([thread('s1')]);
+      expect(order.admit('a', second, [thread('s1'), thread('s2')])).toEqual([thread('s1')]);
     });
   });
 
