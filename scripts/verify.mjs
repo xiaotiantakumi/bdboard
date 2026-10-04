@@ -40,7 +40,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { npmRunSpawnSpec } from './npm-command.mjs';
 import { isOrphaned, killProcessTree } from './process-tree.mjs';
-import { acquireVerifySlot, envSlotOptions, SlotWaitTimeoutError } from './verify-slot.mjs';
+import { acquireVerifySlot, envSlotOptions, SLOT_WAIT_TIMEOUT_EXIT_CODE, SlotWaitTimeoutError } from './verify-slot.mjs';
 
 const GRACE_MS = 5_000;
 const ORPHAN_POLL_MS = 1_000;
@@ -141,8 +141,10 @@ if (process.argv.includes('--group-leader')) {
     slot = await acquireVerifySlot(envSlotOptions());
   } catch (error) {
     if (error instanceof SlotWaitTimeoutError) {
+      // bdboard-wj9m: verify の失敗 (1) とは別の終了コードにする (verify は 1 つも走っていない。
+      // merge-pr の着地後検証が、これを main の破損と取り違えて台帳に failure を書かないため)。
       console.error(error.message);
-      process.exit(1);
+      process.exit(SLOT_WAIT_TIMEOUT_EXIT_CODE);
     }
     throw error;
   }
@@ -186,7 +188,10 @@ if (process.argv.includes('--group-leader')) {
     clearInterval(orphanWatch);
     // グループ全体の SIGKILL 猶予を待つ経路でも、スロット自体は今すぐ返す。
     slot.release();
-    process.exit(signal !== null ? (SIGNAL_EXIT_CODES[signal] ?? 1) : (code ?? 1));
+    const exitCode = signal !== null ? (SIGNAL_EXIT_CODES[signal] ?? 1) : (code ?? 1);
+    // 本体ステップが偶然スロット待ちの打ち切りと同じ値で終わっても (例: depcruise は違反数を返す)、
+    // その値は予約済みなので 1 に丸める (bdboard-wj9m)。
+    process.exit(exitCode === SLOT_WAIT_TIMEOUT_EXIT_CODE ? 1 : exitCode);
   });
   leader.on('error', (error) => {
     console.error(`verify: failed to spawn group leader: ${error.message}`);

@@ -316,8 +316,8 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   the GitHub API unreachable). `4` / `6` main is broken → below. `5` finish found the PR unmerged
   (and returned the slot, except under `--repair`). `1` could not run at all (bd unusable, dirty
   worktree, run from the main checkout, `npm ci` failed, untracked files not `.gitignore`d by the
-  tree about to be verified, …) — the message says what to fix; for a landed verify that could not
-  run, fix it and run `npm run merge-pr -- verify <sha>`.
+  tree about to be verified, the verify slot wait timed out, …) — the message says what to fix; for a
+  landed verify that could not run, fix it and run `npm run merge-pr -- verify <sha>`.
 - **The merge line is printed, not run by the script** (decision 4 of bdboard-ulxa §6): if the
   permission classifier refuses `gh pr merge`, running it from inside a script would be a
   bypass. Refused → do not retry, run `finish` (it returns the slot), then the human gate
@@ -326,7 +326,9 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
 - **Layer 3 ledger** = GitHub commit status `bdboard/landed-verify` on each main SHA
   (`gh api repos/xiaotiantakumi/bdboard/commits/<sha>/status`). `finish` checks out the landed tree
   in the PR worktree (`git checkout --detach <sha>`; `npm ci` first if a lockfile differs from what
-  that worktree last installed — a failing `npm ci` is reported, not recorded as `failure`), posts
+  that worktree last installed — a failing `npm ci` is reported, not recorded as `failure`; neither is
+  a verify whose slot wait timed out, which `npm run verify` reports as exit 75 — no verify ran, so
+  only `pending` stays on the ledger, bdboard-wj9m), posts
   `pending`, runs the contract's `verify` while re-posting `pending` every `leaseMinutes / 3` (so a
   verify queued behind the machine-wide verify slots does not look abandoned), posts `success` /
   `failure`, and checks the branch out again. It never touches the main checkout. The verify log
