@@ -40,9 +40,12 @@ export function verifyingStamp() {
   return { ...NO_VERIFY_RECORD, verifyingPid: process.pid, verifyingAt: new Date().toISOString(), verifyingStart: processStartTime(process.pid) };
 }
 
-/** 検証を実行できなかったとき: 実行中の記録を外す (次の finish が RETRY で止まらないように)。 */
-export function clearVerifyRecord(ctx, pr) {
-  writeState(ctx.cwd, pr, { ...readState(ctx.cwd, pr), ...NO_VERIFY_RECORD });
+/**
+ * 検証を実行できなかったとき: 実行中の記録を外す (次の finish が RETRY で止まらないように)。
+ * extra は同時に足す印 (bdboard-ulxa.7: クラス L の failure は landedResult: 'failure'。finish.mjs)。
+ */
+export function clearVerifyRecord(ctx, pr, extra = {}) {
+  writeState(ctx.cwd, pr, { ...readState(ctx.cwd, pr), ...NO_VERIFY_RECORD, ...extra });
 }
 
 /**

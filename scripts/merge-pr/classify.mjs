@@ -13,7 +13,7 @@
 // rebase するか (R) の判定は S2 と同じ:
 //   L = F のうち、main 側と自分の変更ファイルに重なりが無く、どちらの側も hot file に触れておらず、
 //       どちらの側もマージ手順自身 (MERGE_PROCEDURE_FILES) に触れておらず、軽量チェックが中身を見ない
-//       ファイル (merge.lightBlindFiles、既定 scripts/**) に両側が当たっていない。着地予定ツリーで
+//       ファイル (merge.lightBlindFiles、既定 scripts/** harness/** .claude/**) に両側が当たっていない。着地予定ツリーで
 //       軽量チェック (build + lint + check:boundaries) だけを回す
 //   F = それ以外 (重なりあり / 片側でも hot file / 片側でもマージ手順 / 両側が lightBlindFiles)。S2 と同じフル verify
 //

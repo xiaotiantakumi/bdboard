@@ -7,33 +7,20 @@
 // --repair (main 破損の修復 PR 専用、設計 §3.6): PRED_BASE の台帳が failure でも止まらず、
 // `<id> / main-broken <PRED_BASE 12 桁>` の枠を引き継ぐ (無ければその名前で取る)。この枠は
 // gate でも finish でも、修復の着地後検証が success になるまで返さない。
-import { run, shellQuote } from './exec.mjs';
+import { readCommit, shellQuote } from './exec.mjs';
 import { SLOT_MODES } from './config.mjs';
 import { EXIT, fail, fetchedMain, liveMain, refetchMain } from './context.mjs';
 import { getPull } from './github.mjs';
 import { waitForLanded } from './landed.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { lightLandedState, reportLightLanded } from './light-landed.mjs';
-import { brokenMainSteps, mergeInstructions } from './messages.mjs';
+import { brokenMainSteps, keptLightFailureSteps, mergeInstructions } from './messages.mjs';
 import { assertOpenPull } from './prepare.mjs';
 import { recordProblem } from './record.mjs';
 import { acquireSlot, readSlot, releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 
 const CONVENTIONAL = /^[a-z]+(\([^)]+\))?!?: \S/;
-
-/** コミットの木と親 (クラス L の記録の照合用)。読めなければ null。 */
-function readCommit(ctx, sha) {
-  if (typeof sha !== 'string' || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(sha)) {
-    return null;
-  }
-  const shown = run('git', ['show', '-s', '--format=%T %P', sha], { cwd: ctx.cwd });
-  if (shown.status !== 0) {
-    return null;
-  }
-  const [tree, ...parents] = shown.stdout.trim().split(/\s+/);
-  return { tree, parents };
-}
 
 export function mergeCommand(pr, head, title) {
   // 改行を含むタイトルでも印字は必ず 1 行にする。
@@ -93,9 +80,12 @@ export async function gate(ctx, pr, { repair = false } = {}) {
   if (state === null) {
     fail(EXIT.PRECONDITION, `prepare の記録がありません。先に npm run merge-pr -- prepare ${pr}`);
   }
+  if (state.landedResult === 'failure') {
+    fail(EXIT.PRECONDITION, ...keptLightFailureSteps(pr, state)); // finish が failure で残したクラス L の記録 (bdboard-ulxa.7)
+  }
   // 段階が巻き戻された (S2 → S1、S3 → S2 等) か記録が欠けた・食い違う。いまの段階で分類し直す
   // (bdboard-ulxa.3: クラスと記録の組み合わせの判定は record.mjs)。
-  const problem = state.gateAt ? null : recordProblem(ctx.config.mode, state, (sha) => readCommit(ctx, sha));
+  const problem = state.gateAt ? null : recordProblem(ctx.config.mode, state, (sha) => readCommit(ctx.cwd, sha));
   if (problem !== null) {
     audit('gate-record-refused', { pr, id: state.id, class: state.class, mode: ctx.config.mode });
     startOver(ctx, pr, problem);

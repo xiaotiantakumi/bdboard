@@ -15,7 +15,7 @@ import { PREDICTED_MODES } from './config.mjs';
 import { EXIT, fail, fetchedMain, ticketIdFor } from './context.mjs';
 import { assertExternalRefLinked } from './external-ref.mjs';
 import { getLandedStatus, getPull, requiredChecks } from './github.mjs';
-import { brokenMainSteps, rebaseSteps } from './messages.mjs';
+import { brokenMainSteps, keptLightFailureSteps, rebaseSteps } from './messages.mjs';
 import { verifyPredicted } from './predicted.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 
@@ -137,6 +137,9 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
     );
   }
   const prior = readState(ctx.cwd, pr);
+  if (prior?.landedResult === 'failure') {
+    fail(EXIT.PRECONDITION, ...keptLightFailureSteps(pr, prior)); // finish が failure で残したクラス L の記録 (bdboard-ulxa.7)
+  }
   if (prior?.gateAt) {
     fail(
       EXIT.PRECONDITION,
