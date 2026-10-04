@@ -266,9 +266,14 @@ M11 (worker の続行と結末) の読み方の注意 (bdboard-5iwh):
 
 - `ticket` は description の `Worker: <短縮ID>` から取れた確定値、`ticket_hint` は description の先頭の短縮 ID
   (`<ID>: …`、`bdboard-<ID> …`、`Implement|Fix <ID> …`) から取った**未確認**の値で、同時には出ない。ヒントは ID の形をして
-  いるだけで実在を見ていない (`Implement the …` は `bdboard-the` になる)。手順 B は結末を分類する前に、ヒントごとに
-  `bd show` で実在を確かめる。
-- ヒントは `Implement` / `Fix` の動詞が先頭に付いた形も受け付ける (大文字小文字は問わない。動詞が無いときは短縮 ID が先頭)。
+  いるだけで実在を見ていない。手順 B は結末を分類する前に、ヒントごとに `bd show` で実在を確かめる。
+- ヒントは `Implement` / `Fix` の動詞が先頭に付いた形も受け付ける (大文字小文字は問わない)。動詞も `:` も無い、先頭の
+  3〜6 字の小文字の語だけの形 (`<ID> …`) も拾うので、ヒントには ID でない普通の語の偽陽性が混ざる
+  (`review the PR` は `bdboard-review`、`fix: typo` は `bdboard-fix`、`Implement the …` は `bdboard-the`)。
+  取りこぼしを減らすことを優先した仕様で、偽陽性は `bd show` で落とす。
+- 伏せ字は完全な秘密除去ではない。拒否されたコマンドの先頭 2 語では、`npx` の 2 語目 (パッケージ名) と、`-p` のような
+  短いフラグの直後の 1〜2 字の値が出る。description では、16 字未満の値・英字だけの値・全角の `＝` を含む語が出る。
+  `ticket` を取る正規表現が description の全体 (40 字で切る前) を探すのは以前からの挙動で、変えていない。
 - `bdboard-worker` が 80 往復で打ち切られたあとの「作業を進めず報告だけして終了して」という SendMessage も、再開行として
   `continuations` に数えられる。transcript の形では本物の続行と区別できないので、`continuations` は上限として読み、
   区別が要るときは bd のコメント (milestone / PR) と突き合わせる。

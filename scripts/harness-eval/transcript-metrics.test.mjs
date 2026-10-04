@@ -342,11 +342,13 @@ describe.skipIf(!hasPython3())('transcript-metrics.py (bdboard-eydu)', () => {
   it('masks the fake secret shapes that the first allowlist let through, and keeps the command names', () => {
     const out = runJson(PERIOD, { dir: REDACTION_DIR });
     expect(out.files).toEqual({ main: 1, subagent: 0, skipped_lines: 0 });
-    expect(out.permission_denied.deny).toBe(13);
+    expect(out.permission_denied.deny).toBe(15);
     expect(out.permission_denied.by_prefix).toEqual({
       'mysql …': 1, // -pexamplepass: a flag is shown only when it is -x .. -xyz
       'sshpass …': 1, // -pexamplepw
       'printf …': 1, // examplepassword: printf takes a free argument, not a subcommand
+      'claude …': 1, // the second word can be a free-form prompt, so claude / codex are not subcommand CLIs
+      'codex …': 1,
       '… …': 3, // sk-example123abc (3 digits), AKIAEXAMPLEEXAMPLE12 (upper case), xoxb-1234-example (4 digits)
       'git stash': 1,
       'bd -C': 1,
@@ -365,6 +367,7 @@ describe.skipIf(!hasPython3())('transcript-metrics.py (bdboard-eydu)', () => {
       'xoxb-1234',
       'example=value',
       'example-value',
+      'examplepromptword',
     ]) {
       expect(JSON.stringify(out)).not.toContain(secret);
       expect(text).not.toContain(secret);
@@ -375,9 +378,9 @@ describe.skipIf(!hasPython3())('transcript-metrics.py (bdboard-eydu)', () => {
   // (tool をそのまま key にする) と by_tool['…'] が消えて、secret が出力に出る。
   it('masks a denied tool name that is not a plain identifier in by_tool', () => {
     const out = runJson(PERIOD, { dir: REDACTION_DIR });
-    expect(out.permission_denied.by_tool).toEqual({ Bash: 11, Edit: 1, '…': 1 });
+    expect(out.permission_denied.by_tool).toEqual({ Bash: 13, Edit: 1, '…': 1 });
     expect(Object.keys(out.permission_denied.by_tool)).not.toContain('Bash(example=value)');
-    expect(run([...PERIOD], { dir: REDACTION_DIR }).stdout).toContain('by tool: Bash x11, Edit x1, … x1');
+    expect(run([...PERIOD], { dir: REDACTION_DIR }).stdout).toContain('by tool: Bash x13, Edit x1, … x1');
   });
 
   // bdboard-5iwh 項目 3: description は 40 字に切る前に語ごとに伏せる。
@@ -393,6 +396,11 @@ describe.skipIf(!hasPython3())('transcript-metrics.py (bdboard-eydu)', () => {
       // No digit, or a bdboard-<id> shape, stays even when it is long.
       ['Keep abcdefghijklmnopqrst plain', 'Keep abcdefghijklmnopqrst plain'],
       ['Ticket bdboard-cm2q.9.1 kept', 'Ticket bdboard-cm2q.9.1 kept'],
+      // Only runs of ASCII are measured: kana count as letters for isalpha but are not part of a key, so a version
+      // glued to Japanese text is not one 16-character mixed word.
+      ['Setup v5.0.0アップグレードリスクの調査と設計', 'Setup v5.0.0アップグレードリスクの調査と設計'],
+      // A real key with punctuation attached is still masked (the whole ASCII run, parentheses included).
+      ['Rotate (exampleabc123def456) now', 'Rotate … now'],
       // The key starts before the 40th character: cutting first would leave "AKIAE" in the output.
       ['Investigate the flaky behaviour of AKIAEXAMPLEEXAMPLE12 key and more', 'Investigate the flaky behaviour of … key'],
     ];
@@ -403,7 +411,7 @@ describe.skipIf(!hasPython3())('transcript-metrics.py (bdboard-eydu)', () => {
       const out = runJson(['--top', '20', ...PERIOD], { dir });
       expect(out.worker_continuations.items.map((w) => w.description)).toEqual(cases.map(([, expected]) => expected));
       expect(out.subagents.top_tokens.map((s) => s.description).sort()).toEqual(cases.map(([, expected]) => expected).sort());
-      for (const secret of ['example-password', 'example-user', 'EXAMPLE_TOKEN', 'examplevalue', 'AKIAE', 'abcdefghijk12345']) {
+      for (const secret of ['example-password', 'example-user', 'EXAMPLE_TOKEN', 'examplevalue', 'AKIAE', 'abcdefghijk12345', 'exampleabc123def456']) {
         expect(JSON.stringify(out)).not.toContain(secret);
       }
     });
@@ -429,6 +437,17 @@ describe.skipIf(!hasPython3())('transcript-metrics.py (bdboard-eydu)', () => {
       // Neither a secret in the Worker: slot nor a secret-like first word turns into a ticket or a hint.
       ['Worker: AKIAEXAMPLEEXAMPLE12 as an id', 'Worker: … as an id', null, null],
       ['examplesecret1234567: go', '… go', null, null],
+      // A ticket id with punctuation attached reaches 16 characters but is not a key: the bdboard-<id> exemption looks
+      // at the run without its surrounding punctuation.
+      ['Worker: bdboard-ulxa.10, x', 'Worker: bdboard-ulxa.10, x', 'bdboard-ulxa.10', null],
+      ['(Worker: bdboard-cm2q.12) x', '(Worker: bdboard-cm2q.12) x', 'bdboard-cm2q.12', null],
+      ['bdboard-3tw.144: x', 'bdboard-3tw.144: x', null, 'bdboard-3tw.144'],
+      // ticket and ticket_hint are never both set (a leading id plus a Worker: line gives only the ticket), and the
+      // hint is read after the leading spaces are stripped.
+      ['5iwh: then Worker: ab12', '5iwh: then Worker: ab12', 'bdboard-ab12', null],
+      ['   5iwh: after leading spaces', '   5iwh: after leading spaces', null, 'bdboard-5iwh'],
+      // The bare <id> form (no verb, no colon) also picks up a plain word.
+      ['review the PR', 'review the PR', null, 'bdboard-review'],
     ];
     withTmpDir((dir) => {
       cases.forEach(([description], n) => {
@@ -438,10 +457,12 @@ describe.skipIf(!hasPython3())('transcript-metrics.py (bdboard-eydu)', () => {
       expect(out.worker_continuations.items.map((w) => [w.description, w.ticket, w.ticket_hint])).toEqual(
         cases.map(([, shown, ticket, hint]) => [shown, ticket, hint]),
       );
-      expect(out.worker_continuations).toMatchObject({ workers: 14, with_ticket: 2, with_ticket_hint: 7, without_ticket: 5 });
+      expect(out.worker_continuations).toMatchObject({ workers: 20, with_ticket: 5, with_ticket_hint: 10, without_ticket: 5 });
+      // Never both: a worker with a confirmed ticket has no hint.
+      expect(out.worker_continuations.items.filter((w) => w.ticket !== null && w.ticket_hint !== null)).toEqual([]);
 
       const text = run([...PERIOD], { dir }).stdout;
-      expect(text).toContain('workers=14 max_segment=1 breakers=0 continuations=0 resumes=0 ticket=2 ticket_hint=7 no_ticket=5');
+      expect(text).toContain('workers=20 max_segment=1 breakers=0 continuations=0 resumes=0 ticket=5 ticket_hint=10 no_ticket=5');
       expect(text).toContain('h00 ticket=bdboard-ab12 turns=1');
       expect(text).toContain('h02 ticket=- ticket_hint=bdboard-cm2q.15 turns=1');
       expect(text).not.toContain('AKIAEXAMPLE');
