@@ -401,6 +401,14 @@ describe.skipIf(!hasPython3())('transcript-metrics.py (bdboard-eydu)', () => {
       ['Setup v5.0.0アップグレードリスクの調査と設計', 'Setup v5.0.0アップグレードリスクの調査と設計'],
       // A real key with punctuation attached is still masked (the whole ASCII run, parentheses included).
       ['Rotate (exampleabc123def456) now', 'Rotate … now'],
+      // A 16+ character ticket run with a leading bracket stays (the exemption strips both sides, not only the end).
+      ['Fix gate (bdboard-3tw.144) now', 'Fix gate (bdboard-3tw.144) now'],
+      // :// / @ / = are checked on the whole whitespace word, so a value after non-ASCII text is masked too.
+      ['Reset パスワード=ひみつ now', 'Reset … now'],
+      ['Open https://example.com/ファイル/AbCdEf123456 now', 'Open … now'],
+      ['Mail 例え@example.com now', 'Mail … now'],
+      // A full-width ＝ is not one of those marks, but the ASCII run after it is still measured.
+      ['Set TOKEN＝abcdefghij123456 now', 'Set TOKEN＝… now'],
       // The key starts before the 40th character: cutting first would leave "AKIAE" in the output.
       ['Investigate the flaky behaviour of AKIAEXAMPLEEXAMPLE12 key and more', 'Investigate the flaky behaviour of … key'],
     ];
@@ -411,7 +419,7 @@ describe.skipIf(!hasPython3())('transcript-metrics.py (bdboard-eydu)', () => {
       const out = runJson(['--top', '20', ...PERIOD], { dir });
       expect(out.worker_continuations.items.map((w) => w.description)).toEqual(cases.map(([, expected]) => expected));
       expect(out.subagents.top_tokens.map((s) => s.description).sort()).toEqual(cases.map(([, expected]) => expected).sort());
-      for (const secret of ['example-password', 'example-user', 'EXAMPLE_TOKEN', 'examplevalue', 'AKIAE', 'abcdefghijk12345', 'exampleabc123def456']) {
+      for (const secret of ['example-password', 'example-user', 'EXAMPLE_TOKEN', 'examplevalue', 'AKIAE', 'abcdefghijk12345', 'exampleabc123def456', 'ひみつ', 'AbCdEf123456', 'example.com', 'abcdefghij123456']) {
         expect(JSON.stringify(out)).not.toContain(secret);
       }
     });

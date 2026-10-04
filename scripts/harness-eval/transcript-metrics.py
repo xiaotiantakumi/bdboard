@@ -2,7 +2,7 @@
 """Claude Code の transcript (jsonl) から、ハーネス評価 (bdboard-cm2q.9 の手順 B) の数値を出す (bdboard-eydu)。
 
 読み取り専用で、標準ライブラリだけで動く (Python 3.9+)。本文 (プロンプト・返答・コマンドの引数・
-ツール出力) は出力しない。出すのは件数・ID・agentType/model/spawnDepth・meta.json の description
+ツール出力) は、下に挙げる通ってしまう形を除いて出力しない。出すのは件数・ID・agentType/model/spawnDepth・meta.json の description
 (40 字まで)・拒否されたコマンドの先頭 2 語 (許可リスト方式、下記) だけ。判定 (GREEN/YELLOW/RED) はしない。
 数値だけを返し、閾値は評価プロンプト側が持つ。
 
@@ -50,8 +50,9 @@ M11 (評価手順 v2 の「続行と結末」) の読み方:
   - ticket (確定) は description の `Worker: <短縮ID>` から (bdboard-<短縮ID>、無ければ null)。`Worker:` が付いた
     description は一部だけなので、外れたときは先頭の短縮 ID を ticket_hint (未確認、bdboard-<短縮ID>、無ければ
     null) に出す (bdboard-5iwh)。形は `<短縮ID>: …`、`Implement|Fix <短縮ID> …` (`bdboard-` 付きも可)、そして
-    動詞も `:` も無い先頭の 3〜6 字の小文字の語 (`<短縮ID> …`) で、最後の形は ID でない普通の語も拾う
-    (`review the PR` は bdboard-review、`fix: typo` は bdboard-fix、`Implement the …` は bdboard-the)。
+    動詞も `:` も無い先頭の 3〜6 字の小文字英数字の語 (`<短縮ID> …`) で、最後の形は ID でない普通の語も拾う
+    (`review the PR` は bdboard-review、`fix: typo` は bdboard-fix、`Implement the …` は bdboard-the、
+    `864 status` は bdboard-864)。
     語として ID の形をしているだけで bd に実在するかは見ていないので、取りこぼしを減らす代わりに偽陽性を含む。
     手順 B 側が `bd show` で確かめてから分類する。ticket が取れたときの ticket_hint は null (二重に出さない)。
     TICKET_RE は description の全体 (40 字で切る前) から探す。これは 5iwh より前からの挙動で、変えていない。
@@ -72,12 +73,15 @@ SUBCOMMAND_CLIS に入れない (`claude <語>` は `claude …`)。
 これは完全な秘密除去ではなく、通ってしまう形がある:
   - npx の 2 語目 (パッケージ名) は出る。SUBCOMMAND_CLIS に入っているため。
   - -p のような短いフラグの直後の 1〜2 字の値 (`-pab`) は、フラグ形 -[A-Za-z]{1,3} に合うので出る。
-  - description では、16 字未満の値、英字だけの値、全角の `＝` を含む語は伏せられずに出る (下記)。
+  - description では、16 字未満の値と英字だけの値は伏せられずに出る。全角の `＝` の後ろも、ASCII の連なりが 16 字以上で
+    英字と数字が混ざれば伏せる (`TOKEN＝abcdefghij123456` は `TOKEN＝…`)。出るのは、値が日本語などの非 ASCII の文字で
+    16 字未満の連なりに分かれたときだけ (下記)。
 
-サブエージェントの description (meta.json) は 40 字に切る前に伏せる。空白ではなく ASCII の連なり ([!-~]+) ごとに
-見る (日本語の文字を 16 字の数に入れない)。`://` / `@` / `=` を含む連なりと、16 字以上で英字と数字が混ざる連なり
-は … にする。`bdboard-<ID>[.N]` の形は、前後の句読点 (`(` `)` `,` `:` …) を外した形で見て除く。ticket /
-ticket_hint もこの伏せた後の description から取るので、`Worker: <キー>` のような形でも秘密は出ない。
+サブエージェントの description (meta.json) は 40 字に切る前に伏せる。まず空白区切りの語ごとに、`://` / `@` / `=`
+を含む語を丸ごと … にする (値の前に日本語があっても出ない)。残った語は ASCII の連なり ([!-~]+) ごとに見て、16 字以上で
+英字と数字が混ざる連なりを … にする (日本語の文字を 16 字の数に入れない)。`bdboard-<ID>[.N]` の形は、前後の句読点
+(`(` `)` `,` `:` …) を外した形で見て除く。ticket / ticket_hint もこの伏せた後の description から取るので、
+`Worker: <キー>` のような形でも秘密は出ない。
 """
 
 import argparse
@@ -99,7 +103,9 @@ TIMEOUT_RE = re.compile(r"Command timed out after\s+((?:\d+(?:\.\d+)?(?:ms|h|m|s
 DURATION_RE = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)", re.I)
 DENY_RE = re.compile(r"^Permission to use (\S+)(?: with command (.*))? has been denied\.?\s*$", re.S)
 TICKET_RE = re.compile(r"\bWorker:\s*(?:bdboard-)?([A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)")
-# 先頭の短縮 ID (bdboard-5iwh)。`<ID>: …` と `Implement|Fix <ID> …` の形。実在の確認は手順 B が bd show で行う。
+# 先頭の短縮 ID (bdboard-5iwh)。`<ID>: …`、`Implement|Fix <ID> …` (`bdboard-` 付きも可)、動詞も `:` も無い
+# 3〜6 字の小文字英数字の語だけの形 `<ID> …` を拾う。最後の形は ID でない普通の語 (`review the PR`) や、数字だけの語
+# (`864 status` は bdboard-864) も拾う。実在の確認は手順 B が bd show で行う。
 HINT_RE = re.compile(r"^(?:(?i:implement|fix)\s+)?(?:bdboard-)?([a-z0-9]{3,6}(?:\.[0-9]+)*)(?=[:\s]|$)")
 FIRST_WORD_RE = re.compile(r"^[a-z][a-z0-9._-]{0,23}$")
 FIRST_WORD_MAX_DIGITS = 2  # 数字を 3 つ以上含む 1 語目 (sk-…123、xoxb-1234-…) は伏せる
@@ -198,19 +204,25 @@ def command_prefix(command):
     return " ".join(shown)
 
 
+def redact_run(run):
+    """description の ASCII の連なり 1 つ。16 字以上で英字と数字が混ざるなら … にする。`bdboard-<ID>[.N]` の形は、
+    前後の句読点 (`(`・`)`・`,`・`:` …) を外した形で見て、長くても出す。"""
+    mixed = len(run) >= LONG_MIXED_WORD_LENGTH and any(ch.isdigit() for ch in run) and any(ch.isalpha() for ch in run)
+    return MASK if mixed and not TICKET_WORD_RE.fullmatch(run.strip(TICKET_WORD_PUNCTUATION)) else run
+
+
 def redact_word(word):
-    """description の ASCII の連なり 1 つ。URL・メール・NAME=値 (`://` / `@` / `=`) と、16 字以上で英字と数字が混ざる語を
-    … にする。`bdboard-<ID>[.N]` の形は、前後の句読点 (`(`・`)`・`,`・`:` …) を外した形で見て、長くても出す。"""
+    """description の空白区切りの 1 語。URL・メール・NAME=値 (`://` / `@` / `=`) は語ごと … にする (値の前に日本語が
+    あっても出ない)。16 字の規則は ASCII の連なり (`[!-~]+`) ごとに見る。日本語の文字 (isalpha が真) が 16 字の数に
+    入って、`v5.0.0アップグレード…` のような語が丸ごと伏せられないように。`bdboard-<ID>` の形に `://` / `@` / `=` は
+    入らないので、語ごとの判定でチケット ID が消えることは無い。"""
     if "://" in word or "@" in word or "=" in word:
         return MASK
-    mixed = len(word) >= LONG_MIXED_WORD_LENGTH and any(ch.isdigit() for ch in word) and any(ch.isalpha() for ch in word)
-    return MASK if mixed and not TICKET_WORD_RE.fullmatch(word.strip(TICKET_WORD_PUNCTUATION)) else word
+    return re.sub(r"[!-~]+", lambda match: redact_run(match.group(0)), word)
 
 
 def redact_description(text):
-    """空白区切りではなく ASCII の連なり (`[!-~]+`) ごとに見る。日本語の文字 (isalpha が真) が 16 字の数に入って、
-    `v5.0.0アップグレード…` のような語が丸ごと伏せられないように。"""
-    return re.sub(r"[!-~]+", lambda match: redact_word(match.group(0)), text)
+    return re.sub(r"\S+", lambda match: redact_word(match.group(0)), text)
 
 
 def read_meta(path):
