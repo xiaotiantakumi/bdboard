@@ -16,9 +16,9 @@ import { git, run } from './exec.mjs';
 import { EXIT, REMOTE, fail, refetchMain } from './context.mjs';
 import { getPull } from './github.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
-import { lightLandedState, reportLightLanded } from './light-landed.mjs';
-import { brokenMainSteps } from './messages.mjs';
-import { releaseSlot } from './slot.mjs';
+import { forgetLightFailure, lightLandedState, reportLightLanded } from './light-landed.mjs';
+import { brokenMainSteps, keptLightFailureSteps, mainBrokenSlotHeldSteps } from './messages.mjs';
+import { mainBrokenHolder, releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 import { clearVerifyRecord, guardAgainstRunningVerify, recordVerifyGroup, verifyingStamp } from './verify-guard.mjs';
 import { forgetQueueSince } from './verify-queue.mjs';
@@ -91,6 +91,10 @@ export async function finish(ctx, pr) {
   if (initial === null || !initial.gateAt) {
     fail(EXIT.PRECONDITION, `PR #${pr} を gate した記録がありません (枠を取っていない)。`);
   }
+  if (initial.landedResult === 'failure') {
+    // bdboard-ulxa.7: クラス L の failure で残した記録 (下)。やり直すと直った後の main に main-broken の枠を取り直す。
+    fail(EXIT.PRECONDITION, ...keptLightFailureSteps(pr, initial));
+  }
   guardAgainstRunningVerify(pr, initial);
   const state = releaseFirst(ctx, pr, initial);
   const kept = `main は壊れたままなので枠 (${state.holder}) は保持しています。`;
@@ -139,8 +143,11 @@ export async function finish(ctx, pr) {
   if (verified.result === 'failure' && state.class === 'L') {
     // bdboard-ulxa.7: クラス L の failure は記録 (newMain と class: 'L') を残す。lightSlipSteps の「フレークなら
     // merge-pr verify <sha> でやり直し、数えない」を実行した再検証が L を見分けて light-landed の success を最後の
-    // 行に書けるように (消すと failure by=finish が最後の行として残り、すり抜けに数えられる)。success で消す。
-    clearVerifyRecord(ctx, pr);
+    // 行に書けるように (消すと failure by=finish が最後の行として残り、すり抜けに数えられる)。
+    // landedResult: 'failure' の印で finish / gate / prepare のやり直しは止まる (入口)。消えるのはその再検証が
+    // success のとき (verifyLanded の forgetLightFailure) だけ。再検証も failure の確定したすり抜けの記録は残るが、
+    // すり抜けは 1 件ごとに S2 に戻るので、残る数はすり抜けの件数で抑えられる。
+    clearVerifyRecord(ctx, pr, { landedResult: 'failure' });
   } else {
     removeState(ctx.cwd, pr);
   }
@@ -172,14 +179,22 @@ export async function verifyLanded(ctx, sha) {
   const by = `manual ${git(['config', '--default', 'unknown', 'user.name'], { cwd: ctx.cwd })}`;
   const verified = await runLandedVerify(ctx, full, by, { retryHint: `npm run merge-pr -- verify ${full}` });
   audit('landed-verify', { new: full, result: verified.result, by: 'manual', retried: verified.retried ? 1 : undefined });
-  // finish が error で終わったクラス L の着地なら、その記録 (状態ファイル) から L を見分ける。
-  reportLightLanded(lightLandedState(ctx.cwd, full), full, verified.result, 'manual', verified.retried);
+  // finish が error / failure で終わったクラス L の着地、finish が走らなかった L の着地なら、その記録 (状態ファイル) から L を見分ける。
+  const light = lightLandedState(ctx.cwd, full);
+  reportLightLanded(light, full, verified.result, 'manual', verified.retried);
   if (verified.result === 'error') {
     fail(EXIT.USAGE, '着地後検証を実行できませんでした (上のメッセージ参照)。');
   }
   if (verified.result === 'failure') {
     fail(EXIT.LANDED_FAILED, ...brokenMainSteps(full, ctx.repo, ctx.statusContext));
   }
+  forgetLightFailure(ctx.cwd, light, full); // フレークだった L の failure の記録はもう要らない
   say(`着地後検証 success: ${full.slice(0, 12)}`);
+  // finish が failure のときに取った main-broken の枠は、この再検証では返らない。コマンドを案内するだけで返さない
+  // (修復 PR が gate --repair でその枠を引き継いでいると、返すと修復の finish が枠を失う)。
+  const held = mainBrokenHolder(ctx.cwd, full);
+  if (held !== null) {
+    say(...mainBrokenSlotHeldSteps(full, held));
+  }
   return EXIT.OK;
 }

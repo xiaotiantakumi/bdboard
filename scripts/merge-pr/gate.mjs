@@ -14,7 +14,7 @@ import { getPull } from './github.mjs';
 import { waitForLanded } from './landed.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { lightLandedState, reportLightLanded } from './light-landed.mjs';
-import { brokenMainSteps, mergeInstructions } from './messages.mjs';
+import { brokenMainSteps, keptLightFailureSteps, mergeInstructions } from './messages.mjs';
 import { assertOpenPull } from './prepare.mjs';
 import { recordProblem } from './record.mjs';
 import { acquireSlot, readSlot, releaseSlot } from './slot.mjs';
@@ -79,6 +79,9 @@ export async function gate(ctx, pr, { repair = false } = {}) {
   const state = readState(ctx.cwd, pr);
   if (state === null) {
     fail(EXIT.PRECONDITION, `prepare の記録がありません。先に npm run merge-pr -- prepare ${pr}`);
+  }
+  if (state.landedResult === 'failure') {
+    fail(EXIT.PRECONDITION, ...keptLightFailureSteps(pr, state)); // finish が failure で残したクラス L の記録 (bdboard-ulxa.7)
   }
   // 段階が巻き戻された (S2 → S1、S3 → S2 等) か記録が欠けた・食い違う。いまの段階で分類し直す
   // (bdboard-ulxa.3: クラスと記録の組み合わせの判定は record.mjs)。

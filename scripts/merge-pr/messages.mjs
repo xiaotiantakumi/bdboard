@@ -19,11 +19,34 @@ export function brokenMainSteps(sha, repo, context) {
  * (設計 bdboard-ulxa §5 / §6 裁定 7)。main 破損の手順 (brokenMainSteps) に足して出す。
  */
 export function lightSlipSteps(sha) {
+  const short = sha.slice(0, 12);
   return [
-    `${sha.slice(0, 12)} はクラス L (着地予定ツリーの軽量チェックだけで着地) で、その着地後検証が failure です — S3 のすり抜け (軽量チェックが見ない test 等で壊れた) の疑い。`,
-    `  1. まずログで既知のフレーク (bdboard-241s 等) や負荷由来 (並列 verify の時間切れ等) でないことを確かめる。そうなら壊れていないので npm run merge-pr -- verify ${sha} で検証し直す (クラス L の記録は残してあるので、success が light-landed の最後の行になり、すり抜けに数えない)`,
+    `${short} はクラス L (着地予定ツリーの軽量チェックだけで着地) で、その着地後検証が failure です — S3 のすり抜け (軽量チェックが見ない test 等で壊れた) の疑い。`,
+    `  1. まずログで既知のフレーク (bdboard-241s 等) や負荷由来 (並列 verify の時間切れ等) でないことを確かめる。そうなら壊れていないので npm run merge-pr -- verify ${sha} で検証し直す (クラス L の記録は残してあるので、success が light-landed の最後の行になり、すり抜けに数えない)。success なら finish が取った main-broken の枠が残るので、bd merge-slot check で "… / main-broken ${short}" を確かめ、gate --repair 済みの修復 PR が無ければ bd merge-slot release --holder '<holder>'`,
     '  2. そうでなければすり抜け 1 件で S2 に戻す: 下の修復 PR (fix-forward / revert) に .claude/bdboard-harness.json の merge.mode を "S2" にする 1 行を含め、議長に報告する',
-    `  3. 同じ着地コミットの failure を finish と別の merger の自己修復が両方報告することがある (finish の verify が LEASE より長引くと重なる)。bd search "main 破損: ${sha.slice(0, 12)}" --status open で main 破損の bug や S2 戻しの修復 PR が既に開いていないか確かめ、開いていれば重ねて作らない`,
+    `  3. 同じ着地コミットの failure を別の merger も報告することがある (gh pr merge から LEASE 以上あとに finish を始めた compact・遅延 / pending を書く前の npm ci が LEASE より長い / pending の更新 heartbeat の投稿が LEASE より長く失敗 / 自己修復が報告したあとで遅れて finish が走った)。起票と修復 PR の前に bd search "main 破損: ${short}" --status open、bd merge-slot check (枠の holder が "… / main-broken ${short}")、gh pr list --state open で既に誰かが対応していないか確かめ、していれば重ねて作らない`,
+  ];
+}
+
+/**
+ * bdboard-ulxa.7: finish が failure で残したクラス L の記録 (landedResult: 'failure') を持つ PR に、prepare / gate / finish
+ * をやり直そうとしたときの案内。マージ済みで着地後検証が終わっている PR なので、枠を取り直す手順には進ませない
+ * (finish をやり直すと、直した後の main に main-broken の枠をもう一度取ってしまう)。
+ */
+export function keptLightFailureSteps(pr, state) {
+  const landed = String(state.newMain ?? '');
+  return [
+    `PR #${pr} はクラス L でマージ済みで、その着地後検証 (${landed.slice(0, 12)}) は failure で終わっています。prepare / gate / finish はやり直せません。`,
+    `  - フレーク・負荷由来なら: npm run merge-pr -- verify ${landed} (success でこの記録を消します)`,
+    '  - すり抜けなら: 「When main is broken」の手順 (docs/GIT-WORKFLOW.md) の修復 PR で直し、merge.mode を "S2" に戻す',
+  ];
+}
+
+/** bdboard-ulxa.7: 手動の再検証が success でも、finish が取った main-broken の枠は自動では返らない。 */
+export function mainBrokenSlotHeldSteps(sha, holder) {
+  return [
+    `${sha.slice(0, 12)} の枠 (${holder}) は finish が failure のときに取った main-broken の枠で、この再検証が success でも返されません。`,
+    `この main を直す修復 PR を gate --repair 済みでなければ (その枠は修復の finish が返します): bd merge-slot release --holder '${holder}'`,
   ];
 }
 

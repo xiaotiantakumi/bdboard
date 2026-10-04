@@ -547,7 +547,17 @@ File overlap still never decides whether to merge without a rebase; it only pick
   one slip rolls S3 back to S2. Putting them in the list costs a full verify (what S2 charges anyway)
   only for the rare pair of PRs that both touch the set — one side only (a pack change always ships
   its injected copy in the same PR) stays L. A project that does not want this sets
-  `merge.lightBlindFiles` in its contract, which replaces the whole list.
+  `merge.lightBlindFiles` in its contract, which replaces the whole list. Limits of this list, kept on
+  purpose:
+  - Cost is small: over the 195 most recently merged PRs (the ulxa.7 review) the new default flips
+    only 5 from L to F, so S3 is not defeated by it.
+  - The rule is "any pattern on each side", with no pattern groups, so it also flips unrelated pairs:
+    `scripts/**` on one side and `.claude/agents/*.md` on the other make an F although nothing ties
+    them. Pattern groups would stop that but add a second thing to maintain; the price is one extra
+    full verify, which S2 charges anyway.
+  - Coupling between `src/infrastructure/harness/*.test.ts` and the harness files is **not** covered:
+    `src/**` is not blind (tsc and depcruise read it), so a PR that touches the tests and a PR that
+    touches the files they read can still both be L. Only the landed full verify catches that.
 
 - **The light result is never a verify result.** Class L records `lightTree` / `lightCommit` /
   `lightCheck` / `lightCheckedAt` / `lightCheckSecs` (class F keeps `predictedTree` /
@@ -576,11 +586,14 @@ File overlap still never decides whether to merge without a rebase; it only pick
   SHA and treats a `failure` as the slip, exactly like `finish`.
 - **An L whose `finish` never ran stays L too (bdboard-ulxa.7).** If the chair dies between
   `gh pr merge` and `finish` (a crash, a compact, a spent budget), the record is still the one `gate`
-  wrote: `class: "L"`, `lightTree`, `predBase`, no `newMain`. After the lease, `merge-pr verify <sha>`
-  or the next `gate`'s self-heal of that SHA matches it by content — the landed commit's tree equals
-  `lightTree` and its first parent equals `predBase` (the subject's `(#N)` is not used: `--subject`
-  can be anything) — and reports the slip the same way. Without this the failure looked like an
-  ordinary broken main and nobody was told to go back to S2. Limits: the records live in the git
+  wrote: `class: "L"`, `lightTree`, `predBase`, `gateAt`, no `newMain`. After the lease, `merge-pr
+  verify <sha>` or the next `gate`'s self-heal of that SHA matches it by content — the landed commit's
+  tree equals `lightTree` and its first parent equals `predBase` (the subject's `(#N)` is not used:
+  `--subject` can be anything) — and reports the slip the same way. Only a gated record counts: a
+  `prepare`-only record (no `gateAt`) with the same tree and parent is not matched. If several gated
+  records match, the message names the candidate PR numbers and the one with the latest `gateAt` wins
+  (the larger PR number on a tie), so the readdir order never decides. Without this the failure looked
+  like an ordinary broken main and nobody was told to go back to S2. Limits: the records live in the git
   common dir of the clone that ran `gate`, so a self-heal from **another clone** cannot see them
   (it reports an ordinary broken main; whoever repairs it should look in the merging clone's audit
   log for a `prepare … class=L` of the PR that landed that SHA), and a landed tree that differs from
@@ -597,17 +610,35 @@ File overlap still never decides whether to merge without a rebase; it only pick
   `gate` is sent back to `prepare` (exit 75), where it becomes F and gets the full verify. A PR already
   gated finishes normally.
 - **A flake re-verify un-counts the slip (bdboard-ulxa.7).** On a class-L `failure`, `finish` keeps the
-  record (`newMain` and `class: "L"`, with the running-verify mark cleared); it removes it only on
-  `success` (and on `failure` for every other class). So the `merge-pr verify <sha>` you run after
-  ruling out a flake finds the record and audits `light-landed … result=success by=manual` as the
-  last line for that `new=`; the earlier `result=failure by=finish` is then not a slip (count the last
-  `success` / `failure` per `new=`). The `main-broken` slot `finish` took is not released by that
-  re-verify: release it by hand (`bd merge-slot release --holder '<id> / main-broken <sha12>'`).
-- **Duplicate reports (bdboard-ulxa.7).** If `finish`'s landed verify outlasts the lease (8 minutes), the
-  next merger's `gate` self-heals the same SHA and both print the slip rule, so two people could open
-  a repair PR that sets `merge.mode` back to `"S2"`. The rule's third step says to check first
-  (`bd search "main 破損: <sha12>" --status open`, and the open PR list) and not to open a second
-  one if the bug or the repair PR already exists. Nothing enforces it beyond that sentence.
+  record (`newMain` and `class: "L"`, the running-verify mark cleared) and stamps it
+  `landedResult: "failure"` (on `failure` for every other class it removes the record, as before). So
+  the `merge-pr verify <sha>` you run after ruling out a flake finds the record and audits
+  `light-landed … result=success by=manual` as the last line for that `new=`; the earlier
+  `result=failure by=finish` is then not a slip (count the last `success` / `failure` per `new=`).
+  That successful re-verify also removes the record, unless a `finish` is still verifying (a live
+  `verifyingPid`). The record of a **confirmed** slip (the re-verify fails too) stays; they are bounded
+  by the number of slips, and every slip rolls back to S2.
+  - **`finish`, `gate` and `prepare` refuse a record stamped `landedResult: "failure"`** (exit 2, a
+    message that it is a finished class-L failure and points at `merge-pr verify <newMain>` and the
+    repair procedure). Without that, a re-run of `finish <N>` (the record still has `gateAt`,
+    `releasedAt` and `newMain`) would verify the old SHA again and, on a failure, take `main-broken
+    <sha12>` on a main that is already repaired, blocking every `gate`.
+  - **The `main-broken` slot is not released by the re-verify**, on purpose: a repair PR gated with
+    `--repair` has taken that slot over, and releasing it would cost the repair's `finish` its slot. On
+    a `success`, `merge-pr verify <sha>` reads the slot and, if its holder ends in `/ main-broken
+    <sha12>` for that SHA, prints the exact `bd merge-slot release --holder '<holder>'` (the slip
+    rule's step 1 says the same: check with `bd merge-slot check`, release unless a `--repair`-gated
+    repair PR exists). It only prints.
+- **Duplicate reports (bdboard-ulxa.7).** `finish`'s own landed verify cannot outlast the lease: the
+  runner refreshes the ledger's `pending` every lease/3. The real overlaps, where `finish` and another
+  merger's self-heal (or a second `verify`) report the same SHA, are: `finish` started more than a
+  lease after `gh pr merge` (a compact, a delay); an `npm ci` before the first `pending` that takes
+  longer than the lease; the heartbeat posts failing for longer than the lease; and a self-heal that
+  already attributed the slip followed by a late recovery `finish <N>`. Two people could then open a
+  repair PR that sets `merge.mode` back to `"S2"`. The rule's third step (the same sentence in the CLI
+  and here) says to check first: `bd search "main 破損: <sha12>" --status open`, `bd merge-slot check`
+  (holder `… / main-broken <sha12>`) and `gh pr list --state open`, and not to open a second bug or
+  repair PR if one exists. Nothing enforces it beyond that sentence.
 - **Exit codes** as in S2; `3` also means "the light check failed on the predicted tree" (log:
   `<git common dir>/bdboard-merge/light-check-pr<N>-<tree12>.log`).
 - `prepare --dry-run` also prints the S3 class ("参考: merge.mode が S3 ならクラス=…") in S0–S2, and

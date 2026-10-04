@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import { lightLandedState, reportLightLanded } from './merge-pr/light-landed.mjs';
+import { forgetLightFailure, lightLandedState, reportLightLanded } from './merge-pr/light-landed.mjs';
 
 import {
   DEFAULT_HOT_FILES,
@@ -468,10 +468,19 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     expect(finished.stderr).toContain('S3 のすり抜け');
     expect(finished.stderr).toContain('既知のフレーク');
     expect(finished.stderr).toContain('修復 PR (fix-forward / revert) に .claude/bdboard-harness.json の merge.mode を "S2" にする 1 行を含め');
-    // bdboard-ulxa.7 (指摘 9): finish の verify が LEASE より長いと self-heal と重なり、2 者が S2 戻しの修復を開きうる。
-    expect(finished.stderr).toContain('finish と別の merger の自己修復が両方報告することがある');
-    expect(finished.stderr).toContain(`bd search "main 破損: ${landed.slice(0, 12)}" --status open`);
-    expect(finished.stderr).toContain('開いていれば重ねて作らない');
+    // bdboard-ulxa.7 (指摘 9): 別の merger も同じ着地コミットを報告しうる。実際に重なる条件と、起票前に見る 3 か所 (文言は docs と同じ)。
+    const step3 = finished.stderr.split('\n').find((line) => line.includes('  3. 同じ着地コミットの failure を別の merger も報告することがある'));
+    expect(step3).toBeDefined();
+    for (const overlap of ['gh pr merge から LEASE 以上あとに finish を始めた', 'pending を書く前の npm ci が LEASE より長い', 'heartbeat の投稿が LEASE より長く失敗', '自己修復が報告したあとで遅れて finish が走った']) {
+      expect(step3).toContain(overlap);
+    }
+    expect(step3).not.toContain('finish の verify が LEASE より長引く'); // finish の verify 自体は pending を LEASE/3 ごとに更新するので重ならない
+    expect(step3).toContain(`bd search "main 破損: ${landed.slice(0, 12)}" --status open`);
+    expect(step3).toContain(`bd merge-slot check (枠の holder が "… / main-broken ${landed.slice(0, 12)}")`);
+    expect(step3).toContain('gh pr list --state open');
+    expect(step3).toContain('していれば重ねて作らない');
+    // フレークの再検証 (手順 1) は success でも main-broken の枠が残るので、確かめて返すコマンドも案内する。
+    expect(finished.stderr).toContain(`bd merge-slot check で "… / main-broken ${landed.slice(0, 12)}" を確かめ、gate --repair 済みの修復 PR が無ければ bd merge-slot release --holder '<holder>'`);
     expect(posted().map(({ sha, state }) => [sha, state])).toEqual([
       [landed, 'pending'],
       [landed, 'failure'],
@@ -482,7 +491,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
 
   // 指摘 4: L の failure で finish が状態を消すと、フレークの再検証 (merge-pr verify <sha>) が L を見分けられず、
   // light-landed の success を書けない → result=failure by=finish が最後の行として残り、すり抜けに数えられていた。
-  it('S3 flake: finish keeps the L record on a failure, so the re-verify writes a light-landed success as the last line (a non-L failure still removes the record)', () => {
+  it('S3 flake: finish keeps the L record on a failure, so the re-verify writes a light-landed success as the last line and then removes the record (a non-L failure removes it at once)', () => {
     setup({ merge: S3 });
     const moved = advanceMain({ 'peer.txt': 'peer\n' });
     expect(run(['prepare', String(PR)]).status).toBe(0);
@@ -490,19 +499,41 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     expect(run(['gate', String(PR)]).status).toBe(0);
     const landed = landSquash();
     expect(run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' }).status).toBe(6);
-    // 実行中の印 (verifyingPid) は外れ、class と着地コミットが残る。
-    expect(readState()).toMatchObject({ class: 'L', newMain: landed, verifyingPid: null });
+    // 実行中の印 (verifyingPid) は外れ、class と着地コミットが残り、failure の印が付く。
+    expect(readState()).toMatchObject({ class: 'L', newMain: landed, verifyingPid: null, landedResult: 'failure' });
+    const holder = `demo-1 / main-broken ${landed.slice(0, 12)}`;
+    expect(readFake().slot.holder).toBe(holder);
+    const acquires = calls('bd', 'acquire').length; // gate の枠と、finish が failure で取った main-broken の枠
 
     const again = run(['verify', landed]); // ログでフレークと分かった: 検証し直しは success
     expect(again.status).toBe(0);
-    const lines = auditText()
-      .split('\n')
-      .filter((line) => line.includes('\tlight-landed\t') && line.includes(`new=${landed}`));
-    expect(lines.map((line) => /result=(\w+)\tby=(\w+)/.exec(line)?.slice(1))).toEqual([
+    const lightLines = () =>
+      auditText()
+        .split('\n')
+        .filter((line) => line.includes('\tlight-landed\t') && line.includes(`new=${landed}`))
+        .map((line) => /result=(\w+)\tby=(\w+)/.exec(line)?.slice(1));
+    expect(lightLines()).toEqual([
       ['failure', 'finish'],
       ['success', 'manual'],
     ]);
     expect(posted().at(-1)).toMatchObject({ sha: landed, state: 'success' });
+    expect(existsSync(stateFile())).toBe(false); // フレークと確かめられた failure の記録は消える
+    // main-broken の枠は自動では返さず、返すコマンドをそのまま印字する (修復 PR が引き継いでいると返してはいけない)。
+    expect(again.stderr).toContain(`bd merge-slot release --holder '${holder}'`);
+    expect(readFake().slot.holder).toBe(holder);
+    // 再実行しても 2 つ目の failure の行は付かず、枠も取り直さない。
+    const rerun = run(['finish', String(PR)]);
+    expect(rerun.status).toBe(2);
+    expect(rerun.stderr).toContain('gate した記録がありません');
+    expect(lightLines()).toEqual([
+      ['failure', 'finish'],
+      ['success', 'manual'],
+    ]);
+    expect(calls('bd', 'acquire')).toHaveLength(acquires);
+    // 対照: 別の SHA の success では、その SHA の main-broken の枠が無いので何も印字しない。
+    const other = run(['verify', moved]);
+    expect(other.status).toBe(0);
+    expect(other.stderr).not.toContain('merge-slot release');
 
     // 対照: クラス N の failure は従来どおり記録を消す (消えるのは L だけを残す変更)。
     setup({ merge: S3 });
@@ -511,6 +542,38 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     simulateMerge();
     expect(run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' }).status).toBe(6);
     expect(existsSync(stateFile())).toBe(false);
+  });
+
+  // レビュー (major): 残した記録は gateAt / releasedAt / newMain を持つので、そのままだと finish <N> をやり直せてしまい、
+  // 直った後の main に main-broken の枠を取り直して全 gate を止める。origin/main では記録が無く exit 2 だった。
+  it('S3 failure record: after a class-L failure, finish / gate / prepare stop with exit 2 pointing at merge-pr verify, take no slot, and a confirmed slip keeps the record', () => {
+    setup({ merge: S3 });
+    const moved = advanceMain({ 'peer.txt': 'peer\n' });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    writeFake({ statuses: { [moved]: [status('success')] } });
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = landSquash();
+    expect(run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' }).status).toBe(6);
+    const acquires = calls('bd', 'acquire').length;
+    const verifiedBefore = verified();
+    const auditBefore = auditText();
+
+    for (const phase of ['finish', 'gate', 'prepare']) {
+      const rerun = run([phase, String(PR)]);
+      expect(rerun.status, phase).toBe(2);
+      expect(rerun.stderr, phase).toContain('その着地後検証');
+      expect(rerun.stderr, phase).toContain('prepare / gate / finish はやり直せません');
+      expect(rerun.stderr, phase).toContain(`npm run merge-pr -- verify ${landed}`);
+      expect(rerun.stderr, phase).not.toContain('枠を保持');
+    }
+    expect(calls('bd', 'acquire')).toHaveLength(acquires); // main-broken の枠を取り直していない
+    expect(verified()).toEqual(verifiedBefore); // 同じ SHA をもう一度検証していない
+    expect(auditText().slice(auditBefore.length)).not.toMatch(/\tlight-landed\t|\tlanded-verify\t/);
+    expect(readFake().slot.holder).toBe(`demo-1 / main-broken ${landed.slice(0, 12)}`);
+
+    // 再検証も failure (確定したすり抜け): 記録は残る (すり抜けの件数で抑えられる)。
+    expect(run(['verify', landed], { FAKE_VERIFY_EXIT: '1' }).status).toBe(6);
+    expect(readState()).toMatchObject({ class: 'L', newMain: landed, landedResult: 'failure' });
   });
 
   // 指摘 2: gate → gh pr merge の後、finish が newMain を書く前に落ちると、状態ファイルは gate のまま (newMain なし)。
@@ -540,26 +603,89 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     const write = (patch) => writeFileSync(stateFile(), JSON.stringify({ ...record, ...patch }));
     const other = 'c'.repeat(40);
 
+    // prepare しただけで gate していない記録 (gateAt なし) は、同じ木と親でも引かない (マージ前の記録に帰属しない)。
     write({});
+    expect(record.gateAt).toBeUndefined();
+    expect(lightLandedState(work, landed)).toBeNull();
+    write({ gateAt: 'x' });
     expect(lightLandedState(work, landed)).toMatchObject({ pr: PR, class: 'L' });
     write({ gateAt: 'x', releasedAt: 'x', holder: 'demo-1 / PR#7' });
     expect(lightLandedState(work, landed)).toMatchObject({ pr: PR, holder: 'demo-1 / PR#7' });
     // 照合が外れる記録は帰属しない (別の PR・別の木・別のベース・L でない・読めないコミット)。
-    write({ lightTree: other });
+    write({ gateAt: 'x', lightTree: other });
     expect(lightLandedState(work, landed)).toBeNull();
-    write({ predBase: other });
+    write({ gateAt: 'x', predBase: other });
     expect(lightLandedState(work, landed)).toBeNull();
-    write({ class: 'F' });
+    write({ gateAt: 'x', class: 'F' });
     expect(lightLandedState(work, landed)).toBeNull();
-    write({});
+    write({ gateAt: 'x' });
     expect(lightLandedState(work, other)).toBeNull();
     expect(lightLandedState(work, 'not-a-sha')).toBeNull();
     // newMain を持つ記録は、その SHA でだけ引く (木と親が合っていても別の着地コミットなら内容では引かない)。
-    write({ newMain: other });
+    write({ gateAt: 'x', newMain: other });
     expect(lightLandedState(work, landed)).toBeNull();
     expect(lightLandedState(work, other)).toMatchObject({ pr: PR });
     write({ newMain: landed, lightTree: other });
     expect(lightLandedState(work, landed)).toMatchObject({ pr: PR });
+  });
+
+  // レビュー (nit): 同じ木と親に合う gate 済みの記録が複数あっても、readdir の順で黙って決めない。
+  it('lightLandedState: when several gated L records match the landed commit, it says so and picks the most recent gateAt', () => {
+    setup({ merge: S3 });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    const record = readState();
+    const landed = landSquash();
+    const dir = path.dirname(stateFile());
+    const put = (pr, gateAt) => writeFileSync(path.join(dir, `pr-${pr}.json`), JSON.stringify({ ...record, pr, id: `demo-${pr}`, gateAt }));
+    const written = [];
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => written.push(String(chunk)));
+    try {
+      // PR 番号の小さい方が新しい: 番号順 (readdir の順) では決まらない。
+      put(8, '2026-10-02T00:00:00.000Z');
+      put(9, '2026-10-01T00:00:00.000Z');
+      expect(lightLandedState(work, landed)).toMatchObject({ pr: 8 });
+      put(9, '2026-10-03T00:00:00.000Z');
+      expect(lightLandedState(work, landed)).toMatchObject({ pr: 9 });
+      put(8, '2026-10-03T00:00:00.000Z'); // 同時刻なら PR 番号の大きい方
+      expect(lightLandedState(work, landed)).toMatchObject({ pr: 9 });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written).toHaveLength(6); // 3 回の照会 × 2 行
+    expect(written.slice(0, 2).join('')).toBe(
+      `merge-pr: 注意: ${landed.slice(0, 12)} に合うクラス L の記録が複数あります (PR #8, #9)。\nmerge-pr: gate の時刻が最も新しい PR #8 のものとして扱います。\n`,
+    );
+    expect(written[3]).toBe('merge-pr: gate の時刻が最も新しい PR #9 のものとして扱います。\n');
+    expect(written[5]).toBe('merge-pr: gate の時刻が最も新しい PR #9 のものとして扱います。\n');
+    // 1 件だけなら何も言わない (上の spy の外)。
+    rmSync(path.join(dir, 'pr-9.json'));
+    rmSync(path.join(dir, 'pr-8.json'));
+    put(8, 'x');
+    expect(lightLandedState(work, landed)).toMatchObject({ pr: 8 });
+  });
+
+  // レビュー (minor): 手動の再検証が success のとき、フレークと確かめられた failure の記録だけを消す。
+  it('forgetLightFailure: removes only a finish-kept failure record of that SHA whose finish is not still verifying', () => {
+    setup({ merge: S3 });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    const record = readState();
+    const landed = landSquash();
+    const kept = { ...record, gateAt: 'x', newMain: landed, landedResult: 'failure', verifyingPid: null };
+    const attempt = (patch, sha = landed) => {
+      writeFileSync(stateFile(), JSON.stringify({ ...kept, ...patch }));
+      forgetLightFailure(work, { ...kept, ...patch }, sha);
+      return existsSync(stateFile());
+    };
+    expect(attempt({})).toBe(false); // フレークだった failure の記録
+    expect(attempt({ landedResult: undefined })).toBe(true); // error で残した記録 (finish のやり直しの対象) は消さない
+    expect(attempt({ class: 'F' })).toBe(true);
+    expect(attempt({}, 'd'.repeat(40))).toBe(true); // 別の SHA の再検証では消さない
+    // finish がまだ検証を実行中 (生きている PID・新しい記録) の記録は消さない。
+    expect(attempt({ verifyingPid: process.ppid, verifyingAt: new Date().toISOString() })).toBe(true);
+    expect(attempt({ verifyingPid: 2 ** 22 + 12345, verifyingAt: new Date().toISOString() })).toBe(false); // 居ない PID の古い印は無視
+    expect(forgetLightFailure(work, null, landed)).toBeUndefined(); // 記録が無くても投げない
   });
 
   it('S3 slip after an error: finish keeps the L record when the landed verify cannot run, and merge-pr verify <sha> reports a failure as the slip', () => {

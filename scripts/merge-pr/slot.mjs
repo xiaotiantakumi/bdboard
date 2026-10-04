@@ -29,6 +29,12 @@ export function readSlot(cwd) {
   }
 }
 
+/** sha の main-broken の枠 (`… / main-broken <sha12>`) を今握っている holder。握っていなければ (読めなくても) null。 */
+export function mainBrokenHolder(cwd, sha) {
+  const slot = readSlot(cwd);
+  return slot.ok && slot.holder?.endsWith(` / main-broken ${sha.slice(0, 12)}`) ? slot.holder : null;
+}
+
 /**
  * 枠を取る。取れたら { ok: true }。期限切れ・main が動いた・bd が使えないときは
  * { ok: false, reason: 'timeout' | 'moved' | 'error', holder, detail }。
