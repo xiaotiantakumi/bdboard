@@ -108,6 +108,34 @@ describe('hasVisibleText', () => {
   });
 });
 
+describe('hasVisibleText — combining marks and the braille blank need something visible to attach to (bdboard-4lea)', () => {
+  // 結合文字 (\p{M}) と点字の空白は、手前に付く文字が無ければ何も見えない。1 つの文字ごとに 1 行。
+  it.each([
+    ['a lone combining acute accent (U+0301)', '\u{0301}'],
+    ['a lone Thai combining mark (U+0E31)', '\u{0E31}'],
+    ['a lone enclosing mark (U+20DD)', '\u{20DD}'],
+    ['VARIATION SELECTOR-16 alone (U+FE0F)', '\u{FE0F}'],
+    ['COMBINING GRAPHEME JOINER alone (U+034F)', '\u{034F}'],
+    ['BRAILLE PATTERN BLANK alone (U+2800)', '\u{2800}'],
+    ['KHMER VOWEL INHERENT AQ alone (U+17B4)', '\u{17B4}'],
+    ['an ideographic variation selector alone (U+E0100)', '\u{E0100}'],
+    ['marks mixed with whitespace and joiners', ' \u{FE0F}\u{200D}\u{2800}\u{0301}\t'],
+  ])('is false for %s', (_name, value) => {
+    expect(hasVisibleText(value)).toBe(false);
+  });
+
+  it('stays true for text that has a visible character, including emoji sequences and accents', () => {
+    expect(hasVisibleText('\u{200D}\u{1F469}\u{200D}\u{1F4BB}')).toBe(true); // 先頭に ZWJ が付いた絵文字の連なり
+    expect(hasVisibleText('\u{1F469}\u{200D}\u{1F4BB}')).toBe(true);
+    expect(hasVisibleText('e\u{0301}')).toBe(true); // é の分解形
+    expect(hasVisibleText('\u{00E9}')).toBe(true); // é の合成形
+    expect(hasVisibleText('\u{2764}\u{FE0F}')).toBe(true); // ❤ + VS16
+    expect(hasVisibleText('\u{845B}\u{E0100}')).toBe(true); // 葛 + IVS
+    expect(hasVisibleText('\u{0301} x')).toBe(true); // 結合文字のほかに、見える文字がある
+    expect(hasVisibleText('\u{2800}\u{2801}')).toBe(true); // 点字 U+2801 (点が 1 つ) は見える
+  });
+});
+
 describe('stripNonLineText', () => {
   it('removes every character isSingleLineText rejects, newlines included, and keeps the rest', () => {
     expect(stripNonLineText('a\nb\r\nc\u200dd\u202ee\u3164f\u{e0061}g')).toBe('abcdefg');
@@ -177,6 +205,17 @@ describe('foldHomePaths', () => {
     ['/home/linuxbrew/.linuxbrew/bin/x', '~/.linuxbrew/bin/x'],
     // 引数が名前に巻き込まれる (ユーザー名を残さないことを優先する)
     ['bash C:\\Users\\example-user --flag', 'bash ~/'],
+    ['C:\\Users\\John Smith --flag', '~/'],
+    // Windows の名前は空白を含みうるが、空白の直後がドライブ文字か / \ なら次のパスの頭なので、そこで名前を終える (bdboard-4lea)
+    ['cd C:\\Users\\example-user && node C:\\Users\\example-user\\proj\\x.js', 'cd ~/ ~/proj\\x.js'],
+    ['C:\\Users\\example-user D:\\Users\\example-user\\x', '~/ ~/x'],
+    ['cp C:\\Users\\example-user /home/example-user/x', 'cp ~/ ~/x'],
+    ['C:\\Users\\example-user D:/Users/example-other/x', '~/ ~/x'],
+    ['C:\\Users\\example-user /Users/example-other/x', '~/ ~/x'],
+    ['C:\\Users\\example-user  D:\\Users\\example-user\\x', '~/ ~/x'],
+    ['C:\\Users\\John Smith D:\\Users\\example-user\\x', '~/ ~/x'],
+    ['C:\\Users\\example-user \\\\wsl$\\Ubuntu\\home\\example-other\\x', '~/ ~/x'],
+    ['C:\\Users\\example-user D:\\data', '~/ D:\\data'],
     ['two /Users/a/x.sh and /home/b/y.sh', 'two ~/x.sh and ~/y.sh'],
     ['  /Users/example-user/x.sh  ', '  ~/x.sh  '],
   ])('%s -> %s', (input, expected) => {
@@ -233,6 +272,34 @@ describe('foldHomePaths', () => {
     expect(foldHomePaths('C:\\Users\\John Smith;rest')).toBe('~/;rest');
   });
 
+  // bdboard-4lea: 空白を含む Windows の名前が、空白のあとの次のパスの頭 (ドライブ文字・/・\) まで飲み込むと、
+  // 次のパスのユーザー名が残った ("cd ~/:\Users\alice\proj\x.js")。どの形でも、ユーザー名は 1 つも残らない。
+  it.each([
+    ['a second Windows path after a command', 'cd C:\\Users\\example-user && node C:\\Users\\example-user\\proj\\x.js'],
+    ['a second drive path right after the bare root', 'C:\\Users\\example-user D:\\Users\\example-user\\x'],
+    ['a POSIX path right after the bare root', 'cp C:\\Users\\example-user /home/example-user/x'],
+    ['two users on two drives', 'C:\\Users\\example-user D:\\Users\\example-other\\x'],
+  ])('leaves no user name behind when %s follows a space', (_label, input) => {
+    const folded = foldHomePaths(input);
+    expect(folded).not.toContain('example-user');
+    expect(folded).not.toContain('example-other');
+    expect(folded).not.toContain('Users');
+    expect(folded).not.toContain(':\\');
+  });
+
+  // 既知の取りこぼし (docs/ISSUE-REPORTING.md の「ホーム配下のパス」): ` ) { } ' は Windows のアカウント名に使えるが、
+  // 名前の終わりの記号でもある。名前の途中にあると、そこから先の名前が残る。名前の終わりの記号のテスト
+  // ("C:\Users\u)rest" が "~/)rest") と両立しないので、これらを名前に入れる案は見送った。変えるなら docs も直す。
+  it.each([
+    ["a quote inside the name (O'Brien-like)", "C:\\Users\\example'user\\x", "~/'user\\x"],
+    ['a closing parenthesis inside the name', 'C:\\Users\\example)user\\x', '~/)user\\x'],
+    ['a closing brace inside the name', 'C:\\Users\\example}user\\x', '~/}user\\x'],
+    ['a backtick inside the name', 'C:\\Users\\example`user\\x', '~/`user\\x'],
+    ['a name that starts with a brace is not folded at all', 'C:\\Users\\{example-user}\\x', 'C:\\Users\\{example-user}\\x'],
+  ])('known miss: %s', (_label, input, expected) => {
+    expect(foldHomePaths(input)).toBe(expected);
+  });
+
   it('is linear on long hostile input', () => {
     const hostile = [
       `/Users/${'a'.repeat(100_000)}`,
@@ -240,6 +307,8 @@ describe('foldHomePaths', () => {
       `C:\\Users\\${' '.repeat(100_000)}`,
       `${'/Volumes/x '.repeat(10_000)}`,
       `${'\\\\wsl$\\'.repeat(10_000)}`,
+      `${'C:\\Users\\a D:\\Users\\b '.repeat(10_000)}`,
+      `C:\\Users\\${'a '.repeat(50_000)}`,
     ];
     const started = Date.now();
     for (const input of hostile) foldHomePaths(input);
@@ -292,9 +361,34 @@ describe('sanitizeProjectName', () => {
     ['proj\u2029/Users/example-user/proj', 'proj ~/proj'],
     ['proj\t/Us\u200bers/example-user/proj', 'proj ~/proj'],
     ['\u200b\n\u202e', ''],
+    // 画面では空白に見える文字 (ハングルの埋め字 U+115F・U+1160・U+3164・U+FFA0 と U+180E) も、取り除かず空白に替える:
+    // 取り除くと前の語にパスが貼り付き、畳めない (bdboard-4lea)
+    ['proj\u{3164}/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\u{115F}/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\u{1160}/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\u{FFA0}/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\u{180E}/Users/example-user/proj', 'proj ~/proj'],
+    ['proj\u{3164}C:\\Users\\example-user\\proj', 'proj ~/proj'],
+    ['pro\u{3164}j', 'pro j'],
+    ['a\u{3164}\u{3164}\u{FFA0}b', 'a b'],
+    ['\u{3164}proj\u{180E}', 'proj'],
     ['   ', ''],
   ])('%j -> %j', (input, expected) => {
     expect(sanitizeProjectName(input)).toBe(expected);
     expect(sanitizeProjectName(expected)).toBe(expected);
   });
+
+  // 決めたこと (bdboard-4lea): 幅ゼロで何も見えない文字 (ZWSP U+200B・WORD JOINER U+2060・ソフトハイフン U+00AD) は
+  // 空白に替えず取り除く。空白に替えると "/Us<ZWSP>ers/name" のような形崩しが畳めなくなる。取り除いた結果は画面に見える
+  // 文字列と一致する (手前の語にパスが貼り付いて見えるなら、貼り付いたまま)。
+  it.each([['U+200B', '\u{200B}'], ['U+2060', '\u{2060}'], ['U+00AD', '\u{00AD}']])(
+    'strips the invisible zero-width %s instead of turning it into a space',
+    (_name, ch) => {
+      expect(sanitizeProjectName(`pro${ch}j`)).toBe('proj');
+      expect(sanitizeProjectName(`/Us${ch}ers/example-user/proj`)).toBe('~/proj');
+      expect(sanitizeProjectName(`proj${ch}/Users/example-user/proj`)).toBe(
+        sanitizeProjectName('proj/Users/example-user/proj'),
+      );
+    },
+  );
 });

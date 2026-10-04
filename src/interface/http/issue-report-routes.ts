@@ -67,8 +67,9 @@ const versionString = singleLine(100);
 
 /**
  * プロジェクト名 (表示用): 絵文字の連結 (👩‍💻-tools) などで 400 にしないよう、弾く文字は取り除いて受け、
- * ホーム配下のパスは "~/" に畳む (sanitizeProjectName)。改行・タブなどパスの区切りにもなる文字は、
- * 取り除かず空白に替えてから畳む (つなげるとパスが前の語に貼り付いて畳めないため)。結果が空なら 400。
+ * ホーム配下のパスは "~/" に畳む (sanitizeProjectName)。改行・タブなどパスの区切りにもなる文字と、画面では
+ * 空白に見えるハングルの埋め字・U+180E は、取り除かず空白に替えてから畳む (つなげるとパスが前の語に貼り付いて
+ * 畳めないため)。結果が空なら 400。
  */
 const projectNameSchema = z
   .string()
@@ -145,7 +146,9 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
 
   app.post(ISSUE_DRAFTS_PATH, localOnlyGuard, limitBody(ISSUE_REPORT_BODY_MAX_BYTES), async (c) => {
     // 400 の本文は固定の文言だけ。理由 (details) は返さない: zod の既定の文言は入力の値をそのまま含む
-    // (z.enum の invalid_enum_value は "received '<値>'") ので、トンネル越しにも値が戻ってしまう。
+    // (z.enum の invalid_enum_value は "received '<値>'") ので、書き込んだ側へ値がそのまま戻り、応答を残すログや
+    // 呼び出し側のログにも値が残る。この受け取りは localOnlyGuard の後ろ (トンネルは 403) なので、理由はトンネルではなく、
+    // 値を書き手とログへ戻さないこと。
     const parsed = await parseJsonBody(c, receiveBodySchema);
     if (!parsed.ok) return parsed.response;
 

@@ -66,8 +66,12 @@ const PATH_END = /(?:[\\/]+|(?=[\s'"`:;,|<>)[\]{}=]|$))/;
 /**
  * Windows: C:\Users\<名前>、C:/Users/<名前>。大文字小文字は区別しない。名前には半角スペースだけ許す
  * (John Smith)。改行・タブなどの空白は名前に入れないので、複数行の本文でも次の行を巻き込まない。
+ * ただし半角スペースの直後が "X:\"・"X:/" (ドライブ文字) か "/"・"\" のときは、そのスペースで名前を終える。
+ * 次のパスの頭を名前として飲み込むと、"cd C:\Users\u && node C:\Users\u\x.js" が "cd ~/:\Users\u\x.js" になり、
+ * 次のパスのユーザー名が残るため (bdboard-4lea)。終えたあとの次のパスは、空白の直後なので別に畳まれる。
  */
-const WINDOWS_HOME = /[A-Za-z]:[\\/]+[Uu][Ss][Ee][Rr][Ss][\\/]+(?:[^\\/\s'"`:;,|<>)[\]{}=]| )+/;
+const WINDOWS_HOME =
+  /[A-Za-z]:[\\/]+[Uu][Ss][Ee][Rr][Ss][\\/]+(?:[^\\/\s'"`:;,|<>)[\]{}=]| (?![A-Za-z]:[\\/]|[\\/]))+/;
 /** WSL から Windows 側を見たパス: \\wsl$\<distro>\home\<名前>、\\wsl.localhost\<distro>\home\<名前>。 */
 const WSL_UNC_HOME =
   /\\\\wsl(?:\$|\.localhost)[\\/]+[^\\/\s'"]+[\\/]+home[\\/]+[^\\/\s'"`:;,|<>)[\]{}=]+/;
@@ -98,9 +102,18 @@ const HOME_PATH_PATTERN = new RegExp(
  * ` : ; , | < > ) [ ] { } = のどれかか文字列の終わりで終わる (PATH 風の "/home/u:/home/u/bin" や
  * "x=/Users/u;y=/Users/u/z" は名前ごとに畳み、区切りの先は残す)。Windows の名前だけは半角スペースを含みうるので、
  * 上の止まる文字か行の終わりまで名前として読む: "bash C:\Users\u --flag" は "bash ~/" になる
- * (引数を残すより、ユーザー名を残さないことを優先する)。"/Users/Shared"・"C:\Users\Public"・
+ * (引数を残すより、ユーザー名を残さないことを優先する)。ただし半角スペースの直後が "X:\"・"X:/" か "/"・"\" なら
+ * そこで名前を終える: "cd C:\Users\u && node C:\Users\u\x.js" は "cd ~/ ~/x.js"、
+ * "cp C:\Users\u /home/u/x" は "cp ~/ ~/x" (次のパスも別に畳む)。"/Users/Shared"・"C:\Users\Public"・
  * "/home/linuxbrew" のような共有の場所も同じ形なので畳まれる。パス以外の秘密 (引数のトークンなど) と、
  * "~name/" の形は見つけない。
+ *
+ * 既知の取りこぼし (docs/ISSUE-REPORTING.md、bdboard-4lea): ` ) { } ' は Windows のアカウント名に使えるが、上の止まる文字
+ * でもあるので、名前の途中にあると、そこから先の名前が残る ("C:\Users\O'Brien\x" は "~/'Brien\x"。名前が "{" で
+ * 始まる "C:\Users\{bob}\x" は畳めない)。これらを Windows の名前の中だけ許すと、パスの直後に付く閉じ括弧・閉じ引用符・
+ * 閉じバッククォート ("(C:\Users\u)"・"`C:\Users\u` and more") を名前に巻き込み、区切りの先を消す
+ * ("C:\Users\u)rest" が "~/)rest" になる、名前の終わりの記号のテストとも両立しない)。名前の一部が残る割り切りを、
+ * 区切りの先を壊さないために受け入れた。
  */
 export function foldHomePaths(value: string): string {
   return value.replace(HOME_PATH_PATTERN, '~/');
@@ -121,13 +134,21 @@ export function canonicalizeIdentifier(value: string): string {
   return foldHomePaths(value.trim());
 }
 
-/** パスの先頭の境界としても読める、1 行の検査で弾く文字 (改行・タブ・行区切り・BOM など)。取り除くと前の語に繋がるので空白にする。 */
-const BOUNDARY_LIKE_DISALLOWED = /[\p{Cc}\p{Zl}\p{Zp}\uFEFF]/gu;
+/**
+ * パスの先頭の境界としても読める、1 行の検査で弾く文字。取り除くと前の語に繋がるので空白にする。
+ * 改行・タブなどの制御文字 (Cc)・行区切り (Zl・Zp)・BOM のほか、画面では空白に見える文字:
+ * ハングルの埋め字 (U+115F・U+1160・U+3164・U+FFA0) と U+180E (モンゴル語の母音区切り。かつて空白だった)。
+ * ZWSP (U+200B)・WORD JOINER (U+2060)・ソフトハイフン (U+00AD) など、画面で何も見えない幅ゼロの文字は含めない:
+ * 空白に替えると "/Us<ZWSP>ers/name" のような形崩しが畳めなくなる (取り除けば畳める)。また取り除いた結果は、
+ * 画面に見える文字列と一致する (手前の語にパスが貼り付いて見えるなら、貼り付いたまま扱う)。
+ */
+const BOUNDARY_LIKE_DISALLOWED = /[\p{Cc}\p{Zl}\p{Zp}\u{115F}\u{1160}\u{3164}\u{FFA0}\u{180E}\uFEFF]/gu;
 
 /**
  * プロジェクト名 (表示用) の整形。拒否はしない (空になったら呼び出し側が 400 にする)。
- *   1. 改行・タブ・そのほかの制御文字・行区切り・BOM は空白に置き換える。取り除くと前の語に繋がり、
- *      "proj<TAB>/Users/u/proj" の "/Users/u/proj" が行頭でも空白の直後でもなくなって畳まれない。
+ *   1. 改行・タブ・そのほかの制御文字・行区切り・BOM と、画面では空白に見える文字 (ハングルの埋め字・U+180E) は
+ *      空白に置き換える。取り除くと前の語に繋がり、"proj<TAB>/Users/u/proj" の "/Users/u/proj" が行頭でも
+ *      空白の直後でもなくなって畳まれない ("proj<U+3164>/Users/u/proj" も同じ)。
  *   2. 1 行の検査で弾くそれ以外の文字 (ゼロ幅・双方向制御など) は取り除く。
  *   3. ホーム配下のパスを畳む。2 の後なので、"/Us<ゼロ幅>ers/name" のように見えない文字で形を崩した値も畳まれる。
  *   4. 空白の連なりを 1 つにし、前後を落とす。
@@ -137,7 +158,12 @@ export function sanitizeProjectName(value: string): string {
   return foldHomePaths(stripNonLineText(spaced)).replace(/ {2,}/g, ' ').trim();
 }
 
-/** 空白と ZWJ・ZWNJ を除いて、目に見える文字が 1 つでも残るか。見送りの理由が空に見える値でないことの確認に使う。 */
+/**
+ * 空白・ZWJ・ZWNJ・結合文字 (\p{M}。異体字選択子・結合用の書記素連結子 U+034F・クメール語の固有母音 U+17B4・
+ * IVS の U+E0100 などを含む)・点字の空白 U+2800 を除いて、目に見える文字が 1 つでも残るか。見送りの理由が空に見える
+ * 値でないことの確認に使う。結合文字は手前の文字に付いて初めて見えるので、結合文字だけの値は見えない。
+ * "e" + U+0301 (é の分解形) は "e" が残るので見える。
+ */
 export function hasVisibleText(value: string): boolean {
-  return value.replace(/[\s\u200C\u200D]/g, '').length > 0;
+  return value.replace(/[\s\u{2800}\p{M}\u200C\u200D]/gu, '').length > 0;
 }
