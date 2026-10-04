@@ -48,7 +48,10 @@ export interface FsIssueDraftStorageOptions {
   };
 }
 
-/** incomplete: 未列挙の理由で飛ばした (あとで読めるかもしれない)。受け取りの索引をキャッシュさせない印。 */
+/**
+ * incomplete: あとで読めるかもしれない理由で飛ばした (未列挙のエラー、または再試行を使い切ったファイル単位の失敗)。
+ * 受け取りの索引をキャッシュさせない印。
+ */
 type DraftRead =
   | { readonly kind: 'ok'; readonly draft: IssueDraft }
   | { readonly kind: 'missing' }
@@ -104,7 +107,7 @@ export function createFsIssueDraftStorage(
    */
   async function readDraftFile(id: string): Promise<DraftRead> {
     // 不正な id は読み取りの失敗ではなくプログラムの誤りなので、try の外で投げる。
-    // 読み出しの errno の扱い (再試行・恒久の飛ばし・未列挙の飛ばし) は issue-draft-file-reader.ts。
+    // 読み出しの errno の扱い (再試行・ファイル単位の飛ばし・恒久の飛ばし・未列挙の飛ばし) は issue-draft-file-reader.ts。
     const read = await readRaw(path.join(draftDir(id), DRAFT_FILE));
     if (read.kind !== 'ok') return read;
     let parsedJson: unknown;

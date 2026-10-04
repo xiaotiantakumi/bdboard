@@ -504,6 +504,44 @@ describe('createFsIssueDraftStorage', () => {
       await service.receive({ kind: 'A', catalogSlug: `slug-${ID_1}` });
       expect(scan).toHaveBeenCalledTimes(1);
     });
+
+    // 完全な索引をキャッシュしたあとで、既知の下書きが握られて読めなくなったとき (N5 の「キャッシュ済みの完全な索引のあと」)。
+    // get() が undefined を返すので、サービスはそれを「消された」とみなして新しい下書きを作る。既知の id を使い回すと、
+    // 握りが解けたあとに、握られていた下書きを黙って上書きしてしまう。
+    it('a known draft that is busy after the complete index was cached is not overwritten: the receive creates a new draft instead', async () => {
+      const { storage } = makeStorage();
+      await seedTwoDrafts(storage);
+      const service = makeService(storage);
+      const scan = vi.spyOn(storage, 'scan');
+      const draftJson = path.join(baseDir, ID_2, 'draft.json');
+
+      // 最初の受け取りが完全な索引を作ってキャッシュする (ID_2 の指紋もこの索引にある)。
+      expect(await service.receive({ kind: 'A', catalogSlug: 'first' })).toMatchObject({ outcome: 'created' });
+      expect(scan).toHaveBeenCalledTimes(1);
+      const before = await fs.readFile(draftJson);
+
+      // ここから ID_2 の draft.json は読むたびに EBUSY (握られたまま)。
+      let busy = true;
+      const reads = failReadingId2(() => (busy ? withCode('EBUSY') : undefined));
+      const result = await service.receive({ kind: 'A', catalogSlug: `slug-${ID_2}` });
+
+      expect(reads.calls).toBe(4); // get(ID_2) が 4 回読んで諦めた
+      expect(scan).toHaveBeenCalledTimes(1); // 索引はキャッシュ済みなので読み直していない
+      expect(result).toMatchObject({ ok: true, outcome: 'created' });
+      const createdId = result.ok ? result.draft.id : undefined;
+      expect(createdId).toBeDefined();
+      expect(createdId).not.toBe(ID_2);
+
+      // 握りが解けたあとも、ID_2 の draft.json は 1 バイトも変わっていない。
+      busy = false;
+      expect(await fs.readFile(draftJson)).toEqual(before);
+      expect(await storage.get(ID_2)).toEqual(makeDraft(ID_2));
+      // キャッシュの索引はこの指紋を新しい下書きに向けた (再起動までそのまま。N5 に書いた割り切り)。
+      expect(await service.receive({ kind: 'A', catalogSlug: `slug-${ID_2}` })).toMatchObject({
+        outcome: 'merged',
+        draft: { id: createdId },
+      });
+    });
   });
 
   it('refuses to save a draft over 200KB that nothing can shrink, writing nothing and keeping the old one', async () => {

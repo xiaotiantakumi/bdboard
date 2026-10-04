@@ -580,8 +580,8 @@ describe('images', () => {
 });
 
 // bdboard-r50m: 受け取りの索引 (最初の受け取りが作る) のキャッシュ。ストアが scan() で「一覧が欠けているかも」
-// (complete: false = 未列挙の読み取りエラーで飛ばした下書きがある) と知らせた回の索引は、その回の受け取りには使うが
-// キャッシュしない。次の受け取りが読み直す。
+// (complete: false = あとで読めるかもしれない理由、つまり未列挙の読み取りエラーや、再試行を使い切ったファイル単位の失敗 (EBUSY など)
+// で飛ばした下書きがある) と知らせた回の索引は、その回の受け取りには使うがキャッシュしない。次の受け取りが読み直す。
 describe('receive: the index is cached only when the listing is complete', () => {
   /** in-memory のストアの scan() の complete を、テストから切り替えられるようにする。 */
   function createGappedHarness(listing: { complete: boolean }, existing?: InMemoryIssueDraftStorage) {
