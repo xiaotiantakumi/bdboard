@@ -422,6 +422,83 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(prepared.stderr).toContain('意味的衝突の可能性が高い');
     expect(prepared.stderr).toContain('git rebase');
     expect(prepared.stderr).not.toContain('prepare を再実行してください');
+    expect(existsSync(timeoutsRecord())).toBe(false); // 時間切れだけではない失敗は、1 回目の記録も残さない
+  });
+
+  // bdboard-e8jj (PR #871 レビュー指摘 1): 時間切れだけの失敗で exit 75 にするのは同じ着地予定ツリーにつき 1 回だけ。
+  // 決定的なハング (毎回時間切れになる意味的衝突) が毎回 75 のまま rebase に格下げされないのを防ぐ。
+  const timeoutsRecord = () => path.join(mergeDir(), `pr-${PR}-predicted-timeouts.json`);
+  const prepareWith = (output, extraEnv = {}) => {
+    const file = path.join(tmp, 'predicted-output.txt');
+    writeFileSync(file, output);
+    return run(['prepare', String(PR)], { FAKE_VERIFY_OUTPUT_FILE: file, FAKE_VERIFY_EXIT: '1', ...extraEnv });
+  };
+  const predictedAudit = (event = 'predicted-verify') => auditText().split('\n').filter((line) => line.includes(`\t${event}\t`));
+  const onlyTimeouts = vitestLog(TIMEOUTS, '2 failed | 100 passed (102)');
+
+  it('allows one load-induced exit 75 per predicted tree: the same tree failing with only timeouts again is exit 3 (a likely deterministic hang)', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    const first = prepareWith(onlyTimeouts);
+    expect(first.status).toBe(75);
+    expect(first.stderr).toContain('prepare を再実行してください');
+    const recorded = JSON.parse(readFileSync(timeoutsRecord(), 'utf8'));
+    expect(recorded).toEqual({ pr: PR, tree: expect.stringMatching(/^[0-9a-f]{40}$/) });
+    const second = prepareWith(onlyTimeouts);
+    expect(second.status).toBe(3);
+    expect(second.stderr).toContain('同じ着地予定ツリーで 2 回続けて');
+    expect(second.stderr).toContain('決定的なハング');
+    expect(second.stderr).toContain('git rebase'); // rebaseSteps の案内まで出る
+    expect(second.stderr).not.toContain('prepare を再実行してください');
+    expect(JSON.parse(readFileSync(timeoutsRecord(), 'utf8'))).toEqual(recorded); // 格下げした後も記録は残る
+    expect(prepareWith(onlyTimeouts).status).toBe(3); // 同じツリーは何度やり直しても 3 (75 に戻らない)
+    expect(verified()).toHaveLength(3);
+    expect(existsSync(stateFile())).toBe(false);
+    // 監査: result はどれも failure。時間切れだけの失敗は loadInduced=1 と件数を持ち、2 回目からは repeated=1 も持つ。
+    const lines = predictedAudit();
+    expect(lines).toHaveLength(3);
+    expect(lines.every((line) => line.includes('\tresult=failure\t'))).toBe(true);
+    expect(lines[0]).toMatch(/\tloadInduced=1\ttimeouts=3$/);
+    expect(lines[1]).toMatch(/\tloadInduced=1\ttimeouts=3\trepeated=1$/);
+    expect(lines[2]).toMatch(/\tloadInduced=1\ttimeouts=3\trepeated=1$/);
+  });
+
+  it('counts again from one when the predicted tree is a different one (main moved)', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    expect(prepareWith(onlyTimeouts).status).toBe(75);
+    const firstTree = JSON.parse(readFileSync(timeoutsRecord(), 'utf8')).tree;
+    advanceMain({ 'peer2.txt': 'peer two\n' }); // main が動けば着地予定ツリーも変わる
+    expect(prepareWith(onlyTimeouts).status).toBe(75); // 別のツリーの 1 回目: また 75
+    const secondTree = JSON.parse(readFileSync(timeoutsRecord(), 'utf8')).tree;
+    expect(secondTree).not.toBe(firstTree);
+    expect(prepareWith(onlyTimeouts).status).toBe(3); // その同じツリーの 2 回目: 3
+    expect(predictedAudit().map((line) => /\trepeated=1$/.test(line))).toEqual([false, false, true]);
+  });
+
+  it('clears the record on a predicted success, so the same tree gets its one exit 75 again later', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    expect(prepareWith(onlyTimeouts).status).toBe(75);
+    expect(existsSync(timeoutsRecord())).toBe(true);
+    const succeeded = run(['prepare', String(PR)]); // 偽の verify が緑
+    expect(succeeded.status, succeeded.stderr).toBe(0);
+    expect(existsSync(timeoutsRecord())).toBe(false);
+    expect(prepareWith(onlyTimeouts).status).toBe(75); // 成功で数え直したので、また 1 回目
+  });
+
+  it('applies the same once-per-tree rule to the S3 light check (class L)', () => {
+    setup({ merge: { mode: 'S3', lightCheck: 'node verify.cjs --light' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    expect(prepareWith(onlyTimeouts).status).toBe(75);
+    const second = prepareWith(onlyTimeouts);
+    expect(second.status).toBe(3);
+    expect(second.stderr).toContain('軽量チェック (node verify.cjs --light) が失敗しました');
+    expect(second.stderr).toContain('決定的なハング');
+    const lines = predictedAudit('light-check');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/\tloadInduced=1\ttimeouts=3$/);
+    expect(lines[1]).toMatch(/\tloadInduced=1\ttimeouts=3\trepeated=1$/);
   });
 
   it('does not retry a failure that is not all timeouts', () => {

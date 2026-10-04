@@ -12,9 +12,9 @@
 import { git } from './exec.mjs';
 import { EXIT, fail, refetchMain, REMOTE } from './context.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
-import { classifyVerifyFailure, readLogQuietly } from './load-retry.mjs';
 import { rebaseSteps } from './messages.mjs';
 import { forgetPredictedGroup, recordPredictedGroup } from './predicted-guard.mjs';
+import { forgetLoadInduced, judgePredictedFailure, rememberLoadInduced } from './predicted-timeouts.mjs';
 import { audit, removeState } from './state.mjs';
 import { liveMainAsync, queueSinceFor } from './verify-queue.mjs';
 
@@ -68,9 +68,10 @@ export function predictedCommit(ctx, pr, { predBase, head, tree }) {
 
 /**
  * 着地予定ツリーを verify する (kind 'light' なら軽量チェック)。success なら状態ファイルに足す
- * フィールドを返す。failure → exit 3 (rebase に格下げ。ただし失敗が全部時間切れの形なら負荷由来とみなして
- * exit 75 で prepare のやり直しを案内する、bdboard-e8jj) / 実行できない → exit 1 / verify 中に main が
- * 動いた → exit 75。どの失敗でも状態ファイルは消す (前回の prepare の記録で gate に進ませない)。
+ * フィールドを返す。failure → exit 3 (rebase に格下げ。ただし失敗が全部時間切れの形なら負荷由来とみなして、
+ * 同じ着地予定ツリーにつき 1 回だけ exit 75 で prepare のやり直しを案内する。同じツリーでまた時間切れだけなら
+ * 決定的なハングとみなして exit 3 — predicted-timeouts.mjs、bdboard-e8jj) / 実行できない → exit 1 / verify 中に
+ * main が動いた → exit 75。どの失敗でも状態ファイルは消す (前回の prepare の記録で gate に進ませない)。
  *
  * bdboard-ulxa.6: verify スロットには優先度 merge で、この PR が最初に並んだ時刻を添えて並ぶ。
  * verify の間 (スロット待ちを含む) に remote の main が PRED_BASE から動いたら、その場で verify を
@@ -98,7 +99,11 @@ export async function verifyPredicted(ctx, pr, id, { predBase, head, tree }, { k
   forgetPredictedGroup(ctx, pr); // verify が戻った (どの結果でも) ので孤児は居ない。SIGKILL・クラッシュのときだけここに来ず残る
   const seconds = Math.round((Date.now() - startedAt) / 1000);
   const extra = kind === 'light' ? { command } : {};
-  audit(spec.event, { pr, id, base: predBase, head, tree, commit, result: verified.result, secs: seconds, ...extra });
+  // bdboard-e8jj: 失敗は監査の前に分類して、時間切れだけの失敗 (loadInduced=1) を意味的衝突の格下げと見分けられるようにする
+  // (result は分類に関わらず failure)。repeated=1 は同じツリーでの 2 回目 (exit 3 に倒した側)。
+  const timeoutsOnly = verified.result === 'failure' ? judgePredictedFailure(ctx.cwd, pr, tree, verified.logPath) : undefined;
+  const loadFields = timeoutsOnly?.loadInduced ? { loadInduced: 1, timeouts: timeoutsOnly.timeouts, repeated: timeoutsOnly.repeated ? 1 : undefined } : {};
+  audit(spec.event, { pr, id, base: predBase, head, tree, commit, result: verified.result, secs: seconds, ...extra, ...loadFields });
   if (verified.result === 'abandoned') {
     removeState(ctx.cwd, pr);
     fail(
@@ -115,23 +120,28 @@ export async function verifyPredicted(ctx, pr, id, { predBase, head, tree }, { k
     removeState(ctx.cwd, pr);
     // bdboard-e8jj: 落ちた vitest の失敗が全部時間切れの形 (着地後検証の再実行と同じ判定。load-retry.mjs) なら、
     // 負荷由来とみなして rebase に格下げしない。自動の再実行はしない (自動で 1 回再実行するのは台帳に書く着地後検証だけ)
-    // ので、prepare を人が再実行する。
-    const verdict = classifyVerifyFailure(readLogQuietly(verified.logPath));
-    if (verdict.loadInduced) {
+    // ので、prepare を人が再実行する。ただし同じ着地予定ツリーにつき 1 回だけ (predicted-timeouts.mjs): 2 回続けて
+    // 時間切れだけなら決定的なハングとみなし、下の exit 3 に落とす。
+    if (timeoutsOnly.loadInduced && !timeoutsOnly.repeated) {
+      rememberLoadInduced(ctx.cwd, pr, tree);
       fail(
         EXIT.RETRY,
-        `${spec.what}は失敗しましたが、失敗 ${verdict.timeouts} 件はすべて時間切れの形 (負荷由来) なので、意味的衝突とは扱わず rebase に格下げしません (ログ: ${verified.logPath})。`,
-        `prepare を再実行してください: npm run merge-pr -- prepare ${pr} (verify スロットの順番は最初に並んだ時刻を引き継ぎます。${spec.what}は自動では再実行しません)`,
+        `${spec.what}は失敗しましたが、失敗 ${timeoutsOnly.timeouts} 件はすべて時間切れの形 (負荷由来) なので、意味的衝突とは扱わず rebase に格下げしません (ログ: ${verified.logPath})。`,
+        `prepare を再実行してください: npm run merge-pr -- prepare ${pr} (verify スロットの順番は最初に並んだ時刻を引き継ぎます。${spec.what}は自動では再実行しません。再実行は同じ着地予定ツリーにつき 1 回だけで、またそのツリーで時間切れだけなら rebase に格下げします)`,
       );
     }
     fail(
       EXIT.NEEDS_REBASE,
       `着地予定ツリー (${ctx.mainRef} ${predBase.slice(0, 12)} + PR head ${head.slice(0, 12)}) で ${kind === 'light' ? `軽量チェック (${command})` : 'verify'} が失敗しました。`,
+      ...(timeoutsOnly.repeated
+        ? [`同じ着地予定ツリーで 2 回続けて、失敗が時間切れ ${timeoutsOnly.timeouts} 件だけでした。負荷ではなく決定的なハングの可能性が高いので、負荷由来とは扱いません。`]
+        : []),
       `main の変更との意味的衝突の可能性が高いので rebase に格下げします (ログ: ${verified.logPath})。`,
       '  既知のフレーク (bdboard-241s 等) だとログから言えるときだけ、そのまま prepare し直してよい。',
       ...rebaseSteps(ctx.mainRef, `${spec.what} failure`),
     );
   }
+  forgetLoadInduced(ctx.cwd, pr); // このツリーは通った: 時間切れだけで落ちた前回の記録はもう要らない
   if (refetchMain(ctx) !== predBase) {
     removeState(ctx.cwd, pr);
     fail(EXIT.RETRY, `verify の間に ${ctx.mainRef} が ${predBase.slice(0, 12)} から動きました。prepare からやり直してください。`);

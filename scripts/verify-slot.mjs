@@ -267,13 +267,14 @@ export function isHandoffPath(handoffPath, dir, selfPath) {
 }
 
 // 予約を消し、その pid を返す (自分の順番の計算から外す)。既に無い (ENOENT) のは正常。消せないときは黙らずに書く:
-// 予約は merge-pr が再実行の後で消すまで残り、その間ほかの待ち手からは landed の待ち手に見える。
+// 予約は merge-pr が消すまで残り (再実行の holder が見えた時点か、遅くとも再実行が戻るとき。merge-pr/reservation-watch.mjs)、
+// その間ほかの待ち手からは landed の待ち手に見える。
 function releaseHandoff(handoffPath, options, log) {
   try {
     (options.io || fs).unlinkSync(handoffPath);
   } catch (error) {
     if (error.code !== 'ENOENT') {
-      log(`verify: warning: could not remove the landed retry reservation ${handoffPath} (${error.code || error.message}); going on without waiting behind it — merge-pr removes it when the retry ends`);
+      log(`verify: warning: could not remove the landed retry reservation ${handoffPath} (${error.code || error.message}); going on without waiting behind it — merge-pr removes it as soon as it sees this holder, and at the latest when the retry ends`);
     }
   }
   return Number(/^holder-(\d+)\.json$/.exec(path.basename(handoffPath))[1]);

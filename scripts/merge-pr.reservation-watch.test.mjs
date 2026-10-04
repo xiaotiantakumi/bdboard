@@ -67,22 +67,56 @@ describe('retryHolderAppeared', () => {
 });
 
 describe('watchRetryHolder', () => {
-  const watch = (overrides = {}) => {
-    const reservation = { path: reservationPath, released: 0, release() { this.released += 1; } };
+  // removes: false は unlink が失敗し続ける環境 (release は呼ばれるがファイルが残る。本物の release も unlinkQuietly で失敗を飲み込む)。
+  const watch = (overrides = {}, { removes = true } = {}) => {
+    const reservation = {
+      path: reservationPath,
+      released: 0,
+      release() {
+        this.released += 1;
+        if (removes) {
+          rmSync(reservationPath, { force: true });
+        }
+      },
+    };
     const stop = watchRetryHolder({ reservation, since: SINCE, intervalMs: INTERVAL_MS, ...overrides });
     return { reservation, stop };
   };
 
-  it('releases the reservation once, as soon as the retry holder shows', async () => {
+  it('releases the reservation once, as soon as the retry holder shows, and stops when the file is gone', async () => {
     const { reservation, stop } = watch();
     await sleep(NEGATIVE_WAIT_MS);
     expect(reservation.released).toBe(0); // 再実行の holder がまだ無い間は何もしない
     writeFileSync(otherPath, JSON.stringify(retryHolder()));
     await waitUntil(() => reservation.released > 0);
     await sleep(NEGATIVE_WAIT_MS);
-    expect(reservation.released).toBe(1); // 見えた後は止まる
+    expect(reservation.released).toBe(1); // 消えたので止まる (再実行の holder は見え続けている)
+    expect(existsSync(reservationPath)).toBe(false);
     stop();
     stop(); // 冪等
+  });
+
+  it('keeps releasing every poll while the file is still there (the unlink keeps failing), and stops once it is gone', async () => {
+    const { reservation, stop } = watch({}, { removes: false });
+    writeFileSync(otherPath, JSON.stringify(retryHolder()));
+    await waitUntil(() => reservation.released >= 4); // 1 回で諦めない
+    rmSync(reservationPath); // 一過性が解けて消えた
+    await sleep(INTERVAL_MS * 6); // 動いていた周が終わるのを待つ
+    const settled = reservation.released;
+    await sleep(NEGATIVE_WAIT_MS);
+    expect(reservation.released).toBe(settled); // 消えた後は呼ばない
+    stop();
+  });
+
+  it('stops retrying the release when stop() is called (the caller finally is the bound)', async () => {
+    const { reservation, stop } = watch({}, { removes: false });
+    writeFileSync(otherPath, JSON.stringify(retryHolder()));
+    await waitUntil(() => reservation.released >= 2);
+    stop();
+    const atStop = reservation.released;
+    await sleep(NEGATIVE_WAIT_MS);
+    expect(reservation.released).toBe(atStop);
+    expect(existsSync(reservationPath)).toBe(true); // 残りは finally の release が消す
   });
 
   it('keeps the reservation for a holder that is not this retry', async () => {
@@ -106,14 +140,15 @@ describe('watchRetryHolder', () => {
     expect(() => stop()).not.toThrow();
   });
 
-  it('survives a release that throws (the finally of the caller is the guarantee)', async () => {
+  it('survives a release that throws and tries again on the next poll (the finally of the caller is the bound)', async () => {
     const reservation = { path: reservationPath, tries: 0, release() { this.tries += 1; throw new Error('boom'); } };
     const stop = watchRetryHolder({ reservation, since: SINCE, intervalMs: INTERVAL_MS });
     writeFileSync(otherPath, JSON.stringify(retryHolder()));
-    await waitUntil(() => reservation.tries > 0);
-    await sleep(NEGATIVE_WAIT_MS);
+    await waitUntil(() => reservation.tries >= 3);
     stop();
-    expect(reservation.tries).toBe(1);
+    const atStop = reservation.tries;
+    await sleep(NEGATIVE_WAIT_MS);
+    expect(reservation.tries).toBe(atStop);
   });
 
   it('removes a real reservation from reserveVerifySlot (its since is the one merge-pr passes) and its exit hook', async () => {

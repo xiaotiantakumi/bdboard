@@ -496,8 +496,11 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   the reservation is still a waiting `landed` holder that never runs but takes
   the second slot in other waiters' plans, so a `merge` or `pr` waiter usually
   cannot take that slot. Normally that is at most one poll interval after the
-  re-run's holder appears, not the whole re-run. If merge-pr itself is stuck
-  while alive (its pid does not die, so nothing reaps the file), the
+  re-run's holder appears, not the whole re-run. merge-pr's own delete can hit
+  the same transient, so it tries again on every poll until the file is gone;
+  if it keeps failing, the reservation stays until the re-run returns, where
+  the `finally` is the last attempt (the bound of the watch). If merge-pr
+  itself is stuck while alive (its pid does not die, so nothing reaps the file), the
   reservation stays until it counts as stale 30 min after it was written
   (`staleTtlMs` from its `joinedAt`). A `merge` waiter held up that way has
   no free slot to be "blocked" on, keeps the 15 min limit, and can exit 75

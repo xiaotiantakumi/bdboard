@@ -9,9 +9,10 @@ export const USAGE = `merge-pr — マージ手順 S1 / S2 / S3 (枠は CAS と�
 
   npm run merge-pr -- prepare <PR> [--dry-run]   枠の外: PR / 必須チェック / main を確かめ PRED_BASE を記録
                                                  (S2: main が動いていれば着地予定ツリーを verify。S3: 重なりも
-                                                  hot file も無ければ (クラス L) 軽量チェックだけ。軽量チェックの
-                                                  失敗も exit 3。--dry-run はどの段階でも S2 / S3 の分類を参考表示し、
-                                                  verify はしない)
+                                                  hot file も無ければ (クラス L) 軽量チェックだけ。どちらの失敗も
+                                                  exit 3、ただし失敗が vitest の時間切れだけなら同じ着地予定ツリー
+                                                  につき 1 回は exit 75 (prepare を再実行)。--dry-run はどの段階でも
+                                                  S2 / S3 の分類を参考表示し、verify はしない)
   BDBOARD_MERGER=chair npm run merge-pr -- gate <PR> [--repair] 層3 ゲート → bd merge-slot acquire → CAS → マージ行を stdout に印字
                                                  (--repair: main 破損の修復 PR 専用。main-broken の枠を引き継ぐ)
   <印字された gh pr merge ... --match-head-commit ... を 1 回だけ実行>
@@ -24,11 +25,13 @@ export const USAGE = `merge-pr — マージ手順 S1 / S2 / S3 (枠は CAS と�
   merge.mode (.claude/bdboard-harness.json、origin/main の値が正) が S0 の間は prepare の表示だけ動く。
 
 終了コード: 0 成功 / 1 使い方・想定外 / 2 前提不成立 / 4 main が壊れている
-            3 rebase が要る (S1: main が動いた / S2: テキスト衝突・hot file・着地予定ツリーの verify failure)
+            3 rebase が要る (S1: main が動いた / S2: テキスト衝突・hot file・着地予定ツリーの verify failure。
+              ただし verify の失敗が全部時間切れの形なら、同じツリーの 1 回目は 75 で、2 回目から 3)
             5 finish: 未マージ (枠は返した) / 6 finish: 着地後検証 failure (origin/main が先へ進んでいれば main-broken の枠は取らない)
             7 議長以外の gate / finish / verify
             8 origin/main の ref が lock されている (stale lock の疑い。人が確認して消す。自動では消さない)
-            75 やり直し (CAS 負け等)`;
+            75 やり直し (CAS 負け・main が動いた等。着地予定ツリーの verify / 軽量チェックが時間切れだけで落ちたときも:
+               負荷由来とみなして prepare を 1 回だけ再実行する)`;
 
 function assertMerger(phase) {
   if (process.env.BDBOARD_MERGER !== 'chair') {
