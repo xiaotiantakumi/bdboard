@@ -86,6 +86,11 @@ function isOlderThan(io, filePath, ms, now) {
 // 一瞬だけ)。代わりの holder は旧形式の待ち手の barrier (verify-slot-queue.mjs) にはならない: 旧スクリプトは
 // holder を一度 'wx' で書くだけで rename しないので、旧形式が読めなくなるのはウイルス対策ソフトの
 // ロックなどの稀な場合に限られ、そのときも数としては「走っている」側に倒している。
+// bdboard-e8jj: 読めない holder は中身が分からないので priority を持たず、normalizePriority で pr として扱う。これが
+// 効くのは、Windows で相手が holder を書き換えている最中 (置き換えの rename と競合した読み取りの失敗) の一過性だけで、
+// その 1 周の間、landed の待ち手は相手を pr とみなして待つことがある (相手が本当は merge でも待つ向きの誤り)。逆に
+// pr の待ち手は、読めない landed を pr とみなして同居の規則を 1 周だけ見落としうる (枠の数は数えるので上限は超えない)。
+// 次の周に読めれば本当の priority で判定し直す。
 function unreadableHolder(io, filePath, pid, now, unreadableSince) {
   if (!unreadableSince.has(filePath)) {
     unreadableSince.set(filePath, now);

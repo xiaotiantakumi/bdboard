@@ -20,13 +20,18 @@
 // 並ぶまでの数秒〜十数秒 (ログの退避・監査・pending の投稿・npm の起動) に、待っていた pr が先に枠を取って再実行を
 // 待たせないよう、1 回目が終わった直後に予約 holder を置き (scripts/verify-slot.mjs の reserveVerifySlot)、
 // 再実行の verify に BDBOARD_VERIFY_SLOT_HANDOFF で渡す。1 回目の verify.mjs が自分の holder を消してから予約を
-// 置くまでの短い隙間は覆えない (そこで pr が始めると再実行はその終わりを待つ。遅れるだけで、隣では走らない)。再実行しない経路でも finally で消す (中断で process.exit
-// する経路は reserveVerifySlot の 'exit' フック、SIGKILL で残った予約は pid が死んでいれば次の参加者が回収する)。
+// 置くまでの短い隙間は覆えない (そこで pr が始めると再実行はその終わりを待つ。遅れるだけで、隣では走らない)。
+// 予約は再実行の verify が自分の holder を書いた後で消すが、その削除が失敗しても (Windows の EPERM 等) 幽霊枠を残さない
+// ために、merge-pr も再実行の holder (retry: true、同じ since) が見えた時点で自分で消す (reservation-watch.mjs。
+// 残るのは最大 poll 1 回分)。再実行が holder を見せないまま戻る経路と、再実行しない経路は finally で消す (中断で
+// process.exit する経路は reserveVerifySlot の 'exit' フック、SIGKILL で残った予約は pid が死んでいれば次の参加者が回収する)。
 import { copyFileSync, readFileSync, renameSync } from 'node:fs';
 import { cpus, loadavg } from 'node:os';
 
 import { envSlotOptions, reserveVerifySlot } from '../verify-slot.mjs';
+import { watchRetryHolder } from './reservation-watch.mjs';
 import { audit, say } from './state.mjs';
+import { pollMs } from './verify-queue.mjs';
 import { postQuietly, runContractVerify, stoppedEarly } from './verify-run.mjs';
 
 // eslint-disable-next-line no-control-regex -- ログに残った色付けを外す
@@ -179,7 +184,13 @@ export async function retryLoadInduced({ attempt, queue, code, by, firstQueuedAt
     if (!postQuietly(ctx, sha, 'pending', running)) {
       return { stopped: 'error', retried: null };
     }
-    const again = await runContractVerify({ ...attempt, queue: { ...queue, queueSince, handoff: reservation.path }, running });
+    const stopWatching = watchRetryHolder({ reservation, since: queueSince, intervalMs: pollMs() });
+    let again;
+    try {
+      again = await runContractVerify({ ...attempt, queue: { ...queue, queueSince, handoff: reservation.path }, running });
+    } finally {
+      stopWatching();
+    }
     const retried = { timeouts: verdict.timeouts };
     const stopped = await stoppedEarly(activeChild, again, logPath);
     return stopped ? { stopped, retried } : { code: again, retried };

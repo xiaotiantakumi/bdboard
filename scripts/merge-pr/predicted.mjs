@@ -12,6 +12,7 @@
 import { git } from './exec.mjs';
 import { EXIT, fail, refetchMain, REMOTE } from './context.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
+import { classifyVerifyFailure, readLogQuietly } from './load-retry.mjs';
 import { rebaseSteps } from './messages.mjs';
 import { forgetPredictedGroup, recordPredictedGroup } from './predicted-guard.mjs';
 import { audit, removeState } from './state.mjs';
@@ -67,7 +68,8 @@ export function predictedCommit(ctx, pr, { predBase, head, tree }) {
 
 /**
  * 着地予定ツリーを verify する (kind 'light' なら軽量チェック)。success なら状態ファイルに足す
- * フィールドを返す。failure → exit 3 (rebase に格下げ) / 実行できない → exit 1 / verify 中に main が
+ * フィールドを返す。failure → exit 3 (rebase に格下げ。ただし失敗が全部時間切れの形なら負荷由来とみなして
+ * exit 75 で prepare のやり直しを案内する、bdboard-e8jj) / 実行できない → exit 1 / verify 中に main が
  * 動いた → exit 75。どの失敗でも状態ファイルは消す (前回の prepare の記録で gate に進ませない)。
  *
  * bdboard-ulxa.6: verify スロットには優先度 merge で、この PR が最初に並んだ時刻を添えて並ぶ。
@@ -111,6 +113,17 @@ export async function verifyPredicted(ctx, pr, id, { predBase, head, tree }, { k
   }
   if (verified.result === 'failure') {
     removeState(ctx.cwd, pr);
+    // bdboard-e8jj: 落ちた vitest の失敗が全部時間切れの形 (着地後検証の再実行と同じ判定。load-retry.mjs) なら、
+    // 負荷由来とみなして rebase に格下げしない。自動の再実行はしない (自動で 1 回再実行するのは台帳に書く着地後検証だけ)
+    // ので、prepare を人が再実行する。
+    const verdict = classifyVerifyFailure(readLogQuietly(verified.logPath));
+    if (verdict.loadInduced) {
+      fail(
+        EXIT.RETRY,
+        `${spec.what}は失敗しましたが、失敗 ${verdict.timeouts} 件はすべて時間切れの形 (負荷由来) なので、意味的衝突とは扱わず rebase に格下げしません (ログ: ${verified.logPath})。`,
+        `prepare を再実行してください: npm run merge-pr -- prepare ${pr} (verify スロットの順番は最初に並んだ時刻を引き継ぎます。${spec.what}は自動では再実行しません)`,
+      );
+    }
     fail(
       EXIT.NEEDS_REBASE,
       `着地予定ツリー (${ctx.mainRef} ${predBase.slice(0, 12)} + PR head ${head.slice(0, 12)}) で ${kind === 'light' ? `軽量チェック (${command})` : 'verify'} が失敗しました。`,

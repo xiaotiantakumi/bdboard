@@ -4,12 +4,16 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { classifyVerifyFailure, retryLoadInduced } from './merge-pr/load-retry.mjs';
 import {
   advanceMain,
   auditText,
+  CONTEXT,
+  env,
+  head,
   landSquash,
   mainCheckout,
   posted,
@@ -23,9 +27,11 @@ import {
   status,
   tmp,
   verified,
+  work,
   writeFake,
 } from './merge-pr.test-support.mjs';
 import { VERIFY_JS } from './merge-pr.test-support-verify-js.mjs';
+import { SLOT_IDENTITY_ENV } from './verify-slot.mjs';
 
 const banner = (script, command) => `\n> bdboard@0.1.2 ${script}\n> ${command}\n`;
 const vitestLog = (body, summary) =>
@@ -175,6 +181,70 @@ function loadRetryEnv(exits) {
   return { FAKE_VERIFY_OUTPUT_FILE: output, FAKE_VERIFY_EXIT_SEQUENCE: exits, FAKE_VERIFY_SEQUENCE_FILE: path.join(tmp, 'fake-verify-seq') };
 }
 
+// bdboard-e8jj: 再実行の verify が予約を消せない (unlink が EPERM) 状況の子 (merge-pr.test-support-retry-child.mjs)。
+// 子は本物の acquireVerifySlot で自分の holder を書き、見えたことを RETRY_CHILD_REPORT に残す。
+const RETRY_CHILD = fileURLToPath(new URL('./merge-pr.test-support-retry-child.mjs', import.meta.url));
+const retryChildVerifyJs = () =>
+  `if (process.env.BDBOARD_VERIFY_SLOT_HANDOFF) require('node:child_process').execFileSync(process.execPath, [${JSON.stringify(RETRY_CHILD)}], { stdio: 'inherit' });\n${VERIFY_JS}`;
+
+// retryLoadInduced を merge-pr の別プロセスではなくこのプロセスで呼ぶ。呼び出しが戻った時点で予約が無いこと (merge-pr の
+// finally が消したこと) を見るには、プロセスが生きている間に見る必要がある: 別プロセスの merge-pr は終了時の 'exit' フックも
+// 予約を消すので、終わった後の置き場を見ても finally の有無が区別できない。gh / audit / スロットの置き場は setup() の偽の環境に向ける。
+describe.skipIf(process.platform === 'win32')('retryLoadInduced: a reservation the retry cannot delete is gone when the call returns (bdboard-e8jj)', { timeout: 30_000 }, () => {
+  registerTempRepoHooks();
+  const NAMES = [
+    ...SLOT_IDENTITY_ENV, 'BDBOARD_VERIFY_SLOTS', 'BDBOARD_VERIFY_SLOT_DIR', 'BDBOARD_VERIFY_SLOT_WAIT_MS', 'BDBOARD_MERGE_GH', 'BDBOARD_MERGE_BD',
+    'BDBOARD_MERGE_NPM', 'BDBOARD_MERGE_FAKE_STATE', 'BDBOARD_MERGE_AUDIT_LOG', 'BDBOARD_MERGE_POLL_MS', 'RETRY_CHILD_REPORT', 'RETRY_CHILD_WAIT_MS',
+  ];
+  let saved;
+  beforeEach(() => {
+    saved = Object.fromEntries(NAMES.map((name) => [name, process.env[name]]));
+  });
+  afterEach(() => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+  });
+
+  it('removes it in the finally when the watch never sees the retry holder', async () => {
+    setup();
+    for (const name of [...SLOT_IDENTITY_ENV, 'BDBOARD_VERIFY_SLOTS', 'BDBOARD_VERIFY_SLOT_WAIT_MS']) {
+      delete process.env[name]; // 外側の verify (landed の掃引など) の素性を受け継がない
+    }
+    const report = path.join(tmp, 'retry-child-report.json');
+    Object.assign(process.env, {
+      ...Object.fromEntries(Object.entries(env).filter(([name]) => NAMES.includes(name))),
+      BDBOARD_MERGE_POLL_MS: '3600000', // 見張りは動かない: 消せるのは finally だけ
+      RETRY_CHILD_REPORT: report,
+      RETRY_CHILD_WAIT_MS: '300',
+    });
+    const logPath = path.join(tmp, 'landed-verify.log');
+    writeFileSync(logPath, vitestLog(TIMEOUTS, '2 failed | 100 passed (102)'));
+    const attempt = {
+      ctx: { cwd: work, repo: 'example/demo', statusContext: CONTEXT },
+      root: work,
+      sha: head,
+      command: `${JSON.stringify(process.execPath)} ${JSON.stringify(RETRY_CHILD)}`,
+      logPath,
+      activeChild: { current: undefined, interrupted: false },
+      ledger: false,
+    };
+    const exitHooks = process.listenerCount('exit');
+    const result = await retryLoadInduced({ attempt, queue: { priority: 'landed' }, code: 1, by: 'test', firstQueuedAt: Date.now() - 60_000 });
+    expect(result).toEqual({ code: 0, retried: { timeouts: 3 } });
+    const seen = JSON.parse(readFileSync(report, 'utf8'));
+    expect(seen.presentAtStart).toBe(true);
+    expect(seen.warnings.join('\n')).toMatch(/could not remove the landed retry reservation .*\(EPERM\)/);
+    expect(seen.goneWhileRunning).toBe(false); // 再実行が走っている間は残っていた (消せる者が居ない)
+    expect(readdirSync(slotDir())).toEqual([]); // 戻った後は無い: finally が消した
+    expect(process.listenerCount('exit')).toBe(exitHooks);
+  });
+});
+
 describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after a load-induced landed failure (bdboard-xdk8)', { timeout: 30_000 }, () => {
   registerTempRepoHooks();
 
@@ -227,6 +297,25 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(readdirSync(slotDir())).toEqual([]);
   });
 
+  it('removes a reservation the retry could not delete (EPERM) as soon as the retry holder shows, while the retry is still running (bdboard-e8jj)', () => {
+    // 再実行のときだけ (BDBOARD_VERIFY_SLOT_HANDOFF が渡る) 子を起こす偽の verify.cjs。子は本物の acquireVerifySlot を、
+    // 予約の削除が EPERM で失敗する io で呼び、予約が消えるのを最大 RETRY_CHILD_WAIT_MS 待つ。
+    setup({ branchFiles: { 'verify.cjs': retryChildVerifyJs() } });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    simulateMerge();
+    const report = path.join(tmp, 'retry-child-report.json');
+    const finished = run(['finish', String(PR)], { ...loadRetryEnv('1,0'), RETRY_CHILD_REPORT: report, RETRY_CHILD_WAIT_MS: '8000', BDBOARD_MERGE_POLL_MS: '50' });
+    expect(finished.status, finished.stderr).toBe(0);
+    expect(verified()).toHaveLength(2);
+    expect(posted().at(-1).state).toBe('success');
+    const seen = JSON.parse(readFileSync(report, 'utf8'));
+    expect(seen.presentAtStart).toBe(true);
+    expect(seen.warnings.join('\n')).toMatch(/could not remove the landed retry reservation .*\(EPERM\)/);
+    expect(seen.goneWhileRunning).toBe(true); // 再実行がまだ走っている間に、merge-pr が見張りで消した
+    expect(readdirSync(slotDir())).toEqual([]);
+  });
+
   it('records the new verify process group on the retry too (bdboard-ky9l onSpawn)', () => {
     setup({ branchFiles: { 'verify.cjs': PROBE + VERIFY_JS } });
     expect(run(['prepare', String(PR)]).status).toBe(0);
@@ -272,9 +361,12 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
   it('carries the retry into the light-landed line of a class L landing (S3), and never retries the light check itself', () => {
     setup({ merge: { mode: 'S3', lightCheck: 'node verify.cjs --light' } });
     const moved = advanceMain({ 'peer.txt': 'peer\n' });
-    // 軽量チェック (ledger: false) は時間切れだけの失敗でも再実行しない。回数は着地後検証と別に数える。
+    // 軽量チェック (ledger: false) は時間切れだけの失敗でも再実行しない (bdboard-e8jj: 意味的衝突 (exit 3) とも扱わず、
+    // exit 75 で prepare のやり直しを案内する)。回数は着地後検証と別に数える。
     const prepared = run(['prepare', String(PR)], { ...loadRetryEnv('1,0'), FAKE_VERIFY_SEQUENCE_FILE: path.join(tmp, 'fake-verify-seq-light') });
-    expect(prepared.status).toBe(3);
+    expect(prepared.status).toBe(75);
+    expect(prepared.stderr).toContain('着地予定ツリーの軽量チェックは失敗しましたが');
+    expect(prepared.stderr).toContain(`prepare を再実行してください: npm run merge-pr -- prepare ${PR}`);
     expect(verified()).toHaveLength(1);
     expect(prepared.stderr).not.toContain('1 回だけ再実行します');
     expect(run(['prepare', String(PR)]).status).toBe(0);
@@ -289,17 +381,47 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(auditText()).toMatch(new RegExp(`\tlight-landed\tpr=${PR}\tid=demo-1\tnew=${landed}\tresult=success\tby=finish\tretried=1\n`));
   });
 
-  it('does not retry the predicted-tree verify (ledger: false) even when its failures are all timeouts', () => {
+  // bdboard-e8jj: S2 の着地予定ツリーの verify (predicted.mjs) の failure を、ログの形で分ける。全部時間切れの形 (負荷由来)
+  // なら意味的衝突とは扱わず exit 75 で prepare のやり直しを案内し、それ以外は今までどおり exit 3 (rebase に格下げ)。
+  // どちらも自動の再実行はしない (verified() が 1 回)。偽の verify (VERIFY_JS) は FAKE_VERIFY_OUTPUT_FILE の中身をログに出す。
+  function predictedWith(output) {
     setup({ merge: { mode: 'S2' } });
     advanceMain({ 'peer.txt': 'peer\n' });
-    const prepared = run(['prepare', String(PR)], loadRetryEnv('1,0'));
-    expect(prepared.status).toBe(3); // NEEDS_REBASE (意味的衝突として rebase に格下げ)
+    const file = path.join(tmp, 'predicted-output.txt');
+    writeFileSync(file, output);
+    const prepared = run(['prepare', String(PR)], { FAKE_VERIFY_OUTPUT_FILE: file, FAKE_VERIFY_EXIT: '1' });
     expect(verified()).toHaveLength(1);
-    expect(prepared.stderr).not.toContain('1 回だけ再実行します');
-    expect(prepared.stderr).not.toContain('負荷由来');
+    expect(auditText()).toMatch(/\tpredicted-verify\t.*\tresult=failure\t/); // 監査の result は分類に関わらず failure
+    expect(existsSync(stateFile())).toBe(false); // gate に進ませない
     expect(auditText()).not.toContain('landed-verify-retry');
-    expect(readdirSync(mergeDir()).some((name) => name.includes('.first-attempt-'))).toBe(false);
     expect(existsSync(slotDir())).toBe(false);
+    return prepared;
+  }
+
+  it.each([
+    ['vitest timeouts only', vitestLog(TIMEOUTS, '2 failed | 100 passed (102)'), '3 件'],
+    ['a spawnSync child killed by its timeout', vitestLog(' FAIL  scripts/a.test.mjs > b\nError: spawnSync /bin/sh ETIMEDOUT\n', '1 failed | 1 passed (2)'), '1 件'],
+  ])('a predicted verify that failed with %s is load-induced: exit 75 and "run prepare again", not a rebase', (_name, output, count) => {
+    const prepared = predictedWith(output);
+    expect(prepared.status).toBe(75);
+    expect(prepared.stderr).toContain(`失敗 ${count}はすべて時間切れの形 (負荷由来)`);
+    expect(prepared.stderr).toContain(`prepare を再実行してください: npm run merge-pr -- prepare ${PR}`);
+    expect(prepared.stderr).not.toContain('git rebase'); // rebaseSteps の案内は出さない
+    expect(prepared.stderr).not.toContain('意味的衝突の可能性が高い');
+    expect(run(['prepare', String(PR)]).status).toBe(0); // 偽の verify が緑なら、そのまま prepare し直せる
+  });
+
+  it.each([
+    ['an assertion failure', vitestLog(' FAIL  a.test.ts > b\nAssertionError: expected 1 to be 2\n', '1 failed | 1 passed (2)')],
+    ['timeouts mixed with one assertion failure', vitestLog(`${TIMEOUTS}\n FAIL  b.test.ts > c\nAssertionError: expected 1 to be 2\n`, '3 failed | 1 passed (4)')],
+    ['a failing step that is not vitest', `${banner('build', 'tsc --noEmit')}src/a.ts(1,1): error TS2322: Type 'string' is not assignable.\nError: Test timed out in 5000ms.\n`],
+    ['a log with no failure message', 'something went wrong\n'],
+  ])('a predicted verify that failed with %s is still a rebase conflict (exit 3)', (_name, output) => {
+    const prepared = predictedWith(output);
+    expect(prepared.status).toBe(3);
+    expect(prepared.stderr).toContain('意味的衝突の可能性が高い');
+    expect(prepared.stderr).toContain('git rebase');
+    expect(prepared.stderr).not.toContain('prepare を再実行してください');
   });
 
   it('does not retry a failure that is not all timeouts', () => {

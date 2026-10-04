@@ -23,7 +23,8 @@
 //   走り出すときに holder file へ acquiredAt を書く (書き込みは一時ファイル + rename で原子的に)。
 // - bdboard-xdk8: landed (着地後検証) は pr (PR 前の手元 verify) と同時に走らない (merge とは枠を分け合い、
 //   止まった先頭を飛ばせるのも merge だけ)。負荷で着地後検証が偽の failure を出し、main-broken の枠で全マージが
-//   止まったため。規則と根拠は verify-slot-queue.mjs の EXCLUDED_BESIDE。この規則で止まっている待ちは、相手が
+//   止まったため。規則と根拠は verify-slot-queue.mjs の EXCLUDED_BESIDE。landed の待ちと、空き枠があるのに
+//   この規則で止められている待ち手 (空き枠が無くて待つだけの待ち手は含まない) は、相手が
 //   stale になるまで打ち切りを延ばす (verify-slot-wait.mjs の slotWaitLimitMs。明示した
 //   BDBOARD_VERIFY_SLOT_WAIT_MS が優先)。走っている landed を待つ側の表示は「正常、kill しない」にする (旧表示の
 //   「hung verify?」は kill を誘っていた)。merge-pr が着地後検証を 1 回だけ再実行するときの隙間は予約 holder で
