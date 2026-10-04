@@ -328,6 +328,37 @@ What this means operationally:
   32 min instead of a few seconds. The tests that spawn `verify.mjs` or the slot
   scripts strip them as well, for a run started by hand with them exported.
 
+### Standalone vitest runs are not counted (bdboard-72oy)
+
+Verify slots count `npm run verify` runs only. A worker's standalone `npx vitest run` can add load while a landed
+verify is running, which caused false failures (bdboard-xdk8). `verify.mjs` marks its group leader with
+`BDBOARD_IN_VERIFY=1`; this flag is not slot identity, so `withoutSlotIdentity` preserves it for the steps.
+
+Both Vitest configs use `scripts/vitest-global-setup.mjs`, which dynamically calls
+`scripts/vitest-outside-verify.mjs`. Outside verify (the flag is not `1`), it reuses `readOthers` and `planSlots` to
+look for `landed` holders and appends a `vitest-outside-verify` line to `$BDBOARD_MERGE_AUDIT_LOG` or
+`$TMPDIR/bdboard-merge-audit.log`. It warns and records only; the run is never delayed. Measure frequency first with
+`grep vitest-outside-verify "$TMPDIR/bdboard-merge-audit.log"`, then decide whether to add a bounded wait.
+
+- `landed_state=running` (the landed verify has its slot): a `vitest: warning:` line on stderr **and** the audit line
+  (`landed_running_s`).
+- `landed_state=waiting` (queued) or `reserved` (merge-pr's reservation for its single landed retry): the audit line
+  only, no warning (`landed_waited_s`). There is no load yet, but a verify about to start overlapped with a standalone
+  run, which a running-only count would miss. With several landed holders the heaviest state is recorded
+  (running, then waiting, then reserved).
+- Audit fields: `pid`, `cwd`, `project`, `cmd` (200 chars), `landed_state`, `landed_pid`, `landed_count`,
+  `landed_running_s` / `landed_waited_s`. `landed_pid` and `landed_count` describe only the landed holders in the
+  recorded state (a waiting holder next to a reserved one is recorded as `waiting` with `landed_count=1`), and
+  `landed_waited_s` counts from the holder's first queue time (`queuedAt`), not its last re-join.
+- Silent and unrecorded: inside verify, no landed holder, a stale holder (over 30 min), a dead pid, a running
+  `pr` / `merge` verify, and `BDBOARD_VERIFY_SLOTS=0` (gating disabled).
+
+Inside verify the setup returns before loading anything, so CI is silent because its vitest runs inside
+`npm run verify` (`BDBOARD_IN_VERIFY=1`); a standalone vitest on a machine with no slot directory is silent too. The
+check fails open: every error is swallowed. Reading the slot directory has the slot's own side effects, because
+`readOthers` reclaims dead-pid holder files, corrupt holder files older than 5 s, and temporary files whose writer is
+dead, exactly as the slot itself does (see "Stale handling is automatic" above).
+
 ### Priorities (bdboard-ulxa.6)
 
 The limit never changes; only *which waiter gets a freed slot* does. Each
