@@ -60,19 +60,26 @@ const ERROR_HEADLINE = /^\s*(?:[A-Za-z_$][\w$]*)?Error\b[^:]{0,40}:\s/;
  * いてこのタイマー自体が張られない (docs/VERIFY.md「vitest worker RPC タイムアウト」)。出たら想定外なので
  * 再実行せずに調べる。
  */
+// テストが起こした子プロセス (spawnSync) が自分の時間切れで殺された形。負荷下ではこれが落ちる原因の 1 つで、
+// 見出しでは `Error: spawnSync /bin/sh ETIMEDOUT` としか出ないので、件数を別に数えて表に出す (bdboard-7qhq)。
+const CHILD_TIMEOUT = /^spawnSync \S+ ETIMEDOUT\b/;
 export const TIMEOUT_SHAPES = Object.freeze([
   /^(?:Test|Hook) timed out in \d+ms\b/,
   /^\[vitest-pool\]: Timeout (?:starting|terminating) \S+ (?:runner|worker)\b/,
   /^\[vitest-pool-runner\]: Timeout waiting for worker to respond\b/,
-  /^spawnSync \S+ ETIMEDOUT\b/,
+  CHILD_TIMEOUT,
 ]);
 // 見出しの先頭の字下げとエラー名 (`Error: ` `TypeError [ERR_X]: ` 等。ERROR_HEADLINE と同じ形) を外す。
 const HEADLINE_PREFIX = /^\s*(?:\w*Error\b[^:]{0,40}:\s*)?/;
 
-const isTimeout = (line) => {
-  const message = line.replace(HEADLINE_PREFIX, '');
-  return TIMEOUT_SHAPES.some((shape) => shape.test(message));
-};
+const headlineMessage = (line) => line.replace(HEADLINE_PREFIX, '');
+const isTimeout = (line) => TIMEOUT_SHAPES.some((shape) => shape.test(headlineMessage(line)));
+
+/**
+ * 子プロセスの時間切れ (ETIMEDOUT) の件数を人が読む 1 行にする (0 件なら行なし)。say / fail の引数に spread で渡す。
+ * 件数は classifyVerifyFailure の etimedout で、ログを読む箇所を増やさない (bdboard-7qhq)。
+ */
+export const childTimeoutLines = (count) => (count > 0 ? [`子プロセスの時間切れ (ETIMEDOUT) が ${count} 件 (ログの見出しの spawnSync … ETIMEDOUT)。`] : []);
 
 function lastIndex(lines, test, from = 0) {
   for (let index = lines.length - 1; index >= from; index -= 1) {
@@ -85,19 +92,21 @@ function lastIndex(lines, test, from = 0) {
 
 /**
  * verify のログから、落ちたステップの失敗が全部時間切れの形かを決める純関数。
- * @returns {{ loadInduced: boolean, timeouts: number, reason: string }}
+ * etimedout は見出しのうち spawnSync の子の時間切れ (`spawnSync … ETIMEDOUT`) の件数 (timeouts の内数)。負荷由来でない
+ * 失敗が混ざっていても数える (bdboard-7qhq: 失敗の原因を読む人に件数を見せるため。再実行の判断には使わない)。
+ * @returns {{ loadInduced: boolean, timeouts: number, etimedout: number, reason: string }}
  */
 export function classifyVerifyFailure(logText) {
   const lines = String(logText).replace(ANSI, '').split(/\r?\n/);
   // `&&` でつないだステップは落ちたところで止まるので、最後に始まったステップが落ちたステップ。
   const banner = lastIndex(lines, (line) => NPM_BANNER.test(line));
   if (banner === -1 || !VITEST_COMMAND.test(lines[banner + 1] ?? '')) {
-    return { loadInduced: false, timeouts: 0, reason: `the failing step is not a vitest run (${(lines[banner + 1] ?? 'unknown').trim()})` };
+    return { loadInduced: false, timeouts: 0, etimedout: 0, reason: `the failing step is not a vitest run (${(lines[banner + 1] ?? 'unknown').trim()})` };
   }
   const segment = lines.slice(banner);
   const summary = lastIndex(segment, (line) => SUMMARY_FILES.test(line));
   if (summary === -1 || !(segment[summary].includes('failed') || segment.some((line) => SUMMARY_ERRORS.test(line)))) {
-    return { loadInduced: false, timeouts: 0, reason: 'no vitest failure summary' };
+    return { loadInduced: false, timeouts: 0, etimedout: 0, reason: 'no vitest failure summary' };
   }
   const headlines = new Set();
   segment.forEach((line, index) => {
@@ -114,14 +123,16 @@ export function classifyVerifyFailure(logText) {
       }
     }
   });
-  const other = [...headlines].map((index) => segment[index]).find((line) => !isTimeout(line));
+  const failures = [...headlines].map((index) => segment[index]);
+  const etimedout = failures.filter((line) => CHILD_TIMEOUT.test(headlineMessage(line))).length;
+  const other = failures.find((line) => !isTimeout(line));
   if (other !== undefined) {
-    return { loadInduced: false, timeouts: 0, reason: `a failure that is not a timeout: ${other.trim().slice(0, 120)}` };
+    return { loadInduced: false, timeouts: 0, etimedout, reason: `a failure that is not a timeout: ${other.trim().slice(0, 120)}` };
   }
   if (headlines.size === 0) {
-    return { loadInduced: false, timeouts: 0, reason: 'no failure message found' };
+    return { loadInduced: false, timeouts: 0, etimedout, reason: 'no failure message found' };
   }
-  return { loadInduced: true, timeouts: headlines.size, reason: `all ${headlines.size} failures are timeouts` };
+  return { loadInduced: true, timeouts: headlines.size, etimedout, reason: `all ${headlines.size} failures are timeouts` };
 }
 
 export function readLogQuietly(logPath) {
@@ -177,12 +188,24 @@ export async function retryLoadInduced({ attempt, queue, code, by, firstQueuedAt
     const kept = verdict.loadInduced ? keepFirstAttemptLog(logPath) : null;
     if (kept === null) {
       const why = verdict.loadInduced ? `1 回目のログ ${logPath} を退避できなかったので再実行しません` : `負荷由来とは判断できないので再実行しません (${verdict.reason})`;
+      // 子プロセスの時間切れの件数は、この後 installAndVerify が出す failure の行 (最後のログ) に載るのでここでは出さない。
       say(`verify が失敗しました (exit ${code})。${why}。`);
       return { code, retried: null };
     }
-    audit('landed-verify-retry', { sha, by, exit: code, timeouts: verdict.timeouts, load1: loadavg()[0].toFixed(1), cpus: cpus().length, log: kept });
+    // etimedout (bdboard-7qhq) は 0 件なら項目ごと出さない (audit は undefined を飛ばす)。
+    audit('landed-verify-retry', {
+      sha,
+      by,
+      exit: code,
+      timeouts: verdict.timeouts,
+      etimedout: verdict.etimedout || undefined,
+      load1: loadavg()[0].toFixed(1),
+      cpus: cpus().length,
+      log: kept,
+    });
     say(
       `verify が失敗しました (exit ${code}) が、失敗は ${verdict.timeouts} 件とも時間切れの形なので負荷由来とみなし、1 回だけ再実行します。`,
+      ...childTimeoutLines(verdict.etimedout),
       `1 回目のログ: ${kept}`,
     );
     const running = `npm run verify retrying after load-induced failure (by ${by})`;
