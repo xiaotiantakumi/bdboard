@@ -19,6 +19,7 @@ function plan(overrides: Partial<RecoveredTurnPlanInput> = {}) {
     alreadyRestored: true,
     knownOpen: ['A', 'B'],
     persisted: undefined,
+    provisionalEntry: false,
     knownSelected: 'A',
     explicitDraftSelected: false,
     ...overrides,
@@ -49,6 +50,95 @@ describe('planRecoveredTurn', () => {
     });
     expect(result.nextOpen).toEqual(['B', 'A', 'racing', 'C']);
     expect(result.nextSelected).toBe('A');
+  });
+
+  describe('a provisional first entry (bdboard-rt6i)', () => {
+    const SERVER = [thread('A'), thread('B'), thread('N'), thread('C')];
+
+    it('opens the server list together with the provisional [N] and the recovered session, not just [N, C] (gap 1)', () => {
+      // 初回訪問で、E7 の一覧 fetch が in-flight の間に送信成功が [N] を書いた(未復元)。
+      const result = plan({
+        alreadyRestored: false,
+        provisionalEntry: true,
+        knownOpen: ['N'],
+        threads: SERVER,
+        persisted: { activeSessionIds: ['N'], selectedSessionId: 'N' },
+        knownSelected: 'N',
+      });
+      expect(result.nextOpen).toEqual(['A', 'B', 'N', 'C']);
+      expect(result.nextSelected).toBe('N');
+      expect(result.persistedSelected).toBe('N');
+    });
+
+    it('treats the same entry as a revisit record when it is not provisional', () => {
+      const result = plan({
+        alreadyRestored: false,
+        provisionalEntry: false,
+        knownOpen: ['N'],
+        threads: SERVER,
+        persisted: { activeSessionIds: ['N'], selectedSessionId: 'N' },
+        knownSelected: 'N',
+      });
+      expect(result.nextOpen).toEqual(['N', 'C']);
+    });
+
+    it('adds the server list to an adopted open that is already restored, keeping an id the list does not carry yet', () => {
+      const result = plan({
+        alreadyRestored: true,
+        provisionalEntry: true,
+        knownOpen: ['adopted'],
+        threads: SERVER,
+        persisted: { activeSessionIds: ['adopted'], selectedSessionId: 'adopted' },
+        knownSelected: 'adopted',
+      });
+      // 回収したセッション C は末尾に付く(planReplacedThread の規則)。
+      expect(result.nextOpen).toEqual(['A', 'B', 'N', 'adopted', 'C']);
+      expect(result.nextSelected).toBe('adopted');
+    });
+
+    it('keeps the persisted selection while a draft is shown, and still widens the open set', () => {
+      const result = plan({
+        alreadyRestored: false,
+        provisionalEntry: true,
+        explicitDraftSelected: true,
+        knownOpen: ['N'],
+        threads: SERVER,
+        persisted: { activeSessionIds: ['N'], selectedSessionId: 'N' },
+        knownSelected: undefined,
+      });
+      expect(result.nextOpen).toEqual(['A', 'B', 'N', 'C']);
+      expect(result.nextSelected).toBeUndefined();
+      expect(result.persistedSelected).toBe('N');
+    });
+  });
+
+  describe('threads the user closed during the provisional entry (bdboard-rt6i)', () => {
+    const SERVER = [thread('A'), thread('B'), thread('N1'), thread('N2'), thread('C')];
+
+    it('leaves the closed ids out of the widened open set (N1 -> N2 -> close N1)', () => {
+      const result = plan({
+        alreadyRestored: false,
+        provisionalEntry: true,
+        closedIds: new Set(['N1']),
+        knownOpen: ['N2'],
+        threads: SERVER,
+        persisted: { activeSessionIds: ['N2'], selectedSessionId: 'N2' },
+        knownSelected: 'N2',
+      });
+      expect(result.nextOpen).toEqual(['A', 'B', 'N2', 'C']);
+    });
+
+    it('ignores closed ids when the entry is not provisional (they are only recorded while an entry is provisional)', () => {
+      const result = plan({
+        alreadyRestored: true,
+        provisionalEntry: false,
+        closedIds: new Set(['A']),
+        knownOpen: ['A', 'B'],
+        threads: SERVER,
+        persisted: { activeSessionIds: ['A', 'B'], selectedSessionId: 'A' },
+      });
+      expect(result.nextOpen).toEqual(['A', 'B', 'C']);
+    });
   });
 
   describe('a replaced thread (bdboard-w9hv)', () => {

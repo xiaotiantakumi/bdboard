@@ -41,7 +41,8 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     turnRecoveryGeneration, unresolvedSends, clearUnresolvedSend, clearStreamingReplyForKey,
     detachedStreamSendRef, requestAbortControllerRef, cancelThreadConfirmDelete, setThreadError,
     ticketProjectFallbackNotice, setTicketProjectFallbackNotice, setThreadLists, openThreadIds,
-    setOpenThreadIds, openThreadIdsRef, restoredProjectsRef, threadListOrder, openThreads, conversationInputs,
+    setOpenThreadIds, openThreadIdsRef, restoredProjectsRef, provisionalEntries, threadListOrder, openThreads,
+    conversationInputs,
     conversationAttachments,
     attachmentErrors, conversationInputsRef, conversationAttachmentsRef, draftSeedTextRef, agents,
     setAgents, setSelectedAgentId, selectedAgent, selectedAgentUnavailable, setSelectedModelId,
@@ -130,6 +131,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     setSelectedThreadIds,
     startNewDraftThread,
     restoredProjectsRef,
+    provisionalEntries,
     threadListOrder,
   });
 
@@ -152,6 +154,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
       openThreads,
       openThreadIdsRef,
       restoredProjectsRef,
+      provisionalEntries,
       threadListOrder,
       setThreadLists,
       setOpenThreadIds,
@@ -227,6 +230,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     conversationsRef,
     openThreadIdsRef,
     restoredProjectsRef,
+    provisionalEntries,
     setSelectedAgentId,
     unresolvedSends,
     clearUnresolvedSend,

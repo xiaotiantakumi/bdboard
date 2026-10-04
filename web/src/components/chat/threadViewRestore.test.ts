@@ -2,7 +2,7 @@
 // (chat/useChatSessionLifecycle.ts)が共有する open/選択の復元規則。
 import { describe, expect, it } from 'vitest';
 import type { ChatThreadDto } from '../../api';
-import { isFirstVisitWritten, restoreThreadView, widenOpenToServerList } from './threadViewRestore';
+import { restoreThreadView, widenOpenToServerList } from './threadViewRestore';
 
 function thread(sessionId: string): ChatThreadDto {
   return { sessionId, agentId: 'claude', title: sessionId, pinned: false, updatedAt: '2026-01-01T00:00:00Z' };
@@ -46,24 +46,6 @@ describe('restoreThreadView on a first visit whose entry was written during the 
     expect(
       restoreThreadView(LIST, { activeSessionIds: ['sess-gone'], selectedSessionId: 'sess-gone' }, true),
     ).toEqual({ open: ['sess-1', 'sess-2'], selected: 'sess-1' });
-  });
-});
-
-describe('isFirstVisitWritten', () => {
-  it('is true only when the fetch started without an entry and an entry with open threads now exists', () => {
-    expect(isFirstVisitWritten(true, { activeSessionIds: ['sess-1'] })).toBe(true);
-  });
-
-  it('is false for a revisit: the entry existed when the fetch started', () => {
-    expect(isFirstVisitWritten(false, { activeSessionIds: ['sess-1'] })).toBe(false);
-  });
-
-  it('is false while no entry has appeared', () => {
-    expect(isFirstVisitWritten(true, undefined)).toBe(false);
-  });
-
-  it('is false for an entry with no open threads, which is the explicit empty an agent change writes', () => {
-    expect(isFirstVisitWritten(true, { activeSessionIds: [] })).toBe(false);
   });
 });
 

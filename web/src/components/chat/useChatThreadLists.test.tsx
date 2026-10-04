@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatThreadDto } from '../../api';
-import { readPersistedChatThreads } from '../../chatThreadStorage';
+import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { useChatThreadLists, type UseChatThreadListsDrawerActions } from './useChatThreadLists';
 
 vi.mock('../../api', async (importOriginal) => {
@@ -155,6 +155,78 @@ describe('useChatThreadLists', () => {
     expect(drawer.closeDrawer).toHaveBeenCalledOnce();
   });
 
+  it('closeThread keeps the provisional-entry mark and remembers the closed id, for the selected project only (bdboard-rt6i)', () => {
+    const { result } = setup();
+    result.current.provisionalEntries.markIfFirstEntry('project-a');
+    result.current.provisionalEntries.markIfFirstEntry('project-b');
+    act(() => {
+      result.current.setOpenThreadIds((prev) => ({ ...prev, 'project-a': ['sess-1', 'sess-2'] }));
+    });
+    act(() => result.current.closeThread('sess-1'));
+    // 閉じても印は下ろさない(下ろすと [sess-2] が利用者の記録になり、サーバーの他のスレッドが開かれない)。
+    expect(result.current.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(true);
+    expect(Array.from(result.current.provisionalEntries.closedIds('project-a'))).toEqual(['sess-1']);
+    expect(result.current.provisionalEntries.closedIds('project-b').size).toBe(0);
+  });
+
+  it('closeThread records nothing when no provisional entry is marked: the close is simply the user\'s record (bdboard-rt6i)', () => {
+    const { result } = setup();
+    act(() => {
+      result.current.setOpenThreadIds((prev) => ({ ...prev, 'project-a': ['sess-1', 'sess-2'] }));
+    });
+    act(() => result.current.closeThread('sess-1'));
+    expect(result.current.provisionalEntries.closedIds('project-a').size).toBe(0);
+    expect(result.current.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(false);
+  });
+
+  it('deleteThread remembers the closed id once the delete succeeds, and not when the delete fails (bdboard-rt6i)', async () => {
+    deleteChatThreadMock.mockRejectedValueOnce(new Error('boom'));
+    const { result } = setup();
+    result.current.provisionalEntries.markIfFirstEntry('project-a');
+    await act(async () => result.current.deleteThread('sess-1'));
+    // 失敗では何も変わらない(閉じていない)。
+    expect(result.current.provisionalEntries.closedIds('project-a').size).toBe(0);
+    await act(async () => result.current.deleteThread('sess-1'));
+    expect(Array.from(result.current.provisionalEntries.closedIds('project-a'))).toEqual(['sess-1']);
+  });
+
+  /** 印だけを見る(永続化の中身ではなく): 空でないエントリが書かれたとして、仮のエントリと読まれるか。 */
+  const marked = (result: { current: { provisionalEntries: { isProvisional: (id: string, p: { activeSessionIds: string[] }) => boolean } } }) =>
+    result.current.provisionalEntries.isProvisional('project-a', { activeSessionIds: ['sess-1'] });
+
+  it('selectOpenThread marks the first entry it writes for an unrestored project (bdboard-rt6i)', () => {
+    const { result } = setup();
+    act(() => result.current.selectOpenThread('sess-1'));
+    expect(marked(result)).toBe(true);
+  });
+
+  it('reopenClosedThread marks the first entry it writes for an unrestored project (bdboard-rt6i)', () => {
+    const { result } = setup();
+    act(() => result.current.reopenClosedThread('sess-closed'));
+    expect(marked(result)).toBe(true);
+  });
+
+  it('reopenClosedThread takes the reopened id off the closed ids, so a list that lands later does not subtract it (bdboard-rt6i)', () => {
+    const { result } = setup();
+    result.current.provisionalEntries.markIfFirstEntry('project-a');
+    result.current.provisionalEntries.noteClosed('project-a', 'sess-closed');
+    result.current.provisionalEntries.noteClosed('project-a', 'sess-other');
+    act(() => result.current.reopenClosedThread('sess-closed'));
+    expect(Array.from(result.current.provisionalEntries.closedIds('project-a'))).toEqual(['sess-other']);
+  });
+
+  it('does not mark a project that already has an entry, or is already restored (bdboard-rt6i)', () => {
+    writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-x'], selectedSessionId: 'sess-x' });
+    const withEntry = setup();
+    act(() => withEntry.result.current.selectOpenThread('sess-1'));
+    expect(marked(withEntry.result)).toBe(false);
+
+    localStorage.clear();
+    const restored = setup();
+    restored.result.current.restoredProjectsRef.current.add('project-a');
+    act(() => restored.result.current.reopenClosedThread('sess-closed'));
+    expect(marked(restored.result)).toBe(false);
+  });
   it('deleteThread removes the thread on success and always cancels confirm-delete', async () => {
     const { result, setThreadError, drawer } = setup({ currentSessionId: 'sess-1' });
     act(() => {
