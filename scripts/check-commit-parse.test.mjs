@@ -378,6 +378,30 @@ describe('check-commit-parse CLI', () => {
     sh(work, 'git', 'commit', '-F', fixturePath);
   }
 
+  // 同じメッセージの空コミットを `git fast-import` の 1 回の起動で count 件積む (bdboard-h9s0)。
+  // `git commit` を 1 件ずつ呼ぶと 1 件ごとに 2 プロセス (commit 本体と、その後ろで走る
+  // `git maintenance run --auto`) が立ち、プロセス起動が遅い Windows の runner では 15 秒を超えた。
+  // fast-import なら件数によらず 1 プロセス。
+  // 積み先は makeRepo が push している main。最初の 1 件だけ `from refs/heads/main^0` で既存の先端を
+  // 親に指す (省略すると親なしの新しい root になり fast-import は main を更新しない。`^0` を付けない
+  // `from refs/heads/main` は「自分自身からブランチは作れない」で fatal になる)。2 件目以降は
+  // 同じストリーム内の直前のコミットが親になる。tree は親から引き継ぐので空コミットになる。
+  function commitEmptyManyViaFastImport(work, count, message) {
+    const data = Buffer.from(message, 'utf8');
+    const head = Buffer.from(
+      `commit refs/heads/main\ncommitter T <t@e> 1700000000 +0000\ndata ${data.length}\n`,
+    );
+    const record = (parent) => Buffer.concat([head, data, Buffer.from(`${parent}\n`)]);
+    execFileSync('git', ['fast-import', '--quiet'], {
+      cwd: work,
+      input: Buffer.concat([
+        record('from refs/heads/main^0\n'),
+        ...Array.from({ length: count - 1 }, () => record('')),
+      ]),
+      stdio: ['pipe', 'ignore', 'pipe'],
+    });
+  }
+
   function runCheck(work, args) {
     return spawnSync(process.execPath, [SCRIPT_PATH, '--repo', work, ...args], {
       cwd: REPO_ROOT,
@@ -429,21 +453,25 @@ describe('check-commit-parse CLI', () => {
     'handles git log output larger than 1 MB',
     () => {
       const { work } = makeRepo('large-log');
-      // 30 件 × 640 行 × 81文字 ≈ 1.5 MB。1コミットごとは約51 KBに保つ。
-      // 空コミット(--allow-empty)にして git add / ファイル書き込みをループから除去し、
-      // git 子プロセス起動回数を 60 → 30 に減らす(Windows CI のプロセス起動オーバーヘッド対策。
-      // bdboard-qlw1)。git log は diff ではなくコミットメッセージだけを読むスクリプトなので、
-      // 検証内容(1MB超のログをスクリプトが正しく扱えること)は変わらない。
+      // 30 件 × 64 行 × 819文字 ≈ 1.6 MB。1コミットごとは約52 KBに保つ。
+      // 守っているのは「1MB超の git log をスクリプトが ENOBUFS なく扱えること」(bdboard-ni4r)。
+      // Windows CI のコストを 2 点で下げている (bdboard-h9s0。qlw1 の `git commit` ごとの
+      // git add / ファイル書き込みを外す対処に続くもの)。
+      // - git log は diff ではなくコミットメッセージだけを読むので、積むのは空コミットでよい。
+      //   30 件を `git fast-import` の 1 回の起動で作る (`git commit` を 30 回呼ぶと、1 件ごとに
+      //   `git maintenance run --auto` も立って git が約 60 プロセス増える)。
+      // - スクリプトの解析コストはバイト数ではなく行数に比例する (640 行 × 30 件で mac でも約1.6秒。
+      //   同じバイト数を 64 行にすると約0.2秒)。サイズは 1MB を超えるまま、行を長くして行数を減らす。
+      const commitCount = 30;
       const line = 'A conventional commit body line with enough ordinary text to grow the log output.';
-      const message = `fix: large log fixture\n\n${Array.from({ length: 640 }, () => line).join('\n')}\n`;
-      const messagePath = path.join(tmpRoot, 'message.txt');
-      fs.writeFileSync(messagePath, message);
-      for (let index = 0; index < 30; index += 1) {
-        sh(work, 'git', 'commit', '--allow-empty', '-F', messagePath);
-      }
+      const longLine = Array.from({ length: 10 }, () => line).join(' ');
+      const message = `fix: large log fixture\n\n${Array.from({ length: 64 }, () => longLine).join('\n')}\n`;
+      commitEmptyManyViaFastImport(work, commitCount, message);
 
       const log = sh(work, 'git', 'log', '--format=%H%x1f%B%x1e', 'v0.0.0..HEAD');
       expect(Buffer.byteLength(log, 'utf8')).toBeGreaterThan(1024 * 1024);
+      // fast-import が 1 件にまとめてしまっていないこと (多数のコミットの log という形を保つ)。
+      expect(log.split('\x1e').filter((record) => record.trim() !== '')).toHaveLength(commitCount);
 
       const result = runCheck(work, ['--range', 'v0.0.0..HEAD']);
       const combined = `${result.stdout}\n${result.stderr}`;
