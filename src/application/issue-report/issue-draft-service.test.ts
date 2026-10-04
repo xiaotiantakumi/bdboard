@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS,
   ISSUE_DRAFT_FREE_TEXT_MAX_CHARS,
@@ -576,5 +576,74 @@ describe('images', () => {
     expect(results.filter((result) => result.ok)).toHaveLength(ISSUE_DRAFT_MAX_IMAGES);
     expect(results.filter((result) => !result.ok && result.reason === 'limit-reached')).toHaveLength(5);
     expect(await storage.countImages(created.draft.id)).toBe(ISSUE_DRAFT_MAX_IMAGES);
+  });
+});
+
+// bdboard-r50m: 受け取りの索引 (最初の受け取りが作る) のキャッシュ。ストアが scan() で「一覧が欠けているかも」
+// (complete: false = 未列挙の読み取りエラーで飛ばした下書きがある) と知らせた回の索引は、その回の受け取りには使うが
+// キャッシュしない。次の受け取りが読み直す。
+describe('receive: the index is cached only when the listing is complete', () => {
+  /** in-memory のストアの scan() の complete を、テストから切り替えられるようにする。 */
+  function createGappedHarness(listing: { complete: boolean }, existing?: InMemoryIssueDraftStorage) {
+    const storage = existing ?? createInMemoryIssueDraftStorage();
+    const realScan = storage.scan.bind(storage);
+    const scan = vi
+      .spyOn(storage, 'scan')
+      .mockImplementation(async () => ({ drafts: (await realScan()).drafts, complete: listing.complete }));
+    return { ...createHarness(undefined, storage), scan };
+  }
+
+  it('an incomplete listing is read again on every receive; a complete one is cached from then on', async () => {
+    const listing = { complete: false };
+    const { service, scan } = createGappedHarness(listing);
+
+    await service.receive(catalogInput('a'));
+    await service.receive(catalogInput('b'));
+    await service.receive(catalogInput('c'));
+    expect(scan).toHaveBeenCalledTimes(3);
+
+    listing.complete = true;
+    await service.receive(catalogInput('d'));
+    expect(scan).toHaveBeenCalledTimes(4);
+    await service.receive(catalogInput('e'));
+    await service.receive(catalogInput('a'));
+    expect(scan).toHaveBeenCalledTimes(4);
+  });
+
+  it('the receive that sees an incomplete listing still works with what it could read', async () => {
+    const seeded = createHarness();
+    const first = await expectOk(seeded.service.receive(catalogInput('known')));
+    const { service, scan } = createGappedHarness({ complete: false }, seeded.storage);
+
+    const merged = await expectOk(service.receive(catalogInput('known')));
+    expect(merged.outcome).toBe('merged');
+    expect(merged.draft.id).toBe(first.draft.id);
+    expect(merged.draft.occurrenceCount).toBe(2);
+    expect((await expectOk(service.receive(catalogInput('other')))).outcome).toBe('created');
+    expect(scan).toHaveBeenCalledTimes(2);
+  });
+
+  it('what an incomplete pass wrote is found by the next pass (the same fingerprint is not created twice)', async () => {
+    const listing = { complete: false };
+    const { service, storage } = createGappedHarness(listing);
+
+    const created = await expectOk(service.receive(catalogInput('x')));
+    expect(created.outcome).toBe('created');
+    listing.complete = true;
+    const again = await expectOk(service.receive(catalogInput('x')));
+    expect(again.outcome).toBe('merged');
+    expect(again.draft.id).toBe(created.draft.id);
+    expect(storage.drafts.size).toBe(1);
+  });
+
+  it('a rejected scan is not cached either: the next receive reads again', async () => {
+    const { service, scan } = createGappedHarness({ complete: true });
+    scan.mockRejectedValueOnce(new Error('example scan failure'));
+
+    await expect(service.receive(catalogInput('a'))).rejects.toThrow('example scan failure');
+    expect((await expectOk(service.receive(catalogInput('a')))).outcome).toBe('created');
+    expect(scan).toHaveBeenCalledTimes(2);
+    await service.receive(catalogInput('b'));
+    expect(scan).toHaveBeenCalledTimes(2);
   });
 });

@@ -30,6 +30,9 @@ export function createInMemoryIssueDraftStorage(
     async list() {
       return [...drafts.values()].map((draft) => structuredClone(draft));
     },
+    async scan() {
+      return { drafts: [...drafts.values()].map((draft) => structuredClone(draft)), complete: true };
+    },
     async get(id) {
       const draft = drafts.get(id);
       return draft === undefined ? undefined : structuredClone(draft);

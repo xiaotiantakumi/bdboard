@@ -15,12 +15,24 @@ export interface StoredDraftImage {
   readonly createdAt: Date;
 }
 
+export interface DraftListing {
+  readonly drafts: readonly IssueDraft[];
+  /**
+   * false: 一覧が欠けているかもしれない。未列挙の理由 (EIO など、あとで読めるかもしれないもの) で
+   * 読めず飛ばした下書きがある。呼び出し側はこの一覧から作ったものをキャッシュしない (次の呼び出しで
+   * 読み直す)。恒久的な理由 (権限、ディレクトリでないもの、壊れた JSON など) で飛ばしただけなら true。
+   */
+  readonly complete: boolean;
+}
+
 export interface IssueDraftStoragePort {
+  /** list() と同じ一覧に、欠けていないかどうかを添える。受け取りの索引づくり用 (bdboard-r50m)。 */
+  scan(): Promise<DraftListing>;
   /**
    * 全下書き。読めない・壊れている下書き (権限、ディレクトリでないもの、不正な JSON、形や時刻の
-   * 不正など。あとで通る見込みの無いもの) は警告を出して読み飛ばす (1件の破損で一覧や受け取り全体を
-   * 落とさない)。あとで通るかもしれない一時的な読み取りの失敗 (EMFILE・EIO など) は読み飛ばさず
-   * 投げる。欠けた一覧を「全部」として使い続けないため (受け取りの索引は最初の 1 回だけ作る)。
+   * 不正、EIO のような未列挙のエラーなど) は警告を出して読み飛ばす (1件の破損で一覧や受け取り全体を
+   * 落とさない)。EMFILE のような一時的なエラーは実装が回数上限つきで再試行し、使い切ったときだけ
+   * 投げる。未列挙のエラーで飛ばした一覧は scan() が complete: false で知らせる。
    */
   list(): Promise<readonly IssueDraft[]>;
   /** 1件取得。存在しない・読めない・壊れているときは undefined (読めない・壊れているときは警告)。 */

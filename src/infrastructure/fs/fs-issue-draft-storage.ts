@@ -4,7 +4,9 @@ import { randomBytes } from 'node:crypto';
 import { ISSUE_DRAFT_MAX_JSON_BYTES, isDraftId, type IssueDraft } from '../../domain/issue-draft.js';
 import { draftJsonBytes, serializeDraft } from '../../domain/issue-draft-size.js';
 import { draftSchema } from './issue-draft-schema.js';
+import { DRAFT_READ_RETRY_DELAYS_MS, createDraftFileReader, sleepForMs } from './issue-draft-file-reader.js';
 import type {
+  DraftListing,
   IssueDraftStoragePort,
   StoredDraftImage,
 } from '../../application/ports/issue-draft-storage.js';
@@ -25,14 +27,6 @@ const IMAGES_DIR = 'images';
 /** このストアが採番する画像のファイル名 (<epochMs>-<16桁hex>.<ext>)。.DS_Store などの迷い込んだファイルは画像に数えない。 */
 const IMAGE_FILE_NAME_PATTERN = /^[0-9]{1,20}-[0-9a-f]{16}\.[a-z0-9]{1,8}$/;
 
-/**
- * 読めない下書きとして飛ばしてよい、その場で直らないエラー (種類が違う・読む権限が無い)。
- * これ以外 (EMFILE・EIO・ENOMEM など、あとで通るかもしれない一時的なもの) は飛ばさず投げる。
- * 飛ばすと、起動後の最初の受け取りが作る索引 (issue-draft-service の loadIndex) が欠けたまま
- * プロセスの間ずっと使われ、既知の指紋が新規として二重に作られる。
- */
-const PERMANENT_READ_ERROR_CODES: ReadonlySet<string> = new Set(['ENOTDIR', 'EISDIR', 'EACCES', 'EPERM']);
-
 function isNotFound(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT';
 }
@@ -45,12 +39,20 @@ function within(parent: string, target: string): boolean {
 export interface FsIssueDraftStorageOptions {
   /** 読めない下書きを飛ばしたときの警告 (既定は console.warn)。中身は渡さない: 理由と id だけ。 */
   readonly warn?: (message: string) => void;
+  /** 既定は process.platform。win32 でだけ EPERM/EACCES を一時的として再試行する (テストで分岐を通すために注入できる)。 */
+  readonly platform?: NodeJS.Platform;
+  /** draft.json の読み出しの再試行。待ち (ms) の並びと sleep を差し替えられる (テストは実時間を待たない)。 */
+  readonly readRetry?: {
+    readonly delaysMs?: readonly number[];
+    readonly sleep?: (ms: number) => Promise<void>;
+  };
 }
 
+/** incomplete: 未列挙の理由で飛ばした (あとで読めるかもしれない)。受け取りの索引をキャッシュさせない印。 */
 type DraftRead =
   | { readonly kind: 'ok'; readonly draft: IssueDraft }
   | { readonly kind: 'missing' }
-  | { readonly kind: 'unusable'; readonly reason: string };
+  | { readonly kind: 'unusable'; readonly reason: string; readonly incomplete: boolean };
 
 export function createFsIssueDraftStorage(
   baseDir: string,
@@ -58,6 +60,11 @@ export function createFsIssueDraftStorage(
 ): IssueDraftStoragePort {
   const resolvedBaseDir = path.resolve(baseDir);
   const warn = options.warn ?? ((message: string) => console.warn(message));
+  const readRaw = createDraftFileReader({
+    platform: options.platform ?? process.platform,
+    delaysMs: options.readRetry?.delaysMs ?? DRAFT_READ_RETRY_DELAYS_MS,
+    sleep: options.readRetry?.sleep ?? sleepForMs,
+  });
   /** 同じ下書きの同じ理由は 1 回だけ警告する (一覧は画面から何度も呼ばれる)。 */
   const warned = new Set<string>();
 
@@ -97,36 +104,45 @@ export function createFsIssueDraftStorage(
    */
   async function readDraftFile(id: string): Promise<DraftRead> {
     // 不正な id は読み取りの失敗ではなくプログラムの誤りなので、try の外で投げる。
-    const file = path.join(draftDir(id), DRAFT_FILE);
-    let raw: string;
-    try {
-      raw = await fs.readFile(file, 'utf8');
-    } catch (error) {
-      if (isNotFound(error)) return { kind: 'missing' };
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== undefined && PERMANENT_READ_ERROR_CODES.has(code)) {
-        return { kind: 'unusable', reason: `unreadable (${code})` };
-      }
-      throw error;
-    }
+    // 読み出しの errno の扱い (再試行・恒久の飛ばし・未列挙の飛ばし) は issue-draft-file-reader.ts。
+    const read = await readRaw(path.join(draftDir(id), DRAFT_FILE));
+    if (read.kind !== 'ok') return read;
     let parsedJson: unknown;
     try {
-      parsedJson = JSON.parse(raw);
+      parsedJson = JSON.parse(read.raw);
     } catch {
-      return { kind: 'unusable', reason: 'not valid JSON' };
+      return { kind: 'unusable', reason: 'not valid JSON', incomplete: false };
     }
     const parsed = draftSchema.safeParse(parsedJson);
-    if (!parsed.success) return { kind: 'unusable', reason: 'does not match the draft format' };
+    if (!parsed.success) return { kind: 'unusable', reason: 'does not match the draft format', incomplete: false };
     // ファイル名の id と中身の id が食い違うものは、別の下書きとして扱わず読まない。
-    if (parsed.data.id !== id) return { kind: 'unusable', reason: 'id does not match its directory' };
+    if (parsed.data.id !== id) return { kind: 'unusable', reason: 'id does not match its directory', incomplete: false };
     return { kind: 'ok', draft: parsed.data };
   }
 
-  async function readUsableDraft(id: string): Promise<IssueDraft | undefined> {
+  /** 読んで、使えなければ警告 (同じ下書きの同じ理由は 1 回) を出す。list/scan と get の共通の入口。 */
+  async function readAndReport(id: string): Promise<DraftRead> {
     const result = await readDraftFile(id);
-    if (result.kind === 'ok') return result.draft;
     if (result.kind === 'unusable') warnUnusable(id, result.reason);
-    return undefined;
+    return result;
+  }
+
+  async function scan(): Promise<DraftListing> {
+    let names: string[];
+    try {
+      names = await fs.readdir(resolvedBaseDir);
+    } catch (error) {
+      if (isNotFound(error)) return { drafts: [], complete: true };
+      throw error;
+    }
+    const results = await Promise.all(names.filter(isDraftId).map((name) => readAndReport(name)));
+    const drafts: IssueDraft[] = [];
+    let complete = true;
+    for (const result of results) {
+      if (result.kind === 'ok') drafts.push(result.draft);
+      else if (result.kind === 'unusable' && result.incomplete) complete = false;
+    }
+    return { drafts, complete };
   }
 
   async function imageEntries(id: string): Promise<StoredDraftImage[]> {
@@ -159,18 +175,15 @@ export function createFsIssueDraftStorage(
 
   return {
     async list() {
-      let names: string[];
-      try {
-        names = await fs.readdir(resolvedBaseDir);
-      } catch (error) {
-        if (isNotFound(error)) return [];
-        throw error;
-      }
-      const drafts = await Promise.all(names.filter(isDraftId).map((name) => readUsableDraft(name)));
-      return drafts.filter((draft): draft is IssueDraft => draft !== undefined);
+      return (await scan()).drafts;
     },
 
-    get: (id) => readUsableDraft(id),
+    scan,
+
+    async get(id) {
+      const result = await readAndReport(id);
+      return result.kind === 'ok' ? result.draft : undefined;
+    },
 
     async save(draft) {
       const dir = draftDir(draft.id);

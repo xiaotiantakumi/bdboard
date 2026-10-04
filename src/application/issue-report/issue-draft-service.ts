@@ -89,8 +89,9 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
   const exclusive = createMutex();
   let indexPromise: Promise<DraftIndex> | undefined;
 
-  async function loadIndex(): Promise<DraftIndex> {
-    const drafts = [...(await deps.storage.list())].sort((a, b) =>
+  async function loadIndex(): Promise<{ readonly index: DraftIndex; readonly complete: boolean }> {
+    const listing = await deps.storage.scan();
+    const drafts = [...listing.drafts].sort((a, b) =>
       a.firstOccurredAt < b.firstOccurredAt ? -1 : a.firstOccurredAt > b.firstOccurredAt ? 1 : 0,
     );
     const idByFingerprint = new Map<string, string>();
@@ -102,16 +103,29 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
         newDraftsByHour.set(bucket, (newDraftsByHour.get(bucket) ?? 0) + 1);
       }
     }
-    return { idByFingerprint, newDraftsByHour };
+    return { index: { idByFingerprint, newDraftsByHour }, complete: listing.complete };
   }
 
-  /** 起動後の最初の受け取りで一度だけ保存済みの下書きを読み、以後は書いた分をメモリで足す。 */
+  /**
+   * 起動後の最初の受け取りで一度だけ保存済みの下書きを読み、以後は書いた分をメモリで足す。
+   * 読むのに失敗したとき、または未列挙のエラーで飛ばした下書きがあって一覧が欠けているとき
+   * (complete: false) は、キャッシュしない。欠けた索引を使い続けると既知の指紋が新規として二重に
+   * 作られるので、次の受け取りでもう一度全件を読み直す (その回の受け取りには欠けた索引を使う)。
+   */
   function getIndex(): Promise<DraftIndex> {
-    indexPromise ??= loadIndex().catch((error: unknown) => {
-      indexPromise = undefined;
-      throw error;
-    });
-    return indexPromise;
+    if (indexPromise !== undefined) return indexPromise;
+    const loading: Promise<DraftIndex> = loadIndex().then(
+      ({ index, complete }) => {
+        if (!complete && indexPromise === loading) indexPromise = undefined;
+        return index;
+      },
+      (error: unknown) => {
+        if (indexPromise === loading) indexPromise = undefined;
+        throw error;
+      },
+    );
+    indexPromise = loading;
+    return loading;
   }
 
   async function receiveLocked(rawInput: ReceiveDraftInput): Promise<ReceiveDraftResult> {
