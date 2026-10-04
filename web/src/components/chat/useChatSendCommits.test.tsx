@@ -191,6 +191,15 @@ describe('commitSuccess', () => {
       expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-new', 'sess-two']);
     });
 
+    it('takes the sent session off the closed ids: a send into a thread closed during the mark is not subtracted later', () => {
+      const { hook, params } = setup();
+      params.provisionalEntries.markIfFirstEntry('proj-a');
+      params.provisionalEntries.noteClosed('proj-a', 'sess-new');
+      params.provisionalEntries.noteClosed('proj-a', 'sess-other');
+      act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
+      expect(Array.from(params.provisionalEntries.closedIds('proj-a'))).toEqual(['sess-other']);
+    });
+
     it('does not mark a revisit: an entry already existed, so it is the user\'s own record', () => {
       writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-a'], selectedSessionId: 'sess-a' });
       const { hook, params } = setup();

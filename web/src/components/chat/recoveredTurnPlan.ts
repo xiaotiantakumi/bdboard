@@ -18,7 +18,8 @@ export interface RecoveredTurnPlanInput {
   persisted: PersistedChatThreadState | undefined;
   /**
    * このプロジェクトの永続化済みエントリが仮のエントリか(bdboard-rt6i。chat/provisionalEntry.ts の
-   * isProvisional = 印が立っていて、エントリに開いているスレッドが 1 件以上ある)。仮のエントリは
+   * isProvisional = 印が立っていて、エントリが存在する。印のある [] も仮。エージェント切替の空は、handleAgentChange が
+   * 同じハンドラで settle して印を下ろすので仮にならない)。仮のエントリは
    * 利用者が開き閉じした記録ではないので、永続化を正本にせず、サーバー一覧を足して開く。
    */
   provisionalEntry: boolean;

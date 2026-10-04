@@ -31,7 +31,9 @@ export function withoutClosed(threads: readonly ChatThreadDto[], closed: Readonl
  * - markIfFirstEntry: 最初の永続化エントリを書く経路(送信成功・採用・履歴ロード・スレッドの選択/再オープン・
  *   選択中スレッドの死亡)が、書く直前に呼ぶ。未復元で、まだエントリが無いときだけ印を立てる。判定は呼ぶ時点の
  *   restoredProjectsRef と永続化を読むので、採用のように restoredProjectsRef を立てる処理より前に呼ぶこと。
- * - isProvisional: 復元する側が読む。印があり、いまのエントリが空でないとき true。
+ * - isProvisional: 復元する側が読む。印が立っていて、エントリが存在するとき true — 印だけで決まり、印のある [] も仮
+ *   (送信 N1 → N1 を閉じる、の [] は利用者の記録ではない)。エージェント切替の空が仮にならないのは、handleAgentChange が
+ *   [] を書いた同じハンドラの直後に settle で印を下ろすから(エントリの中身では見分けない)。
  * - noteClosed / noteReopened / closedIds: 印がある間に利用者が閉じた(削除した)スレッド。開き直した(閉じたスレッドの
  *   再オープン、CLI セッションの採用)id は noteReopened で閉じた id から外す。閉じる操作は印を下ろさない
  *   (下ろすと、送信 N1 → 送信 N2 → N1 を閉じる、で永続化 [N2] が利用者の記録になり、一度も見ていないサーバーの

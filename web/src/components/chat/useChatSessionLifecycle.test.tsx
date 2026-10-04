@@ -671,11 +671,13 @@ describe('useChatSessionLifecycle', () => {
     });
 
     it('does not treat an agent change\'s empty entry as provisional on a recovery: handleAgentChange settles the mark', () => {
-      // handleAgentChange と同じ順: 空のエントリを書き、印を settle で下ろし、復元済みにする。
-      writePersistedChatThreadState('project-a', { activeSessionIds: [] });
+      // 実際の順を再生する: 未復元でエントリが無いうちに送信が印を立て([sess-x] を書く)、そのあと handleAgentChange が
+      // [] を書き、同じハンドラで settle して復元済みにする。settle を外すと印のある [] は仮のエントリになり、回収が広げる。
       const restoredProjectsRef = { current: new Set<string>() };
       const provisionalEntries = createProvisionalEntryMarks((id) => restoredProjectsRef.current.has(id));
       provisionalEntries.markIfFirstEntry('project-a');
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-x'], selectedSessionId: 'sess-x' });
+      writePersistedChatThreadState('project-a', { activeSessionIds: [] });
       provisionalEntries.settle('project-a');
       restoredProjectsRef.current.add('project-a');
       const { result, params } = setup({

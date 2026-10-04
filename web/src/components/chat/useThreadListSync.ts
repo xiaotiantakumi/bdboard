@@ -255,9 +255,10 @@ export function useThreadListSync({
           // bdboard-0206: 確立したのが採用なら、open はその 1 件(と永続化の基点)だけで、サーバー一覧の他の
           // スレッドが開かれない。初回訪問のときだけ、採用が確立した open にサーバー一覧を足し、永続化も揃える
           // (でないとリロードで閉じられる)。選択は採用が確立したまま触らない。open が分からない(undefined)なら
-          // 足さない。エージェント切替の「空に確定」は、マーカーが下りている(handleAgentChange)うえ、エントリの
-          // activeSessionIds も空なので当たらず、そのまま残る(切替のあとに送信・採用が書いたエントリでも、復元済みの
-          // プロジェクトには仮のマーカーを立てないので、利用者が空にした open を一覧で広げない。bdboard-rt6i)。
+          // 足さない。エージェント切替の「空に確定」は、handleAgentChange が [] を書いた同じハンドラの直後に settle で
+          // マーカーを下ろすので当たらず、そのまま残る(印だけで決まる: 印のある [] は仮、下りた [] は仮ではない。切替のあとに
+          // 送信・採用が書いたエントリでも、復元済みのプロジェクトには仮のマーカーを立てないので、利用者が空にした open を
+          // 一覧で広げない。bdboard-rt6i)。
           if (provisional && openIdsNow !== undefined) {
             const widened = widenOpenToServerList(listForFirstVisit, openIdsNow);
             setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: widened }));
