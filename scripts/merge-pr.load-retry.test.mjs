@@ -11,8 +11,10 @@ import { classifyVerifyFailure, retryLoadInduced } from './merge-pr/load-retry.m
 import {
   advanceMain,
   auditText,
+  commitAll,
   CONTEXT,
   env,
+  git,
   head,
   landSquash,
   mainCheckout,
@@ -425,9 +427,22 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(existsSync(timeoutsRecord())).toBe(false); // 時間切れだけではない失敗は、1 回目の記録も残さない
   });
 
-  // bdboard-e8jj (PR #871 レビュー指摘 1): 時間切れだけの失敗で exit 75 にするのは同じ着地予定ツリーにつき 1 回だけ。
-  // 決定的なハング (毎回時間切れになる意味的衝突) が毎回 75 のまま rebase に格下げされないのを防ぐ。
+  // bdboard-e8jj (PR #871 レビュー指摘 1): 時間切れだけの失敗で exit 75 にするのは同じ PR head につき 1 回だけ。
+  // 決定的なハング (毎回時間切れになる意味的衝突) が毎回 75 のまま rebase に格下げされないのを防ぐ。記録は着地予定ツリーではなく
+  // head で見る (prepare の合間に main が動くとツリーが変わり、ツリーで数えると上限が効かなくなる)。記録の読み書きの単体は
+  // scripts/merge-pr.predicted-timeouts.test.mjs (こちらは POSIX だけ)。
   const timeoutsRecord = () => path.join(mergeDir(), `pr-${PR}-predicted-timeouts.json`);
+  const predictedTrees = () => predictedAudit().map((line) => /\ttree=([0-9a-f]+)\t/.exec(line)[1]);
+  // PR のブランチに 1 コミット足して push し、偽の gh にも新しい head を教える (PR が更新された)。
+  const moveHead = () => {
+    writeFileSync(path.join(work, 'more.txt'), 'more\n');
+    const next = commitAll(work, 'feat(demo-1): more');
+    git(work, ['push', '-q', 'origin', 'bd/demo-1']);
+    const { pulls } = readFake();
+    pulls[PR].head.sha = next;
+    writeFake({ pulls });
+    return next;
+  };
   const prepareWith = (output, extraEnv = {}) => {
     const file = path.join(tmp, 'predicted-output.txt');
     writeFileSync(file, output);
@@ -436,22 +451,24 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
   const predictedAudit = (event = 'predicted-verify') => auditText().split('\n').filter((line) => line.includes(`\t${event}\t`));
   const onlyTimeouts = vitestLog(TIMEOUTS, '2 failed | 100 passed (102)');
 
-  it('allows one load-induced exit 75 per predicted tree: the same tree failing with only timeouts again is exit 3 (a likely deterministic hang)', () => {
+  it('allows one load-induced exit 75 per PR head: the same head failing with only timeouts again is exit 3 (a likely deterministic hang)', () => {
     setup({ merge: { mode: 'S2' } });
     advanceMain({ 'peer.txt': 'peer\n' });
     const first = prepareWith(onlyTimeouts);
     expect(first.status).toBe(75);
     expect(first.stderr).toContain('prepare を再実行してください');
+    expect(first.stderr).not.toContain('前にも時間切れだけで落ちています');
     const recorded = JSON.parse(readFileSync(timeoutsRecord(), 'utf8'));
-    expect(recorded).toEqual({ pr: PR, tree: expect.stringMatching(/^[0-9a-f]{40}$/) });
+    expect(recorded).toEqual({ pr: PR, head }); // 着地予定ツリーではなく PR head
     const second = prepareWith(onlyTimeouts);
     expect(second.status).toBe(3);
-    expect(second.stderr).toContain('同じ着地予定ツリーで 2 回続けて');
+    expect(second.stderr).toContain(`この PR head (${head.slice(0, 12)}) は前にも時間切れだけで落ちています`);
+    expect(second.stderr).not.toContain('2 回続けて'); // 続けてとは限らない (間に別の失敗があっても記録は残る)
     expect(second.stderr).toContain('決定的なハング');
     expect(second.stderr).toContain('git rebase'); // rebaseSteps の案内まで出る
     expect(second.stderr).not.toContain('prepare を再実行してください');
     expect(JSON.parse(readFileSync(timeoutsRecord(), 'utf8'))).toEqual(recorded); // 格下げした後も記録は残る
-    expect(prepareWith(onlyTimeouts).status).toBe(3); // 同じツリーは何度やり直しても 3 (75 に戻らない)
+    expect(prepareWith(onlyTimeouts).status).toBe(3); // 同じ head は何度やり直しても 3 (75 に戻らない)
     expect(verified()).toHaveLength(3);
     expect(existsSync(stateFile())).toBe(false);
     // 監査: result はどれも failure。時間切れだけの失敗は loadInduced=1 と件数を持ち、2 回目からは repeated=1 も持つ。
@@ -463,20 +480,57 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(lines[2]).toMatch(/\tloadInduced=1\ttimeouts=3\trepeated=1$/);
   });
 
-  it('counts again from one when the predicted tree is a different one (main moved)', () => {
+  it('does not reset the count when main moves between the two runs (the predicted tree changes, the PR head does not): 75 then 3', () => {
     setup({ merge: { mode: 'S2' } });
     advanceMain({ 'peer.txt': 'peer\n' });
     expect(prepareWith(onlyTimeouts).status).toBe(75);
-    const firstTree = JSON.parse(readFileSync(timeoutsRecord(), 'utf8')).tree;
-    advanceMain({ 'peer2.txt': 'peer two\n' }); // main が動けば着地予定ツリーも変わる
-    expect(prepareWith(onlyTimeouts).status).toBe(75); // 別のツリーの 1 回目: また 75
-    const secondTree = JSON.parse(readFileSync(timeoutsRecord(), 'utf8')).tree;
+    advanceMain({ 'peer2.txt': 'peer two\n' }); // main が動けば着地予定ツリーは変わる
+    const second = prepareWith(onlyTimeouts);
+    expect(second.status).toBe(3); // 木が違っても head が同じなら 2 回目
+    expect(second.stderr).toContain('前にも時間切れだけで落ちています');
+    const [firstTree, secondTree] = predictedTrees();
     expect(secondTree).not.toBe(firstTree);
-    expect(prepareWith(onlyTimeouts).status).toBe(3); // その同じツリーの 2 回目: 3
+    expect(predictedAudit().map((line) => /\trepeated=1$/.test(line))).toEqual([false, true]);
+    advanceMain({ 'peer3.txt': 'peer three\n' });
+    expect(prepareWith(onlyTimeouts).status).toBe(3); // main がまた動いても 3 のまま
+  });
+
+  it('counts again from one when the PR head is a different one (the PR was updated)', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    expect(prepareWith(onlyTimeouts).status).toBe(75);
+    const firstHead = JSON.parse(readFileSync(timeoutsRecord(), 'utf8')).head;
+    const nextHead = moveHead();
+    expect(nextHead).not.toBe(firstHead);
+    expect(prepareWith(onlyTimeouts).status).toBe(75); // 別の head の 1 回目: また 75
+    expect(JSON.parse(readFileSync(timeoutsRecord(), 'utf8'))).toEqual({ pr: PR, head: nextHead });
+    expect(prepareWith(onlyTimeouts).status).toBe(3); // その head の次: 3
     expect(predictedAudit().map((line) => /\trepeated=1$/.test(line))).toEqual([false, false, true]);
   });
 
-  it('clears the record on a predicted success, so the same tree gets its one exit 75 again later', () => {
+  it('keeps the record through a failure that is not only timeouts (it is not a consecutive count)', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    expect(prepareWith(onlyTimeouts).status).toBe(75);
+    expect(prepareWith(vitestLog(' FAIL  a.test.ts > b\nAssertionError: expected 1 to be 2\n', '1 failed | 1 passed (2)')).status).toBe(3);
+    expect(existsSync(timeoutsRecord())).toBe(true);
+    const third = prepareWith(onlyTimeouts);
+    expect(third.status).toBe(3);
+    expect(third.stderr).toContain('前にも時間切れだけで落ちています'); // 間に別の失敗があっても、前にも落ちた事実は変わらない
+  });
+
+  it('finish deletes the timeouts record of the merged PR (bdboard-e8jj)', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    simulateMerge();
+    writeFileSync(timeoutsRecord(), `${JSON.stringify({ pr: PR, head })}\n`); // 前に時間切れだけで落ちた記録が残っていた
+    const finished = run(['finish', String(PR)]);
+    expect(finished.status, finished.stderr).toBe(0);
+    expect(existsSync(timeoutsRecord())).toBe(false);
+  });
+
+  it('clears the record on a predicted success, so the same head gets its one exit 75 again later', () => {
     setup({ merge: { mode: 'S2' } });
     advanceMain({ 'peer.txt': 'peer\n' });
     expect(prepareWith(onlyTimeouts).status).toBe(75);
@@ -487,7 +541,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(prepareWith(onlyTimeouts).status).toBe(75); // 成功で数え直したので、また 1 回目
   });
 
-  it('applies the same once-per-tree rule to the S3 light check (class L)', () => {
+  it('applies the same once-per-head rule to the S3 light check (class L)', () => {
     setup({ merge: { mode: 'S3', lightCheck: 'node verify.cjs --light' } });
     advanceMain({ 'peer.txt': 'peer\n' });
     expect(prepareWith(onlyTimeouts).status).toBe(75);

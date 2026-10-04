@@ -499,7 +499,7 @@ the PR instead of always demanding a rebase when main has moved (design §2.3):
 |---|---|---|
 | N | `origin/main` is an ancestor of the PR head (main did not move) | same as S1 — records PRED_BASE, no extra verify |
 | R | main moved **and** (not exactly one merge-base / `git merge-tree` reports a text conflict or cannot run / main's changes and yours hit the same `merge.hotFiles` pattern / GitHub reports the PR `mergeable: false`) | exit 3, same as S1: rebase (or `git merge origin/main`) → push → CI → `prepare` |
-| F | main moved, no conflict, no hot-file collision | builds the predicted landed tree with `git merge-tree --write-tree origin/main HEAD`, commits it locally (`git commit-tree`, parents PRED_BASE and the PR head — not pushed, no ref), detach-checks it out **in the PR worktree**, runs the contract's `verify`, checks the branch out again. Green → records PRED_BASE = origin/main and the predicted tree; red → exit 3 (demoted to R) |
+| F | main moved, no conflict, no hot-file collision | builds the predicted landed tree with `git merge-tree --write-tree origin/main HEAD`, commits it locally (`git commit-tree`, parents PRED_BASE and the PR head — not pushed, no ref), detach-checks it out **in the PR worktree**, runs the contract's `verify`, checks the branch out again. Green → records PRED_BASE = origin/main and the predicted tree; red → exit 3 (demoted to R). Exception: a failure that is only vitest timeouts is exit 75 once per PR head, see "Exit codes" below |
 
 `gate` and `finish` are the S1 ones. What makes "the tree we verified" equal "the tree that lands":
 GitHub's squash commit is the 3-way merge of the PR head into the main it merges onto; `gate`'s CAS
@@ -536,13 +536,18 @@ building / linting / testing the landed tree catches a semantic conflict) — un
   machine load, not as a semantic conflict, so the first time it is not demoted to `3`. The message says
   "prepare を再実行してください" and the verify slot place is kept. Unlike the landed verify, the predicted
   verify is not re-run automatically, and neither is S3's light check: you run `prepare` again. That
-  is allowed **once per predicted tree**: merge-pr records the tree in
-  `<git common dir>/bdboard-merge/pr-<N>-predicted-timeouts.json` (`{pr, tree}`, nothing else — no pid or
-  time), and if the same tree fails with only timeouts a second time it is read as a deterministic hang
-  (a real conflict that shows up only as a hang) and the exit is `3` (rebase), with a line saying so.
-  A different tree (main moved or the PR was updated) counts again from one; a predicted success and
-  `finish` delete the record. The `predicted-verify` / `light-check` audit line of a timeouts-only
-  failure carries `loadInduced=1 timeouts=<N>` (and `repeated=1` for the second time on the same tree)
+  is allowed **once per PR head**: merge-pr records the head SHA in
+  `<git common dir>/bdboard-merge/pr-<N>-predicted-timeouts.json` (`{pr, head}`, nothing else — no pid or
+  time), and if that head fails with only timeouts again — even when main has moved and the predicted
+  tree is a different one — it is read as a deterministic hang (a real conflict that shows up only as
+  a hang) and the exit is `3` (rebase), with the line "この PR head … は前にも時間切れだけで落ちています".
+  (The key is the head, not the predicted tree: main moving between two `prepare` runs changes the
+  tree every time and would reset a per-tree count forever.) A new head (the PR was updated or
+  rebased) counts again from one; a predicted success and `finish` delete the record, and a failure
+  that is not only timeouts leaves it as it was. If the record cannot be written, `prepare` prints one
+  warning line with the error code, and the next run is a first time again. The
+  `predicted-verify` / `light-check` audit line of a timeouts-only failure carries
+  `loadInduced=1 timeouts=<N>` (and `repeated=1` when that head had already failed with only timeouts)
   next to `result=failure`, so a count of demotions can tell the two apart. Any
   other failure stays `3`. `1` also covers a predicted verify that
   could not run (dirty worktree, `npm ci` failed). `4` also comes from `prepare` when PRED_BASE's
@@ -587,7 +592,7 @@ main's changes and the PR's never touch the same file. Under S3, `prepare` split
 |---|---|---|
 | N / R | as in S2 | as in S2 (file overlap does not decide R either) |
 | F | S2's F **and** (main's changes and yours share a file, or either side touches a `merge.hotFiles` file or the merge procedure itself — one side is enough — or **both** sides touch `merge.lightBlindFiles` — any pattern on each side — default `scripts/**`, `harness/**`, `.claude/**`) | as in S2: the full `verify` on the predicted tree |
-| L | S2's F, no shared file, no hot file and no merge-procedure file on either side, and not both sides in `merge.lightBlindFiles` | builds the same predicted commit and runs only `merge.lightCheck` (default `npm run verify -- --light` = `verify:light`: check:file-size, lint:verify, build, build:web, check:boundaries — no tests) on it, in the same slot queue (priority `merge`) with the same abandon-on-main-move. Green → records PRED_BASE and the light result; red → exit 3, like a failed predicted verify (the light check is not re-run automatically either; a failure that is only vitest timeouts is exit 75 once per tree, as in S2 — which needs a `merge.lightCheck` with a vitest step; the default has none, so its failures are always exit 3) |
+| L | S2's F, no shared file, no hot file and no merge-procedure file on either side, and not both sides in `merge.lightBlindFiles` | builds the same predicted commit and runs only `merge.lightCheck` (default `npm run verify -- --light` = `verify:light`: check:file-size, lint:verify, build, build:web, check:boundaries — no tests) on it, in the same slot queue (priority `merge`) with the same abandon-on-main-move. Green → records PRED_BASE and the light result; red → exit 3, like a failed predicted verify (the light check is not re-run automatically either; a failure that is only vitest timeouts is exit 75 once per PR head, as in S2 — which needs a `merge.lightCheck` with a vitest step; the default has none, so its failures are always exit 3) |
 
 File overlap still never decides whether to merge without a rebase; it only picks full (F) or light (L).
 
@@ -728,7 +733,7 @@ File overlap still never decides whether to merge without a rebase; it only pick
   `<git common dir>/bdboard-merge/light-check-pr<N>-<tree12>.log`). The light check is not re-run
   automatically (only the landed verify gets the one retry). Only when `merge.lightCheck` runs vitest can
   its failure be read as load: then a failure whose vitest step shows only timeouts is `75` with
-  "prepare を再実行してください", once per predicted tree and then `3`, exactly as for S2's predicted verify.
+  "prepare を再実行してください", once per PR head and then `3`, exactly as for S2's predicted verify.
   The default `lightCheck` (`verify:light`) has no vitest step, so its failures are always `3`.
 - `prepare --dry-run` also prints the S3 class ("参考: merge.mode が S3 ならクラス=…") in S0–S2, and
   a normal S2 `prepare` prints it when the PR would be L — use it to see how often S3 would apply.
