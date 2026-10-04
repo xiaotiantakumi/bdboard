@@ -525,22 +525,42 @@ dies, so no PID, start time or age is ever guessed. Design and measurements: `bd
 
 - **What `npm run verify` does** (`scripts/verify-worktree-claim.mjs`, lock object in
   `scripts/worktree-lock.mjs`): before the slot wait, it takes the lock **shared** and keeps it
-  for its whole life, so a queued verify already claims the tree. The descriptor is handed to the
-  group leader as fd 3 — if the outer `verify.mjs` is SIGKILLed, the lock stays held until the
-  leader's group is gone. Two manual verifies in one worktree share it.
-- **Refusal.** If a merge-pr owns the worktree (it writes the advisory owner line
-  `{by, pid, phase, sha, cwd, at}` into the file), a manual verify exits **1** at once and prints
-  the owner and `lsof -t <lockfile>` — the inference-free way to see who holds it now. merge-pr's
-  own contract verify passes `BDBOARD_WORKTREE_HELD_BY=<merge-pr pid>` and shares; that variable
-  is in `SLOT_IDENTITY_ENV`, so the steps (and the tests that spawn `verify.mjs`) never inherit it.
+  for its whole life, so a queued verify already claims the tree. On a free tree it holds the lock
+  exclusively only long enough to write its owner line (`by: "npm run verify"`), then downgrades.
+  The descriptor is handed to the group leader as fd 3 (only the leader holds it; the steps under
+  it do not), so if the outer `verify.mjs` is SIGKILLed the lock stays held until the leader
+  exits. Two manual verifies in one worktree share it.
+- **Waiting to share.** If someone holds the lock exclusively and is *not* a merge-pr — normally
+  another verify between writing its owner line and downgrading — verify re-reads the owner and
+  retries for up to **30 s**, then gives up with exit **75** ("did not run", the same reserved
+  code as the slot-wait timeout; merge-pr does not read it as a test failure).
+- **Refusal (comes with bdboard-wea0.2).** merge-pr does not take the lock yet; once wea0.2 lands
+  it will write the advisory owner line `{by: "merge-pr …", pid, phase, sha, cwd, at}` while it
+  holds the tree. When such a line is present and its `phase` is not `done`, a manual verify exits
+  **1** at once — without waiting — and prints the owner and `lsof -t <lockfile>`, the
+  inference-free way to see who holds it now. The owner is re-read after every acquisition, so a
+  merge-pr that takes the tree between the read and verify's shared lock is still refused.
+  merge-pr's own contract verify will pass `BDBOARD_WORKTREE_HELD_BY=<merge-pr pid>` and share;
+  that variable is already in `SLOT_IDENTITY_ENV`, so the steps (and the tests that spawn
+  `verify.mjs`) never inherit it.
+- **Stale merge-pr line.** The owner line is only overwritten by the next exclusive holder. A
+  merge-pr that crashed (wea0.2, before it wrote `phase: done`) leaves a line that refuses
+  verifies while some other verify keeps the tree shared; once nobody holds the lock, the next
+  verify takes it exclusively and overwrites the line. Check with `lsof -t <lockfile>`.
 - **Never delete the lock file.** The content is only advice; the flock is the truth. Deleting the
   file lets a second exclusive holder lock a new inode (the lock object re-checks `dev`+`ino`
-  after every acquisition, but do not rely on it). A stale file on disk is harmless.
+  after every acquisition, but do not rely on it). A stale file on disk is harmless. If the owner
+  line cannot be written, verify prints one stderr line and continues (the lock is still held).
 - **Helper.** Node cannot call `flock`, so a one-line `perl` (fallback `python3`) locks the
-  descriptor Node holds. `BDBOARD_FLOCK_HELPER='["/abs/helper", "arg"]'` (JSON argv prefix; the
-  helper gets the op number as its last argument and the descriptor as fd 3) replaces both. With
-  no working helper, verify prints one stderr line and runs **without** the lock — the lock must
-  never block CI or another developer.
+  descriptor Node holds. `BDBOARD_FLOCK_HELPER='["/abs/helper", "arg"]'` (JSON argv prefix)
+  replaces both. Contract: the helper gets the descriptor as fd 3 and the `flock` op number as
+  its last argument (`LOCK_SH`=1, `LOCK_EX`=2, `LOCK_NB`=4, `LOCK_UN`=8), and exits **0** =
+  locked, **1** = busy (`EWOULDBLOCK`), anything else = error. A helper that runs longer than
+  10 s is killed and counts as an error.
+- **Runs unlocked, with one stderr line,** when there is no working helper, outside a git
+  worktree, when a helper call errors, when a second descriptor is not blocked after the lock is
+  taken (a filesystem that does not keep `flock` locks, such as some NFS setups), or on any
+  unexpected error while claiming — the lock must never block CI or another developer.
 - **Emergency hatch: `BDBOARD_WORKTREE_LOCK=off`.** Runs verify without the lock and warns on
   every use. While it is set, nothing stops a merge-pr from switching the tree under the run.
 - **Windows:** no-op (no `flock`); verify spawns nothing for it (design §5). Protection there

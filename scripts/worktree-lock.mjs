@@ -1,17 +1,14 @@
 // bdboard-wea0.1: worktree 単位の advisory lock (flock(2))。設計は `bd show bdboard-wea0` の DESIGN 欄 (§2–§5)。
-//
 // <absolute-git-dir>/bdboard-worktree.lock に flock を取る。Node は flock を呼べないので、Node が openSync した
 // fd を子の fd 3 に渡し、1 行のヘルパー (perl / python3) にその fd を flock させる。flock の lock は「開いた
-// ファイル記述 (open file description)」に付くため、ヘルパーが終わっても lock は Node の記述に残り、その fd を
-// 受け継いだ子 (verify のリーダー) が生きている間も残る (設計 E1 / S4)。最後の保持者が死ねばカーネルが外すので、
-// PID の再利用・時計・年齢の上限はどれも入力にならない。
-//
+// ファイル記述」に付くため、ヘルパーが終わっても lock は Node の記述に残り、その fd を受け継いだ子 (verify の
+// リーダー) が生きている間も残る (E1 / S4)。最後の保持者が死ねばカーネルが外す: PID・時計・年齢は入力にならない。
 // 実測から来る決まり (設計 §2):
 // - 1 プロセス 1 記述子。同じプロセスでも 2 つ目の記述は 1 つ目と衝突する (E1)。開き直さない。
 // - ファイルは絶対に unlink しない。消して作り直されると、別の inode に 2 人目の EX が立つ (E5)。取得のたびに
 //   fstat(fd) と stat(path) の dev+ino を比べ、違えば開き直して取り直す。
-// - release で fd を null にし、以後の操作は拒否する。閉じた fd 番号は spawnSync の pipe に再利用され、そこへの
-//   flock が 0 を返した (Linux, E11)。
+// - release で fd を null にし以後の操作は拒否する。閉じた fd 番号への flock が、番号を再利用した spawnSync の pipe
+//   に効いて 0 を返した (Linux, E11)。
 // - 変換 (EX→SH / SH→EX) は原子的でない (E4: macOS は降格、Linux は昇格の隙間に他者が入る)。拒否は結果として
 //   返し、黙らない。拒否のあとは記述を UN して「何も持っていない」に揃える (OS ごとに残り方が違うのを消す)。
 // - 中身は助言用の JSON 1 行 (読むのは worktree-lock-owner.mjs)。EX に到達した保持者だけが書く。
@@ -41,24 +38,21 @@ const PYTHON_SCRIPT = [
 export const PERL_FLOCK_HELPER = Object.freeze(['perl', '-e', PERL_SCRIPT, '--']);
 export const PYTHON_FLOCK_HELPER = Object.freeze(['python3', '-c', PYTHON_SCRIPT]);
 const MAX_REOPEN = 3;
-
+const HELPER_TIMEOUT_MS = 10_000; // 刺さったヘルパー (例: PERL5OPT=-d) で verify を黙って止めない。打ち切りは 'error'。
 export function lockPathFor(gitDir) {
   return path.join(gitDir, LOCK_FILE_NAME);
 }
 
 /** ヘルパーで fd に flock(op) をかける。'ok' | 'busy' | 'error'。 */
 export function runFlockHelper(helper, fd, op, spawnSync = nodeSpawnSync) {
-  const result = spawnSync(helper[0], helper.slice(1).concat(String(op)), { stdio: ['ignore', 'ignore', 'pipe', fd], windowsHide: true });
-  if (result.error || result.status === null) {
-    return 'error';
-  }
-  return result.status === 0 ? 'ok' : result.status === 1 ? 'busy' : 'error';
+  const options = { stdio: ['ignore', 'ignore', 'pipe', fd], windowsHide: true, timeout: HELPER_TIMEOUT_MS };
+  const result = spawnSync(helper[0], helper.slice(1).concat(String(op)), options);
+  // spawn の失敗・打ち切り (error)、シグナルでの終了 (status null) は 'error'。
+  return result.error ? 'error' : result.status === 0 ? 'ok' : result.status === 1 ? 'busy' : 'error';
 }
 
-/**
- * BDBOARD_FLOCK_HELPER (JSON の argv 接頭辞、BDBOARD_MERGE_GH と同じ慣習) があればそれだけを試す (明示した
- * 上書きが壊れているのを perl で黙って補わない)。無ければ perl → python3。
- */
+// BDBOARD_FLOCK_HELPER (JSON の argv 接頭辞、BDBOARD_MERGE_GH と同じ慣習) があればそれだけを試す (明示した上書きが
+// 壊れているのを perl で黙って補わない)。無ければ perl → python3。
 export function flockHelperCandidates(env = process.env) {
   const raw = env[FLOCK_HELPER_ENV];
   if (raw === undefined || raw === '') {
@@ -149,10 +143,13 @@ export function openWorktreeLock(options) {
           return { ok: true, outcome: 'locked', held: mode, converted };
         }
         // E5: path の先が別のファイルに替わっている。古い記述を閉じ (= その lock を手放し)、開き直して取り直す。
-        // 開き直しに失敗しても閉じた番号を持ち続けない (E11)。
-        fs.closeSync(fd);
-        fd = null;
-        mode = null;
+        // 閉じる・開き直すが失敗しても閉じた番号を持ち続けない (E11)。
+        try {
+          fs.closeSync(fd);
+        } finally {
+          fd = null;
+          mode = null;
+        }
         try {
           fd = openLockFile(lockPath);
         } catch {
@@ -161,10 +158,10 @@ export function openWorktreeLock(options) {
       }
       return { ok: false, outcome: 'replaced', held: null, converted };
     },
-    /** EX を持っているときだけ、新しい 2 つ目の記述からの EX|NB が塞がっていることを確かめる (NFS 等の検出)。 */
+    /** lock (EX か SH) を持っている間、新しい 2 つ目の記述からの EX|NB が塞がることを確かめる (NFS 等の検出)。 */
     selfCheck() {
-      if (fd === null || mode !== 'EX') {
-        return { ok: false, outcome: fd === null ? 'released' : 'not-exclusive' };
+      if (fd === null || mode === null) {
+        return { ok: false, outcome: fd === null ? 'released' : 'not-locked' };
       }
       const probeFd = openLockFile(lockPath);
       try {
@@ -189,11 +186,14 @@ export function openWorktreeLock(options) {
     },
     /** fd を閉じる (fd を受け継いだ子がいれば lock はその子に残る)。以後の操作は拒否。何度呼んでもよい。 */
     release() {
-      if (fd !== null) {
-        fs.closeSync(fd);
+      try {
+        if (fd !== null) {
+          fs.closeSync(fd);
+        }
+      } finally {
+        fd = null; // close が投げても閉じた (かもしれない) 番号を持ち続けない (E11)
+        mode = null;
       }
-      fd = null;
-      mode = null;
     },
   };
   return lock;

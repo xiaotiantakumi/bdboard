@@ -21,14 +21,18 @@ const children = [];
 const leaderGroups = [];
 const heldLocks = [];
 
+const running = (child) => child.exitCode === null && child.signalCode === null;
+
+// リーダーのグループを kill するのは、自分の子 (外側の verify) の handle がまだ終わっていないと示すときだけ (終わった子の
+// リーダー pid を当て推量で kill しない。PR #872 レビュー指摘 8)。外側を SIGKILL したあとのリーダーは自分で孤児の
+// グループを畳むか (verify.mjs)、偽の npm の上限 (約 10 秒) で終わる。
 afterEach(() => {
-  for (const kill of [...children.splice(0).map((child) => () => child.kill('SIGKILL')), ...leaderGroups.splice(0).map((pid) => () => process.kill(-pid, 'SIGKILL'))]) {
-    try {
-      kill();
-    } catch {
-      /* もう居ない */
+  for (const { pid, outer } of leaderGroups.splice(0)) {
+    if (running(outer)) {
+      process.kill(-pid, 'SIGKILL');
     }
   }
+  children.splice(0).filter(running).forEach((child) => child.kill('SIGKILL'));
   heldLocks.splice(0).forEach((lock) => lock.release());
   tempDirs.splice(0).forEach((dir) => fs.rmSync(dir, { recursive: true, force: true }));
 });
@@ -69,10 +73,10 @@ const startVerify = (worktree, name, extra) => {
 };
 
 const npmRan = (worktree, name) => fs.existsSync(path.join(worktree.root, `${name}.marker`));
-const leaderOf = async (worktree, name) => {
+const leaderOf = async (worktree, name, outer) => {
   await waitFor(() => npmRan(worktree, name), 10_000, `${name}: fake npm started`);
   const pid = Number(fs.readFileSync(path.join(worktree.root, `${name}.leader`), 'utf8').trim());
-  leaderGroups.push(pid);
+  leaderGroups.push({ pid, outer });
   return pid;
 };
 
@@ -107,7 +111,7 @@ describe.skipIf(realProcessLockTestsSkipped)('verify.mjs holds the worktree lock
   it('S4: SIGKILL of the outer verify leaves the lock with the leader (fd 3) until the leader dies', async () => {
     const worktree = makeWorktree();
     const run = startVerify(worktree, 'a', { FAKE_NPM_RELEASE: path.join(worktree.root, 'never') });
-    const leader = await leaderOf(worktree, 'a');
+    const leader = await leaderOf(worktree, 'a', run.child);
     run.child.kill('SIGKILL');
     await run.done;
     expect(isAlive(leader)).toBe(true);
@@ -120,10 +124,11 @@ describe.skipIf(realProcessLockTestsSkipped)('verify.mjs holds the worktree lock
   it('S2: SIGKILL of the outer and the leader group frees the lock', async () => {
     const worktree = makeWorktree();
     const run = startVerify(worktree, 'a', { FAKE_NPM_RELEASE: path.join(worktree.root, 'never') });
-    const leader = await leaderOf(worktree, 'a');
+    const leader = await leaderOf(worktree, 'a', run.child);
     expect(probeLock(worktree.lockPath, 'EX')).toBe('busy');
     run.child.kill('SIGKILL');
     process.kill(-leader, 'SIGKILL');
+    await run.done; // handle の終了を反映させる (afterEach が死んだグループを kill しに行かない)
     await waitFor(() => probeLock(worktree.lockPath, 'EX') === 'free', 5_000, 'lock freed by the kernel');
   });
 
@@ -131,27 +136,23 @@ describe.skipIf(realProcessLockTestsSkipped)('verify.mjs holds the worktree lock
     const worktree = makeWorktree();
     holdAsMergePr(worktree, { pid: 4242, downgrade: true });
     for (const heldBy of [undefined, '4243']) {
-      const startedAt = Date.now();
       const result = runVerify(worktree, 'manual', { BDBOARD_WORKTREE_HELD_BY: heldBy });
       expect(result.status, result.stderr).toBe(1);
-      expect(Date.now() - startedAt).toBeLessThan(1_900); // 待たずに拒否 (gate bdboard-oiak 問1 の既定)
-      expect(result.stderr).toContain('merge-pr finish 869 (pid 4242, phase verify');
+      // 持ち主を見て拒否した (待ちの打ち切りではない。gate bdboard-oiak 問1 の既定 = 待たない)
+      expect(result.stderr).toContain('merge-pr finish 869 (pid 4242, phase verify, sha abc, since T) — a merge-pr owns it');
+      expect(result.stderr).not.toContain('exclusively');
       expect(result.stderr).toContain(`lsof -t '`);
       expect(npmRan(worktree, 'manual')).toBe(false);
     }
   });
 
-  it('refuses during the merge-pr EX window (tree being switched) as well', () => {
+  it('refuses during the merge-pr EX window (tree being switched) as well, by its owner line and without waiting', () => {
     const worktree = makeWorktree();
     holdAsMergePr(worktree, { pid: 4242, downgrade: false });
-    const startedAt = Date.now();
     const manual = runVerify(worktree, 'manual');
     expect(manual.status, manual.stderr).toBe(1);
-    expect(Date.now() - startedAt).toBeLessThan(1_900);
-    const own = runVerify(worktree, 'own', { BDBOARD_WORKTREE_HELD_BY: '4242' }); // 自分の契約 verify でも EX の間は入れない
-    expect(own.status, own.stderr).toBe(1);
-    expect(own.stderr).toContain('exclusively');
-    expect(npmRan(worktree, 'manual') || npmRan(worktree, 'own')).toBe(false);
+    expect(manual.stderr).toContain('phase checkout, sha abc, since T) — a merge-pr owns it');
+    expect(npmRan(worktree, 'manual')).toBe(false);
   });
 
   it('proceeds when BDBOARD_WORKTREE_HELD_BY names the merge-pr, and does not pass that variable to the steps', () => {
@@ -166,7 +167,7 @@ describe.skipIf(realProcessLockTestsSkipped)('verify.mjs holds the worktree lock
     const worktree = makeWorktree();
     const release = path.join(worktree.root, 'release-a');
     const first = startVerify(worktree, 'a', { FAKE_NPM_RELEASE: release });
-    await leaderOf(worktree, 'a');
+    await leaderOf(worktree, 'a', first.child);
     const second = runVerify(worktree, 'b');
     expect(second.status, second.stderr).toBe(0);
     expect(npmRan(worktree, 'b')).toBe(true);

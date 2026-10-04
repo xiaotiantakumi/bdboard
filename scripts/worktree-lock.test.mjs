@@ -8,7 +8,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { describeOwner, lsofHint, readOwner } from './worktree-lock-owner.mjs';
-import { flockHelperCandidates, FLOCK_HELPER_ENV, openWorktreeLock, PERL_FLOCK_HELPER, PYTHON_FLOCK_HELPER } from './worktree-lock.mjs';
+import { flockHelperCandidates, FLOCK_HELPER_ENV, OP, openWorktreeLock, PERL_FLOCK_HELPER, PYTHON_FLOCK_HELPER, runFlockHelper } from './worktree-lock.mjs';
 import { helperWorks, probeLock, realProcessLockTestsSkipped } from './worktree-lock.test-support.mjs';
 
 const tempDirs = [];
@@ -58,6 +58,17 @@ describe('owner content and messages (pure)', () => {
     expect(flockHelperCandidates({ [FLOCK_HELPER_ENV]: '["/opt/flock","-x"]' })).toEqual([['/opt/flock', '-x']]);
     expect(flockHelperCandidates({ [FLOCK_HELPER_ENV]: 'perl' })).toEqual([]);
     expect(flockHelperCandidates({ [FLOCK_HELPER_ENV]: '[]' })).toEqual([]);
+  });
+
+  it('every helper call is bounded by a timeout; a timed-out or killed helper is an error, never locked or busy', () => {
+    const options = [];
+    const timedOut = (command, args, spawnOptions) => {
+      options.push(spawnOptions);
+      return { error: new Error('spawnSync perl ETIMEDOUT'), status: null, signal: 'SIGTERM' };
+    };
+    expect(runFlockHelper(PERL_FLOCK_HELPER, 99, OP.EX | OP.NB, timedOut)).toBe('error');
+    expect(options[0].timeout).toBeGreaterThan(0);
+    expect(runFlockHelper(PERL_FLOCK_HELPER, 99, OP.EX | OP.NB, () => ({ status: null, signal: 'SIGKILL' }))).toBe('error');
   });
 });
 
@@ -133,13 +144,16 @@ describe.skipIf(realProcessLockTestsSkipped)('worktree lock against a real perl 
     expect(probeLock(lockPath, 'EX')).toBe('busy');
   });
 
-  it('selfCheck passes on the local filesystem only while holding EX', () => {
+  it('selfCheck passes on the local filesystem while holding EX or SH, and refuses while holding nothing', () => {
     const lockPath = tempLockPath();
     const lock = open(lockPath);
-    expect(lock.selfCheck()).toEqual({ ok: false, outcome: 'not-exclusive' });
+    expect(lock.selfCheck()).toEqual({ ok: false, outcome: 'not-locked' });
     lock.tryLock('EX');
     expect(lock.selfCheck()).toEqual({ ok: true, outcome: 'busy' });
     expect(probeLock(lockPath, 'EX')).toBe('busy'); // 2 つ目の記述を閉じても 1 つ目の lock は残る
+    lock.tryLock('SH');
+    expect(lock.selfCheck()).toEqual({ ok: true, outcome: 'busy' }); // verify は降格のあとに検査する (PR #872 指摘 1)
+    expect(probeLock(lockPath, 'SH')).toBe('free');
   });
 
   it('only an EX holder writes the owner; garbage content does not affect locking', () => {
