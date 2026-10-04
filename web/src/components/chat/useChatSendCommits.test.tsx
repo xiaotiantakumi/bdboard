@@ -294,6 +294,22 @@ describe('commitSuccess', () => {
       expect(store.threadLists['proj-a']?.map((thread) => thread.sessionId)).toEqual(['sess-a', 'sess-c']);
     });
 
+    it('bdboard-gtv0: unknown chat session: a list fetch that started before the send does not bring the dead thread back, and keeps the new session', () => {
+      const { hook, params } = setup();
+      params.restoredProjectsRef.current.add('proj-a');
+      params.openThreadIdsRef.current = { 'proj-a': ['sess-old'] };
+      params.replacedMarksRef.current.goneKeys.add('sess-old');
+      const order = params.threadListOrder;
+      const seq = order.begin('proj-a');
+      act(() => hook.result.current.commitSuccess('sess-old', 'hello', RESULT));
+      const dead = { sessionId: 'sess-old', agentId: 'claude', title: 'old', pinned: false, updatedAt: 'x' };
+      const other = { sessionId: 'sess-other', agentId: 'claude', title: 'other', pinned: false, updatedAt: 'x' };
+      expect(order.admit('proj-a', seq, [dead, other])).toEqual([
+        other,
+        expect.objectContaining({ sessionId: 'sess-new', title: 'hello', pinned: false }),
+      ]);
+    });
+
     it('chat agent mismatch: the live thread stays in the thread list (closed) so it can be reopened', () => {
       const { hook, store } = setupWithOpenAB();
       act(() =>
