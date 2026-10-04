@@ -1,0 +1,4 @@
+{"type":"user","timestamp":"2026-09-30T10:00:00.000Z","sessionId":"00000000-0000-4000-8000-000000000002","message":{"role":"user","content":"Stop hook feedback: [stop-ticket-gate.sh] bdboard-harness: チケット example-2 は in_progress のまま止まろうとしています"}}
+this line is not json and must be skipped
+{"type":"user","timestamp":"2026-10-01T10:00:00.000Z","sessionId":"00000000-0000-4000-8000-000000000002","message":{"role":"user","content":"Stop hook feedback: [stop-ticket-gate.sh] bdboard-harness: チケット example-2 は in_progress のまま止まろうとしています"}}
+{"type":"assistant","timestamp":"2026-10-01T10:05:00.000Z","sessionId":"00000000-0000-4000-8000-000000000002","message":{"id":"msg_s2_1","model":"claude-test-main","role":"assistant","content":[{"type":"text","text":"synthetic reply"}],"usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":1,"output_tokens":1}}}
