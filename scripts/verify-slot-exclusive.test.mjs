@@ -378,6 +378,42 @@ describe('reserveVerifySlot: merge-pr holds the place of its landed retry (bdboa
     }
   });
 
+  // 上の読み直しが効くのは、再実行が「自分の holder を置いてから予約を消す」順を守るときだけ (逆順だと、予約が消えた後の
+  // 一覧にも再実行の holder がまだ載っていないことがある)。その順を固定する (PR #877 のレビュー m1)。
+  it('the retry renames its own holder in before it deletes the reservation it takes over', async () => {
+    const dir = makeDir();
+    const mergePr = spawnLiveProcess();
+    try {
+      const now = Date.now();
+      const reservation = holderFile(dir, mergePr.pid);
+      fs.writeFileSync(reservation, JSON.stringify({ v: HOLDER_FORMAT, pid: mergePr.pid, priority: 'landed', joinedAt: now, queuedAt: now, since: now - 60_000, reserved: true }));
+      const own = holderFile(dir, process.pid);
+      const events = [];
+      const io = {
+        ...fs,
+        renameSync: (from, to) => {
+          fs.renameSync(from, to);
+          if (path.resolve(to) === path.resolve(own)) {
+            events.push('own holder in');
+          }
+        },
+        unlinkSync: (file) => {
+          if (path.resolve(file) === path.resolve(reservation)) {
+            events.push('reservation deleted');
+          }
+          return fs.unlinkSync(file);
+        },
+      };
+      const slot = await acquireVerifySlot(fast(dir, { priority: 'landed', queueSince: now - 60_000, handoffPath: reservation, waitTimeoutMs: 2_000, io }), () => {});
+      slot.release();
+      expect(events.slice(0, 2)).toEqual(['own holder in', 'reservation deleted']);
+      expect(fs.existsSync(reservation)).toBe(false);
+    } finally {
+      mergePr.kill('SIGKILL');
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('a reservation left by a merge-pr that died is reaped like any dead holder', async () => {
     const dir = makeDir();
     try {

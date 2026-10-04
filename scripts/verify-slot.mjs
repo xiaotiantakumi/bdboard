@@ -181,6 +181,7 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
   };
   // bdboard-xdk8: 自分の holder が見えるようになったので、最初の settle より前に merge-pr の予約 holder
   // (reserveVerifySlot) を消す。消せなくても自分の順番の計算からは外す (予約は自分の席なので、その後ろで待たない)。
+  // bdboard-bwys: 他の待ち手の readOthers はこの順 (自分の holder を置いてから予約を消す) に頼っている。入れ替えない。
   const skipPid = handoff === undefined ? null : releaseHandoff(handoff, options, log);
 
   try {

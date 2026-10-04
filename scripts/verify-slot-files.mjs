@@ -151,9 +151,11 @@ export async function writeHolderAtomically(filePath, holder, options = {}) {
  * 名前だけを読み足す (消えるものが無くなるまで)。merge-pr の予約から再実行の verify への引き継ぎは「再実行の holder を
  * 置いてから予約を消す」順 (verify-slot.mjs の acquireVerifySlot と merge-pr/reservation-watch.mjs) だが、readdir が
  * その間に挟まると、一覧には予約だけが載り、読みに行くと予約はもう無い。その一覧だけで返すと landed が 1 本も
- * 見えず、pr の待ち手が隙間で走り出していた (CI で 1 回、負荷をかけた再現で 700 回中 24 回)。やり直しの readdir は
- * 予約が消えた後なので、再実行の holder は (再実行がもう抜けていなければ) 必ず載る。読み足すのは新しい名前だけ
- * なので、載り続けるのに読めない名前 (壊れたシンボリックリンク等) でも回り続けない。
+ * 見えず、pr の待ち手が隙間で走り出していた (CI で 1 回、負荷をかけた再現で 700 回中 24 回)。予約の読み取りが
+ * 「無い」(ENOENT) と答えたなら、やり直しの readdir は予約が消えた後なので、再実行の holder は (再実行がもう
+ * 抜けていなければ) 必ず載る。Windows で削除待ち (delete-pending) の予約は ENOENT ではなく EPERM 等で読めないことがあり、
+ * そのときは読み直さず、上の「読めない相手は pr とみなして 1 周だけ数える」扱い (bdboard-e8jj) に落ちる。読み足すのは
+ * 新しい名前だけなので、載り続けるのに読めない名前 (壊れたシンボリックリンク等) でも回り続けない。
  */
 export function readOthers(dir, selfPath, options = {}) {
   const io = options.io || fs;
