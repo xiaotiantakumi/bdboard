@@ -227,6 +227,87 @@ describe('useChatThreadLists', () => {
     act(() => restored.result.current.reopenClosedThread('sess-closed'));
     expect(marked(restored.result)).toBe(false);
   });
+
+  describe('the mark and the closed ids are stored with the entry (bdboard-521p)', () => {
+    /** 未復元の初回訪問で送信が最初のエントリを書いた状態(印 → 書き込みの順)。 */
+    function provisionalFirstEntry(open: string[], selected: string) {
+      const rendered = setup();
+      rendered.result.current.provisionalEntries.markIfFirstEntry('project-a');
+      writePersistedChatThreadState('project-a', { activeSessionIds: open, selectedSessionId: selected });
+      act(() => {
+        rendered.result.current.setOpenThreadIds((prev) => ({ ...prev, 'project-a': open }));
+      });
+      return rendered;
+    }
+
+    it('selectOpenThread and reopenClosedThread store the mark on the first entry they write for an unrestored project', () => {
+      const select = setup();
+      act(() => select.result.current.selectOpenThread('sess-1'));
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: [], selectedSessionId: 'sess-1', provisional: true,
+      });
+
+      localStorage.clear();
+      const reopen = setup();
+      act(() => reopen.result.current.reopenClosedThread('sess-closed'));
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-closed'], selectedSessionId: 'sess-closed', provisional: true,
+      });
+    });
+
+    it('closeThread stores the closed id and keeps the stored mark: it does not lower it', () => {
+      const { result } = provisionalFirstEntry(['sess-1', 'sess-2'], 'sess-2');
+      act(() => result.current.closeThread('sess-1'));
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-2'],
+        selectedSessionId: 'sess-2',
+        provisional: true,
+        provisionalClosedSessionIds: ['sess-1'],
+      });
+    });
+
+    it('deleteThread stores the closed id once the delete succeeds, and not when it fails', async () => {
+      deleteChatThreadMock.mockRejectedValueOnce(new Error('boom'));
+      const { result } = provisionalFirstEntry(['sess-1', 'sess-2'], 'sess-2');
+      await act(async () => result.current.deleteThread('sess-1'));
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-1', 'sess-2'], selectedSessionId: 'sess-2', provisional: true,
+      });
+      await act(async () => result.current.deleteThread('sess-1'));
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-2'],
+        selectedSessionId: 'sess-2',
+        provisional: true,
+        provisionalClosedSessionIds: ['sess-1'],
+      });
+    });
+
+    it('reopenClosedThread takes the reopened id off the stored closed ids', () => {
+      const { result } = provisionalFirstEntry(['sess-1', 'sess-2'], 'sess-2');
+      act(() => result.current.closeThread('sess-1'));
+      act(() => result.current.closeThread('sess-2'));
+      expect(readPersistedChatThreads()['project-a']?.provisionalClosedSessionIds).toEqual(['sess-1', 'sess-2']);
+
+      act(() => result.current.reopenClosedThread('sess-1'));
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-1'],
+        selectedSessionId: 'sess-1',
+        provisional: true,
+        provisionalClosedSessionIds: ['sess-2'],
+      });
+    });
+
+    it('closeThread on an unmarked project stores no mark and no closed id: the close is the user record', () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-1', 'sess-2'], selectedSessionId: 'sess-2' });
+      const { result } = setup();
+      act(() => {
+        result.current.setOpenThreadIds((prev) => ({ ...prev, 'project-a': ['sess-1', 'sess-2'] }));
+      });
+      act(() => result.current.closeThread('sess-1'));
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['sess-2'], selectedSessionId: 'sess-2' });
+    });
+  });
+
   it('deleteThread removes the thread on success and always cancels confirm-delete', async () => {
     const { result, setThreadError, drawer } = setup({ currentSessionId: 'sess-1' });
     act(() => {

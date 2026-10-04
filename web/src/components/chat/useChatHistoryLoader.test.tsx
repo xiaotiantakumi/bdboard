@@ -214,7 +214,7 @@ describe('useChatHistoryLoader: history fetch effect', () => {
 
     it('marks the project before writing the first persisted entry', async () => {
       const params = await runLoad({});
-      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['sess-a'], selectedSessionId: 'sess-a' });
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['sess-a'], selectedSessionId: 'sess-a', provisional: true });
       expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(true);
     });
 

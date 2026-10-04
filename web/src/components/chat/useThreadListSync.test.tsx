@@ -735,6 +735,176 @@ describe('useThreadListSync', () => {
       await flush();
       expect(result.current.openThreadIds['proj-a']).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-new']);
     });
+
+    describe('the mark is stored, so it survives a reload or closing the chat panel (bdboard-521p)', () => {
+      it('widens with the server list on a fresh mount when the first list never landed: the stored [N] is not a revisit record', async () => {
+        // 1 回目のマウント: 初回の一覧が着地しない(リロード・パネルを閉じる)まま、送信が最初のエントリを書く。
+        fetchChatThreadsMock.mockReturnValue(new Promise<ChatThreadDto[]>(() => undefined));
+        const first = renderProbe();
+        act(() => {
+          first.result.current.provisionalEntries.markIfFirstEntry('proj-a');
+          writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+        });
+        first.unmount();
+        expect(readPersistedChatThreads()['proj-a']).toEqual({
+          activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new', provisional: true,
+        });
+
+        // 2 回目のマウント(メモリの印は無い。読めるのは保存だけ): 一覧が着地すると、サーバー一覧と [N] の和で開く。
+        fetchChatThreadsMock.mockResolvedValue([...SERVER_LIST, thread('sess-new')]);
+        const second = renderProbe();
+        await flush();
+        await flush();
+        expect(second.result.current.openThreadIds['proj-a']).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-new']);
+        expect(second.result.current.key.selectedThreadIds['proj-a']).toBe('sess-new');
+        // 復元(E7)で保存の印も下りる: 以後の訪問で広げ直さない。
+        expect(readPersistedChatThreads()['proj-a']).toEqual({
+          activeSessionIds: ['sess-a', 'sess-b', 'sess-c', 'sess-new'], selectedSessionId: 'sess-new',
+        });
+      });
+
+      it('leaves a thread closed during the earlier mount out of the widen after a fresh mount (the closed ids are stored)', async () => {
+        fetchChatThreadsMock.mockReturnValue(new Promise<ChatThreadDto[]>(() => undefined));
+        const first = renderProbe();
+        act(() => {
+          first.result.current.provisionalEntries.markIfFirstEntry('proj-a');
+          writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-n1', 'sess-n2'], selectedSessionId: 'sess-n2' });
+          first.result.current.provisionalEntries.noteClosed('proj-a', 'sess-n1');
+          writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-n2'], selectedSessionId: 'sess-n2' });
+        });
+        first.unmount();
+
+        fetchChatThreadsMock.mockResolvedValue([...SERVER_LIST, thread('sess-n1'), thread('sess-n2')]);
+        const second = renderProbe();
+        await flush();
+        await flush();
+        expect(second.result.current.openThreadIds['proj-a']).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-n2']);
+        expect(readPersistedChatThreads()['proj-a']).toEqual({
+          activeSessionIds: ['sess-a', 'sess-b', 'sess-c', 'sess-n2'], selectedSessionId: 'sess-n2',
+        });
+      });
+
+      it('keeps the stored mark when the fresh mount\'s fetch fails too, and a later visit that reaches the server widens', async () => {
+        fetchChatThreadsMock.mockReturnValue(new Promise<ChatThreadDto[]>(() => undefined));
+        const first = renderProbe();
+        act(() => {
+          first.result.current.provisionalEntries.markIfFirstEntry('proj-a');
+          writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+        });
+        first.unmount();
+
+        fetchChatThreadsMock.mockRejectedValue(new Error('down'));
+        const second = renderProbe();
+        await flush();
+        await flush();
+        expect(second.result.current.openThreadIds['proj-a']).toEqual(['sess-new']);
+        expect(readPersistedChatThreads()['proj-a']?.provisional).toBe(true);
+        second.unmount();
+
+        fetchChatThreadsMock.mockResolvedValue([...SERVER_LIST, thread('sess-new')]);
+        const third = renderProbe();
+        await flush();
+        await flush();
+        expect(third.result.current.openThreadIds['proj-a']).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-new']);
+        expect(readPersistedChatThreads()['proj-a']).not.toHaveProperty('provisional');
+      });
+
+      it('treats an old-format stored entry as the user record on a fresh mount: no widening', async () => {
+        // bdboard-521p 以前に書かれた形のリテラル(印のフィールドが無い)。
+        localStorage.setItem(
+          'bdboard.chat.thread.v2',
+          '{"proj-a":{"activeSessionIds":["sess-a"],"selectedSessionId":"sess-a"}}',
+        );
+        fetchChatThreadsMock.mockResolvedValue(SERVER_LIST);
+        const { result } = renderProbe();
+        await flush();
+        await flush();
+        expect(result.current.openThreadIds['proj-a']).toEqual(['sess-a']);
+        expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: ['sess-a'], selectedSessionId: 'sess-a' });
+      });
+
+      it('lowers the stored mark on the adopted-open path as well', async () => {
+        const list = deferred<ChatThreadDto[]>();
+        fetchChatThreadsMock.mockReturnValue(list.promise);
+        const { result } = renderProbe();
+        act(() => {
+          result.current.provisionalEntries.markIfFirstEntry('proj-a');
+          result.current.restoredProjectsRef.current.add('proj-a');
+          result.current.openThreadIdsRef.current = { 'proj-a': ['sess-new'] };
+          writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+        });
+        expect(readPersistedChatThreads()['proj-a']?.provisional).toBe(true);
+        await act(async () => { list.resolve(SERVER_LIST); await list.promise; });
+        expect(readPersistedChatThreads()['proj-a']).not.toHaveProperty('provisional');
+      });
+    });
+
+    describe('a first entry written after the first list failed is provisional (bdboard-521p, E7 failure path)', () => {
+      it('marks the first entry a send writes after the fetch failed, so the next visit widens', async () => {
+        let visits = 0;
+        fetchChatThreadsMock.mockImplementation(async (projectId: string) => {
+          if (projectId !== 'proj-a') return [];
+          visits += 1;
+          if (visits === 1) throw new Error('boom');
+          return [...SERVER_LIST, thread('sess-new')];
+        });
+        const { result, rerender } = renderProbe();
+        await flush();
+        await flush();
+        // 失敗した E7 は「復元済み」を立てるが、永続化エントリは無いまま(open は空)。
+        expect(result.current.restoredProjectsRef.current.has('proj-a')).toBe(true);
+        expect(readPersistedChatThreads()['proj-a']).toBeUndefined();
+
+        // そのあとの送信が最初の永続化エントリを書く(commitSuccess と同じ順: 印 → 書き込み)。
+        act(() => {
+          result.current.provisionalEntries.markIfFirstEntry('proj-a');
+          writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+        });
+        expect(readPersistedChatThreads()['proj-a']).toEqual({
+          activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new', provisional: true,
+        });
+        expect(result.current.provisionalEntries.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(true);
+
+        rerender({ projectId: 'proj-b' });
+        await flush();
+        rerender({ projectId: 'proj-a' });
+        await flush();
+        await flush();
+        expect(result.current.openThreadIds['proj-a']).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-new']);
+        expect(readPersistedChatThreads()['proj-a']).not.toHaveProperty('provisional');
+      });
+
+      it('does not mark a send after an agent change that followed the failed fetch: the explicit empty is the record', async () => {
+        fetchChatThreadsMock.mockRejectedValue(new Error('boom'));
+        const { result } = renderProbe();
+        await flush();
+        await flush();
+        // エージェント切替(handleAgentChange)の順: 空を書き、復元済みを立て、settle で印を下ろす。
+        act(() => {
+          writePersistedChatThreadState('proj-a', { activeSessionIds: [], selectedSessionId: undefined });
+          result.current.restoredProjectsRef.current.add('proj-a');
+          result.current.provisionalEntries.settle('proj-a');
+          result.current.provisionalEntries.markIfFirstEntry('proj-a');
+          writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+        });
+        expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+      });
+
+      it('does not mark when the failed fetch left an existing entry: it is still the user record', async () => {
+        writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-1'], selectedSessionId: 'sess-1' });
+        fetchChatThreadsMock.mockRejectedValue(new Error('boom'));
+        const { result } = renderProbe();
+        await flush();
+        await flush();
+        act(() => {
+          result.current.provisionalEntries.markIfFirstEntry('proj-a');
+          writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-1', 'sess-new'], selectedSessionId: 'sess-new' });
+        });
+        expect(readPersistedChatThreads()['proj-a']).toEqual({
+          activeSessionIds: ['sess-1', 'sess-new'], selectedSessionId: 'sess-new',
+        });
+      });
+    });
   });
 
   it('consumes a pending ticket draft on the failure path too', async () => {
