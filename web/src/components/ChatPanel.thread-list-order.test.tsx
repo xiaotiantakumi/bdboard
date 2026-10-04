@@ -576,6 +576,128 @@ describe('ChatPanel: the provisional first entry is told apart from the user\'s 
     expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-n2']);
   });
 
+  /** stubSends に加えて、スレッドの履歴 GET(再オープンしたスレッドが読む)にも空の履歴で答える。 */
+  function stubSendsAndHistory(sessionIds: readonly string[]) {
+    let posts = 0;
+    stubFetch((url, init) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        const sessionId = sessionIds[Math.min(posts, sessionIds.length - 1)];
+        posts += 1;
+        return jsonResponse({ reply: `AI reply ${posts}`, sessionId, agentId: 'claude' });
+      }
+      const history = /^\/api\/chat\/sessions\/([^/]+)\/messages/.exec(url);
+      if (history !== null) return jsonResponse({ sessionId: history[1], agentId: 'claude', messages: [] });
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+  }
+
+  /** ドロワーの「閉じたスレッド」から title のスレッドを選ぶ = reopenClosedThread。 */
+  async function reopenFromDrawer(container: HTMLElement, user: ReturnType<typeof userEvent.setup>, title: string) {
+    openThreadDrawer(container);
+    await user.click(await within(getThreadDrawer(container)).findByRole('button', { name: title }));
+  }
+
+  /** ドラフトから 'hello one' を送り、新規スレッドで 'hello two' を送る(送信 N1 → 送信 N2)。 */
+  async function sendTwo(user: ReturnType<typeof userEvent.setup>) {
+    await user.type(screen.getByLabelText('メッセージ'), 'hello one');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('AI reply 1');
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
+    await user.type(screen.getByLabelText('メッセージ'), 'hello two');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('AI reply 2');
+  }
+
+  async function closeFromDrawer(container: HTMLElement, user: ReturnType<typeof userEvent.setup>, title: string) {
+    const menu = await openThreadDrawerItemMenu(container, user, title);
+    await user.click(within(menu).getByRole('menuitem', { name: /タブから閉じる/ }));
+  }
+
+  it('keeps a thread the user reopened after closing it during the first list (close N1 -> reopen N1)', async () => {
+    const user = userEvent.setup();
+    const firstList = createDeferred<ChatThreadDto[]>();
+    scriptThreadLists([firstList]);
+    stubSendsAndHistory(['sess-n1', 'sess-n2']);
+
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+    await sendTwo(user);
+    await closeFromDrawer(container, user, 'hello one');
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-n2']);
+    // 気が変わって、閉じたスレッドをドロワーから開き直す。
+    await reopenFromDrawer(container, user, 'hello one');
+    expect(switcherTitle(container)).toHaveTextContent('hello one');
+
+    await resolveDeferred(firstList, [SERVER_A, SERVER_B]);
+
+    // 開き直した N1 は「閉じた」から外れる: サーバー一覧と送信した 2 件を開き、見ている N1 のまま。
+    expect(switcherCount(container)).toHaveTextContent('スレッド 4');
+    expect(switcherTitle(container)).toHaveTextContent('hello one');
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: ['sess-a', 'sess-b', 'sess-n1', 'sess-n2'],
+      selectedSessionId: 'sess-n1',
+    });
+  });
+
+  it('opens the server list when the only provisional thread is closed during the first list (send N1 -> close N1)', async () => {
+    const user = userEvent.setup();
+    const firstList = createDeferred<ChatThreadDto[]>();
+    scriptThreadLists([firstList]);
+    stubSends(['sess-n1']);
+
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+    await user.type(screen.getByLabelText('メッセージ'), 'hello one');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('AI reply 1');
+    await closeFromDrawer(container, user, 'hello one');
+    // 唯一のスレッドを閉じたので、永続化は空のエントリ。それでも仮のエントリのまま(N1 -> N2 -> close N1 と同じ扱い)。
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual([]);
+
+    await resolveDeferred(firstList, [SERVER_A, SERVER_B]);
+
+    expect(switcherCount(container)).toHaveTextContent('スレッド 2');
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b']);
+  });
+
+  it('keeps a thread reopened long after a failed first list on the next visit (close N1 -> reopen N1 -> revisit)', async () => {
+    const user = userEvent.setup();
+    const calls: Record<string, number> = {};
+    const firstList = createDeferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockImplementation((projectId: string) => {
+      calls[projectId] = (calls[projectId] ?? 0) + 1;
+      if (projectId !== 'proj-a') return Promise.resolve([]);
+      return calls[projectId] === 1
+        ? firstList.promise
+        : Promise.resolve([SERVER_A, SERVER_B, thread('sess-n1', 'hello one'), thread('sess-n2', 'hello two')]);
+    });
+    stubSendsAndHistory(['sess-n1', 'sess-n2']);
+
+    const { container } = renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: 'proj-a' });
+    await sendTwo(user);
+    // 初回の一覧が失敗する(E7 は永続化のまま open を確定し、仮のエントリの印は残す)。
+    await act(async () => {
+      firstList.reject(new Error('list down'));
+      await firstList.promise.catch(() => undefined);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // しばらく経ってから、N1 を閉じて、また開き直す。
+    await closeFromDrawer(container, user, 'hello one');
+    await reopenFromDrawer(container, user, 'hello one');
+
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-b');
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-a');
+    await waitFor(() => expect(calls['proj-a']).toBe(2));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-n1', 'sess-n2']);
+    expect(switcherCount(container)).toHaveTextContent('スレッド 4');
+  });
+
   it('keeps every server thread open when a revisit history load writes the first entry before the list lands (history loader)', async () => {
     const user = userEvent.setup();
     const A1 = thread('sess-a1', 'thread a1');

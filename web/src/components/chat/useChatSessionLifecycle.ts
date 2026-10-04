@@ -315,10 +315,7 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     // (サーバー側の別内容で)上書きしてしまう。
     historyRequestIdRef.current += 1;
     setSelectedAgentId(agentId);
-    setConversations((prev) => ({
-      ...prev,
-      [sessionId]: { messages: seeded, sessionId, agentId },
-    }));
+    setConversations((prev) => ({ ...prev, [sessionId]: { messages: seeded, sessionId, agentId } }));
     // 履歴は上で seedMessages から取り込み済みなので、通常の(常に空の)
     // ChatMessageRepository 由来の自動読み込み effect は動かさない。
     setHistoryLoadedFor((prev) => ({ ...prev, [sessionId]: true }));
@@ -329,6 +326,7 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     // bdboard-rt6i: 未復元で最初の永続化エントリを書く採用は仮のエントリ(chat/provisionalEntry.ts)。印の判定は
     // restoredProjectsRef を読むので、下の restoredProjectsRef.current.add より前に呼ぶ。
     provisionalEntries.markIfFirstEntry(projectId);
+    provisionalEntries.noteReopened(projectId, sessionId);
     const baseOpenThreads = [...(usedPersistedBase
       ? (readPersistedChatThreads()[projectId]?.activeSessionIds ?? [])
       : (openThreadIdsRef.current[projectId] ?? []))];

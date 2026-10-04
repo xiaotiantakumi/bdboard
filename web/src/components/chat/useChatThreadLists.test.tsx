@@ -206,6 +206,15 @@ describe('useChatThreadLists', () => {
     expect(marked(result)).toBe(true);
   });
 
+  it('reopenClosedThread takes the reopened id off the closed ids, so a list that lands later does not subtract it (bdboard-rt6i)', () => {
+    const { result } = setup();
+    result.current.provisionalEntries.markIfFirstEntry('project-a');
+    result.current.provisionalEntries.noteClosed('project-a', 'sess-closed');
+    result.current.provisionalEntries.noteClosed('project-a', 'sess-other');
+    act(() => result.current.reopenClosedThread('sess-closed'));
+    expect(Array.from(result.current.provisionalEntries.closedIds('project-a'))).toEqual(['sess-other']);
+  });
+
   it('does not mark a project that already has an entry, or is already restored (bdboard-rt6i)', () => {
     writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-x'], selectedSessionId: 'sess-x' });
     const withEntry = setup();

@@ -670,11 +670,13 @@ describe('useChatSessionLifecycle', () => {
       expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-a', 'sess-b', 'sess-new', 'sess-c', 'sess-rec'] });
     });
 
-    it('does not treat an agent change\'s empty entry as provisional on a recovery, even if the mark were left set', () => {
+    it('does not treat an agent change\'s empty entry as provisional on a recovery: handleAgentChange settles the mark', () => {
+      // handleAgentChange と同じ順: 空のエントリを書き、印を settle で下ろし、復元済みにする。
       writePersistedChatThreadState('project-a', { activeSessionIds: [] });
       const restoredProjectsRef = { current: new Set<string>() };
       const provisionalEntries = createProvisionalEntryMarks((id) => restoredProjectsRef.current.has(id));
       provisionalEntries.markIfFirstEntry('project-a');
+      provisionalEntries.settle('project-a');
       restoredProjectsRef.current.add('project-a');
       const { result, params } = setup({
         provisionalEntries,
@@ -687,6 +689,39 @@ describe('useChatSessionLifecycle', () => {
       expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-rec'] });
     });
 
+    it('widens a marked project whose entry became empty (the user closed the only provisional thread) with the server list minus the closed ids', () => {
+      const { restoredProjectsRef, provisionalEntries } = provisionalFirstEntry();
+      provisionalEntries.noteClosed('project-a', 'sess-b');
+      provisionalEntries.noteClosed('project-a', 'sess-new');
+      // sess-new を閉じて [] になった。印は残っているので、この [] は利用者の記録ではなく仮のエントリ。
+      writePersistedChatThreadState('project-a', { activeSessionIds: [] });
+      const { result, params } = setup({
+        restoredProjectsRef,
+        provisionalEntries,
+        openThreadIdsRef: { current: { 'project-a': [] } },
+        selectedThreadIdsRef: { current: {} },
+      });
+      act(() => result.current.applyRecoveredTurn(SERVER, RECOVERED));
+
+      expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-a', 'sess-rec'] });
+      expect(provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(false);
+    });
+
+    it('keeps an id the user reopened (noteReopened) in the widened open set on a recovery', () => {
+      const { restoredProjectsRef, provisionalEntries } = provisionalFirstEntry();
+      provisionalEntries.noteClosed('project-a', 'sess-b');
+      provisionalEntries.noteReopened('project-a', 'sess-b');
+      const { result, params } = setup({
+        restoredProjectsRef,
+        provisionalEntries,
+        openThreadIdsRef: { current: { 'project-a': ['sess-new'] } },
+        selectedThreadIdsRef: { current: { 'project-a': 'sess-new' } },
+      });
+      act(() => result.current.applyRecoveredTurn(SERVER, RECOVERED));
+
+      expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-a', 'sess-b', 'sess-new', 'sess-rec'] });
+    });
+
     it('marks the first entry an adoption writes before the project is restored', () => {
       const { result, params } = setup();
       act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
@@ -695,6 +730,14 @@ describe('useChatSessionLifecycle', () => {
         activeSessionIds: ['sess-new'],
         selectedSessionId: 'sess-new',
       });
+    });
+
+    it('takes an adopted id off the closed ids, so a list that lands later does not subtract it', () => {
+      const { result, params } = setup();
+      params.provisionalEntries.markIfFirstEntry('project-a');
+      params.provisionalEntries.noteClosed('project-a', 'sess-new');
+      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+      expect(params.provisionalEntries.closedIds('project-a').has('sess-new')).toBe(false);
     });
 
     it('does not mark an adoption on a revisit (an entry already existed)', () => {
@@ -717,6 +760,16 @@ describe('useChatSessionLifecycle', () => {
       });
       act(() => result.current.handleHistorySessionGone('sess-dead'));
       expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: ['sess-live'] });
+      expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(true);
+    });
+
+    it('keeps a marked project provisional when the dead selected session was its only open thread (empty entry)', () => {
+      const { result, params } = setup({
+        selectedThreadIdsRef: { current: { 'project-a': 'sess-dead' } },
+        openThreadIdsRef: { current: { 'project-a': ['sess-dead'] } },
+      });
+      act(() => result.current.handleHistorySessionGone('sess-dead'));
+      expect(readPersistedChatThreads()['project-a']).toEqual({ activeSessionIds: [] });
       expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(true);
     });
 

@@ -3,12 +3,14 @@ import { readPersistedChatThreads, type PersistedChatThreadState } from '../../c
 
 /**
  * bdboard-0206 / bdboard-rt6i: 「永続化済みのエントリが、サーバー一覧と合わせる前の仮のエントリか」。
- * marked は、このプロジェクトに仮のエントリの印(ProvisionalEntryMarks)が立っているか。persisted はいまのエントリで、
- * 開いているスレッドが 1 件以上ある。エージェント切替(handleAgentChange)の「空に確定」のエントリ
- * (activeSessionIds が空)は利用者の意図なので、これには当たらない。
+ * marked は、このプロジェクトに仮のエントリの印(ProvisionalEntryMarks)が立っているか。persisted はいまのエントリ。
+ * 開いているスレッドが 0 件の空のエントリも、印がある間は仮のエントリのまま: 仮のスレッドを 1 つ閉じて空になった
+ * (送信 N1 → N1 を閉じる)ときに、N1 → N2 → N1 を閉じる([A,B,N2])と違ってサーバーのスレッドが開かれない、
+ * という不揃いを作らないため。利用者の明示的な「空」(エージェント切替 handleAgentChange)は settle で印ごと下りるので、
+ * 空のエントリでも仮にはならない。
  */
 export function isProvisionalEntry(marked: boolean, persisted: PersistedChatThreadState | undefined): boolean {
-  return marked && persisted !== undefined && persisted.activeSessionIds.length > 0;
+  return marked && persisted !== undefined;
 }
 
 /** bdboard-rt6i: 仮のエントリのとき、利用者が閉じた id を open の候補(サーバー一覧)から外す。 */
@@ -30,7 +32,8 @@ export function withoutClosed(threads: readonly ChatThreadDto[], closed: Readonl
  *   選択中スレッドの死亡)が、書く直前に呼ぶ。未復元で、まだエントリが無いときだけ印を立てる。判定は呼ぶ時点の
  *   restoredProjectsRef と永続化を読むので、採用のように restoredProjectsRef を立てる処理より前に呼ぶこと。
  * - isProvisional: 復元する側が読む。印があり、いまのエントリが空でないとき true。
- * - noteClosed / closedIds: 印がある間に利用者が閉じた(削除した)スレッド。閉じる操作は印を下ろさない
+ * - noteClosed / noteReopened / closedIds: 印がある間に利用者が閉じた(削除した)スレッド。開き直した(閉じたスレッドの
+ *   再オープン、CLI セッションの採用)id は noteReopened で閉じた id から外す。閉じる操作は印を下ろさない
  *   (下ろすと、送信 N1 → 送信 N2 → N1 を閉じる、で永続化 [N2] が利用者の記録になり、一度も見ていないサーバーの
  *   スレッドが開かれない)。代わりに閉じた id を覚え、復元する側が開くスレッドから外す(withoutClosed)。
  * - settle: 利用者の明示的な「空」(エージェント切替)と、一覧と合わせた復元(E7 の成功・回収の hydrate)で、
@@ -43,6 +46,7 @@ export interface ProvisionalEntryMarks {
   markIfFirstEntry(projectId: string): void;
   isProvisional(projectId: string, persisted: PersistedChatThreadState | undefined): boolean;
   noteClosed(projectId: string, sessionId: string): void;
+  noteReopened(projectId: string, sessionId: string): void;
   closedIds(projectId: string): ReadonlySet<string>;
   settle(projectId: string): void;
 }
@@ -62,6 +66,7 @@ export function createProvisionalEntryMarks(isRestored: (projectId: string) => b
       if (!marked.has(projectId)) return;
       closed.set(projectId, (closed.get(projectId) ?? new Set<string>()).add(sessionId));
     },
+    noteReopened: (projectId, sessionId) => void closed.get(projectId)?.delete(sessionId),
     closedIds: (projectId) => closed.get(projectId) ?? NO_CLOSED,
     settle(projectId) {
       marked.delete(projectId);

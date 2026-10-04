@@ -6,7 +6,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
+import { readPersistedChatThreads } from '../../chatThreadStorage';
 import type { ChatAttachment } from './attachments';
 import { createProvisionalEntryMarks } from './provisionalEntry';
 import { useChatConversationsState } from './useChatConversationsState';
@@ -111,9 +111,11 @@ describe('useDraftThreadLauncher', () => {
       result.current.launcher.handleAgentChange('codex');
     });
 
-    // 切替のあとに別経路が非空のエントリを書いても、印は下りているので仮のエントリではない。
-    writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new' });
+    // 切替が書いた空のエントリ([])は、印が下りているので仮のエントリではなく、利用者の明示的な記録。
+    expect(readPersistedChatThreads()['proj-a']).toEqual({ activeSessionIds: [], selectedSessionId: undefined });
     expect(marks.isProvisional('proj-a', readPersistedChatThreads()['proj-a'])).toBe(false);
+    // 切替のあとに別経路が非空のエントリを書いても、印は下りているので仮のエントリではない。
+    expect(marks.isProvisional('proj-a', { activeSessionIds: ['sess-new'] })).toBe(false);
     expect(marks.closedIds('proj-a').size).toBe(0);
     // ほかのプロジェクトの印と閉じた id には触れない。
     expect(marks.isProvisional('proj-other', { activeSessionIds: ['sess-new'] })).toBe(true);

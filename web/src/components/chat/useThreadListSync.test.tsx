@@ -584,6 +584,39 @@ describe('useThreadListSync', () => {
       expect(result.current.provisionalEntries.closedIds('proj-a').size).toBe(0);
     });
 
+    it('opens the server list when the only provisional thread was closed: a marked empty entry is still provisional (R2)', async () => {
+      // 送信 N1 → N1 を閉じる。closeThread は永続化を [] にするが、印は下ろさず N1 を覚える。[] は利用者の記録ではない。
+      const list = deferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockReturnValue(list.promise);
+      const { result } = renderProbe();
+      act(() => {
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
+        result.current.threadListOrder.noteEntryWrite('proj-a', thread('sess-n1'), 'upsert');
+        result.current.provisionalEntries.noteClosed('proj-a', 'sess-n1');
+        writePersistedChatThreadState('proj-a', { activeSessionIds: [], selectedSessionId: undefined });
+      });
+      await act(async () => { list.resolve(SERVER_LIST); await list.promise; });
+      expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-a', 'sess-b', 'sess-c'] });
+      expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-c']);
+    });
+
+    it('keeps a thread the user closed and then reopened during the first list: noteReopened takes it off the closed ids (R1)', async () => {
+      const list = deferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockReturnValue(list.promise);
+      const { result } = renderProbe();
+      act(() => {
+        result.current.provisionalEntries.markIfFirstEntry('proj-a');
+        result.current.threadListOrder.noteEntryWrite('proj-a', thread('sess-n1'), 'upsert');
+        result.current.threadListOrder.noteEntryWrite('proj-a', thread('sess-n2'), 'upsert');
+        result.current.provisionalEntries.noteClosed('proj-a', 'sess-n1');
+        result.current.provisionalEntries.noteReopened('proj-a', 'sess-n1');
+        writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-n2', 'sess-n1'], selectedSessionId: 'sess-n1' });
+      });
+      await act(async () => { list.resolve(SERVER_LIST); await list.promise; });
+      expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'sess-c', 'sess-n1', 'sess-n2']);
+      expect(result.current.key.selectedThreadIds).toEqual({ 'proj-a': 'sess-n1' });
+    });
+
     it('leaves a closed thread out of the widen on the adopted-open path as well', async () => {
       const list = deferred<ChatThreadDto[]>();
       fetchChatThreadsMock.mockReturnValue(list.promise);

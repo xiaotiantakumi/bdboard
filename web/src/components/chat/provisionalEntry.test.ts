@@ -10,7 +10,7 @@ function thread(sessionId: string): ChatThreadDto {
 const OPEN = { activeSessionIds: ['sess-1'] };
 
 describe('isProvisionalEntry', () => {
-  it('is true only when the mark is set and an entry with open threads exists', () => {
+  it('is true when the mark is set and an entry exists', () => {
     expect(isProvisionalEntry(true, OPEN)).toBe(true);
   });
 
@@ -22,8 +22,12 @@ describe('isProvisionalEntry', () => {
     expect(isProvisionalEntry(true, undefined)).toBe(false);
   });
 
-  it('is false for an entry with no open threads, which is the explicit empty an agent change writes', () => {
-    expect(isProvisionalEntry(true, { activeSessionIds: [] })).toBe(false);
+  it('is true for an empty entry while the mark is set: closing the only provisional thread leaves a provisional [], not a record', () => {
+    expect(isProvisionalEntry(true, { activeSessionIds: [] })).toBe(true);
+  });
+
+  it('is false for an empty entry once the mark is down: the explicit empty an agent change writes is settled', () => {
+    expect(isProvisionalEntry(false, { activeSessionIds: [] })).toBe(false);
   });
 });
 
@@ -99,6 +103,36 @@ describe('createProvisionalEntryMarks', () => {
       marks.noteClosed('proj-a', 'sess-2');
       expect(Array.from(marks.closedIds('proj-a'))).toEqual(['sess-1', 'sess-2']);
       expect(marks.closedIds('proj-b').size).toBe(0);
+    });
+  });
+
+  describe('noteReopened', () => {
+    it('takes a reopened id off the closed ids, for that project only, and ignores an id that was never closed', () => {
+      marks.markIfFirstEntry('proj-a');
+      marks.markIfFirstEntry('proj-b');
+      marks.noteClosed('proj-a', 'sess-1');
+      marks.noteClosed('proj-a', 'sess-2');
+      marks.noteClosed('proj-b', 'sess-1');
+
+      marks.noteReopened('proj-a', 'sess-1');
+      marks.noteReopened('proj-a', 'sess-never-closed');
+
+      expect(Array.from(marks.closedIds('proj-a'))).toEqual(['sess-2']);
+      expect(Array.from(marks.closedIds('proj-b'))).toEqual(['sess-1']);
+    });
+
+    it('does nothing for an unmarked project and does not raise the mark', () => {
+      marks.noteReopened('proj-a', 'sess-1');
+      expect(marks.closedIds('proj-a').size).toBe(0);
+      expect(marks.isProvisional('proj-a', OPEN)).toBe(false);
+    });
+
+    it('lets the id be closed again afterwards', () => {
+      marks.markIfFirstEntry('proj-a');
+      marks.noteClosed('proj-a', 'sess-1');
+      marks.noteReopened('proj-a', 'sess-1');
+      marks.noteClosed('proj-a', 'sess-1');
+      expect(marks.closedIds('proj-a').has('sess-1')).toBe(true);
     });
   });
 

@@ -275,6 +275,8 @@ export function useChatThreadLists({
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
     setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
     provisionalEntries.markIfFirstEntry(selectedProjectId);
+    // 開き直したスレッドは、仮のエントリの間に閉じていても、復元で開く候補から外さない。
+    provisionalEntries.noteReopened(selectedProjectId, sessionId);
     writePersistedChatThreadState(selectedProjectId, {
       activeSessionIds: next,
       selectedSessionId: sessionId,
