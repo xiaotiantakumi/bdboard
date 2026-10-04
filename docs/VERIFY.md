@@ -298,17 +298,21 @@ What this means operationally:
   wait longer than 15 min while the queue keeps moving.)
 - **Exit 75 means "no verify ran", not "verify failed" (bdboard-wj9m).** A
   verify that failed exits non-zero as before (mostly 1); 75 is reserved for
-  the slot wait timing out, so a caller that records verdicts can tell the two
-  apart. `merge-pr`'s landed verify treats 75 as "could not run" (exit 1,
-  retry once the slot is free) and posts nothing but `pending` — before this,
+  "verify gave up before running anything" — the slot wait timing out, or
+  (bdboard-wea0.1) the worktree-lock share wait giving up (see "Worktree lock"
+  below; verify's own stderr line says which) — so a caller that records
+  verdicts can tell the two apart. `merge-pr`'s landed verify treats 75 as
+  "could not run" (exit 1, retry once the slot or the worktree is free) and
+  posts nothing but `pending` — before this,
   the timeout exited 1, was recorded as `failure` on
   `bdboard/landed-verify`, and a healthy main looked broken (and could be held
   by `holdBrokenMain`). To keep the value unambiguous, `scripts/verify.mjs`
   maps a verify *step* that happens to exit 75 (e.g. `depcruise`, which exits
   with its violation count) to 1. Callers that only test "non-zero" still
   stop on it: CI fails the job, and `scripts/always-on-server.sh --verify`
-  leaves the server alone (exit 2) and prints the exit code, saying 75 is
-  the slot timeout rather than a red verify. `merge-pr` reads 75 from
+  leaves the server alone (exit 2) and prints the exit code, saying 75 means
+  verify did not run (slot or worktree-lock wait) rather than a red verify.
+  `merge-pr` reads 75 from
   whatever command the contract's `verify` is, so a contract that replaces
   `npm run verify` must not exit 75 for a failed check (it would be reported
   as "could not run", not recorded as `failure`).
@@ -533,11 +537,17 @@ dies, so no PID, start time or age is ever guessed. Design and measurements: `bd
 - **Waiting to share.** If someone holds the lock exclusively and is *not* a merge-pr — normally
   another verify between writing its owner line and downgrading — verify re-reads the owner and
   retries for up to **30 s**, then gives up with exit **75** ("did not run", the same reserved
-  code as the slot-wait timeout; merge-pr does not read it as a test failure).
+  code as the slot-wait timeout; merge-pr does not read it as a test failure). While it waits it
+  prints `verify: waiting to share the worktree lock (… waited Ns of 30s) — not a hang` about 2 s
+  in and every 10 s after, like the slot wait. The give-up line says "something has held the
+  worktree lock exclusively"; the owner line it quotes is the *last* one written and may be stale
+  (the holder may not have written yet), so `lsof -t <lockfile>` on the next line is what names
+  the holder.
 - **Refusal (comes with bdboard-wea0.2).** merge-pr does not take the lock yet; once wea0.2 lands
   it will write the advisory owner line `{by: "merge-pr …", pid, phase, sha, cwd, at}` while it
   holds the tree. When such a line is present and its `phase` is not `done`, a manual verify exits
-  **1** at once — without waiting — and prints the owner and `lsof -t <lockfile>`, the
+  **1** at once — without waiting — and prints the owner, one sentence on why merge-pr's tree
+  must not be shared (only for such an active merge-pr line) and `lsof -t <lockfile>`, the
   inference-free way to see who holds it now. The owner is re-read after every acquisition, so a
   merge-pr that takes the tree between the read and verify's shared lock is still refused.
   merge-pr's own contract verify will pass `BDBOARD_WORKTREE_HELD_BY=<merge-pr pid>` and share;
@@ -557,10 +567,16 @@ dies, so no PID, start time or age is ever guessed. Design and measurements: `bd
   its last argument (`LOCK_SH`=1, `LOCK_EX`=2, `LOCK_NB`=4, `LOCK_UN`=8), and exits **0** =
   locked, **1** = busy (`EWOULDBLOCK`), anything else = error. A helper that runs longer than
   10 s is killed and counts as an error.
-- **Runs unlocked, with one stderr line,** when there is no working helper, outside a git
-  worktree, when a helper call errors, when a second descriptor is not blocked after the lock is
-  taken (a filesystem that does not keep `flock` locks, such as some NFS setups), or on any
-  unexpected error while claiming — the lock must never block CI or another developer.
+- **Runs unlocked, with one stderr line** (`verify: worktree lock: <cause> — running WITHOUT the
+  worktree lock …`), when there is no working helper, outside a git worktree, when a helper call
+  errors (on the first exclusive try, the downgrade or while waiting), when a second descriptor
+  is not blocked after the lock is taken (a filesystem that does not keep `flock` locks, such as
+  some NFS setups), or on any unexpected error while claiming — the lock must never block CI or
+  another developer. The only other lines on a run that goes ahead are the owner-line write
+  failure above and, when another holder slips in between verify's exclusive lock and its
+  downgrade, `the EX->SH conversion was refused (busy): another holder took the lock in the gap`
+  (verify then re-reads the owner and shares or waits as above). Closing the lock when the
+  leader exits never changes verify's exit code.
 - **Emergency hatch: `BDBOARD_WORKTREE_LOCK=off`.** Runs verify without the lock and warns on
   every use. While it is set, nothing stops a merge-pr from switching the tree under the run.
 - **Windows:** no-op (no `flock`); verify spawns nothing for it (design §5). Protection there

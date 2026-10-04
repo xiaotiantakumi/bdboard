@@ -42,7 +42,7 @@ import { npmRunSpawnSpec } from './npm-command.mjs';
 import { isOrphaned, killProcessTree } from './process-tree.mjs';
 import { acquireVerifySlot, envSlotOptions, IN_VERIFY_ENV, SLOT_WAIT_TIMEOUT_EXIT_CODE, SlotWaitTimeoutError, withoutSlotIdentity } from './verify-slot.mjs';
 import { LIGHT_FLAG, leaderArgsFor, stepsScriptFor } from './verify-steps.mjs';
-import { claimWorktreeForVerify } from './verify-worktree-claim.mjs';
+import { claimWorktreeForVerify, releaseQuietly } from './verify-worktree-claim.mjs';
 
 const GRACE_MS = 5_000;
 const ORPHAN_POLL_MS = 1_000;
@@ -211,9 +211,8 @@ if (process.argv.includes('--group-leader')) {
     clearInterval(orphanWatch);
     // グループ全体の SIGKILL 猶予を待つ経路でも、スロット自体は今すぐ返す。
     slot.release();
-    if (worktreeLock !== null) {
-      worktreeLock.release();
-    }
+    // close が失敗しても verify の結果 (下の終了コード) を変えない。lock はこのプロセスの終了で外れる。
+    releaseQuietly(worktreeLock);
     const exitCode = signal !== null ? (SIGNAL_EXIT_CODES[signal] ?? 1) : (code ?? 1);
     // 本体ステップが偶然スロット待ちの打ち切りと同じ値で終わっても (例: depcruise は違反数を返す)、
     // その値は予約済みなので 1 に丸める (bdboard-wj9m)。

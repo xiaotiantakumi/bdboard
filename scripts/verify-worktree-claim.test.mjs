@@ -37,10 +37,10 @@ const makeRepo = () => {
   return { repoRoot, lockPath, other };
 };
 
-/** 注入した時計: sleep のたびに進む (30 秒の待ちを実時間で待たない)。 */
-const fakeClock = (onSleep = () => {}) => {
+/** 注入した時計: sleep のたびに進む (30 秒の待ちを実時間で待たない)。step を渡せば 1 回でその分跳ぶ (ヘルパーの spawn を減らす)。 */
+const fakeClock = (onSleep = () => {}, step = undefined) => {
   let clock = 0;
-  return { now: () => clock, sleep: async (ms) => { clock += ms; onSleep(); } };
+  return { now: () => clock, sleep: async (ms) => { clock += step === undefined ? ms : step; onSleep(); } };
 };
 
 const runClaim = async (repoRoot, options = {}) => {
@@ -81,9 +81,18 @@ describe.skipIf(realProcessLockTestsSkipped)('claimWorktreeForVerify against a r
     const { claim, lines } = await runClaim(repoRoot, { spawnSync: gappy });
     expect(claim.exitCode).toBe(null);
     expect(claim.lock.mode).toBe('SH');
-    expect(lines.join('\n')).toContain('EX->SH conversion was refused');
+    expect(lines.join('\n')).toContain('EX->SH conversion was refused (busy): another holder took the lock in the gap');
     expect(readOwner(lockPath)).toMatchObject({ by: VERIFY_OWNER_BY, pid: process.pid, phase: 'verify' });
     expect([probeLock(lockPath, 'EX'), probeLock(lockPath, 'SH')]).toEqual(['busy', 'free']);
+  });
+
+  it('a helper error on the EX->SH downgrade is not blamed on another holder: one line, running unlocked', async () => {
+    const { repoRoot, lockPath } = makeRepo();
+    const erring = (command, args, options) => (args[args.length - 1] === '5' ? { error: new Error('ETIMEDOUT'), status: null } : spawnSync(command, args, options));
+    const { claim, lines } = await runClaim(repoRoot, { spawnSync: erring });
+    expect(claim).toEqual({ lock: null, exitCode: null });
+    expect(lines).toEqual([expect.stringContaining('failed (error) — running WITHOUT the worktree lock')]);
+    expect(probeLock(lockPath, 'EX')).toBe('free');
   });
 
   it('a self-check that finds a second descriptor free means one stderr line and running unlocked', async () => {
@@ -126,18 +135,21 @@ describe.skipIf(realProcessLockTestsSkipped)('claimWorktreeForVerify against a r
     expect(fired).toBe(true);
     expect(claim).toEqual({ lock: null, exitCode: 1 });
     expect(lines.join('\n')).toContain('merge-pr finish 869 (pid 4242, phase verify');
-    expect(probeLock(lockPath, 'SH')).toBe('free'); // 自分の SH は手放した (残っているのは merge-pr の SH だけ)
+    mergePr.release();
+    expect(probeLock(lockPath, 'EX')).toBe('free'); // 自分の SH も手放している (拒否で lock を漏らさない。再レビュー N3)
   });
 
-  it('an EX holder that is not a merge-pr past the share wait gives 75 ("did not run"), without merge-pr wording', async () => {
+  it('an EX holder that is not an active merge-pr past the share wait gives 75 ("did not run"), with progress lines and no merge-pr wording', async () => {
     const { repoRoot, other } = makeRepo();
     const stuck = other();
     expect(stuck.tryLock('EX').ok).toBe(true);
-    stuck.writeOwner({ by: VERIFY_OWNER_BY, pid: 1, phase: 'verify', sha: null, cwd: '/x', at: 'T' });
-    const { claim, lines } = await runClaim(repoRoot, fakeClock());
+    stuck.writeOwner({ ...MERGE_PR, phase: 'done' }); // 終わった merge-pr の残り書き: 拒否もしないし merge-pr の説明も出さない
+    const { claim, lines } = await runClaim(repoRoot, fakeClock(undefined, 2_000)); // 2 秒ずつ跳ぶ時計 (spawn は約 15 回)
     expect(SHARE_TIMEOUT_EXIT_CODE).toBe(75);
     expect(claim).toEqual({ lock: null, exitCode: 75 });
-    expect(lines[0]).toContain('held the lock exclusively for over 30000 ms');
+    const notices = lines.filter((line) => line.includes('waiting to share the worktree lock'));
+    expect(notices.map((line) => line.match(/waited (\d+)s of 30s/)[1])).toEqual(['2', '12', '22']); // 2 秒後、以後 10 秒ごと
+    expect(lines[notices.length]).toContain('something has held the worktree lock exclusively for over 30000 ms (the last owner line says merge-pr');
     expect(lines.join('\n')).not.toContain('merge-pr switches');
   });
 

@@ -76,6 +76,17 @@ export function writeVerifyCopy(scriptsDir, root) {
   fs.writeFileSync(path.join(root, 'fake-bin', 'npm'), FAKE_NPM, { mode: 0o755 });
 }
 
+/** コピーした worktree-lock.mjs の release() を、閉じずに投げるよう書き換える (リーダー終了時の close の失敗の代わり)。 */
+export function injectReleaseFailure(root) {
+  const file = path.join(root, 'scripts', 'worktree-lock.mjs');
+  const source = fs.readFileSync(file, 'utf8');
+  const patched = source.replace('    release() {\n', "    release() {\n      throw new Error('EIO: injected close failure');\n");
+  if (patched === source) {
+    throw new Error('injectReleaseFailure: release() not found in the copied worktree-lock.mjs');
+  }
+  fs.writeFileSync(file, patched);
+}
+
 export async function waitFor(check, timeoutMs, label) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {

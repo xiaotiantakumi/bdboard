@@ -1,8 +1,6 @@
-// bdboard-wea0.1 (設計 bdboard-wea0 §7 T2): scripts/verify.mjs が worktree lock を正しい期間だけ持つことを、実プロセスと
-// 実際の kill で確かめる。verify-slot-timeout-exit.test.mjs と同じく verify.mjs と import 先を一時ディレクトリへコピーし、
-// PATH 先頭の偽の npm で受ける。違いは一時ディレクトリを `git init` すること (lock は <git-dir>/bdboard-worktree.lock)。
-// 偽の npm は、走ったら $PPID (= リーダー) と marker を書き、FAKE_NPM_RELEASE があればそのファイルが現れるまで待つ。
-// テストが kill するのは自分が起こした verify と、そのリーダーのグループ (pid は偽の npm が書いたもの) だけ。
+// bdboard-wea0.1 (設計 bdboard-wea0 §7 T2): verify.mjs が worktree lock を正しい期間だけ持つことを実プロセスと実際の kill で
+// 確かめる。verify.mjs の import graph を `git init` した一時ディレクトリへコピーし、PATH 先頭の偽の npm で受ける
+// (worktree-lock.test-support.mjs)。kill するのは自分が起こした verify と、そのリーダーのグループ (偽の npm が書いた pid) だけ。
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,7 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { withoutSlotIdentity } from './verify-slot.mjs';
 import { readOwner } from './worktree-lock-owner.mjs';
 import { openWorktreeLock } from './worktree-lock.mjs';
-import { isAlive, probeLock, realProcessLockTestsSkipped, waitFor, writeVerifyCopy } from './worktree-lock.test-support.mjs';
+import { injectReleaseFailure, isAlive, probeLock, realProcessLockTestsSkipped, waitFor, writeVerifyCopy } from './worktree-lock.test-support.mjs';
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url));
 const tempDirs = [];
@@ -23,9 +21,8 @@ const heldLocks = [];
 
 const running = (child) => child.exitCode === null && child.signalCode === null;
 
-// リーダーのグループを kill するのは、自分の子 (外側の verify) の handle がまだ終わっていないと示すときだけ (終わった子の
-// リーダー pid を当て推量で kill しない。PR #872 レビュー指摘 8)。外側を SIGKILL したあとのリーダーは自分で孤児の
-// グループを畳むか (verify.mjs)、偽の npm の上限 (約 10 秒) で終わる。
+// リーダーのグループを kill するのは、自分の子 (外側の verify) の handle がまだ終わっていないときだけ (レビュー指摘 8)。
+// 外側を SIGKILL したあとのリーダーは自分で孤児のグループを畳むか、偽の npm の上限 (約 10 秒) で終わる。
 afterEach(() => {
   for (const { pid, outer } of leaderGroups.splice(0)) {
     if (running(outer)) {
@@ -99,8 +96,7 @@ describe.skipIf(realProcessLockTestsSkipped)('verify.mjs holds the worktree lock
     children.push(slotHolder);
     fs.writeFileSync(path.join(worktree.slotDir, `holder-${slotHolder.pid}.json`), JSON.stringify({ pid: slotHolder.pid, joinedAt: Date.now() - 1_000, cwd: '/fake' }));
     const queued = startVerify(worktree, 'queued', { BDBOARD_VERIFY_SLOTS: '1', BDBOARD_VERIFY_SLOT_WAIT_MS: '30000' });
-    // 一瞬の EX (持ち主を書く間) のあと、共有 (SH) で持ち続ける。
-    await waitFor(() => probeLock(worktree.lockPath, 'SH') === 'free' && probeLock(worktree.lockPath, 'EX') === 'busy', 10_000, 'queued verify holds SH');
+    await waitFor(() => probeLock(worktree.lockPath, 'SH') === 'free' && probeLock(worktree.lockPath, 'EX') === 'busy', 10_000, 'queued verify holds SH (after its brief EX)');
     expect(readOwner(worktree.lockPath)).toMatchObject({ by: 'npm run verify', pid: queued.child.pid, phase: 'verify' });
     expect(npmRan(worktree, 'queued')).toBe(false); // まだスロット待ち
     queued.child.kill('SIGTERM');
@@ -138,9 +134,8 @@ describe.skipIf(realProcessLockTestsSkipped)('verify.mjs holds the worktree lock
     for (const heldBy of [undefined, '4243']) {
       const result = runVerify(worktree, 'manual', { BDBOARD_WORKTREE_HELD_BY: heldBy });
       expect(result.status, result.stderr).toBe(1);
-      // 持ち主を見て拒否した (待ちの打ち切りではない。gate bdboard-oiak 問1 の既定 = 待たない)
       expect(result.stderr).toContain('merge-pr finish 869 (pid 4242, phase verify, sha abc, since T) — a merge-pr owns it');
-      expect(result.stderr).not.toContain('exclusively');
+      expect(result.stderr).not.toContain('exclusively'); // 持ち主を見て拒否した (待ちの打ち切りではない。gate 問1 の既定)
       expect(result.stderr).toContain(`lsof -t '`);
       expect(npmRan(worktree, 'manual')).toBe(false);
     }
@@ -176,6 +171,13 @@ describe.skipIf(realProcessLockTestsSkipped)('verify.mjs holds the worktree lock
     fs.writeFileSync(release, '');
     expect(await first.done).toEqual({ code: 0, signal: null });
     expect(probeLock(worktree.lockPath, 'EX')).toBe('free');
+  });
+
+  it('a release that throws when the leader exits does not turn a passing verify red (re-review N2)', () => {
+    const worktree = makeWorktree();
+    injectReleaseFailure(worktree.root);
+    const result = runVerify(worktree, 'a');
+    expect([result.status, npmRan(worktree, 'a')], result.stderr).toEqual([0, true]);
   });
 
   it('without a helper it prints one stderr line and runs unlocked', () => {
