@@ -719,6 +719,78 @@ describe('useChatSessionLifecycle', () => {
       rerender({ ...params, openThreads: ['sess-x'], selectedThreadIdsRef: { current: {} } });
       expect(result.current.handleHistorySessionGone).toBe(first);
     });
+
+    // bdboard-gtv0: 死んだセッションを prune したあとに、prune より前に始まった一覧取得の応答が届いても、
+    // そのセッションを一覧に戻さない(戻すと、閉じたスレッドの再オープン経路から死亡スレッドを選べてしまう)。
+    describe('a list that started before the prune (bdboard-gtv0)', () => {
+      it('does not bring the dead session back through a recovery hydrate that started before the prune', () => {
+        const threadListOrder = createThreadListFetchOrder();
+        const { result, params } = setup({
+          selectedThreadIdsRef: { current: { 'project-a': 'sess-live' } },
+          openThreadIdsRef: { current: { 'project-a': ['sess-live', 'sess-dead'] } },
+          restoredProjectsRef: { current: new Set(['project-a']) },
+          threadListOrder,
+        });
+        const seq = threadListOrder.begin('project-a');
+        act(() => result.current.handleHistorySessionGone('sess-dead'));
+        act(() =>
+          result.current.applyRecoveredTurn([thread('sess-live'), thread('sess-dead'), thread('sess-rec')], RECOVERED, false, seq),
+        );
+
+        expect(lastUpdate(params.setThreadLists as ReturnType<typeof vi.fn>, {})).toEqual({
+          'project-a': [thread('sess-live'), thread('sess-rec')],
+        });
+      });
+
+      it('does not bring the dead session back through an adoption refresh that started before the prune, and admits it once', async () => {
+        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
+        fetchChatThreadsMock.mockReturnValue(
+          new Promise<ChatThreadDto[]>((resolve) => {
+            resolveThreads = resolve;
+          }),
+        );
+        const threadListOrder = createThreadListFetchOrder();
+        const admit = vi.spyOn(threadListOrder, 'admit');
+        const { result, params } = setup({
+          selectedThreadIdsRef: { current: { 'project-a': 'sess-live' } },
+          openThreadIdsRef: { current: { 'project-a': ['sess-live', 'sess-dead'] } },
+          restoredProjectsRef: { current: new Set(['project-a']) },
+          threadListOrder,
+        });
+        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+        await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+        // 取り直しの途中で、履歴の取得が「セッションは死んでいる」と分かった。
+        act(() => result.current.handleHistorySessionGone('sess-dead'));
+        await act(async () => {
+          resolveThreads([thread('sess-live'), thread('sess-dead'), thread('sess-new')]);
+          await Promise.resolve();
+        });
+
+        expect(lastUpdate(params.setThreadLists as ReturnType<typeof vi.fn>, {})).toEqual({
+          'project-a': [thread('sess-live'), thread('sess-new')],
+        });
+        // 取り直しは 1 fetch につき admit を 1 回だけ呼ぶ(同じ番号の二重 admit が起きない)。
+        expect(admit.mock.calls.map((call) => call[1])).toEqual([1]);
+      });
+
+      it('trusts a list that started after the prune', () => {
+        const threadListOrder = createThreadListFetchOrder();
+        const { result, params } = setup({
+          selectedThreadIdsRef: { current: { 'project-a': 'sess-live' } },
+          openThreadIdsRef: { current: { 'project-a': ['sess-live', 'sess-dead'] } },
+          restoredProjectsRef: { current: new Set(['project-a']) },
+          threadListOrder,
+        });
+        threadListOrder.begin('project-a');
+        act(() => result.current.handleHistorySessionGone('sess-dead'));
+        // prune の後に始まった回収の一覧(省略 = いま始めた fetch)はサーバーが反映済みなので、応答のまま当てる。
+        act(() => result.current.applyRecoveredTurn([thread('sess-live'), thread('sess-dead')], RECOVERED));
+
+        expect(lastUpdate(params.setThreadLists as ReturnType<typeof vi.fn>, {})).toEqual({
+          'project-a': [thread('sess-live'), thread('sess-dead')],
+        });
+      });
+    });
   });
 
   describe('handleResumeDiscoveredSession', () => {

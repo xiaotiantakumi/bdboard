@@ -361,6 +361,42 @@ describe('useThreadListSync', () => {
     });
   });
 
+  describe('a thread deleted while the list is in flight (bdboard-gtv0)', () => {
+    it('does not bring the deleted thread back to the list or the open tabs, and admits the response exactly once', async () => {
+      const list = deferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockReturnValue(list.promise);
+      const { result } = renderProbe();
+      const admit = vi.spyOn(result.current.threadListOrder, 'admit');
+      // 初回の一覧が in-flight の間に sess-2 が削除された(useChatThreadLists の deleteThread 相当: forgetEntry)。
+      act(() => {
+        result.current.threadListOrder.forgetEntry('proj-a', 'sess-2');
+      });
+      // サーバーの応答は削除前の状態を映していて sess-2 を載せている。
+      await act(async () => { list.resolve([thread('sess-1'), thread('sess-2'), thread('sess-3')]); await list.promise; });
+      expect(result.current.threadLists['proj-a']?.map((t) => t.sessionId)).toEqual(['sess-1', 'sess-3']);
+      expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-1', 'sess-3'] });
+      expect(result.current.key.selectedThreadIds).toEqual({ 'proj-a': 'sess-1' });
+      // E7 は 1 fetch につき admit を 1 回だけ呼ぶ(同じ番号の二重 admit が起きない)。
+      expect(admit.mock.calls.map((call) => call[1])).toEqual([1]);
+    });
+
+    it('trusts a response that started after the delete', async () => {
+      const first = deferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockReturnValueOnce(first.promise);
+      const { result, rerender } = renderProbe();
+      act(() => {
+        result.current.threadListOrder.forgetEntry('proj-a', 'sess-2');
+      });
+      // 別のプロジェクトへ移って戻ると、新しい E7 の fetch が始まる(削除より後の開始番号)。
+      const second = deferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockReturnValueOnce(new Promise(() => {})).mockReturnValueOnce(second.promise);
+      rerender({ projectId: 'proj-b' });
+      rerender({ projectId: 'proj-a' });
+      await act(async () => { second.resolve([thread('sess-1'), thread('sess-2')]); await second.promise; });
+      expect(result.current.threadLists['proj-a']?.map((t) => t.sessionId)).toEqual(['sess-1', 'sess-2']);
+    });
+  });
+
   describe('first visit whose first persisted entry is written while the list is in flight (bdboard-0206)', () => {
     const SERVER_LIST = [thread('sess-a'), thread('sess-b'), thread('sess-c')];
 
