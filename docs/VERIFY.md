@@ -347,7 +347,9 @@ look for `landed` holders and appends a `vitest-outside-verify` line to `$BDBOAR
   run, which a running-only count would miss. With several landed holders the heaviest state is recorded
   (running, then waiting, then reserved).
 - Audit fields: `pid`, `cwd`, `project`, `cmd` (200 chars), `landed_state`, `landed_pid`, `landed_count`,
-  `landed_running_s` / `landed_waited_s`.
+  `landed_running_s` / `landed_waited_s`. `landed_pid` and `landed_count` describe only the landed holders in the
+  recorded state (a waiting holder next to a reserved one is recorded as `waiting` with `landed_count=1`), and
+  `landed_waited_s` counts from the holder's first queue time (`queuedAt`), not its last re-join.
 - Silent and unrecorded: inside verify, no landed holder, a stale holder (over 30 min), a dead pid, a running
   `pr` / `merge` verify, and `BDBOARD_VERIFY_SLOTS=0` (gating disabled).
 

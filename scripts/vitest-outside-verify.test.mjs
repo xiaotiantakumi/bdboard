@@ -24,10 +24,12 @@ const makeDir = () => {
 };
 
 // state: running (acquiredAt あり) / waiting (acquiredAt なし) / reserved (merge-pr の予約。acquiredAt なし + reserved)。
-// ageMs = joinedAt (running は acquiredAt も) が何 ms 前か。
-const writeHolder = (dir, { pid = process.pid, priority = 'landed', state = 'running', ageMs = 65_000 } = {}) => {
-  const at = Date.now() - ageMs;
-  const holder = { v: 2, pid, joinedAt: at, queuedAt: at, priority };
+// ageMs = joinedAt (running は acquiredAt も) が何 ms 前か。queuedAgeMs = queuedAt (最初に並んだ時刻) が何 ms 前か
+// (既定は ageMs と同じ。並び直した長い待ち手は joinedAt だけが新しい)。
+const writeHolder = (dir, { pid = process.pid, priority = 'landed', state = 'running', ageMs = 65_000, queuedAgeMs = ageMs } = {}) => {
+  const now = Date.now();
+  const at = now - ageMs;
+  const holder = { v: 2, pid, joinedAt: at, queuedAt: now - queuedAgeMs, priority };
   if (state === 'running') {
     holder.acquiredAt = at;
   }
@@ -153,17 +155,57 @@ describe('vitest outside verify: a landed verify that has not started yet (bdboa
     expect(records[0]).not.toHaveProperty('landed_running_s');
   });
 
+  // landed 以外 (pr / merge) は、順番待ちでも予約でも数えない (plan.queue を landed に絞る)。
+  it.each([
+    ['waiting pr', { priority: 'pr', state: 'waiting' }],
+    ['waiting merge', { priority: 'merge', state: 'waiting' }],
+    ['reserved pr', { priority: 'pr', state: 'reserved' }],
+  ])('records nothing for a %s holder', async (_label, options) => {
+    const dir = makeDir();
+    writeHolder(dir, options);
+    const { result, warnings, records } = await runCheck(dir);
+    expect(result).toMatchObject({ state: null, warned: false });
+    expect(warnings).toEqual([]);
+    expect(records).toEqual([]);
+  });
+
+  // 長く待っている新形式の待ち手は stale と見なされる前に joinedAt だけを今にして並び直す (verify-slot.mjs)。
+  // 待ちの長さは最初に並んだ queuedAt から数え、joinedAt が新しくても stale にはならない。
+  it('records a long waiter that re-joined (old queuedAt, fresh joinedAt) and measures the wait from queuedAt', async () => {
+    const dir = makeDir();
+    const pid = writeHolder(dir, { state: 'waiting', ageMs: 60_000, queuedAgeMs: 40 * 60_000 });
+    const { result, warnings, records } = await runCheck(dir);
+    expect(result).toMatchObject({ state: 'waiting', warned: false });
+    expect(warnings).toEqual([]);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ landed_state: 'waiting', landed_pid: pid });
+    expect(records[0].landed_waited_s).toBeGreaterThanOrEqual(40 * 60);
+  });
+
   it('records the heaviest state when several landed holders exist (running over waiting over reserved)', async () => {
     const dir = makeDir();
     const reserved = writeHolder(dir, { pid: process.ppid, state: 'reserved' });
     expect(landedHolders(envFor(dir), { selfPid: 0 })).toMatchObject({ running: [], waiting: [], reserved: [{ pid: reserved }] });
-    // 同じ置き場に running を足すと running が勝つ (警告も出る)。
-    const running = writeHolder(dir);
-    const { result, warnings, records } = await runCheck(dir);
-    expect(result).toMatchObject({ state: 'running', warned: true });
-    expect(warnings).toHaveLength(1);
-    expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({ landed_state: 'running', landed_pid: running });
+
+    // 予約に順番待ちを足すと waiting が勝つ。landed_count は記録した状態の holder だけを数える (予約は含めない)。
+    const waiting = writeHolder(dir, { state: 'waiting' });
+    const waitingOverReserved = await runCheck(dir);
+    expect(waitingOverReserved.result).toMatchObject({ state: 'waiting', warned: false });
+    expect(waitingOverReserved.records).toHaveLength(1);
+    expect(waitingOverReserved.records[0]).toMatchObject({ landed_state: 'waiting', landed_pid: waiting, landed_count: 1 });
+
+    // さらに running を足すと running が勝つ (警告も出る)。3 つ目の生きた pid は別プロセスで用意する。
+    const holderProcess = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+    try {
+      const running = writeHolder(dir, { pid: holderProcess.pid, state: 'running' });
+      const runningOverAll = await runCheck(dir);
+      expect(runningOverAll.result).toMatchObject({ state: 'running', warned: true });
+      expect(runningOverAll.warnings).toHaveLength(1);
+      expect(runningOverAll.records).toHaveLength(1);
+      expect(runningOverAll.records[0]).toMatchObject({ landed_state: 'running', landed_pid: running, landed_count: 1 });
+    } finally {
+      holderProcess.kill('SIGKILL');
+    }
     expect(LANDED_STATES).toEqual(['running', 'waiting', 'reserved']);
   });
 });
@@ -274,9 +316,19 @@ describe('vitest-global-setup', () => {
       process.env.BDBOARD_VERIFY_SLOTS = '2';
       process.env.BDBOARD_MERGE_AUDIT_LOG = audit;
       process.env[IN_VERIFY_ENV] = '1';
+      // verify の中では project.config にも触れずに戻る。setup の早期 return の BDBOARD_IN_VERIFY が
+      // IN_VERIFY_ENV と食い違うと、中の checkOutsideVerify は黙っていても project.config を読むのでここで落ちる。
+      let touched = false;
+      const project = {
+        get config() {
+          touched = true;
+          return { root: '/test/project' };
+        },
+      };
       const stderr = await withCapturedStderr(async () => {
-        await expect(setup({ config: { root: '/test/project' } })).resolves.toBeUndefined();
+        await expect(setup(project)).resolves.toBeUndefined();
       });
+      expect(touched).toBe(false);
       expect(stderr).toBe('');
       expect(fs.existsSync(audit)).toBe(false);
     } finally {
