@@ -10,6 +10,7 @@ import { classifyVerifyFailure, retryLoadInduced } from './merge-pr/load-retry.m
 import {
   advanceMain,
   auditText,
+  landSquash,
   mainCheckout,
   posted,
   PR,
@@ -19,8 +20,10 @@ import {
   setup,
   simulateMerge,
   stateFile,
+  status,
   tmp,
   verified,
+  writeFake,
 } from './merge-pr.test-support.mjs';
 import { VERIFY_JS } from './merge-pr.test-support-verify-js.mjs';
 
@@ -264,6 +267,26 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(auditText()).toMatch(/\tlanded-verify\t.*\tresult=error\tretried=1\n/);
     expect(landedLogs().filter((name) => name.includes('.first-attempt-'))).toHaveLength(1);
     expect(readdirSync(slotDir())).toEqual([]);
+  });
+
+  it('carries the retry into the light-landed line of a class L landing (S3), and never retries the light check itself', () => {
+    setup({ merge: { mode: 'S3', lightCheck: 'node verify.cjs --light' } });
+    const moved = advanceMain({ 'peer.txt': 'peer\n' });
+    // 軽量チェック (ledger: false) は時間切れだけの失敗でも再実行しない。回数は着地後検証と別に数える。
+    const prepared = run(['prepare', String(PR)], { ...loadRetryEnv('1,0'), FAKE_VERIFY_SEQUENCE_FILE: path.join(tmp, 'fake-verify-seq-light') });
+    expect(prepared.status).toBe(3);
+    expect(verified()).toHaveLength(1);
+    expect(prepared.stderr).not.toContain('1 回だけ再実行します');
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(readFake().slot.holder).toBeNull();
+    writeFake({ statuses: { [moved]: [status('success')] } });
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = landSquash();
+    const finished = run(['finish', String(PR)], loadRetryEnv('1,0'));
+    expect(finished.status, finished.stderr).toBe(0);
+    expect(verified().filter((line) => line === landed)).toHaveLength(2);
+    expect(auditText()).toMatch(/\tlanded-verify\t.*\tresult=success\tretried=1\n/);
+    expect(auditText()).toMatch(new RegExp(`\tlight-landed\tpr=${PR}\tid=demo-1\tnew=${landed}\tresult=success\tby=finish\tretried=1\n`));
   });
 
   it('does not retry the predicted-tree verify (ledger: false) even when its failures are all timeouts', () => {

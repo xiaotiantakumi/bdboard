@@ -533,8 +533,8 @@ File overlap still never decides whether to merge without a rebase; it only pick
   contract): `scripts/merge-pr/**`, `scripts/merge-pr.mjs`, `scripts/check-drift/**`,
   `scripts/check-drift.mjs`, and the `scripts/` modules `merge-pr` imports
   (`scripts/process-identity.mjs`, `scripts/process-tree.mjs`, `scripts/verify-slot.mjs`,
-  `scripts/verify-slot-files.mjs`, `scripts/verify-slot-queue.mjs`; `scripts/merge-pr.s3.test.mjs`
-  walks the imports and fails when one is missing).
+  `scripts/verify-slot-files.mjs`, `scripts/verify-slot-queue.mjs`, `scripts/verify-slot-wait.mjs`;
+  `scripts/merge-pr.s3.test.mjs` walks the imports and fails when one is missing).
 
 - **The light result is never a verify result.** Class L records `lightTree` / `lightCommit` /
   `lightCheck` / `lightCheckedAt` / `lightCheckSecs` (class F keeps `predictedTree` /
@@ -551,9 +551,10 @@ File overlap still never decides whether to merge without a rebase; it only pick
   `light-tree … match=true|false|unknown` — a separate event from F's `predicted-tree`, so S2's
   measurements and its rollback rule keep counting class F only (a `light-tree … match=false` means
   the same thing, GitHub's merge and git's disagree, and is reported the same way) — and audits the
-  landed verify as `light-landed … result=success|failure|error by=finish|manual|self-heal`. One
-  landed SHA can get several `light-landed` lines (an `error` and then a re-verify); count the last
-  `success` / `failure` per `new=`.
+  landed verify as `light-landed … result=success|failure|error by=finish|manual|self-heal`, with
+  `retried=1` at the end when the landed verify was re-run once after a load-induced failure (the
+  same rule as the `landed-verify` line). One landed SHA can get several `light-landed` lines (an
+  `error` and then a re-verify); count the last `success` / `failure` per `new=`.
 - **An L whose landed verify could not run stays L.** If `finish`'s landed verify ends in `error`
   (a verify-slot timeout, a failed `npm ci`, …), `finish` prints the slip rule, audits
   `light-landed … result=error` and keeps its record (`class: "L"`, `newMain` = the landed SHA) in

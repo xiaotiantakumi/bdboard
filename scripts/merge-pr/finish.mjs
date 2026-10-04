@@ -122,7 +122,7 @@ export async function finish(ctx, pr) {
   });
   // bdboard-xdk8: 負荷由来の失敗で 1 回だけ再実行したときだけ retried=1 を足す (しなければ項目ごと出さない)。
   audit('landed-verify', { pr, id: state.id, new: landed, result: verified.result, retried: verified.retried ? 1 : undefined });
-  reportLightLanded(state, landed, verified.result, 'finish'); // error でも L であることを残す
+  reportLightLanded(state, landed, verified.result, 'finish', verified.retried); // error でも L であることを残す
   const leftover = run('git', ['ls-remote', REMOTE, `refs/heads/${pull.headRef}`], { cwd: ctx.cwd });
   if (leftover.status === 0 && leftover.stdout.trim() !== '') {
     say(`remote にブランチ ${pull.headRef} が残っています: git push origin --delete ${pull.headRef}`);
@@ -166,7 +166,7 @@ export async function verifyLanded(ctx, sha) {
   const verified = await runLandedVerify(ctx, full, by, { retryHint: `npm run merge-pr -- verify ${full}` });
   audit('landed-verify', { new: full, result: verified.result, by: 'manual', retried: verified.retried ? 1 : undefined });
   // finish が error で終わったクラス L の着地なら、その記録 (状態ファイル) から L を見分ける。
-  reportLightLanded(lightLandedState(ctx.cwd, full), full, verified.result, 'manual');
+  reportLightLanded(lightLandedState(ctx.cwd, full), full, verified.result, 'manual', verified.retried);
   if (verified.result === 'error') {
     fail(EXIT.USAGE, '着地後検証を実行できませんでした (上のメッセージ参照)。');
   }
