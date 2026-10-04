@@ -514,6 +514,38 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
 
   "Abandon" is on the merge-pr side: see docs/GIT-WORKFLOW.md, S2.
 
+## Worktree lock (bdboard-wea0)
+
+The verify slot limits machine load; it knows nothing about worktrees. The **worktree lock**
+says "a verify is using this checked-out tree", so that an operation that switches the tree
+(merge-pr's detached checkout and branch restore — wired in by bdboard-wea0.2) cannot run
+under a live verify. It is a kernel `flock(2)` on `$(git rev-parse --absolute-git-dir)/bdboard-worktree.lock`
+(`.git/worktrees/<name>/` for a linked worktree): the kernel releases it when the last holder
+dies, so no PID, start time or age is ever guessed. Design and measurements: `bd show bdboard-wea0`.
+
+- **What `npm run verify` does** (`scripts/verify-worktree-claim.mjs`, lock object in
+  `scripts/worktree-lock.mjs`): before the slot wait, it takes the lock **shared** and keeps it
+  for its whole life, so a queued verify already claims the tree. The descriptor is handed to the
+  group leader as fd 3 — if the outer `verify.mjs` is SIGKILLed, the lock stays held until the
+  leader's group is gone. Two manual verifies in one worktree share it.
+- **Refusal.** If a merge-pr owns the worktree (it writes the advisory owner line
+  `{by, pid, phase, sha, cwd, at}` into the file), a manual verify exits **1** at once and prints
+  the owner and `lsof -t <lockfile>` — the inference-free way to see who holds it now. merge-pr's
+  own contract verify passes `BDBOARD_WORKTREE_HELD_BY=<merge-pr pid>` and shares; that variable
+  is in `SLOT_IDENTITY_ENV`, so the steps (and the tests that spawn `verify.mjs`) never inherit it.
+- **Never delete the lock file.** The content is only advice; the flock is the truth. Deleting the
+  file lets a second exclusive holder lock a new inode (the lock object re-checks `dev`+`ino`
+  after every acquisition, but do not rely on it). A stale file on disk is harmless.
+- **Helper.** Node cannot call `flock`, so a one-line `perl` (fallback `python3`) locks the
+  descriptor Node holds. `BDBOARD_FLOCK_HELPER='["/abs/helper", "arg"]'` (JSON argv prefix; the
+  helper gets the op number as its last argument and the descriptor as fd 3) replaces both. With
+  no working helper, verify prints one stderr line and runs **without** the lock — the lock must
+  never block CI or another developer.
+- **Emergency hatch: `BDBOARD_WORKTREE_LOCK=off`.** Runs verify without the lock and warns on
+  every use. While it is set, nothing stops a merge-pr from switching the tree under the run.
+- **Windows:** no-op (no `flock`); verify spawns nothing for it (design §5). Protection there
+  stays "none", as it was before the lock.
+
 ## vitest worker RPC タイムアウトの既知 flake 判別 (撤去済み)
 
 Vitest 3 では worker → main の RPC (`onTaskUpdate`) の応答待ちが birpc の既定 60 秒で
