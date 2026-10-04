@@ -87,10 +87,33 @@ const WSL_UNC_HOME =
 const POSIX_HOME =
   /(?:\/(?:mnt\/|cygdrive\/)?[A-Za-z](?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/System\/Volumes\/Data(?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/Volumes\/(?:[^/\s'"]| )+(?=\/[Uu][Ss][Ee][Rr][Ss]\/)|\/(?:var|usr)(?=\/home\/))?\/(?:[Uu][Ss][Ee][Rr][Ss]|home)[\\/]+(?:[^\\/\s'"`:;,|<>()[\]{}=]|\((?!\(?(?:[A-Za-z]:[\\/]|[\\/])))+/;
 
+/**
+ * ホームのパスの「本体」と終わりの正規表現の元 (開始位置の条件 PATH_START を含まない)。公開本文の置き換え
+ * (issue-public-home.ts) が、開始位置の条件だけを緩めて同じ本体を使うために出す。文字列なので、呼び出し側が
+ * 自分の RegExp を作る (ここの RegExp の lastIndex を共有しない)。
+ */
+export const HOME_PATH_BODY_SOURCE = `(?:${WINDOWS_HOME.source}|${WSL_UNC_HOME.source}|${POSIX_HOME.source})${PATH_END.source}`;
+
 const HOME_PATH_PATTERN = new RegExp(
   `${PATH_START.source}(?:${WINDOWS_HOME.source}|${WSL_UNC_HOME.source}|${POSIX_HOME.source})${PATH_END.source}`,
   'g',
 );
+
+/**
+ * ホーム配下の絶対パスの出現位置 (UTF-16 の半開区間 [start, end))。foldHomePaths が "~/" に置き換える範囲と同じ規則・
+ * 同じ正規表現で、位置を返すだけ (文字列は書き換えない)。範囲は名前とその後ろの区切りまで。開始位置の条件 (PATH_START) も
+ * foldHomePaths と同じなので、「パスの先頭として読める位置」にあるものだけを返す。公開本文の置き換え
+ * (issue-public-home.ts) は、この条件を意図して緩めた別の入口を使う。この関数と foldHomePaths の結果は一致する
+ * (範囲を取り除いて "~/" を入れると foldHomePaths と同じ文字列になる)。
+ */
+export function findHomePathRanges(
+  value: string,
+): readonly { readonly start: number; readonly end: number }[] {
+  return [...value.matchAll(HOME_PATH_PATTERN)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+}
 
 /**
  * 文字列の中の、利用者のホーム配下の絶対パスを "~/" に畳む (前後の空白は触らない。題名・本文用)。
