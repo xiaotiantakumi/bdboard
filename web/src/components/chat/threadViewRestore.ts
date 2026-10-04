@@ -16,40 +16,24 @@ export interface RestoredThreadView {
  * - 永続化があれば、そのうちサーバーがまだ一覧に載せている id だけを開く。無ければ全部開く。
  * - 選択は永続化済みの選択が一覧にあればそれ、無ければ開いた先頭。
  *
- * bdboard-0206: firstVisitWritten(isFirstVisitWritten が true)のときは、永続化があっても全部開く。
- * その永続化は、E7 が一覧を取りに行っている間に送信成功・採用が書いた最初のエントリで、利用者が
- * 開き閉じした状態ではない。これを正本にすると、サーバー一覧の他のスレッドが開かれない。
+ * bdboard-0206: provisional(chat/provisionalEntry.ts の isProvisionalEntry が true)のときは、永続化があっても
+ * 全部開く。その永続化は、E7 が一覧を取りに行っている間に最初の永続化エントリとして書かれた仮のエントリ
+ * (bdboard-rt6i)で、利用者が開き閉じした状態ではない。これを正本にすると、サーバー一覧の他のスレッドが開かれない。
  * 永続化の id は一覧に載っていれば全部開く id に含まれるので、サーバー一覧と永続化の和になる。
  */
 export function restoreThreadView(
   threads: readonly ChatThreadDto[],
   persisted: PersistedChatThreadState | undefined,
-  firstVisitWritten = false,
+  provisional = false,
 ): RestoredThreadView {
   const available = new Set(threads.map((thread) => thread.sessionId));
   const persistedOpen = (persisted?.activeSessionIds ?? []).filter((id) => available.has(id));
-  const open = persisted !== undefined && !firstVisitWritten ? persistedOpen : threads.map((thread) => thread.sessionId);
+  const open = persisted !== undefined && !provisional ? persistedOpen : threads.map((thread) => thread.sessionId);
   const selected =
     persisted?.selectedSessionId && available.has(persisted.selectedSessionId)
       ? persisted.selectedSessionId
       : open[0];
   return { open, selected };
-}
-
-/**
- * bdboard-0206: 「初回訪問なのに、一覧の fetch が in-flight の間に最初の永続化エントリが現れた」か。
- * startedWithoutEntry は E7 がその fetch サイクルを始めた時点でエントリが無かったこと、persistedNow は
- * 応答が届いた時点のエントリ。エントリは送信成功(chat/useChatSendCommits.ts の commitSuccess)か
- * CLI セッションの採用(chat/useChatSessionLifecycle.ts の handleResumeDiscoveredSession)が書いたもので、
- * 開いているスレッドが 1 件以上ある。エージェント切替(handleAgentChange)の「空に確定」のエントリ
- * (activeSessionIds が空)は利用者の意図なので、これには当たらない。
- * 開始時にエントリがあった再訪は永続化が利用者の開き閉じの記録なので、当たらない。
- */
-export function isFirstVisitWritten(
-  startedWithoutEntry: boolean,
-  persistedNow: PersistedChatThreadState | undefined,
-): boolean {
-  return startedWithoutEntry && persistedNow !== undefined && persistedNow.activeSessionIds.length > 0;
 }
 
 /**
