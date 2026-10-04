@@ -12,6 +12,7 @@
 import { git } from './exec.mjs';
 import { EXIT, fail, refetchMain, REMOTE } from './context.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
+import { childTimeoutLines } from './load-retry.mjs';
 import { rebaseSteps } from './messages.mjs';
 import { forgetPredictedGroup, recordPredictedGroup } from './predicted-guard.mjs';
 import { forgetLoadInduced, judgePredictedFailure, rememberLoadInduced } from './predicted-timeouts.mjs';
@@ -104,7 +105,8 @@ export async function verifyPredicted(ctx, pr, id, { predBase, head, tree }, { k
   // (result は分類に関わらず failure)。repeated=1 は同じ PR head が前にも時間切れだけで落ちている回 (exit 3 に倒した側)。
   const timeoutsOnly = verified.result === 'failure' ? judgePredictedFailure(ctx.cwd, pr, head, verified.logPath) : undefined;
   const loadFields = timeoutsOnly?.loadInduced ? { loadInduced: 1, timeouts: timeoutsOnly.timeouts, repeated: timeoutsOnly.repeated ? 1 : undefined } : {};
-  audit(spec.event, { pr, id, base: predBase, head, tree, commit, result: verified.result, secs: seconds, ...extra, ...loadFields });
+  // bdboard-7qhq: 失敗のログに子プロセスの時間切れ (spawnSync ETIMEDOUT) があれば、分類に関わらず etimedout=N を足す (0 件は出さない)。
+  audit(spec.event, { pr, id, base: predBase, head, tree, commit, result: verified.result, secs: seconds, ...extra, ...loadFields, etimedout: timeoutsOnly?.etimedout || undefined });
   if (verified.result === 'abandoned') {
     removeState(ctx.cwd, pr);
     fail(
@@ -128,6 +130,7 @@ export async function verifyPredicted(ctx, pr, id, { predBase, head, tree }, { k
       fail(
         EXIT.RETRY,
         `${spec.what}は失敗しましたが、失敗 ${timeoutsOnly.timeouts} 件はすべて時間切れの形 (負荷由来) なので、意味的衝突とは扱わず rebase に格下げしません (ログ: ${verified.logPath})。`,
+        ...childTimeoutLines(timeoutsOnly.etimedout),
         `prepare を再実行してください: npm run merge-pr -- prepare ${pr} (verify スロットの順番は最初に並んだ時刻を引き継ぎます。${spec.what}は自動では再実行しません。再実行は同じ PR head につき 1 回だけで、その head がまた時間切れだけで落ちたら rebase に格下げします)`,
       );
     }
@@ -137,6 +140,7 @@ export async function verifyPredicted(ctx, pr, id, { predBase, head, tree }, { k
       ...(timeoutsOnly.repeated
         ? [`この PR head (${head.slice(0, 12)}) は前にも時間切れだけで落ちています。今回の失敗 ${timeoutsOnly.timeouts} 件も時間切れだけでした。負荷ではなく決定的なハングの可能性が高いので、負荷由来とは扱いません。`]
         : []),
+      ...childTimeoutLines(timeoutsOnly.etimedout),
       `main の変更との意味的衝突の可能性が高いので rebase に格下げします (ログ: ${verified.logPath})。`,
       '  既知のフレーク (bdboard-241s 等) だとログから言えるときだけ、そのまま prepare し直してよい。',
       ...rebaseSteps(ctx.mainRef, `${spec.what} failure`),
