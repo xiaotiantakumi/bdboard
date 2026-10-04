@@ -52,6 +52,32 @@ describe('detectSuspectedLeaks: every class of leak is reported on raw (bypassed
       expect(detectSuspectedLeaks('body', text, [], empty).map((leak) => [leak.kind, leak.matched])).toEqual([['token', expected]]);
     });
 
+    const stripe = 'sk_live_' + 'x'.repeat(30);
+    const jwt = 'eyJ' + 'a'.repeat(20) + '.eyJ' + 'b'.repeat(20) + '.' + 'c'.repeat(20);
+    const jwtTail = '.eyJ' + 'b'.repeat(20) + '.' + 'c'.repeat(20);
+
+    it.each([
+      ['a Stripe key glued to an identifier', 'key1' + stripe, [['token', stripe]]],
+      ['a JWT glued to a letter and a digit', 'id1' + jwt, [['token', jwtTail]]],
+      ['a JWT glued to an underscore', 'id_' + jwt, [['token', jwtTail]]],
+      ['a home path glued to a digit', '12:00:00/Users/jdoe/x', [['home-path', '/Users/jdoe']]],
+      ['a home path glued to a compiler option that is not a one-letter flag', 'gcc -include/home/jdoe/x.h', [['home-path', '/home/jdoe']]],
+      ['a Windows home path glued to a letter', 'abcC:\\Users\\jdoe\\x', [['home-path', 'C:\\Users\\jdoe']]],
+    ] as const)('reports %s', (_name, text, expected) => {
+      expect(detectSuspectedLeaks('body', text, [], empty).map((leak) => [leak.kind, leak.matched])).toEqual(expected);
+    });
+
+    it('does not report a home path twice when the strict finder already sees it', () => {
+      const leaks = detectSuspectedLeaks('body', 'cwd /Users/jdoe/x', [], empty);
+      expect(leaks.map((leak) => [leak.kind, leak.matched])).toEqual([['home-path', '/Users/jdoe/']]);
+    });
+
+    it('does not report ordinary routes with a lower-case users or a missing name', () => {
+      for (const text of ['GET /api/users/42', 'src/users/x.ts', 'see /Users/ and /home/']) {
+        expect(detectSuspectedLeaks('body', text, [], empty)).toEqual([]);
+      }
+    });
+
     it('reports a lone key block marker (BEGIN without END, END without BEGIN)', () => {
       for (const marker of [begin, '-----' + 'END PRIVATE KEY' + '-----']) {
         const leaks = detectSuspectedLeaks('body', `log ${marker} tail`, [], empty);

@@ -4,7 +4,7 @@
  * 見つける形 (大文字小文字は問わない):
  *   - PEM: "-----BEGIN RSA PRIVATE KEY-----" … "-----END RSA PRIVATE KEY-----" (EC・OPENSSH・ENCRYPTED・PGP の
  *     "PRIVATE KEY BLOCK" も)。
- *   - SSH2 (RFC 4716 の鍵の形): "---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----" … "---- END SSH2 …----" (ダッシュは 4〜5 個、空白は任意)。
+ *   - SSH2 (RFC 4716 の鍵の形): "---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----" … "---- END SSH2 …----" (ダッシュは 3〜5 個、空白は任意)。
  *   - PuTTY: "PuTTY-User-Key-File-3: ssh-ed25519" で始まる鍵ファイル (終わりの印が無いので、文章の終わりまで)。
  *
  * 組み立て方 (BEGIN/END の印を位置の順に 1 回だけ見る状態機械):
@@ -23,9 +23,10 @@ export interface PemSpan {
   readonly end: number;
 }
 
-const NAME = String.raw`[A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?`;
-const BEGIN_SOURCE = String.raw`-{4,5} ?BEGIN ${NAME} ?-{4,5}|PuTTY-User-Key-File-[0-9]+:`;
-const END_SOURCE = String.raw`-{4,5} ?END ${NAME} ?-{4,5}`;
+// ダッシュは 3〜5 個 (ログの折り返しや整形で 1〜2 個落ちた形も拾う)、ラベルにはハイフンも許す ("EC-X PRIVATE KEY")。
+const NAME = String.raw`[A-Z0-9 -]{0,40}PRIVATE KEY(?: BLOCK)?`;
+const BEGIN_SOURCE = String.raw`-{3,5} ?BEGIN ${NAME} ?-{3,5}|PuTTY-User-Key-File-[0-9]+:`;
+const END_SOURCE = String.raw`-{3,5} ?END ${NAME} ?-{3,5}`;
 
 interface Marker {
   readonly kind: 'begin' | 'end';

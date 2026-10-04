@@ -12,6 +12,8 @@
 import { codePointLength, normalizeInline } from './issue-public-text.js';
 
 export const MIN_ROOT_CODE_POINTS = 4;
+/** 根のフォルダ名がこれなら、名前としては足さない (どのプロジェクトにもある名前)。 */
+const GENERIC_DIRECTORY_NAMES: ReadonlySet<string> = new Set(['test', 'src', 'app', 'web', 'server', 'client', 'lib', 'docs']);
 export const MAX_ROOT_CODE_POINTS = 1024;
 
 function normalizationVariants(value: string): string[] {
@@ -68,8 +70,9 @@ export function prepareRoot(raw: string): PreparedRoot {
   const basename = root.slice(lastSeparator + 1);
   return {
     variants: [...new Set(separatorForms.flatMap(nounVariants))],
-    // 4 コードポイント未満のフォルダ名 ("app"・"src") は名前として足さない (一般語との区別がつかない)。
-    basename: codePointLength(basename) >= MIN_ROOT_CODE_POINTS ? basename : undefined,
+    // 4 コードポイント未満のフォルダ名 ("app"・"src") と、一般的なディレクトリ名 ("test"・"docs"・"server") は名前として足さない
+    // (一般語との区別がつかず、"vitest@4.1.11" の中の "test" まで消してしまう)。根のパスそのものは今までどおり探す。
+    basename: codePointLength(basename) >= MIN_ROOT_CODE_POINTS && !GENERIC_DIRECTORY_NAMES.has(basename.toLowerCase()) ? basename : undefined,
     dropped: false,
   };
 }

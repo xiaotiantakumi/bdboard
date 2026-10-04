@@ -534,6 +534,108 @@ describe('empty values render a fixed word, not an empty code span', () => {
   });
 });
 
+describe('terminal colours, glued paths and encoded names (the second review of the same builder)', () => {
+  const BS = '\\';
+  const ESC = String.fromCharCode(0x1b);
+  const NONE: LocalOnlyKeys = { projectRoots: [], properNouns: [] };
+  const STRIPE_LONG = 'sk_live_' + 'x'.repeat(30);
+
+  it.each([
+    ['a raw ESC colour before /Users', `FAIL ${ESC}[36m/Users/jdoe/proj/x.test.ts${ESC}[39m`],
+    ['a raw ESC dim before /home', `${ESC}[2m/home/jdoe/x${ESC}[22m`],
+    ['a raw ESC colour before C:\\Users', `${ESC}[36mC:${BS}Users${BS}jdoe${BS}x.ts${ESC}[39m`],
+    ['a raw ESC erase-line before /Users', `${ESC}[K/Users/jdoe/x`],
+    ['a JSON \\u001b colour', `{"msg":"${BS}u001b[36m/Users/jdoe/x.ts${BS}u001b[39m"}`],
+    ['a log \\x1b colour', `${BS}x1b[36m/home/jdoe/x`],
+    ['a shell \\033 colour', `${BS}033[1;36m/Users/jdoe/x`],
+    ['a shell \\e colour', `${BS}e[36mC:/Users/jdoe/x`],
+  ])('removes the user name behind %s, in the free text and in the error text', (_name, text) => {
+    for (const result of [fromSymptom(text, NONE), buildPublicIssueBody({ ...BASE, errorText: text }, NONE)]) {
+      expect(result.body).not.toContain('jdoe');
+      expect(result.body).not.toMatch(/\[3[69]m|\[2m|\[22m|\[K|\[1;36m/);
+      expect(result.body).toContain('~/');
+      expect(result.suspectedLeaks).toEqual([]);
+      expectMarksExact(result);
+    }
+  });
+
+  it.each([
+    ['a JWT', JWT],
+    ['a Stripe key', STRIPE_LONG],
+    ['a GitHub token', TOKEN],
+    ['an sk- key', SK],
+    ['a Bearer credential', BEARER],
+    ['an e-mail address', 'jdoe@example.com'],
+  ])('removes %s that follows a colour code', (_name, secret) => {
+    const result = fromSymptom(`${ESC}[2m${secret}${ESC}[22m`, NONE);
+    expect(result.body).not.toMatch(/eyJaaaa|xxxxxx|y{8}|jdoe|sk-proj/);
+    expect(result.body).toMatch(/<redacted-token>|<email>/);
+    expect(result.suspectedLeaks).toEqual([]);
+  });
+
+  it('removes the user name behind a one-letter compiler flag', () => {
+    const text = 'c++ -I/Users/jdoe/Library/Caches/node-gyp/22.0.0/include/node -L/home/jdoe/lib -c x.cc';
+    const result = fromSymptom(text, NONE);
+    expect(result.body).not.toContain('jdoe');
+    expect(result.body).toContain('-I~/Library/Caches/node-gyp');
+    expect(result.suspectedLeaks).toEqual([]);
+  });
+
+  it.each([
+    ['a digit before a home path', '12:00:00/Users/jdoe/x', 'home-path', '/Users/jdoe'],
+    ['a letter before a Windows home path', `abcC:${BS}Users${BS}jdoe${BS}x`, 'home-path', `C:${BS}Users${BS}jdoe`],
+    ['a Stripe key glued to an identifier', `key1${STRIPE_LONG}`, 'token', STRIPE_LONG],
+    ['a JWT glued to an identifier', `id1${JWT}`, 'token', JWT.slice(JWT.indexOf('.'))],
+  ])('does not replace but reports %s', (_name, text, kind, matched) => {
+    const result = fromSymptom(text, NONE);
+    expect(result.suspectedLeaks.map((leak) => [leak.field, leak.kind, leak.matched])).toEqual([['body', kind, matched]]);
+  });
+
+  it.each([
+    ['an encoded Japanese name', `file=%2FUsers%2F${encodeURIComponent('小田')}%2Fwork%2Fx.ts`],
+    ['an encoded space in the name', 'file=%2FUsers%2FJohn%20Smith%2Fx'],
+    ['an encoded Windows path with %5C', 'GET /open?path=C%3A%5CUsers%5Cjdoe%5Cx.ts'],
+    ['a lower-case encoded users', 'p=%2Fusers%2Fjdoe%2Fx'],
+  ])('removes the whole user name of %s', (_name, text) => {
+    const result = fromSymptom(text, NONE);
+    expect(result.body).not.toMatch(/jdoe|Smith|%E5|John/);
+    expect(result.body).toContain('~/');
+    expect(result.suspectedLeaks).toEqual([]);
+  });
+
+  it('keeps package versions that look like an address, and still removes a real address and an ssh target', () => {
+    const result = fromSymptom('npm ERR! peer react@18.2.0 from react-dom@19.0.0-rc.1; vitest@4.1.11; deploy@10.0.0.5 and jdoe@example.com', NONE);
+    expect(result.body).toContain('react@18.2.0 from react-dom@19.0.0-rc.1; vitest@4.1.11; <email> and <email>');
+    expect(result.suspectedLeaks).toEqual([]);
+  });
+
+  it('does not let a generic project folder name eat words of the report', () => {
+    const keys: LocalOnlyKeys = { projectRoots: ['/work/test'], properNouns: [] };
+    const result = fromSymptom('installed vitest@4.1.11 in /work/test/src and ran the test server', keys);
+    expect(result.body).toContain('installed vitest@4.1.11 in <project>/src and ran the test server');
+    expect(result.suspectedLeaks).toEqual([]);
+  });
+
+  it('does not leave a fragment of a glued token at the head cut of the error text (the cut moves out of the match)', () => {
+    for (const pad of [960, 970, 975, 980, 985]) {
+      const errorText = `${'h'.repeat(pad)} id1${SK}x\n${'m'.repeat(5_000)}`;
+      const result = buildPublicIssueBody({ ...BASE, errorText }, NONE);
+      expect(result.body).not.toMatch(/sk-/);
+      expect(isWellFormed(result.body)).toBe(true);
+    }
+  });
+
+  it('does not leave a fragment of a glued token at the tail cut of the error text either', () => {
+    for (const pad of [960, 970, 975, 980, 985]) {
+      const errorText = `${'m'.repeat(5_000)}\nid1${SK}x ${'t'.repeat(pad)}`;
+      const result = buildPublicIssueBody({ ...BASE, errorText }, NONE);
+      // 末尾側の断片は "sk-" を含まない (トークンの後ろ半分だけが残る) ので、本体の文字の並びで探す。
+      expect(result.body).not.toContain('ab_-ab');
+      expect(result.body).not.toMatch(/sk-/);
+    }
+  });
+});
+
 describe('keys that were not fully searched are reported, not dropped silently', () => {
   const shorts = Array.from({ length: 200 }, (_, index) => ({
     category: 'branch' as const,

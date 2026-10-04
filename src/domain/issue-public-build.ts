@@ -31,6 +31,7 @@ import { prepareKeys, type PreparedKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
 import { codeBlock, codeSpan, type MarkdownPiece } from './issue-public-markdown.js';
 import { elide, redactText } from './issue-public-redact.js';
+import { findLeakSpans } from './issue-public-spans.js';
 import { normalizeBlock, normalizeInline } from './issue-public-text.js';
 import type {
   LocalOnlyKeys,
@@ -82,16 +83,24 @@ function textOf(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * 省略の切れ目を落とさない範囲: 置換の後でも最後の網が報告するはずの一致 (置き換えなかった緩い一致など)。省略前の全文で探し、
+ * 切れ目がその内側に落ちるなら範囲ごと省略側へ寄せる (切れ目で報告できない短い断片にしない)。省略するときだけ探す。
+ */
+function avoidingLeaks(prepared: PreparedKeys): (text: string) => readonly { start: number; end: number }[] {
+  return (text) => findLeakSpans(text, prepared);
+}
+
 function inline(value: string, cap: number, prepared: PreparedKeys): MarkdownPiece {
   const normalized = normalizeInline(value);
-  return codeSpan(elide(redactText(normalized, prepared), cap, 0, () => '…'));
+  return codeSpan(elide(redactText(normalized, prepared), cap, 0, () => '…', avoidingLeaks(prepared)));
 }
 
 function block(value: string | undefined, prepared: PreparedKeys): MarkdownPiece | undefined {
   const normalized = normalizeBlock(textOf(value) ?? '');
   if (normalized === '') return undefined;
   const label = (count: number): string => `…(以降 ${String(count)} 文字省略)`;
-  return codeBlock(elide(redactText(normalized, prepared), CAP.freeText, 0, label));
+  return codeBlock(elide(redactText(normalized, prepared), CAP.freeText, 0, label, avoidingLeaks(prepared)));
 }
 
 /** エラー全文: 全文を置換してから、先頭と末尾の 1000 コードポイントに省略する (順序を逆にしない)。 */
@@ -99,7 +108,7 @@ function errorBlock(value: string | undefined, prepared: PreparedKeys): Markdown
   const normalized = normalizeBlock(textOf(value) ?? '');
   if (normalized === '') return undefined;
   const label = (count: number): string => `…(${String(count)} 文字省略)…`;
-  return codeBlock(elide(redactText(normalized, prepared), CAP.errorEdge, CAP.errorEdge, label));
+  return codeBlock(elide(redactText(normalized, prepared), CAP.errorEdge, CAP.errorEdge, label, avoidingLeaks(prepared)));
 }
 
 function appendSection(composer: Composer, heading: string, piece: MarkdownPiece | undefined): void {

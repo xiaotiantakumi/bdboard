@@ -276,6 +276,28 @@ describe('the folder name of a project root is a project name too', () => {
     expect(findReplaceableNounSpans('the app is an application', prepared)).toEqual([]);
     expect(findDetectableNounSpans('the app', prepared)).toEqual([]);
   });
+
+  it.each(['test', 'docs', 'server', 'client', 'Test', 'SERVER'])(
+    'does not derive a name from a generic folder called %s (it would damage "vitest@4.1.11" and "the test server")',
+    (folder) => {
+      const prepared = prepareKeys({ projectRoots: [`/work/${folder}`], properNouns: [] });
+      const text = 'installed vitest@4.1.11; the test server and the docs client';
+      expect(findReplaceableNounSpans(text, prepared)).toEqual([]);
+      expect(findDetectableNounSpans(text, prepared)).toEqual([]);
+    },
+  );
+
+  it('still searches the whole root path of a generic folder', () => {
+    const prepared = prepareKeys({ projectRoots: ['/work/test'], properNouns: [] });
+    const text = 'cwd /work/test/src';
+    expect(texts(text, findProjectRootSpans(text, prepared))).toEqual(['/work/test']);
+  });
+
+  it('still derives a name from a folder that merely contains a generic word', () => {
+    const prepared = prepareKeys({ projectRoots: ['/work/test-bench', '/work/my-server'], properNouns: [] });
+    const text = 'a test-bench and my-server';
+    expect(texts(text, findReplaceableNounSpans(text, prepared)).sort()).toEqual(['my-server', 'test-bench']);
+  });
 });
 
 describe('invisible characters in keys are removed the same way as in the text', () => {

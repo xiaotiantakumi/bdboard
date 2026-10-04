@@ -107,6 +107,57 @@ describe('normalizeBlock', () => {
   });
 });
 
+describe('ANSI escape sequences are removed whole, not just the ESC character', () => {
+  // ESC・BEL・U+009B は実行時に作る (テストの文字列リテラルに制御文字を直接書かない)。
+  const ESC = String.fromCharCode(0x1b);
+  const BEL = String.fromCharCode(0x07);
+  const CSI8 = String.fromCharCode(0x9b);
+  const BS = '\\';
+
+  it.each([
+    ['colour on and off', `${ESC}[36m/Users/jdoe/x${ESC}[39m`, '/Users/jdoe/x'],
+    ['a two-parameter colour', `a ${ESC}[1;31mFAIL${ESC}[0m b`, 'a FAIL b'],
+    ['erase in line', `${ESC}[K/home/jdoe/x`, '/home/jdoe/x'],
+    ['a cursor move with a private marker', `${ESC}[?25lC:${BS}Users${BS}jdoe`, `C:${BS}Users${BS}jdoe`],
+    ['a sequence with an intermediate byte', `${ESC}[2 qx`, 'x'],
+    ['an OSC title ended by BEL', `${ESC}]0;title of window${BEL}/Users/jdoe/x`, '/Users/jdoe/x'],
+    ['an OSC hyperlink ended by ESC backslash', `${ESC}]8;;file:///x${ESC}${BS}link${ESC}]8;;${ESC}${BS}`, 'link'],
+    ['an 8-bit CSI', `${CSI8}36m/Users/jdoe/x`, '/Users/jdoe/x'],
+    ['the JSON form \\u001b', `${BS}u001b[36m/Users/jdoe/x${BS}u001b[39m`, '/Users/jdoe/x'],
+    ['the JSON form with an upper-case hex digit', `${BS}u001B[36mx`, 'x'],
+    ['the log form \\x1b', `${BS}x1b[36mx`, 'x'],
+    ['the shell form \\033', `${BS}033[36mx${BS}033[0m`, 'x'],
+    ['the shell form \\e', `${BS}e[1;32mx`, 'x'],
+  ])('removes %s (in a one-line value and in a block)', (_name, text, expected) => {
+    expect(normalizeInline(text)).toBe(expected);
+    expect(normalizeBlock(text)).toBe(expected);
+  });
+
+  it('does not remove an unfinished sequence or ordinary brackets', () => {
+    expect(normalizeInline(`${ESC}]0;no terminator`)).toBe(']0;no terminator');
+    expect(normalizeInline('a[0] = [36m b')).toBe('a[0] = [36m b');
+    expect(normalizeInline(`${BS}u0041[36m`)).toBe(`${BS}u0041[36m`);
+  });
+
+  it('stays linear on 100k of escape-like text', () => {
+    const hostile = [
+      `${ESC}[`.repeat(50_000),
+      `${ESC}[1`.repeat(30_000),
+      `${ESC}]0;`.repeat(25_000),
+      `${ESC}]` + 'x'.repeat(100_000),
+      `${ESC}[` + '1;'.repeat(50_000),
+      `${BS}u001b[`.repeat(15_000),
+      `${BS}e[`.repeat(30_000),
+    ];
+    const started = performance.now();
+    for (const value of hostile) {
+      normalizeInline(value);
+      normalizeBlock(value);
+    }
+    expect(performance.now() - started).toBeLessThan(3000);
+  });
+});
+
 describe('code point helpers', () => {
   const value = 'a' + PAIR + 'b';
 

@@ -3,10 +3,10 @@
  *
  * 2 つの集め方がある (最後の網が置き換えと同じ finder だけだと、finder の穴は永久に見つからない — レビュー指摘):
  *   - findRedactionSpans: 置き換える一致。厳しめの形 (誤検出が少ない) と、LONG の固有名詞だけ。
- *   - findLeakSpans: 最後の網が報告する一致。置き換えと同じものに加えて、緩めた形 (sk-・Bearer の直前の条件なし、小文字の
- *     akia)・SHORT の固有名詞・鍵ブロックの単独の印。報告するだけで書き換えない。
+ *   - findLeakSpans: 最後の網が報告する一致。置き換えと同じものに加えて、緩めた形 (sk-・Bearer・Stripe・JWT の直前の条件なし、
+ *     小文字の akia、開始位置の条件なしの /Users/<名前>・/home/<名前>)・SHORT の固有名詞・鍵ブロックの単独の印。報告するだけで書き換えない。
  */
-import { findPublicHomeRanges } from './issue-public-home.js';
+import { findLooseHomeRanges, findPublicHomeRanges } from './issue-public-home.js';
 import {
   findDetectableNounSpans,
   findProjectRootSpans,
@@ -66,10 +66,16 @@ export function findRedactionSpans(text: string, prepared: PreparedKeys): KindSp
 
 /** 最後の網が報告する一致 (置き換えの一致の上位集合。印の内側の分は呼び出し側が除く)。 */
 export function findLeakSpans(text: string, prepared: PreparedKeys): KindSpan[] {
+  const strictHome = coverage(findPublicHomeRanges(text));
   return [
     ...common(text, prepared),
     ...findDetectableNounSpans(text, prepared),
     ...tagged('token', findTokenSpans(text, true)),
+    // 開始位置の条件で置き換えを見送った形 ("12:00:00/Users/jdoe/x")。置き換えの finder が見つけた分は二重に報告しない。
+    ...tagged(
+      'home-path',
+      findLooseHomeRanges(text).filter((range) => !strictHome(range.start, range.end)),
+    ),
   ];
 }
 

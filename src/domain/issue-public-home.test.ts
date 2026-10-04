@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { foldHomePaths } from './issue-draft-identifier.js';
-import { findPublicHomeRanges } from './issue-public-home.js';
+import { findLooseHomeRanges, findPublicHomeRanges } from './issue-public-home.js';
 
 // 名前はすべて偽の値 (jdoe)。バックスラッシュは String.raw で書く。
 const BS = '\\';
@@ -75,12 +75,83 @@ describe('Windows home paths', () => {
 });
 
 describe('percent-encoded slashes', () => {
+  // 日本語の名前は偽の値 (「小田」を encodeURIComponent したもの)。
+  const JP = encodeURIComponent('小田');
   it.each([
     ['upper-case hex', 'p=%2FUsers%2Fjdoe%2Fx', '%2FUsers%2Fjdoe'],
     ['lower-case hex', 'p=%2fhome%2fjdoe%2fx', '%2fhome%2fjdoe'],
     ['the end of the text', 'p=%2FUsers%2Fjdoe', '%2FUsers%2Fjdoe'],
+    ['a lower-case "users"', 'p=%2Fusers%2Fjdoe%2Fx', '%2Fusers%2Fjdoe'],
+    ['an encoded Japanese name', `/__open-in-editor?file=%2FUsers%2F${JP}%2Fwork%2Fx.ts`, `%2FUsers%2F${JP}`],
+    ['an encoded space in the name', 'file=%2FUsers%2FJohn%20Smith%2Fx', '%2FUsers%2FJohn%20Smith'],
+    ['encoded backslashes (a Windows path)', 'C%3A%5CUsers%5Cjdoe%5Cx.ts', '%5CUsers%5Cjdoe'],
+    ['an encoded Windows path with encoded slashes', `C%3A%2FUsers%2F${JP}%2Fwork`, `%2FUsers%2F${JP}`],
+    ['encoded backslashes with a lower-case hex digit', 'C%3a%5cUsers%5cjdoe%5cx', '%5cUsers%5cjdoe'],
   ])('finds the name in %s', (_name, text, expected) => {
     expect(found(text)).toEqual([expected]);
+  });
+
+  it('stops the name at an encoded separator or a delimiter, and at a lone percent sign', () => {
+    expect(found('a=%2FUsers%2Fjdoe&b=%2Fx')).toEqual(['%2FUsers%2Fjdoe']);
+    expect(found('a=%2FUsers%2Fjdoe%5Cx')).toEqual(['%2FUsers%2Fjdoe']);
+    expect(found('a=%2FUsers%2Fjdoe%zz')).toEqual(['%2FUsers%2Fjdoe']);
+    expect(found('a=%2FUsers%2F%2Fx')).toEqual([]);
+  });
+
+  it('leaves a name that is not a home directory alone', () => {
+    expect(found('p=%2Fvar%2Flog%2Fx')).toEqual([]);
+    expect(found('p=%2FUsersx%2Fjdoe')).toEqual([]);
+  });
+});
+
+describe('a single-letter flag directly before the path (compiler and linker output)', () => {
+  it.each([
+    ['-I', 'c++ -I/Users/jdoe/Library/Caches/node-gyp/22.0.0/include/node -c x.cc', '/Users/jdoe/'],
+    ['-L', 'ld: -L/home/jdoe/lib -lfoo', '/home/jdoe/'],
+    ['-F', 'clang -F/Users/jdoe/Library/Frameworks x.m', '/Users/jdoe/'],
+    ['-B at the start of the text', '-B/home/jdoe/x', '/home/jdoe/'],
+    ['-I after a quote', `"-I/Users/jdoe/inc"`, '/Users/jdoe/'],
+    ['-I after a comma', 'cc -Wl,-L/home/jdoe/lib', '/home/jdoe/'],
+    ['-I with a Windows path', `cl -IC:${BS}Users${BS}jdoe${BS}inc x.c`, `C:${BS}Users${BS}jdoe${BS}`],
+  ])('finds the name after %s', (_name, text, expected) => {
+    expect(found(text)).toEqual([expected]);
+  });
+
+  it('is only for a flag that starts a word: a longer option or a word is not a flag', () => {
+    expect(found('--include/Users/jdoe/x')).toEqual([]);
+    expect(found('x-I/Users/jdoe/x')).toEqual([]);
+    expect(found('foo-bar/Users/jdoe/x')).toEqual([]);
+  });
+});
+
+describe('findLooseHomeRanges: what the last net reports even though the strict finder leaves it alone', () => {
+  function loose(text: string): string[] {
+    return findLooseHomeRanges(text).map((range) => text.slice(range.start, range.end));
+  }
+
+  it.each([
+    ['a digit before', '12:00:00/Users/jdoe/x', '/Users/jdoe'],
+    ['a letter before', 'abc/home/jdoe/x', '/home/jdoe'],
+    ['a Windows path after a letter', `abcC:${BS}Users${BS}jdoe${BS}x`, `C:${BS}Users${BS}jdoe`],
+    ['the stripped remains of an ANSI colour', '[36m/Users/jdoe/x', '/Users/jdoe'],
+  ])('finds %s', (_name, text, expected) => {
+    expect(findPublicHomeRanges(text)).toEqual([]);
+    expect(loose(text)).toEqual([expected]);
+  });
+
+  it('does not report the ordinary routes it was meant to spare (lower-case users, a missing name)', () => {
+    for (const text of ['GET /api/users/42', 'src/users/x.ts', '/Users/', '/home/', 'plain /usr/bin/node']) {
+      expect(loose(text)).toEqual([]);
+    }
+  });
+
+  it('reports a route that happens to be spelled /home/<word> (a deliberate over-report)', () => {
+    expect(loose('https://example.com/home/feed')).toEqual(['/home/feed']);
+  });
+
+  it('stops the name at a delimiter', () => {
+    expect(loose('x1/Users/jdoe/y')).toEqual(['/Users/jdoe']);
+    expect(loose('x1/Users/jdoe:y')).toEqual(['/Users/jdoe']);
   });
 });
 
@@ -133,9 +204,18 @@ describe('state and time', () => {
       '/'.repeat(100_000),
       'a'.repeat(100_000),
       '%2F'.repeat(33_000),
+      '%5C'.repeat(33_000),
+      '%2FUsers%2F' + '%E5'.repeat(33_000),
+      '%2FUsers%2F' + 'a%'.repeat(50_000),
+      '-I'.repeat(50_000),
+      `C:${BS}Users${BS}`.repeat(3) + BS.repeat(100_000),
+      'C:' + BS.repeat(100_000),
     ];
     const started = performance.now();
-    for (const value of hostile) findPublicHomeRanges(value);
+    for (const value of hostile) {
+      findPublicHomeRanges(value);
+      findLooseHomeRanges(value);
+    }
     expect(performance.now() - started).toBeLessThan(3000);
   });
 });

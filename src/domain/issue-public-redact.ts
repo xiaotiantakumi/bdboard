@@ -74,24 +74,40 @@ export function redactText(text: string, prepared: PreparedKeys): RedactedText {
   return applySpans(first.text, [...first.marks, ...fresh]);
 }
 
+/** 範囲を開始位置の順に並べ、重なるもの (接しているだけは別) を和集合にする。切れ目を 1 回の走査で境界へ動かすため。 */
+function unionOf(ranges: readonly { readonly start: number; readonly end: number }[]): { start: number; end: number }[] {
+  const merged: { start: number; end: number }[] = [];
+  for (const range of [...ranges].sort((left, right) => left.start - right.start || right.end - left.end)) {
+    const previous = merged.at(-1);
+    if (previous !== undefined && range.start < previous.end) previous.end = Math.max(previous.end, range.end);
+    else merged.push({ start: range.start, end: range.end });
+  }
+  return merged;
+}
+
 /**
  * 置換「後」の文字列を、先頭 headCodePoints と末尾 tailCodePoints コードポイントに省略する (切れ目はコードポイント単位で、
  * サロゲートの対を割らない)。収まるならそのまま返す。間には label(省略したコードポイント数) を入れる (固定の文言と数字。
  * label 自体は印ではない)。切れ目が印の内側に落ちるときは印の境界へ動かす (先頭側は印の始まり、末尾側は印の終わり)
  * ので、印が半分に割れない。省略した部分に完全に入る印は消え、後ろの印は位置をずらす。tail は 0 でもよい。
+ *
+ * avoid: 省略するときだけ呼ぶ、「切れ目を内側に落とさない範囲」を返す関数 (最後の網が報告する緩い一致。置き換えられなかったが
+ * 疑わしい "id1sk-proj-…" が切れ目で短い断片になると、最後の網の長さの下限を割って、報告されないまま断片が残る)。
+ * 印と同じ動かし方で、範囲ごと省略した側へ寄せるので、断片は公開本文に出ない。
  */
 export function elide(
   redacted: RedactedText,
   headCodePoints: number,
   tailCodePoints: number,
   label: (omitted: number) => string,
+  avoid: (text: string) => readonly { readonly start: number; readonly end: number }[] = () => [],
 ): RedactedText {
   if (codePointLength(redacted.text) <= headCodePoints + tailCodePoints) return redacted;
   let headEnd = codeUnitIndexAfterCodePoints(redacted.text, headCodePoints);
   let tailStart = codeUnitIndexBeforeTailCodePoints(redacted.text, tailCodePoints);
-  for (const mark of redacted.marks) {
-    if (mark.start < headEnd && headEnd < mark.end) headEnd = mark.start;
-    if (mark.start < tailStart && tailStart < mark.end) tailStart = mark.end;
+  for (const range of unionOf([...redacted.marks, ...avoid(redacted.text)])) {
+    if (range.start < headEnd && headEnd < range.end) headEnd = range.start;
+    if (range.start < tailStart && tailStart < range.end) tailStart = range.end;
   }
   const middle = label(codePointLength(redacted.text.slice(headEnd, tailStart)));
   const shift = headEnd + middle.length - tailStart;

@@ -282,6 +282,46 @@ describe('elide', () => {
     expectExactMarks(tail);
   });
 
+  describe('a range to avoid (a match that the last net would report) is never cut into a fragment', () => {
+    const glued = 'id1sk-proj-' + 'x'.repeat(40);
+    const avoidAt = (start: number, end: number) => () => [{ start, end }];
+
+    it('moves a head cut inside the range back to the start of the range', () => {
+      const value = { text: `${'h'.repeat(975)} ${glued}\n${'m'.repeat(200)}`, marks: [] };
+      const start = 976;
+      const result = elide(value, 985, 0, label, avoidAt(start, start + glued.length));
+      expect(result.text).not.toContain('sk-');
+      expect(result.text.startsWith(`${'h'.repeat(975)} [`)).toBe(true);
+    });
+
+    it('moves a tail cut inside the range forward to the end of the range', () => {
+      const text = `${'m'.repeat(200)}\n${glued} ${'t'.repeat(30)}`;
+      const start = 201;
+      const result = elide({ text, marks: [] }, 0, 50, label, avoidAt(start, start + glued.length));
+      expect(result.text).not.toContain('sk-');
+      expect(result.text.endsWith(` ${'t'.repeat(30)}`)).toBe(true);
+    });
+
+    it('does not ask for the ranges when the text fits', () => {
+      let asked = 0;
+      elide({ text: 'short', marks: [] }, 10, 10, label, () => {
+        asked += 1;
+        return [];
+      });
+      expect(asked).toBe(0);
+    });
+
+    it('treats overlapping ranges and marks as one barrier', () => {
+      const token = 'ghp_' + 'x'.repeat(36);
+      const redacted = redactText(`${'a'.repeat(20)}${token} ${'b'.repeat(20)}`, EMPTY);
+      expect(redacted.marks).toEqual([{ kind: 'token', start: 20, end: 36 }]);
+      // 印は [20, 36)。避ける範囲は [30, 45) (印の途中から外へ)。切れ目 40 は避ける範囲の内側 → 和集合の始まり 20 まで戻る。
+      const result = elide(redacted, 40, 0, label, avoidAt(30, 45));
+      expect(result.text).toBe(`${'a'.repeat(20)}[${String(redacted.text.length - 20)}]`);
+      expect(result.marks).toEqual([]);
+    });
+  });
+
   it('does not split a surrogate pair or a placeholder at any head/tail length', () => {
     const text = `😀a😀 example-user 😀b😀 ${'ghp_' + 'x'.repeat(36)} 😀c😀 example-host 😀`;
     const redacted = redactText(text, KEYS);

@@ -74,6 +74,36 @@ describe('other private key formats', () => {
     expect(spanTexts(text)).toEqual([text]);
   });
 
+  it('matches a lower-case BEGIN that has no END at all, and runs to the end of the text', () => {
+    // 終わりの印が無い切り詰めのログ。BEGIN の大文字小文字を区別する変更は、ここでだけ落ちる (END の行があると孤立 END の規則が救う)。
+    const text = `before\n-----${'begin rsa private key'}-----\n${BODY}`;
+    expect(findKeyBlockSpans(text)).toEqual([{ start: 7, end: text.length }]);
+    const mixed = `before\n-----${'Begin Private Key'}-----\n${BODY}`;
+    expect(findKeyBlockSpans(mixed)).toEqual([{ start: 7, end: mixed.length }]);
+  });
+
+  it('matches a lower-case END that has no BEGIN', () => {
+    const text = `${BODY}\n-----${'end rsa private key'}-----\nafter`;
+    expect(spanTexts(text)).toEqual([`${BODY}\n-----${'end rsa private key'}-----`]);
+  });
+
+  it.each([
+    ['three dashes', `---${'BEGIN RSA PRIVATE KEY'}---`, `---${'END RSA PRIVATE KEY'}---`],
+    ['three dashes and spaces', `--- ${'BEGIN PRIVATE KEY'} ---`, `--- ${'END PRIVATE KEY'} ---`],
+    ['a hyphen in the label', `-----${'BEGIN EC-X PRIVATE KEY'}-----`, `-----${'END EC-X PRIVATE KEY'}-----`],
+    ['a hyphen in the label and three dashes', `---${'BEGIN SSH-2 PRIVATE KEY'}---`, `---${'END SSH-2 PRIVATE KEY'}---`],
+  ])('matches %s', (_name, begin, end) => {
+    const text = `a\n${begin}\n${BODY}\n${end}\nb`;
+    expect(spanTexts(text)).toEqual([`${begin}\n${BODY}\n${end}`]);
+    // 終わりの印が無い切り詰めでも、本体まで消える。
+    expect(findKeyBlockSpans(`a\n${begin}\n${BODY}`)).toEqual([{ start: 2, end: 2 + begin.length + 1 + BODY.length }]);
+  });
+
+  it('does not take two dashes or a public key for a private key marker', () => {
+    expect(findKeyBlockSpans(`--${'BEGIN PRIVATE KEY'}--\n${BODY}`)).toEqual([]);
+    expect(findKeyBlockSpans(`---${'BEGIN PUBLIC KEY'}---\n${BODY}`)).toEqual([]);
+  });
+
   it('matches the SSH2 form with four dashes and spaces', () => {
     const text = `---- ${'BEGIN SSH2 ENCRYPTED PRIVATE KEY'} ----\n${BODY}\n---- ${'END SSH2 ENCRYPTED PRIVATE KEY'} ----`;
     expect(spanTexts(text)).toEqual([text]);
@@ -107,6 +137,10 @@ describe('linear time on hostile 100k inputs', () => {
       '---- BEGIN '.repeat(8_000),
       'PuTTY-User-Key-File-'.repeat(5_000),
       '-----BEGIN ' + 'A '.repeat(50_000),
+      '---BEGIN '.repeat(11_000),
+      '---BEGIN ' + 'A-'.repeat(50_000),
+      '---BEGIN ' + 'A-A'.repeat(33_000) + ' PRIVATE KEY',
+      '-'.repeat(50_000) + 'BEGIN ' + '-'.repeat(50_000),
     ];
     const started = performance.now();
     for (const value of hostile) findKeyBlockSpans(value);

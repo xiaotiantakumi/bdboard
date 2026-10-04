@@ -177,12 +177,68 @@ describe('e-mail addresses', () => {
     }
   });
 
-  it.each(['@example-user mention', 'user@localhost', 'a@b', 'foo @ bar.com', 'no at sign.example.com', '100%40 sure'])(
-    'does not treat %j as an address',
-    (text) => {
-      expect(findEmailSpans(text)).toEqual([]);
-    },
-  );
+  it.each([
+    '@example-user mention',
+    'user@localhost',
+    'a@b',
+    'foo @ bar.com',
+    'no at sign.example.com',
+    '100%40 sure',
+    // パッケージの版 (最後のラベルが数字だけ): 版の情報を消さない。
+    'react@18.2.0',
+    'typescript@5.6.3',
+    '@types+node@22.1.0',
+    'vitest@4.1.11-beta.2.3',
+    'react@19.0.0-rc.1',
+    'pkg@2.0.0-beta.1',
+    'pkg@v2.0.1',
+    'pnpm@9.0',
+  ])('does not treat %j as an address', (text) => {
+    expect(findEmailSpans(text)).toEqual([]);
+  });
+
+  it('needs the last label to start with a letter, not every label', () => {
+    for (const address of ['icon@2x.png', 'user@123.example.com', 'a@b-1.c2', 'user@例え.テスト', 'user@xn--abc.xn--def']) {
+      expect(spanTexts(address, findEmailSpans(address))).toEqual([address]);
+    }
+  });
+
+  it('does not cut an address out of the middle of a dotted version', () => {
+    expect(findEmailSpans('a@b.c1.2')).toEqual([]);
+    expect(findEmailSpans('a@b.com.9')).toEqual([]);
+  });
+
+  it('still finds an ssh target written with an IPv4 address (digits only, four parts)', () => {
+    expect(spanTexts('ssh deploy@10.0.0.5 -p 22', findEmailSpans('ssh deploy@10.0.0.5 -p 22'))).toEqual(['deploy@10.0.0.5']);
+    expect(spanTexts('deploy@192.168.1.5.', findEmailSpans('deploy@192.168.1.5.'))).toEqual(['deploy@192.168.1.5']);
+    // 3 つ以下、または桁が多い数字の連なりは版として読む。
+    expect(findEmailSpans('deploy@10.0.5')).toEqual([]);
+    expect(findEmailSpans('chromium@120.0.6099.109')).toEqual([]);
+  });
+});
+
+describe('Stripe and JWT glued to other characters (reported by the loose mode, not replaced)', () => {
+  const stripe = 'sk_live_' + 'x'.repeat(30);
+  const jwt = 'eyJ' + 'a'.repeat(20) + '.eyJ' + 'b'.repeat(20) + '.' + 'c'.repeat(20);
+  const tail = '.eyJ' + 'b'.repeat(20) + '.' + 'c'.repeat(20);
+
+  it('does not replace a Stripe key or a JWT that sits inside a word', () => {
+    for (const text of ['key1' + stripe, 'id1' + jwt, 'id_' + jwt, 'id-' + jwt]) {
+      expect(findTokenSpans(text)).toEqual([]);
+    }
+  });
+
+  it('reports the glued Stripe key in full and the glued JWT from its second part', () => {
+    expect(spanTexts('key1' + stripe, findTokenSpans('key1' + stripe, true))).toEqual([stripe]);
+    for (const prefix of ['id1', 'id_', 'id-']) {
+      expect(spanTexts(prefix + jwt, findTokenSpans(prefix + jwt, true))).toEqual([tail]);
+    }
+  });
+
+  it('does not report a lone JWT header or a short second part', () => {
+    expect(findTokenSpans('id1eyJ' + 'a'.repeat(20) + '.x', true)).toEqual([]);
+    expect(findTokenSpans('a.eyJ' + 'b'.repeat(20), true)).toEqual([]);
+  });
 });
 
 describe('linear time on hostile 100k inputs', () => {
@@ -213,6 +269,14 @@ describe('linear time on hostile 100k inputs', () => {
       'sk_live_'.repeat(12_000),
       'xapp-'.repeat(20_000),
       'ya29.'.repeat(20_000),
+      'x@' + '1.'.repeat(50_000),
+      'x@' + 'a1.'.repeat(33_000),
+      'x@' + '1.'.repeat(50_000) + 'a',
+      'x@10.0.0.' + '1'.repeat(100_000),
+      '.eyJ'.repeat(25_000),
+      '.eyJaaaaaaaa'.repeat(7_000),
+      ('.eyJaaaaaaaa.' + 'b'.repeat(7)).repeat(5_000),
+      'k_live_' + 'x'.repeat(100_000),
     ];
     const started = performance.now();
     for (const value of hostile) {
