@@ -42,6 +42,7 @@ import { npmRunSpawnSpec } from './npm-command.mjs';
 import { isOrphaned, killProcessTree } from './process-tree.mjs';
 import { acquireVerifySlot, envSlotOptions, IN_VERIFY_ENV, SLOT_WAIT_TIMEOUT_EXIT_CODE, SlotWaitTimeoutError, withoutSlotIdentity } from './verify-slot.mjs';
 import { LIGHT_FLAG, leaderArgsFor, stepsScriptFor } from './verify-steps.mjs';
+import { claimWorktreeForVerify, releaseQuietly } from './verify-worktree-claim.mjs';
 
 const GRACE_MS = 5_000;
 const ORPHAN_POLL_MS = 1_000;
@@ -143,6 +144,14 @@ if (process.argv.includes('--group-leader')) {
     waitPhaseHandlers.set(signal, handler);
     process.on(signal, handler);
   }
+  // bdboard-wea0.1: スロット待ちより前に worktree lock を SH で取る (待っている間もこの worktree は使用中)。外側が
+  // verify の間ずっと持ち、fd はリーダーに fd 3 で渡す (外側が SIGKILL されてもリーダーが生きている間は保持)。merge-pr
+  // が持つ worktree では拒否する。win32・ヘルパー無し・BDBOARD_WORKTREE_LOCK=off は lock 無し (docs/VERIFY.md「Worktree lock」)。
+  const claim = await claimWorktreeForVerify({ repoRoot });
+  if (claim.exitCode !== null) {
+    process.exit(claim.exitCode);
+  }
+  const worktreeLock = claim.lock;
   let slot;
   try {
     slot = await acquireVerifySlot(envSlotOptions());
@@ -165,7 +174,8 @@ if (process.argv.includes('--group-leader')) {
     {
       cwd: repoRoot,
       detached: true,
-      stdio: 'inherit',
+      // fd 3 = worktree lock。npm は fd 3 を子に渡さない (設計 E2) ので、tsc/vitest には届かずリーダーで止まる。
+      stdio: worktreeLock === null ? 'inherit' : ['inherit', 'inherit', 'inherit', worktreeLock.fd],
       // bdboard-xdk8: スロットでの素性 (優先度・並んだ時刻・予約) はこの verify のもの。テストの中の verify.mjs や
       // スロットのスクリプトに受け継がせない (verify-slot.mjs の SLOT_IDENTITY_ENV)。
       env: { ...withoutSlotIdentity(process.env), [IN_VERIFY_ENV]: '1' },
@@ -201,6 +211,8 @@ if (process.argv.includes('--group-leader')) {
     clearInterval(orphanWatch);
     // グループ全体の SIGKILL 猶予を待つ経路でも、スロット自体は今すぐ返す。
     slot.release();
+    // close が失敗しても verify の結果 (下の終了コード) を変えない。lock はこのプロセスの終了で外れる。
+    releaseQuietly(worktreeLock);
     const exitCode = signal !== null ? (SIGNAL_EXIT_CODES[signal] ?? 1) : (code ?? 1);
     // 本体ステップが偶然スロット待ちの打ち切りと同じ値で終わっても (例: depcruise は違反数を返す)、
     // その値は予約済みなので 1 に丸める (bdboard-wj9m)。
