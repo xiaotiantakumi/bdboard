@@ -125,9 +125,9 @@ external-ref が `gh-<N>` 形式のときだけ、PR 本文 (コードブロッ�
 どのキーワードを書けばよいかをメッセージに示す。本文を直すだけでよい (head は変わらないので
 push も CI のやり直しも要らない) — 直したら prepare をやり直す。external-ref がそもそも無い
 チケット、または `gh-<N>` 形式でない external-ref (例: URL 形式) は対象外 (何もしない)。
-走るのは `merge.mode` が S1 / S2 の prepare だけ。rebase が要る (exit 3) PR と必須チェックが
-green でない PR では、それを直して prepare し直したときに初めて走る。S2 クラス F の着地予定ツリー
-verify よりは前に走る (本文だけの不備で verify スロットを使わない)。S0 の prepare (分類表示だけ)
+走るのは `merge.mode` が S1 / S2 / S3 の prepare だけ。rebase が要る (exit 3) PR と必須チェックが
+green でない PR では、それを直して prepare し直したときに初めて走る。S2 / S3 クラス F の着地予定ツリー
+verify と S3 クラス L の軽量チェックよりは前に走る (本文だけの不備で verify スロットを使わない)。S0 の prepare (分類表示だけ)
 と `--dry-run` では走らない。チケットは prepare のレビュー記録の確認
 (`bdboard.model.review`) が読んだものを使う (bd は 1 回だけ読む)。bd が読めない (bd 未接続・
 タイムアウト等) ときは、このチェックに来る前にレビュー記録の確認が止める (fail-open はしない)。
@@ -247,7 +247,7 @@ PRs that each pass CI independently but break when combined.
 
 Concurrent sessions have made this concrete, so the procedure is now
 spelled out rather than left to judgement. Run these in order for every
-merge (this is **S0**, the procedure while `merge.mode` is `"S0"`; S1 and S2 follow):
+merge (this is **S0**, the procedure while `merge.mode` is `"S0"`; S1, S2 and S3 follow):
 
 0. **Check for drift** — `npm run drift`. Rebase for main-branch drift; use
    peer-overlap reports to choose a merge order, then re-run CI before taking
@@ -278,7 +278,7 @@ is the only one that catches a conflict *before* it has cost you a CI run.
 
 Which procedure applies is decided by `merge.mode` in `.claude/bdboard-harness.json`
 **as it is on `origin/main`** (bdboard-ulxa): `S0` = the steps above (the default),
-`S1` / `S2` = the steps below. Switching and rolling back are one-line edits of that key,
+`S1` / `S2` / `S3` = the steps below. Switching and rolling back are one-line edits of that key,
 landed through a normal PR; agents dispatched after the switch use the new steps.
 
 ### S1 — hold the slot only for the CAS and the merge (`merge.mode: "S1"`)
@@ -288,7 +288,7 @@ Measured on 2026-09-23 (bdboard-iaqg): with S0 the slot was held 7.6 of 11 hours
 verify all ran inside it; merges were ≈12 minutes apart. S1 moves everything except
 `acquire → git ls-remote → gh pr merge → release` out of the slot (design:
 bdboard-ulxa §2 A; S2 — verifying a predicted landed tree instead of rebasing — is the
-next subsection, S3 is bdboard-ulxa.3). From the PR worktree (a linked worktree made by
+next subsection, S3 — a light check for PRs that do not overlap main — follows it). From the PR worktree (a linked worktree made by
 `git worktree add` — the landed verify refuses to run in the main checkout, because detaching it
 would also replace the `web/dist` the always-on server serves):
 
@@ -420,7 +420,7 @@ recorded one and prints / audits `predicted-tree … match=true|false|unknown`; 
 (to bdboard-ulxa.2), and the landed verify (layer 3, unchanged) still decides the ledger. If
 `gh pr merge` answers 405 "not mergeable", GitHub sees a conflict ort did not: `finish` (returns the
 slot), then rebase. File overlap is **not** a criterion (§3.2: overlap and merge-tree are textual; only
-building / linting / testing the landed tree catches a semantic conflict) — it is only logged for S3.
+building / linting / testing the landed tree catches a semantic conflict) — under S2 it is only logged; S3 uses it to choose a light check.
 
 - **Hot files** (`merge.hotFiles`, default in `scripts/merge-pr/hot-files.mjs`, a contract value
   replaces the whole list): each entry is one *kind*; R when main and the PR both touch the same kind
@@ -471,7 +471,90 @@ building / linting / testing the landed tree catches a semantic conflict) — it
   predicted tree had passed (design §5 / §6 decision 7), or when `predicted-tree … match=false` shows
   up in the audit log (GitHub's merge and git's disagree — the guarantee above does not hold).
 
-### When main is broken (S0, S1 and S2)
+### S3 — a light check for PRs that do not overlap main (`merge.mode: "S3"`)
+
+S3 is S2 plus one more class (bdboard-ulxa.3, design §2.3 / §5). Under S2 every moved-main PR that is
+not R pays a full `npm run verify` (2–4 minutes plus the slot queue) on its predicted tree, even when
+main's changes and the PR's never touch the same file. Under S3, `prepare` splits S2's class F:
+
+| Class | When | What `prepare` does |
+|---|---|---|
+| N / R | as in S2 | as in S2 (file overlap does not decide R either) |
+| F | S2's F **and** (main's changes and yours share a file, or either side touches a `merge.hotFiles` file or the merge procedure itself — one side is enough — or **both** sides touch `merge.lightBlindFiles` — any pattern on each side — default `scripts/**`) | as in S2: the full `verify` on the predicted tree |
+| L | S2's F, no shared file, no hot file and no merge-procedure file on either side, and not both sides in `merge.lightBlindFiles` | builds the same predicted commit and runs only `merge.lightCheck` (default `npm run verify -- --light` = `verify:light`: check:file-size, lint:verify, build, build:web, check:boundaries — no tests) on it, in the same slot queue (priority `merge`) with the same abandon-on-main-move. Green → records PRED_BASE and the light result; red → exit 3, like a failed predicted verify |
+
+File overlap still never decides whether to merge without a rebase; it only picks full (F) or light (L).
+
+- **What the light check cannot see (`merge.lightBlindFiles`, PR #854 review).** The light check
+  inspects nothing in `scripts/`: tsc's projects include only `src/`, `vitest.config.ts` and
+  `test/e2e`, depcruise only `src` and `web`, and the ESLint pass over `scripts/**/*.mjs` is untyped
+  with no import-resolution rule — importing a missing export or module there exits 0 (measured).
+  (`web/src` is not in the list: `build:web` runs `tsc --noEmit` over it, so the light check does
+  type-check its imports.) If main renames an export in `scripts/commit-message-guard.mjs` while a
+  PR imports the old name from a new `scripts/new-tool.mjs`, both PRs are green on their own, an L
+  merge passes the light check, and main lands broken — only the full landed verify finds it. So a
+  PR is F when **both** sides touch `merge.lightBlindFiles` (default `["scripts/**"]`; a contract
+  value replaces the list) — any pattern in the list on each side, not necessarily the same one. It
+  is a separate key from `merge.hotFiles` on purpose: a hot file also makes S2 rebase (R), which
+  these files do not need. One side only stays L — the other side does not change those scripts,
+  and the side that does has its own CI and the full landed verify. The merge procedure itself is F
+  even when only one side touches it, because a broken one is worse than a broken main: every agent
+  that pulls it gets a `merge-pr` that dies on start, including the one that has to merge the
+  repair. That list is `MERGE_PROCEDURE_FILES` in `scripts/merge-pr/hot-files.mjs` (not in the
+  contract): `scripts/merge-pr/**`, `scripts/merge-pr.mjs`, `scripts/check-drift/**`,
+  `scripts/check-drift.mjs`, and the `scripts/` modules `merge-pr` imports
+  (`scripts/process-identity.mjs`, `scripts/process-tree.mjs`, `scripts/verify-slot.mjs`,
+  `scripts/verify-slot-files.mjs`, `scripts/verify-slot-queue.mjs`; `scripts/merge-pr.s3.test.mjs`
+  walks the imports and fails when one is missing).
+
+- **The light result is never a verify result.** Class L records `lightTree` / `lightCommit` /
+  `lightCheck` / `lightCheckedAt` / `lightCheckSecs` (class F keeps `predictedTree` /
+  `predictedVerifiedAt`); the audit event is `light-check` (F's is `predicted-verify`). Neither is
+  written to the `bdboard/landed-verify` ledger (the predicted commit is not on GitHub). `gate` lets a
+  record through only when its class and fields fit the current mode (`scripts/merge-pr/record.mjs`):
+  N in S1–S3; F in S2/S3 with the full verify recorded; L in S3 only, with the light fields present and
+  `lightCommit`'s tree and parents equal to `lightTree`, PRED_BASE and the PR head. Anything else
+  (a missing field, a mismatch, an unknown class) is `gate-record-refused` in the audit log and exit 75
+  → `prepare` again.
+- **The landed verify stays the full `npm run verify`.** `finish` runs it on what lands exactly as in
+  S1/S2, so what the light check cannot see (tests, e2e excepted as always) is still caught and
+  recorded in the ledger. `finish` also compares the landed tree with `lightTree` and audits it as
+  `light-tree … match=true|false|unknown` — a separate event from F's `predicted-tree`, so S2's
+  measurements and its rollback rule keep counting class F only (a `light-tree … match=false` means
+  the same thing, GitHub's merge and git's disagree, and is reported the same way) — and audits the
+  landed verify as `light-landed … result=success|failure|error by=finish|manual|self-heal`. One
+  landed SHA can get several `light-landed` lines (an `error` and then a re-verify); count the last
+  `success` / `failure` per `new=`.
+- **An L whose landed verify could not run stays L.** If `finish`'s landed verify ends in `error`
+  (a verify-slot timeout, a failed `npm ci`, …), `finish` prints the slip rule, audits
+  `light-landed … result=error` and keeps its record (`class: "L"`, `newMain` = the landed SHA) in
+  `<git common dir>/bdboard-merge/` as it always does on `error`. The later `merge-pr verify <sha>`,
+  or the next merger's `gate` self-healing that SHA as its PRED_BASE, finds the record by the landed
+  SHA and treats a `failure` as the slip, exactly like `finish`.
+- **A slip sends us back to S2.** A class-L merge whose landed verify fails is a slip of the light
+  check (`light-landed … result=failure`; `finish` / `verify` / `gate` say "S3 のすり抜け"). First rule
+  out a known flake (bdboard-241s, …) or a load-induced failure (a parallel verify timing out) in the
+  log: then main is not broken and it is not a slip — `merge-pr verify <sha>` again. Otherwise it is
+  handled as a broken main (below: `finish` holds the slot as `main-broken`, P0 bug, fix-forward or
+  revert), **and** one slip is enough to roll back (design §6 decision 7): the repair PR also carries
+  the one-line change setting `merge.mode` back to `"S2"` (so no other L lands while the light check is
+  known to miss something; the contract is a hot file, so the repair PR itself is never L).
+  Rollback needs nothing else — under S2 no PR is classified L, and a class-L record still waiting for
+  `gate` is sent back to `prepare` (exit 75), where it becomes F and gets the full verify. A PR already
+  gated finishes normally.
+- **Exit codes** as in S2; `3` also means "the light check failed on the predicted tree" (log:
+  `<git common dir>/bdboard-merge/light-check-pr<N>-<tree12>.log`).
+- `prepare --dry-run` also prints the S3 class ("参考: merge.mode が S3 ならクラス=…") in S0–S2, and
+  a normal S2 `prepare` prints it when the PR would be L — use it to see how often S3 would apply.
+- Switching: a one-line PR setting `merge.mode` to `"S3"` (`merge.lightCheck` has a default). A
+  branch cut before this script supported S3 rejects `"S3"` as an unknown mode in every phase (exit 1,
+  "merge.mode は S0 / S1 / S2 のいずれかです (受領: \"S3\")") before it touches the slot or the ledger:
+  `git merge origin/main` first. Since S3 the message itself says so for any later unknown mode. A
+  `finish` that hits this (a PR gated on an old branch while main switched — normally impossible,
+  since the slot is held from `gate` to `finish`) can be run from any worktree with the current
+  script: the record lives in the git common dir.
+
+### When main is broken (S0, S1, S2 and S3)
 
 Detected by a `failure` in `bdboard/landed-verify`, a red `verify` / `e2e` in main's push CI
 (`commit-parse` is not used as a gate), or a gate exiting 4. Squash merges make recovery one
@@ -652,7 +735,9 @@ other tools) reads the imported issue before it round-trips back through that sa
   update-branch + CI 再走が要り、S0 で枠の中にあった待ちを GitHub 側へ移すだけになる。
   「CI が見た木 = 着地する木」は S1 では PRED_BASE の CAS と着地後検証の台帳
   (`bdboard/landed-verify`) で担保する (bdboard-ulxa §3.3)。S2 では CI が見ていない
-  「main + PR」の木を prepare が手元で verify し、同じ CAS でその木が着地することを保証する。Merge queue は user-owned の
+  「main + PR」の木を prepare が手元で verify し、同じ CAS でその木が着地することを保証する。
+  S3 のクラス L (main と重ならない PR) はその木で軽量チェック (build + lint + check:boundaries) だけを
+  回し、テストは着地後検証のフル verify に任せる (すり抜け 1 件で S2 に戻す)。Merge queue は user-owned の
   private/public repo では使えない。
 - **force push 禁止** (`non_fast_forward`)、**ブランチ削除禁止** (`deletion`)。
 - **bypass = Repository admin、mode は pull requests only (2026-09-26 変更)**。

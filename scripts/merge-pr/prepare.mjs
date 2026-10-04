@@ -5,11 +5,13 @@
 //   N = origin/main が PR head の祖先 (main 不動)。CI が見た木 = 着地する木。PRED_BASE = origin/main
 //   R = main が進んでいて rebase が要る。rebase (か merge origin/main) → push → CI → prepare から
 //       S1: main が進んでいれば常に R / S2: テキスト衝突・hot file のときだけ R (classify.mjs)
-//   F = (S2 のみ) main が進んだが衝突も hot file も無い。着地予定ツリーを手元で verify して
+//   F = (S2 / S3) main が進んだが衝突も hot file も無い。着地予定ツリーを手元で verify して
 //       通れば rebase せずに PRED_BASE = origin/main で gate へ (predicted.mjs、bdboard-ulxa.2)
-// L (軽量チェック) は S3 (bdboard-ulxa.3)。
+//   L = (S3 のみ) F のうち変更ファイルの重なりが無く、どちらの側も hot file に触れていない。着地予定
+//       ツリーで軽量チェック (merge.lightCheck) だけを回す (bdboard-ulxa.3)。着地後検証はフル verify
 import { git, gitOk, run } from './exec.mjs';
-import { classifyS2 } from './classify.mjs';
+import { classifyForMode, describeClass } from './mode-class.mjs';
+import { PREDICTED_MODES } from './config.mjs';
 import { EXIT, fail, fetchedMain, ticketIdFor } from './context.mjs';
 import { assertExternalRefLinked } from './external-ref.mjs';
 import { getLandedStatus, getPull, requiredChecks } from './github.mjs';
@@ -100,21 +102,6 @@ function assertLocalHead(ctx, pull, pr) {
   return head;
 }
 
-/** クラスを決める。S2 か --dry-run のときは S2 の分類も求める (dry-run では参考表示だけ)。 */
-function classify(ctx, pull, predBase, head, { dryRun }) {
-  const moved = !gitOk(['merge-base', '--is-ancestor', predBase, head], { cwd: ctx.cwd });
-  const wantS2 = ctx.config.mode === 'S2' || dryRun;
-  let s2 = !wantS2 ? null : moved ? classifyS2(ctx, predBase, head) : { class: 'N', reason: 'main 不動', overlap: [], mainFiles: [] };
-  if (s2?.class === 'F' && pull.mergeable === false) {
-    // GitHub が衝突と判定している (ort と GitHub の判定が食い違う)。gh pr merge が 405 で落ちるので R。
-    s2 = { ...s2, class: 'R', reason: 'GitHub が PR を mergeable=false と判定しています' };
-  }
-  if (ctx.config.mode === 'S2') {
-    return { cls: s2.class, s2 };
-  }
-  return { cls: moved ? 'R' : 'N', s2 };
-}
-
 /** 台帳が failure の main の上で着地予定ツリーを verify しても落ちるだけ。先に「main が壊れている」を返す。 */
 function refuseBrokenBase(ctx, pr, predBase) {
   let ledger;
@@ -163,7 +150,7 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
   const id = ticketIdFor(pull.headRef, pr);
   const predBase = fetchedMain(ctx);
   const mode = ctx.config.mode;
-  const { cls, s2 } = classify(ctx, pull, predBase, head, { dryRun });
+  const { cls, s2, s3 } = classifyForMode(ctx, pull, predBase, head, { dryRun });
   const checks = cls !== 'R' ? requiredChecks(ctx, pr) : { verdict: 'skipped', output: '' };
   audit('prepare', {
     pr,
@@ -174,17 +161,14 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
     base: predBase,
     checks: checks.verdict,
     s2: s2?.class,
+    s3: s3?.class,
     main_files: s2?.mainFiles.length,
     overlap: s2?.overlap.length,
   });
   say(
     `PR #${pr} (${id}) head=${head.slice(0, 12)} ${ctx.mainRef}=${predBase.slice(0, 12)} クラス=${cls} 必須チェック=${checks.verdict} merge.mode=${mode}`,
   );
-  if (s2 !== null && mode !== 'S2') {
-    say(`参考: merge.mode が S2 ならクラス=${s2.class} (${s2.reason}、main 側の変更 ${s2.mainFiles.length} 件・重なり ${s2.overlap.length} 件)`);
-  } else if (s2 !== null && cls !== 'N') {
-    say(`S2 の分類: ${s2.reason} (main 側の変更 ${s2.mainFiles.length} 件・重なり ${s2.overlap.length} 件)`);
-  }
+  say(...describeClass(mode, cls, s2, s3, dryRun));
   if (mode === 'S0') {
     removeState(ctx.cwd, pr);
     say(
@@ -195,7 +179,7 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
   }
   if (cls === 'R') {
     removeState(ctx.cwd, pr);
-    fail(EXIT.NEEDS_REBASE, ...rebaseSteps(ctx.mainRef, mode === 'S2' ? s2.reason : undefined));
+    fail(EXIT.NEEDS_REBASE, ...rebaseSteps(ctx.mainRef, PREDICTED_MODES.includes(mode) ? s2.reason : undefined));
   }
   if (checks.verdict === 'unknown') {
     fail(EXIT.RETRY, '必須チェックの状態を GitHub から取得できませんでした (API の枠・ネットワーク)。時間を置いて prepare し直してください:', checks.output);
@@ -207,7 +191,8 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
     fail(EXIT.PRECONDITION, '必須チェックが green ではありません:', checks.output);
   }
   if (dryRun) {
-    say(`--dry-run: 状態ファイルは書きません${cls === 'F' ? ' (着地予定ツリーの verify もしません)' : ''}。`);
+    const skipped = { F: ' (着地予定ツリーの verify もしません)', L: ' (着地予定ツリーの軽量チェックもしません)' }[cls] ?? '';
+    say(`--dry-run: 状態ファイルは書きません${skipped}。`);
     return EXIT.OK;
   }
   removeState(ctx.cwd, pr);
@@ -221,6 +206,13 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
     say(`rebase せずに着地予定ツリー ${s2.tree.slice(0, 12)} を verify します (数分。verify スロット待ちを含む)。`);
     Object.assign(state, await verifyPredicted(ctx, pr, id, { predBase, head, tree: s2.tree }));
     say(`着地予定ツリーの verify success (${state.predictedVerifySecs} 秒)。`);
+  }
+  if (cls === 'L') {
+    // bdboard-ulxa.3: 軽量チェックの成功は light* に残す (フル verify の predicted* とは別。gate が見分ける)。
+    refuseBrokenBase(ctx, pr, predBase);
+    say(`rebase せずに着地予定ツリー ${s3.tree.slice(0, 12)} で軽量チェック (${ctx.config.lightCheck}) を回します (テストは着地後検証で回る)。`);
+    Object.assign(state, await verifyPredicted(ctx, pr, id, { predBase, head, tree: s3.tree }, { kind: 'light' }));
+    say(`着地予定ツリーの軽量チェック success (${state.lightCheckSecs} 秒)。`);
   }
   writeState(ctx.cwd, pr, state);
   say(`準備完了。次: BDBOARD_MERGER=chair npm run merge-pr -- gate ${pr}`);

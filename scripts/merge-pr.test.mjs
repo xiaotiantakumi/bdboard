@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_HOT_FILES,
+  DEFAULT_LIGHT_BLIND_FILES,
   bodyReferencesIssue,
   decideS2Class,
   evaluateLandedStatus,
@@ -136,6 +137,8 @@ describe('merge-pr pure helpers', () => {
         slotWaitMinutes: 10,
         statusContext: CONTEXT,
         hotFiles: DEFAULT_HOT_FILES,
+        lightCheck: 'npm run verify -- --light',
+        lightBlindFiles: DEFAULT_LIGHT_BLIND_FILES,
         verify: 'npm run verify',
         mainBranch: 'main',
         repo: null,
@@ -143,7 +146,8 @@ describe('merge-pr pure helpers', () => {
     });
     expect(parseMergeConfig({ ...base, merge: { mode: 'S1', repo: 'o/r' } }).config).toMatchObject({ mode: 'S1', repo: 'o/r' });
     expect(parseMergeConfig({ ...base, merge: { mode: 'S2' } }).config.mode).toBe('S2');
-    expect(parseMergeConfig({ ...base, merge: { mode: 'S3' } }).ok).toBe(false);
+    expect(parseMergeConfig({ ...base, merge: { mode: 'S3' } }).config.mode).toBe('S3');
+    expect(parseMergeConfig({ ...base, merge: { mode: 'S4' } }).ok).toBe(false);
     expect(parseMergeConfig({ ...base, merge: { hotFiles: ['a/**', '{b,c}.json'] } }).config.hotFiles).toEqual(['a/**', '{b,c}.json']);
     expect(parseMergeConfig({ ...base, merge: { hotFiles: [] } }).config.hotFiles).toEqual([]);
     expect(parseMergeConfig({ ...base, merge: { hotFiles: 'package.json' } }).ok).toBe(false);
@@ -156,11 +160,11 @@ describe('merge-pr pure helpers', () => {
     expect(parseMergeConfig({ ...base, verify: '' }).ok).toBe(false);
   });
 
-  it("this repo's own contract has a valid merge block (the S0/S1/S2 switch is one line)", () => {
+  it("this repo's own contract has a valid merge block (the S0/S1/S2/S3 switch is one line)", () => {
     const contract = JSON.parse(readFileSync(path.join(REPO_ROOT, '.claude', 'bdboard-harness.json'), 'utf8'));
     const parsed = parseMergeConfig(contract);
     expect(parsed.ok).toBe(true);
-    expect(['S0', 'S1', 'S2']).toContain(parsed.config.mode);
+    expect(['S0', 'S1', 'S2', 'S3']).toContain(parsed.config.mode);
     expect(parsed.config.hotFiles.some((pattern) => globToRegExp(pattern).test('package-lock.json'))).toBe(true);
     expect(parsed.config.statusContext).toBe(CONTEXT);
     expect(contract.merge.leaseMinutes).toBe(8);

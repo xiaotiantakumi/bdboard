@@ -14,6 +14,18 @@ export function brokenMainSteps(sha, repo, context) {
   ];
 }
 
+/**
+ * bdboard-ulxa.3: クラス L (着地予定ツリーの軽量チェックだけで着地) の着地後検証が failure = S3 のすり抜けの疑い
+ * (設計 bdboard-ulxa §5 / §6 裁定 7)。main 破損の手順 (brokenMainSteps) に足して出す。
+ */
+export function lightSlipSteps(sha) {
+  return [
+    `${sha.slice(0, 12)} はクラス L (着地予定ツリーの軽量チェックだけで着地) で、その着地後検証が failure です — S3 のすり抜け (軽量チェックが見ない test 等で壊れた) の疑い。`,
+    `  1. まずログで既知のフレーク (bdboard-241s 等) や負荷由来 (並列 verify の時間切れ等) でないことを確かめる。そうなら壊れていないので npm run merge-pr -- verify ${sha} で検証し直す (すり抜けに数えない)`,
+    '  2. そうでなければすり抜け 1 件で S2 に戻す: 下の修復 PR (fix-forward / revert) に .claude/bdboard-harness.json の merge.mode を "S2" にする 1 行を含め、議長に報告する',
+  ];
+}
+
 export function rebaseSteps(mainRef, reason = 'S1 では main が動いたら rebase') {
   return [
     `main が PR のベース以降に進んでいます (クラス R: ${reason})。枠の外で取り込んでから並び直してください:`,

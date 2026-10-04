@@ -245,6 +245,17 @@ What this means operationally:
   and bypasses both the process-group kill (bdboard-kia) and the slot.
   Running individual steps (`npm run build`, `npm run test:server`, …) while
   iterating is still fine; the slot only guards the full chain.
+- **`npm run verify -- --light` is for `merge-pr` only** (bdboard-ulxa.3). It takes
+  the same slot and process group but runs `verify:light` (= `verify:steps` without
+  `test:server` / `test:web`: check:file-size, lint:verify, build, build:web,
+  check:boundaries). `merge-pr prepare` runs it on the predicted landed tree of a
+  class-L PR under `merge.mode: "S3"` (the contract's `merge.lightCheck`; see
+  GIT-WORKFLOW.md "S3"). It runs no tests, so it never replaces the full
+  `npm run verify` before opening a PR; like `verify:steps`, never run
+  `npm run verify:light` directly. Which script `verify.mjs` runs is
+  `scripts/verify-steps.mjs`; `scripts/verify-steps.test.mjs` fails if
+  `verify:light` stops being exactly `verify:steps` minus the two test steps
+  (a step added to one and not the other).
 - **Queue waits are normal, not hangs.** While waiting, verify prints
   `verify: waiting for a verify slot (queue position N/M, priority X, holders: pid …)`
   every 10s on stderr. Leave it queued — the wait is bounded (see

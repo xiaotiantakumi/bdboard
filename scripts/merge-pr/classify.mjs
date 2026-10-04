@@ -9,13 +9,21 @@
 // 衝突は着地する木を build / lint / test しないと分からない)。重なりの件数は監査ログにだけ残す
 // (S3 の軽量チェックを選ぶときの材料)。
 //
+// bdboard-ulxa.3: S3 は F をさらに分ける (decideS3Class)。重なりは F / L の選択にだけ使い、
+// rebase するか (R) の判定は S2 と同じ:
+//   L = F のうち、main 側と自分の変更ファイルに重なりが無く、どちらの側も hot file に触れておらず、
+//       どちらの側もマージ手順自身 (MERGE_PROCEDURE_FILES) に触れておらず、軽量チェックが中身を見ない
+//       ファイル (merge.lightBlindFiles、既定 scripts/**) に両側が当たっていない。着地予定ツリーで
+//       軽量チェック (build + lint + check:boundaries) だけを回す
+//   F = それ以外 (重なりあり / 片側でも hot file / 片側でもマージ手順 / 両側が lightBlindFiles)。S2 と同じフル verify
+//
 // 着地予定ツリーは `git merge-tree --write-tree <origin/main> <PR head>` (--merge-base を渡さない
 // = 自然な merge-base)。GitHub の squash マージが作る木 = その時点の main に head を 3-way マージした
 // 木なので、gate の CAS (main == PRED_BASE) と --match-head-commit (head == PR head) が成り立てば
 // 着地する木はこの木と同じになる。finish が着地後に木の SHA を突き合わせて確かめる。
 import { parseMergeTreeConflictFiles } from '../check-drift/git.mjs';
 import { run } from './exec.mjs';
-import { hotCollisions } from './hot-files.mjs';
+import { DEFAULT_LIGHT_BLIND_FILES, MERGE_PROCEDURE_FILES, hotCollisions, hotTouched } from './hot-files.mjs';
 
 const OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
@@ -83,6 +91,46 @@ export function decideS2Class({ baseCount, merge, hot }) {
     return { class: 'R', reason: `hot file: ${describeHot(hot)}` };
   }
   return { class: 'F', reason: '衝突なし・hot file なし', tree: merge.tree };
+}
+
+/**
+ * S2 の分類結果から S3 のクラスを決める純関数。F 以外 (N / R) はそのまま返す。F のうち重なりが無く、
+ * main 側にも自分の側にも hot file (hotFiles) とマージ手順自身 (MERGE_PROCEDURE_FILES) が無く、
+ * 軽量チェックが中身を見ないファイル (lightBlindFiles のどれか。同じ要素でなくてよい) に両側が当たっていないものだけを L にする。
+ * 材料 (変更ファイルの一覧) が無い F も軽量にしない (安全側 = フル verify)。
+ */
+export function decideS3Class(s2, hotFiles, lightBlindFiles = DEFAULT_LIGHT_BLIND_FILES) {
+  if (s2.class !== 'F') {
+    return s2;
+  }
+  const full = (why) => ({ ...s2, reason: `${s2.reason}・${why}` });
+  if (!Array.isArray(s2.mainFiles) || !Array.isArray(s2.mineFiles) || !Array.isArray(s2.overlap)) {
+    return full('変更ファイルの一覧が無い (フル verify)');
+  }
+  if (s2.overlap.length > 0) {
+    return full(`重なり ${s2.overlap.length} 件 (フル verify): ${s2.overlap.slice(0, 5).join(', ')}`);
+  }
+  const both = [...s2.mainFiles, ...s2.mineFiles];
+  const hot = hotTouched(both, hotFiles);
+  if (hot.length > 0) {
+    return full(`hot file に触れている (フル verify): ${hot.slice(0, 5).join(', ')}`);
+  }
+  const procedure = hotTouched(both, MERGE_PROCEDURE_FILES);
+  if (procedure.length > 0) {
+    return full(`マージ手順自身 (merge-pr / check-drift) に触れている (フル verify): ${procedure.slice(0, 5).join(', ')}`);
+  }
+  // 両側がどれかの要素に当たれば F (同じ要素でなくてよい — main が tools/、自分が scripts/ でも、片方がもう片方を
+  // import していれば軽量チェックは壊れ方を見ない)。
+  const blindMain = hotTouched(s2.mainFiles, lightBlindFiles);
+  const blindMine = hotTouched(s2.mineFiles, lightBlindFiles);
+  if (blindMain.length > 0 && blindMine.length > 0) {
+    const patterns = lightBlindFiles.filter((pattern) => hotTouched([...blindMain, ...blindMine], [pattern]).length > 0);
+    return full(
+      `軽量チェックが中身を見ないファイル (${patterns.join(', ')}) を両側が変更 (型・import を見ない。フル verify): ` +
+        `main ${blindMain.slice(0, 3).join(', ')} / 自分 ${blindMine.slice(0, 3).join(', ')}`,
+    );
+  }
+  return { ...s2, class: 'L', reason: '衝突なし・重なりなし・hot file なし (軽量チェック)' };
 }
 
 /**

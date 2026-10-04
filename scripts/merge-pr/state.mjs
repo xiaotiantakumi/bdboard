@@ -6,7 +6,7 @@
 //
 // 監査ログ (枠の占有率の計測用、設計 §4.2) は ${BDBOARD_MERGE_AUDIT_LOG:-$TMPDIR/bdboard-merge-audit.log}
 // にタブ区切りで 1 行ずつ。書けなくてもマージ手順は止めない。
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -39,6 +39,33 @@ export function writeState(root, pr, state) {
 
 export function removeState(root, pr) {
   rmSync(statePath(root, pr), { force: true });
+}
+
+/**
+ * 残っている状態ファイルを全部読む (読めない・壊れたもの、JSON でもオブジェクトでないもの — null / 数値 /
+ * 文字列 / 配列 — は飛ばす)。PR 番号を知らずに、着地コミット (newMain) から finish の記録を引くとき用
+ * (bdboard-ulxa.3: merge-pr verify / gate の自己修復がクラス L を見分ける)。
+ */
+export function listStates(root) {
+  const dir = stateDir(root);
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const states = [];
+  for (const name of names.filter((entry) => /^pr-[0-9]+\.json$/.test(entry))) {
+    try {
+      const parsed = JSON.parse(readFileSync(path.join(dir, name), 'utf8'));
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        states.push(parsed);
+      }
+    } catch {
+      // 書きかけ・壊れた記録は無いものとして扱う。
+    }
+  }
+  return states;
 }
 
 /**
