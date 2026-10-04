@@ -1,0 +1,217 @@
+import {
+  ISSUE_DRAFT_MAX_FOLDED_FINGERPRINTS,
+  ISSUE_DRAFT_MAX_PROJECTS,
+  capErrorTextRaw,
+  capFreeText,
+  fitDraftToByteLimit,
+  isMassOccurrenceFingerprint,
+  summarizeErrorText,
+  type DraftEnvInfo,
+  type DraftKind,
+  type IssueDraft,
+  type LocalOnlyContext,
+  type OccurredProject,
+} from './issue-draft.js';
+import {
+  buildMassOccurrenceText,
+  buildProvisionalDraftText,
+  type DraftText,
+} from './issue-draft-text.js';
+
+/**
+ * 受け取った 1 回分の報告から下書きを作る・足す純粋関数 (bdboard-4y8q.1、設計 4節の状態遷移の表)。
+ * 保存や排他は application の IssueDraftService が受け持つ。
+ */
+
+export interface ReceiveDraftInput {
+  readonly kind: DraftKind;
+  /** A のみ必須: failure-catalog の短い名前。 */
+  readonly catalogSlug?: string;
+  /** B/C のみ必須: 出どころ (hook 名・スクリプト名・API のパスなど)。 */
+  readonly source?: string;
+  readonly symptom?: string;
+  readonly cause?: string;
+  readonly prevention?: string;
+  readonly errorText?: string;
+  readonly agentNote?: string;
+  readonly envInfo?: Partial<DraftEnvInfo>;
+  readonly project?: { readonly name: string; readonly path: string };
+  readonly sourceTicketRef?: string;
+}
+
+function normalizeEnvInfo(env: Partial<DraftEnvInfo> | undefined): DraftEnvInfo {
+  return {
+    bdboardVersion: env?.bdboardVersion ?? 'unknown',
+    os: env?.os ?? 'unknown',
+    nodeVersion: env?.nodeVersion ?? 'unknown',
+    ...(env?.harnessVersion !== undefined ? { harnessVersion: env.harnessVersion } : {}),
+    ...(env?.bdVersion !== undefined ? { bdVersion: env.bdVersion } : {}),
+    ...(env?.ghVersion !== undefined ? { ghVersion: env.ghVersion } : {}),
+  };
+}
+
+function buildLocalOnly(input: ReceiveDraftInput): LocalOnlyContext {
+  const errorTextRaw = input.errorText === undefined ? undefined : capErrorTextRaw(input.errorText);
+  const summary = errorTextRaw === undefined ? undefined : summarizeErrorText(errorTextRaw);
+  return {
+    symptomRaw: capFreeText(input.symptom ?? ''),
+    causeRaw: capFreeText(input.cause ?? ''),
+    preventionRaw: capFreeText(input.prevention ?? ''),
+    ...(errorTextRaw !== undefined && summary !== undefined
+      ? { errorTextRaw, errorTextHead: summary.head, errorTextTail: summary.tail }
+      : {}),
+    errorTextTruncated: summary?.truncated ?? false,
+    ...(input.agentNote !== undefined ? { agentNoteRaw: capFreeText(input.agentNote) } : {}),
+    envInfo: normalizeEnvInfo(input.envInfo),
+  };
+}
+
+/** 同じパスのプロジェクトは lastSeenAt だけ更新し、新しいパスは (上限まで) 足す。 */
+function upsertProject(
+  projects: readonly OccurredProject[],
+  project: ReceiveDraftInput['project'],
+  nowIso: string,
+): readonly OccurredProject[] {
+  if (project === undefined) return projects;
+  const existing = projects.find((entry) => entry.path === project.path);
+  if (existing !== undefined) {
+    return projects.map((entry) => (entry === existing ? { ...entry, lastSeenAt: nowIso } : entry));
+  }
+  if (projects.length >= ISSUE_DRAFT_MAX_PROJECTS) return projects;
+  return [...projects, { name: project.name, path: project.path, firstSeenAt: nowIso, lastSeenAt: nowIso }];
+}
+
+function textFor(draft: IssueDraft): DraftText {
+  if (isMassOccurrenceFingerprint(draft.fingerprint)) {
+    const folded = draft.localOnly.foldedFingerprints ?? [];
+    return buildMassOccurrenceText({
+      kind: draft.kind,
+      bucket: draft.fingerprint.slice(draft.fingerprint.lastIndexOf(':') + 1),
+      foldedCount: folded.length,
+      foldedCountCapped: folded.length >= ISSUE_DRAFT_MAX_FOLDED_FINGERPRINTS,
+      occurrenceCount: draft.occurrenceCount,
+      firstOccurredAt: draft.firstOccurredAt,
+      lastOccurredAt: draft.lastOccurredAt,
+    });
+  }
+  // 指紋は "A:<slug>" / "<B|C>:<source>:<hash>"。対象の名前は指紋から取り直す
+  // (マージのたびに入力を持ち回らなくて済む)。
+  const rest = draft.fingerprint.slice(2);
+  const name = draft.kind === 'A' ? rest : rest.slice(0, rest.lastIndexOf(':'));
+  return buildProvisionalDraftText({
+    kind: draft.kind,
+    ...(draft.kind === 'A' ? { catalogSlug: name } : { source: name }),
+    versions: draft.localOnly.envInfo,
+    occurrenceCount: draft.occurrenceCount,
+    firstOccurredAt: draft.firstOccurredAt,
+    lastOccurredAt: draft.lastOccurredAt,
+  });
+}
+
+/** 題名・本文を作り直し、大きさの上限に収める。ユーザーが編集済みの項目は触らない (設計 4節)。 */
+function finalize(draft: IssueDraft): IssueDraft {
+  const text = textFor(draft);
+  return fitDraftToByteLimit({
+    ...draft,
+    title: draft.titleEditedByUser ? draft.title : text.title,
+    body: draft.bodyEditedByUser ? draft.body : text.body,
+  });
+}
+
+/** 既知の指紋が無いときの新規下書き (status='pending'、回数 1)。 */
+export function createDraftFromReport(
+  input: ReceiveDraftInput,
+  meta: { readonly id: string; readonly fingerprint: string; readonly nowIso: string },
+): IssueDraft {
+  const localOnly = buildLocalOnly(input);
+  return finalize({
+    id: meta.id,
+    kind: input.kind,
+    fingerprint: meta.fingerprint,
+    title: '',
+    body: '',
+    titleEditedByUser: false,
+    bodyEditedByUser: false,
+    localOnly,
+    occurredProjects: upsertProject([], input.project, meta.nowIso),
+    occurrenceCount: 1,
+    firstOccurredAt: meta.nowIso,
+    lastOccurredAt: meta.nowIso,
+    status: 'pending',
+    ...(localOnly.envInfo.harnessVersion !== undefined
+      ? { harnessVersionAtOccurrence: localOnly.envInfo.harnessVersion }
+      : {}),
+    ...(input.sourceTicketRef !== undefined ? { sourceTicketRef: input.sourceTicketRef } : {}),
+    draftSchemaVersion: 1,
+  });
+}
+
+/**
+ * 既存の下書きへ 1 回分の発生を足す (設計 4節の表)。
+ * pending: 回数・最終発生時刻・プロジェクト一覧を更新し、編集されていなければ題名・本文を作り直す。
+ * dismissed: 回数を足すだけ (エピック決定どおり)。
+ * posted: 開いている issue への表示・閉じた issue の再発は bdboard-4y8q.5 の仕事。それまでは
+ * 回数を失わないよう dismissed と同じく足すだけにする (現時点では posted になる経路が無い)。
+ */
+export function addOccurrence(existing: IssueDraft, input: ReceiveDraftInput, nowIso: string): IssueDraft {
+  if (existing.status !== 'pending') {
+    return { ...existing, occurrenceCount: existing.occurrenceCount + 1 };
+  }
+  return finalize({
+    ...existing,
+    occurrenceCount: existing.occurrenceCount + 1,
+    lastOccurredAt: nowIso,
+    occurredProjects: upsertProject(existing.occurredProjects, input.project, nowIso),
+  });
+}
+
+/**
+ * 1 時間 20 件の枠を超えた新規指紋を、その時間バケツの「大量発生」下書きへ丸め込む。
+ * existing が無ければ新しく作る。公開本文は一般的な文面に留め、元の指紋は localOnly にだけ残す。
+ */
+export function foldIntoMassDraft(
+  existing: IssueDraft | undefined,
+  input: ReceiveDraftInput,
+  meta: {
+    readonly id: string;
+    readonly massFingerprint: string;
+    readonly foldedFingerprint: string;
+    readonly nowIso: string;
+  },
+): IssueDraft {
+  const base: IssueDraft = existing ?? {
+    id: meta.id,
+    kind: input.kind,
+    fingerprint: meta.massFingerprint,
+    title: '',
+    body: '',
+    titleEditedByUser: false,
+    bodyEditedByUser: false,
+    localOnly: {
+      symptomRaw: '',
+      causeRaw: '',
+      preventionRaw: '',
+      errorTextTruncated: false,
+      envInfo: normalizeEnvInfo(input.envInfo),
+      foldedFingerprints: [],
+    },
+    occurredProjects: [],
+    occurrenceCount: 0,
+    firstOccurredAt: meta.nowIso,
+    lastOccurredAt: meta.nowIso,
+    status: 'pending',
+    draftSchemaVersion: 1,
+  };
+  const folded = base.localOnly.foldedFingerprints ?? [];
+  const foldedNext =
+    folded.includes(meta.foldedFingerprint) || folded.length >= ISSUE_DRAFT_MAX_FOLDED_FINGERPRINTS
+      ? folded
+      : [...folded, meta.foldedFingerprint];
+  return finalize({
+    ...base,
+    occurrenceCount: base.occurrenceCount + 1,
+    lastOccurredAt: meta.nowIso,
+    occurredProjects: upsertProject(base.occurredProjects, input.project, meta.nowIso),
+    localOnly: { ...base.localOnly, foldedFingerprints: foldedNext },
+  });
+}

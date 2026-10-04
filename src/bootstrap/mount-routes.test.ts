@@ -32,6 +32,7 @@ function buildDeps(overrides: Partial<MountRoutesDeps> = {}): MountRoutesDeps {
     agentRunRouter: stubRouter('/__sentinel/agent-run'),
     tunnelRouter: stubRouter('/__sentinel/tunnel'),
     updateCheckRouter: stubRouter('/__sentinel/update-check'),
+    issueReportsRouter: stubRouter('/__sentinel/issue-reports'),
     aiQuotaRouter: stubRouter('/__sentinel/ai-quota'),
     chatRouter: stubRouter('/__sentinel/chat'),
     staticSpa: { webDistDir: '/tmp/does-not-matter', spaIndexHtml: '<html></html>' },
@@ -61,6 +62,7 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
       '/__sentinel/agent-run',
       '/__sentinel/tunnel',
       '/__sentinel/update-check',
+      '/__sentinel/issue-reports',
       '/__sentinel/ai-quota',
       '/__sentinel/chat',
     ]);
