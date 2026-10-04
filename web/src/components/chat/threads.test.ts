@@ -120,10 +120,13 @@ describe('appendSentThread', () => {
     expect(appendSentThread([thread('c', 'C')], sent, undefined)).toEqual([thread('c', 'C'), sent]);
   });
 
-  it('題名が null(未設定)の既存行はその null を残す', () => {
-    const existing: ChatThreadDto = { ...thread('a', 'x'), title: null };
-    expect(appendSentThread([existing], thread('a', 'second message'), undefined)).toEqual([
-      { ...existing, updatedAt: thread('a', 'second message').updatedAt },
+  // サーバーの題名は「付けた名前 ?? 最初のユーザー発言」なので、null は「名前も保存済みメッセージも無い」。
+  // その行への送信がその最初の発言で、次のサーバー一覧では送った文が題名になる(CLI セッション採用直後がこれ)。
+  it('題名が null(名前も保存済みメッセージも無い)の既存行は送った文で埋め、ピン留めは残す', () => {
+    const existing: ChatThreadDto = { ...thread('a', 'x'), title: null, pinned: true };
+    const sent: ChatThreadDto = { ...thread('a', 'my first question'), updatedAt: '2026-02-02T00:00:00Z' };
+    expect(appendSentThread([existing], sent, undefined)).toEqual([
+      { ...existing, title: 'my first question', updatedAt: '2026-02-02T00:00:00Z' },
     ]);
   });
 

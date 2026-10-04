@@ -14,13 +14,18 @@ export function buildThreadById(threads: readonly ChatThreadDto[]): Map<string, 
 // bdboard-b1rz: 同じ sessionId の既存行があるときは、足す行の題名とピン留めを既存行のものにして、
 // updatedAt だけ entry の値(送信時刻)へ進める。entry の題名(今送った文)と pinned=false は新しい
 // セッションのための仮の値で、既存スレッドへ送るたびに使うと、付けた名前が送った文に変わり、ピンが外れた。
+// ただし既存行の題名が null のときだけは entry の題名(送った文)で埋める。サーバーでは題名が
+// 「付けた名前 ?? 最初のユーザー発言」(application/chat/list-chat-threads.ts)なので、null は「名前も
+// 保存済みメッセージも無い」という意味で、CLI セッションの採用直後がこれに当たる。この送信がその最初の発言で、
+// 次のサーバー一覧ではこの文がそのスレッドの題名になる。null のまま残すと次の一覧取得まで (無題) が続く。
 export function appendSentThread(
   list: readonly ChatThreadDto[],
   entry: ChatThreadDto,
   goneSessionId: string | undefined,
 ): ChatThreadDto[] {
   const existing = list.find((thread) => thread.sessionId === entry.sessionId);
-  const added: ChatThreadDto = existing === undefined ? entry : { ...existing, updatedAt: entry.updatedAt };
+  const added: ChatThreadDto =
+    existing === undefined ? entry : { ...existing, title: existing.title ?? entry.title, updatedAt: entry.updatedAt };
   return [...list.filter((thread) => thread.sessionId !== entry.sessionId && thread.sessionId !== goneSessionId), added];
 }
 
