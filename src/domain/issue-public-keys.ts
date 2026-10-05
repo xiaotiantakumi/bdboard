@@ -150,12 +150,14 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
         });
         continue;
       }
+      // 端の検査はたたみ方が違う (toLowerCase。issue-public-fragments.ts) ので、検索の鍵を表のたたみで 1 つにまとめても、
+      // 変種はすべて端の鍵に渡す (根と同じ)。µ/μ・ς/σ・ſ/s・U+1FBE/ι は表では同じ、toLowerCase では別 (bdboard-uudb のレビュー MAJOR-1)。
+      addFragmentKey(variant);
       const literal = caseInsensitiveLiteral(variant, false);
       const key = `${category}\0${literal.folded}`;
       if (seenPatterns.has(key)) continue;
       seenPatterns.add(key);
       replaceableNouns.push({ kind: category, literal });
-      addFragmentKey(variant);
     }
   }
   const fragmentKeys: readonly FragmentKey[] = fragments.keys;

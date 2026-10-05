@@ -30,7 +30,8 @@ describe('case-insensitive literal search (bdboard-uudb)', () => {
     const pick = (): string => ALPHABET[next() % ALPHABET.length] ?? '';
     for (let iteration = 0; iteration < 3000; iteration += 1) {
       const key = Array.from({ length: 1 + (next() % 4) }, pick).join('');
-      // 本文は、鍵の各文字を同じ類の別の文字に替えたものと、でたらめな文字を混ぜる。
+      // 本文は、鍵そのものと、でたらめな文字を混ぜる (同じ類の別の文字に替えた形は、乱択の文字で偶然に出るものと、下の 1 文字ずつの
+      // 網羅のテストで確かめる)。
       const variants = [...ALPHABET].filter((candidate) => new RegExp(escapeRegExp(candidate), 'iu').test(key));
       const pieces = Array.from({ length: 12 }, () => (next() % 3 === 0 && variants.length > 0 ? key : pick()));
       const text = pieces.join('') + (variants[next() % Math.max(1, variants.length)] ?? '');
@@ -54,6 +55,39 @@ describe('case-insensitive literal search (bdboard-uudb)', () => {
     for (const letter of letters) {
       expect(literalSearcher(text)(caseInsensitiveLiteral(letter, false))).toEqual(regexSpans(text, letter, false));
     }
+  });
+
+  it('keeps positions across the 8,192-unit decode chunks, including a surrogate pair split by a chunk edge', () => {
+    // 3 × 8,192 + 1 単位。たたみで変わる文字 (代表は類の最小のコードポイントなので q は Q に) で埋め、たたんだ文字列を作り直す経路を通す。
+    const units = Array.from({ length: 3 * 8192 + 1 }, () => 'q');
+    const place = (at: number, value: string): void => {
+      for (let offset = 0; offset < value.length; offset += 1) units[at + offset] = value.charAt(offset);
+    };
+    place(8191, '\u{10400}'); // 上位サロゲートが 8,191、下位が 8,192
+    place(16380, 'BoUnDaRy'); // 16,383 / 16,384 をまたぐ
+    place(24569, 'bOuNdArY'); // 24,575 / 24,576 (最後のチャンクは 1 単位) をまたぐ
+    const text = units.join('');
+    expect(text.length).toBe(3 * 8192 + 1);
+    for (const key of ['boundary', 'qbOUNDARY', '\u{10428}', 'q\u{10428}q']) {
+      for (const root of [false, true]) {
+        const expected = regexSpans(text, key, root);
+        // 根は直後が英字の位置では一致しないので、根の鍵は末尾の 1 件だけのことがある (0 件になるのは根のときだけ)。
+        expect(expected.length > 0 || root).toBe(true);
+        expect(literalSearcher(text)(caseInsensitiveLiteral(key, root))).toEqual(expected);
+      }
+    }
+  });
+
+  it('does not reuse the fold of a different text of the same length and the same head', () => {
+    const head = 'p'.repeat(64);
+    const first = `${head}xxBoundaryxx`;
+    const second = `${head}xxxxxxxxxxxx`;
+    const key = caseInsensitiveLiteral('boundary', false);
+    for (const text of [first, second, first, second]) {
+      expect(literalSearcher(text)(key)).toEqual(regexSpans(text, 'boundary', false));
+    }
+    expect(literalSearcher(first)(key)).toEqual([{ start: 66, end: 74 }]);
+    expect(literalSearcher(second)(key)).toEqual([]);
   });
 
   it('does not search a text shorter than the key, and keeps the root follower rule at the end of the text', () => {

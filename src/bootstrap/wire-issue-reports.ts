@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto';
 import type { Hono } from 'hono';
 import { createIssueDraftService } from '../application/issue-report/issue-draft-service.js';
 import type { PackRegistryPort } from '../application/ports/pack-registry.js';
+import { caseFoldingTableUsable } from '../domain/issue-public-casefold.js';
 import { createFsIssueDraftStorage } from '../infrastructure/fs/fs-issue-draft-storage.js';
 import { resolveIssueDraftsDir } from '../infrastructure/fs/resolve-issue-drafts-dir.js';
 import { createIssueReportRoutes } from '../interface/http/issue-report-routes.js';
@@ -20,6 +21,8 @@ export interface WireIssueReportsDeps {
   /** 最新の harness pack の版を読む (1 件の取得の「版の比較」、bdboard-4y8q.3.1)。 */
   readonly packRegistry: Pick<PackRegistryPort, 'listPacks'>;
   readonly log?: (message: string) => void;
+  /** 公開本文の大文字小文字の表が使えるか (既定は caseFoldingTableUsable。テストが差し替える)。 */
+  readonly caseTableUsable?: () => boolean;
 }
 
 /**
@@ -55,6 +58,13 @@ export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRout
   });
 
   log(`Issue report drafts: storing under ${draftsDir}`);
+
+  // 公開本文の大文字小文字の表 (bdboard-uudb)。エンジンの自己検査に落ちると、以前の正規表現の探し方に黙って戻る (結果は同じだが、
+  // 大きい鍵で組み立てが数分かかる)。起動の後に 1 回だけ確かめ (表は 0.1〜0.3 秒で作られ、以後の組み立てが使う)、落ちたら code だけ出す。
+  const caseTableUsable = deps.caseTableUsable ?? caseFoldingTableUsable;
+  setImmediate(() => {
+    if (!caseTableUsable()) log('issue public body: case table unavailable, using the slow regex search (case-table-fallback)');
+  });
 
   return { issueReportsRouter };
 }

@@ -13,7 +13,8 @@
  *   - リテラルの各文字は、本文の 1 コードポイントにだけ一致する。鍵が位置 p で一致する ⇔ 各コードポイントが同じ同値類にある。
  *   - 表: 大文字小文字で変わりうる文字 (Changes_When_Casefolded か Changes_When_Casemapped。約 3,000 文字) を並べた文字列を、
  *     各文字の `/x/giu` で探して、同値類をエンジンから直接得る。代表は類の中で最小のコードポイント。
- *   - 表の外の文字は自分だけの類 (たたまない): 単純なたたみで別の文字になる文字は Changes_When_Casefolded なので表に入る。
+ *   - 表の外の文字は自分だけの類 (たたまない): 単純なたたみで別の文字になる文字は Changes_When_Casefolded か Changes_When_Casemapped
+ *     なので表に入る (U+1FBE は NFD が ι なので Changes_When_Casefolded ではなく、Changes_When_Casemapped で入る)。
  *     表を作るときに、(1) 類が対称で推移的 (どの要素から引いても同じ類) (2) 類の中で UTF-16 の長さが混ざらない (たたんでも位置が
  *     ずれない) (3) 表の文字を集めた `/[…]/giu` が表の外の文字に一致しない、を確かめる。どれかが成り立たないエンジンでは表を使わず、
  *     以前と同じ `/…/giu` で探す (遅いが同じ結果)。
@@ -82,9 +83,8 @@ function buildTable(): CaseTable | null {
   const bmp = new Uint16Array(0x10000);
   for (let unit = 0; unit < 0x10000; unit += 1) bmp[unit] = unit;
   for (const [codePoint, target] of canonical) {
-    if (codePoint > 0xffff) continue;
-    if (target > 0xffff) return null; // (2) と同じ: 長さが変わるなら使わない。
-    bmp[codePoint] = target;
+    // (2) で類の幅が揃い、代表は類の最小値なので、BMP の文字の代表は BMP。
+    if (codePoint <= 0xffff) bmp[codePoint] = target;
   }
   return { canonical, bmp };
 }
@@ -122,7 +122,7 @@ function foldCase(value: string, { canonical, bmp }: CaseTable): string {
         continue;
       }
     }
-    const target = bmp[unit] ?? unit;
+    const target = bmp[unit];
     if (target !== unit) changed = true;
     units[index] = target;
   }
@@ -137,10 +137,17 @@ function foldCase(value: string, { canonical, bmp }: CaseTable): string {
 
 /**
  * 直前にたたんだ本文とその結果。1 回の置き換えでは、根・LONG の名前・最後の網が同じ本文を続けて探すので、たたむのは 1 回で済む。
- * 純粋な関数の結果を覚えるだけなので、一致の結果は変わらない。
+ * 純粋な関数の結果を覚えるだけなので、一致の結果は変わらない。本文は手元のパスやトークンを含みうるので、組み立ての終わりに
+ * forgetFoldedText で捨てる (公開には出ないが、次の組み立てまでメモリに残さない)。
  */
 let lastText: string | undefined;
 let lastFolded = '';
+
+/** 覚えている本文とたたみを捨てる (buildPublicIssueBody の終わりで呼ぶ)。 */
+export function forgetFoldedText(): void {
+  lastText = undefined;
+  lastFolded = '';
+}
 
 function foldText(text: string, caseTableValue: CaseTable): string {
   if (text !== lastText) {
