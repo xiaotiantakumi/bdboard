@@ -11,7 +11,7 @@
 //   (b) ci-head   — PR head の木 (gate 済みの記録の head は、prepare が必須チェック pass を確かめた head。gate が
 //                   head 不変を再確認している)。クラス N の着地木はこれと同じ。
 // クラス L の lightTree は証拠にしない (軽量チェックはテストを走らせていない)。L の着地木は merge-tree の木で
-// head の木とは違うので (b) にも当たらない。
+// head の木と通常は違うので (b) には当たらない (main の移動が head に何も足さない場合 — コミットとその revert — は当たる)。
 // 証拠を引けるのは finish だけ (gate 済みの状態ファイルがある)。手動の merge-pr verify と gate の自己修復は
 // 対象外で、従来の分類器 (凍結) だけで判定する (docs/GIT-WORKFLOW.md「One retry for a landed failure」)。
 import { run } from './exec.mjs';

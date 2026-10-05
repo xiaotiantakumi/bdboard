@@ -61,7 +61,8 @@ function untrackedFiles(root) {
  * bdboard-wj9m: verify が verify スロット待ちの打ち切り (scripts/verify-slot.mjs の
  * SLOT_WAIT_TIMEOUT_EXIT_CODE) で終わったときも 'error' (verify は走っていない。failure を書くと
  * main は壊れていないのに main-broken と誤記録され、枠の保持 (holdBrokenMain) にまで至る)。
- * bdboard-xdk8: ledger: true の verify が落ち、失敗が全部時間切れの形なら 1 回だけ再実行する。台帳の
+ * bdboard-xdk8: green が無い (下の bdboard-xw00 を参照) とき、ledger: true の verify が落ち、失敗が全部
+ * 時間切れの形なら 1 回だけ再実行する。台帳の
  * description に「retried after load-induced failure」、監査ログに landed-verify-retry と 1 回目のログの
  * パスを残す。再実行が落ちれば failure、スロット待ちの打ち切りなら error (記録しない)。再実行したかは
  * 返り値の retried (呼び出し元が landed-verify の監査行に retried=1 を足す)。
