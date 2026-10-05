@@ -15,16 +15,18 @@ function sample(name: string, contents = 'abc'): PickedImage {
 interface SetupOptions {
   readonly images?: readonly PickedImage[];
   readonly problems?: readonly string[];
+  readonly notice?: string;
   readonly disabled?: boolean;
 }
 
-function setup({ images = [], problems = [], disabled = false }: SetupOptions = {}) {
+function setup({ images = [], problems = [], notice = '', disabled = false }: SetupOptions = {}) {
   const onAddFiles = vi.fn();
   const onRemove = vi.fn();
   const view = render(
     <IssueDraftImagePicker
       images={images}
       problems={problems}
+      notice={notice}
       disabled={disabled}
       onAddFiles={onAddFiles}
       onRemove={onRemove}
@@ -213,6 +215,44 @@ describe('IssueDraftImagePicker: refused images', () => {
   });
 });
 
+// bdboard-8zwi: 付けた・外したは画面では見えるが、読み上げには届かなかった。polite な status で伝える。
+describe('IssueDraftImagePicker: announcing what was attached or removed', () => {
+  it('has a polite status container even when nothing was announced yet, so a later change is read out', () => {
+    setup();
+    const status = screen.getByRole('status');
+    expect(status).toBeInTheDocument();
+    expect(status).toBeEmptyDOMElement();
+  });
+
+  it('puts the notice in that same container and replaces it in place, not by adding a new status', () => {
+    const { view, onAddFiles, onRemove } = setup({ notice: '1 枚の画像を付けました (全部で 1 枚)。' });
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('1 枚の画像を付けました (全部で 1 枚)。');
+    view.rerender(
+      <IssueDraftImagePicker
+        images={[]}
+        problems={[]}
+        notice="「a.png」を外しました (全部で 0 枚)。"
+        disabled={false}
+        onAddFiles={onAddFiles}
+        onRemove={onRemove}
+      />,
+    );
+    expect(screen.getByRole('status')).toBe(status);
+    expect(status).toHaveTextContent('「a.png」を外しました (全部で 0 枚)。');
+  });
+
+  it('keeps the notice out of sight (screen readers only) so it does not move the layout', () => {
+    setup({ notice: '1 枚の画像を付けました (全部で 1 枚)。' });
+    expect(screen.getByRole('status')).toHaveClass('sr-only');
+  });
+
+  it('has no accessibility violations with a notice', async () => {
+    const { view } = setup({ images: [sample('a.png')], notice: '1 枚の画像を付けました (全部で 1 枚)。' });
+    await expectNoA11yViolations(view.container);
+  });
+});
+
 describe('IssueDraftImagePicker: thumbnails', () => {
   let urls: ReturnType<typeof stubObjectUrls>;
 
@@ -242,7 +282,7 @@ describe('IssueDraftImagePicker: thumbnails', () => {
     const second = sample('b.png');
     const { view } = setup({ images: [first, second] });
     view.rerender(
-      <IssueDraftImagePicker images={[second]} problems={[]} disabled={false} onAddFiles={vi.fn()} onRemove={vi.fn()} />,
+      <IssueDraftImagePicker images={[second]} problems={[]} notice="" disabled={false} onAddFiles={vi.fn()} onRemove={vi.fn()} />,
     );
     expect(urls.revoke).toHaveBeenCalledTimes(1);
     expect(urls.revoke).toHaveBeenCalledWith('blob:preview-1');
@@ -254,7 +294,7 @@ describe('IssueDraftImagePicker: thumbnails', () => {
     const second = sample('b.png');
     const { view } = setup({ images: [first, second] });
     view.rerender(
-      <IssueDraftImagePicker images={[second]} problems={[]} disabled={false} onAddFiles={vi.fn()} onRemove={vi.fn()} />,
+      <IssueDraftImagePicker images={[second]} problems={[]} notice="" disabled={false} onAddFiles={vi.fn()} onRemove={vi.fn()} />,
     );
     expect(urls.create).toHaveBeenCalledTimes(2);
   });

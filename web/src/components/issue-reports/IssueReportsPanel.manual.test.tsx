@@ -280,4 +280,64 @@ describe('IssueReportsPanel: 新しく報告の画像 (bdboard-4y8q.6.9)', () =>
     expect(fetchIssueDraft).toHaveBeenCalledWith(NEW_ID);
     expect(createManualIssueDraft).toHaveBeenCalledTimes(1);
   });
+
+  // bdboard-8zwi: 画像が付かなかった結果の画面を出している間に「新しく報告」を押しても、何も変わらなかった。
+  describe('pressing 新しく報告 while the result of a failed image is shown', () => {
+    async function reachTheResult(user: ReturnType<typeof userEvent.setup>) {
+      vi.mocked(uploadIssueDraftImage).mockRejectedValue(
+        new ApiError(400, 'invalid or unsupported image data', { errorMessage: 'invalid or unsupported image data' }),
+      );
+      await openWritingScreen(user);
+      chooseImage('shot.png', 'a');
+      await user.type(screen.getByRole('textbox', { name: /題名/ }), 'Board freezes');
+      await user.type(screen.getByRole('textbox', { name: /説明/ }), 'It freezes when I open the tab');
+      await user.click(screen.getByRole('button', { name: '送る' }));
+      await screen.findByRole('heading', { name: '下書きを作りました' });
+    }
+
+    it('brings up a new, empty writing screen, and does not send the finished report again', async () => {
+      const user = renderPanel({ hostname: 'localhost' });
+      await reachTheResult(user);
+
+      await user.click(screen.getByRole('button', { name: '新しく報告' }));
+
+      expect(screen.queryByRole('heading', { name: '下書きを作りました' })).toBeNull();
+      expect(screen.getByRole('form', { name: '新しく報告' })).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: /題名/ })).toHaveValue('');
+      expect(screen.getByRole('textbox', { name: /説明/ })).toHaveValue('');
+      // 前の報告の画像は持ち越さない。
+      expect(screen.queryByRole('list', { name: '付ける画像' })).toBeNull();
+      expect(createManualIssueDraft).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('textbox', { name: /題名/ })).toHaveFocus();
+    });
+
+    it('can send a second report from there, as a new draft', async () => {
+      const user = renderPanel({ hostname: 'localhost' });
+      await reachTheResult(user);
+      await user.click(screen.getByRole('button', { name: '新しく報告' }));
+      vi.mocked(uploadIssueDraftImage).mockReset();
+      await user.type(screen.getByRole('textbox', { name: /題名/ }), 'Second report');
+      await user.type(screen.getByRole('textbox', { name: /説明/ }), 'Another thing');
+      await user.click(screen.getByRole('button', { name: '送る' }));
+      expect(createManualIssueDraft).toHaveBeenCalledTimes(2);
+      expect(createManualIssueDraft).toHaveBeenLastCalledWith({ title: 'Second report', description: 'Another thing' });
+    });
+
+    it('does not wipe a writing screen that is still being filled in (pressing the button again keeps the input)', async () => {
+      const user = renderPanel({ hostname: 'localhost' });
+      await openWritingScreen(user);
+      await user.type(screen.getByRole('textbox', { name: /題名/ }), 'Half written');
+      await user.click(screen.getByRole('button', { name: '新しく報告' }));
+      expect(screen.getByRole('textbox', { name: /題名/ })).toHaveValue('Half written');
+    });
+
+    it('does not wipe the new writing screen either, after the result was left behind', async () => {
+      const user = renderPanel({ hostname: 'localhost' });
+      await reachTheResult(user);
+      await user.click(screen.getByRole('button', { name: '新しく報告' }));
+      await user.type(screen.getByRole('textbox', { name: /題名/ }), 'Second report');
+      await user.click(screen.getByRole('button', { name: '新しく報告' }));
+      expect(screen.getByRole('textbox', { name: /題名/ })).toHaveValue('Second report');
+    });
+  });
 });

@@ -37,6 +37,9 @@ export function IssueReportsPanel({ reportProject, hostname = window.location.ho
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 右ペインに「新しく報告」の書く画面を出している間は true (詳細の代わりに出す)。
   const [composing, setComposing] = useState(false);
+  // 「新しく報告」を押して書く画面を作り直した回数 (form の key)。画像が付かなかった結果の画面を出している間に押されたときだけ増やす (bdboard-8zwi)。
+  const [composeRound, setComposeRound] = useState(0);
+  const [composeResultShown, setComposeResultShown] = useState(false);
   const localAccess = isLoopbackHostname(hostname);
   const noticeId = useId();
   // 件数のバッジと同じ間隔で読み直す (下書きは bd の外にあり SSE では届かない。バッジと一覧の数を食い違わせない)。
@@ -67,6 +70,8 @@ export function IssueReportsPanel({ reportProject, hostname = window.location.ho
               onClick={() => {
                 setSelectedId(null);
                 setComposing(true);
+                // 結果の画面を出している間は新しい書く画面にする (押しても何も変わらない、をなくす)。書きかけの画面は作り直さず、入力を残す。
+                if (composeResultShown) setComposeRound((round) => round + 1);
               }}
             >
               新しく報告
@@ -117,6 +122,8 @@ export function IssueReportsPanel({ reportProject, hostname = window.location.ho
       <div className="issue-reports-detail-pane">
         {composing ? (
           <IssueDraftManualForm
+            key={composeRound}
+            onResultShownChange={setComposeResultShown}
             project={reportProject}
             localAccess={localAccess}
             onCancel={() => setComposing(false)}

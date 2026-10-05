@@ -63,6 +63,36 @@ describe('IssueDraftImageFailures (bdboard-4y8q.6.9)', () => {
     expect(screen.getByRole('heading', { name: '下書きを作りました' })).not.toHaveFocus();
   });
 
+  // bdboard-8zwi: 送り直しても同じ画像が同じ理由で落ちると、alert の文は前と同じ。読み上げは変化のないものを読まないので、
+  // 結果が新しくなるたびに alert の要素を作り直して、新しい alert として読ませる。
+  it('renews the alert element when the list of failures is renewed, even when the sentence is the same', () => {
+    const { view, onRetry, onOpen } = setup();
+    const first = screen.getByRole('alert');
+    view.rerender(
+      <IssueDraftImageFailures failures={[...FAILURES]} sending={false} onRetry={onRetry} onOpen={onOpen} />,
+    );
+    const second = screen.getByRole('alert');
+    expect(second).not.toBe(first);
+    expect(first).not.toBeInTheDocument();
+    expect(second).toHaveTextContent('下書きは作れましたが、次の画像は付けられませんでした。');
+  });
+
+  it('keeps the same alert element on a re-render with the same list (the sending toggle is not a new result)', () => {
+    const { view, onRetry, onOpen } = setup();
+    const first = screen.getByRole('alert');
+    view.rerender(<IssueDraftImageFailures failures={FAILURES} sending onRetry={onRetry} onOpen={onOpen} />);
+    expect(screen.getByRole('alert')).toBe(first);
+  });
+
+  // 狭い幅で 44px にする規則 (styles/issue-reports.css) は、この class を目印にする。規則そのものは index.css.issueDraftImageTouchTarget.test.ts が見る。
+  it('puts both buttons in the container that the 44px narrow-width rule targets', () => {
+    setup();
+    const actions = document.querySelector('.issue-draft-image-failure-actions');
+    expect(actions).not.toBeNull();
+    expect(actions).toContainElement(screen.getByRole('button', { name: '付かなかった画像をもう一度送る' }));
+    expect(actions).toContainElement(screen.getByRole('button', { name: '下書きを開く' }));
+  });
+
   it('calls onRetry from the retry button and onOpen from the open button', async () => {
     const { user, onRetry, onOpen } = setup();
     await user.click(screen.getByRole('button', { name: '付かなかった画像をもう一度送る' }));

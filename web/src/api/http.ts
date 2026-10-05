@@ -105,6 +105,12 @@ export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T>
   return (await res.json()) as T;
 }
 
+/** 本文をバイト列で受け取る GET (画像など)。失敗は fetchJson と同じ ApiError。 */
+export async function fetchArrayBuffer(path: string): Promise<ArrayBuffer> {
+  const res = await fetchOk(path);
+  return res.arrayBuffer();
+}
+
 /**
  * fetchJson と同じだが、応答の ETag ヘッダも返す (bdboard-mqoa)。条件付きの書き込みの If-Match に、読んだときの ETag を付けるため。
  * ブラウザの HTTP キャッシュが 304 を処理した応答でも、保存済みの本文と一緒に ETag が読める。ヘッダが無ければ undefined。
