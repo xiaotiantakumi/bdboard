@@ -64,6 +64,17 @@ describe('createFsIssueDraftStorage', () => {
     expect(onDisk.id).toBe(ID_1);
   });
 
+  it('keeps the suspected leaks of an edited draft through a save and a read (bdboard-4y8q.3.1)', async () => {
+    const storage = createFsIssueDraftStorage(baseDir);
+    const draft = makeDraft(ID_1, {
+      bodyEditedByUser: true,
+      suspectedLeaks: [{ field: 'body', kind: 'home-path', start: 3, end: 20 }],
+      suspectedLeaksOmitted: 0,
+    });
+    await storage.save(draft);
+    expect(await storage.get(ID_1)).toEqual(draft);
+  });
+
   it('overwrites on a second save and leaves no temp file behind', async () => {
     const storage = createFsIssueDraftStorage(baseDir);
     await storage.save(makeDraft(ID_1));
@@ -135,6 +146,18 @@ describe('createFsIssueDraftStorage', () => {
       await fs.mkdir(path.join(baseDir, BROKEN_ID), { recursive: true });
       await fs.writeFile(path.join(baseDir, BROKEN_ID, 'draft.json'), content);
     };
+
+    it('a suspected leak that starts after it ends (start > end) is skipped; start === end still reads (bdboard-4y8q.3.1 n-B)', async () => {
+      const leak = (start: number, end: number) => ({ field: 'body' as const, kind: 'key-overflow', start, end });
+      const storage = createFsIssueDraftStorage(baseDir);
+      const empty = makeDraft(ID_1, { bodyEditedByUser: true, suspectedLeaks: [leak(0, 0)] });
+      await storage.save(empty);
+      expect(await storage.get(ID_1)).toEqual(empty);
+      await expectSkippedWithOneWarning(
+        () => writeBroken(JSON.stringify(makeDraft(BROKEN_ID, { bodyEditedByUser: true, suspectedLeaks: [leak(5, 4)] }))),
+        'does not match the draft format',
+      );
+    });
 
     // Windows は「ディレクトリでないものの下」を ENOENT と報告する (ENOTDIR にならない) ので、
     // 「飛ばして警告」ではなく「無い下書き」として扱われる。この行は POSIX だけで確かめる。
