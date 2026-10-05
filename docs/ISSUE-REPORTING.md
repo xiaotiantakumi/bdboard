@@ -997,7 +997,7 @@ function normalizeErrorText(text: string): string {
 
 | 部品 | 役割 |
 |---|---|
-| `createSelfErrorReporter({service, throttle, listProjects, envInfo, log, now?})` | `report({source, errorText, agentNote?, project?})`(伏せる → 間引く → `receive` を待たずに呼ぶ。**4y8q.6.4 で変わった**: `receive` の完了を待ち、`'recorded' | 'throttled' | 'skipped'` を返す。下の「本体エラーの取り込み」の逸脱表 2)と `observeRefresh(result, projects)`(6.2 の tracker が選んだ報告をそのまま `receive` へ)。どちらも返す Promise は **reject しない**(呼び出し側は `void` で捨ててよい) |
+| `createSelfErrorReporter({service, throttle, listProjects, envInfo, log, now?})` | `report({source, errorText, agentNote?, project?})`(伏せる → 間引く → `receive` を待たずに呼ぶ。**4y8q.6.4 で変わった**: `receive` の完了を待ち、`'recorded' | 'throttled' | 'skipped'` を返す。下の「本体エラーの取り込み」の逸脱表 2。**4y8q.6.10 で変わった**: 保存に失敗したキーは間引きの記録を残さない。逸脱表 13)と `observeRefresh(result, projects)`(6.2 の tracker が選んだ報告をそのまま `receive` へ)。どちらも返す Promise は **reject しない**(呼び出し側は `void` で捨ててよい) |
 | `createRefreshResultObserver({discovery, cache, onResult, logError})`(`src/application/board/refresh-result-observer.ts`) | `discover()` の結果を覚える包みと、結果 1 回ごとの `onResult(result, projects)` の呼び出し(投げない) |
 | `wireSelfErrorReporter` | throttle・envInfo(`serverEnvInfo`)・停止の環境変数をつないで、`reporter` と `onRefreshResult` を返す(止めているときは両方 `undefined`) |
 
@@ -1024,8 +1024,10 @@ discovery が返す Project は `prefixes` が常に `[]` で(接頭辞は bd �
 
 **失敗の扱い**: 取り込みは、リフレッシュを止めない・遅らせない・落とさない。`receive` が reject・同期 throw・`{ok:false}` を返しても、envInfo・伏せる処理・tracker が throw しても、
 reporter の中で握って**ログに code だけ**出す: `self error draft failed (<code>)`(`error.code` が `[A-Za-z0-9_-]{1,40}` のときだけ。それ以外は `unknown`)と
-`self error draft not saved (<reason>)`(`storage-full` など固定の語彙)。パス・message・stack・エラー文は出さない。保存に失敗した報告は、throttle がすでに「報告済み」にしているので、同じキーはその 1 時間は再試行しない(消えるのは 1 件分で、続いていれば
-1 時間後に次の報告が来る)。`onRefreshResult` を呼ぶ側(`createRefreshResultObserver`)も、
+`self error draft not saved (<reason>)`(`storage-full` など固定の語彙)。パス・message・stack・エラー文は出さない。
+**保存に失敗した報告は、throttle の記録を取り消す(bdboard-4y8q.6.10 で変わった)**。この節の初版は、throttle が聞いた時点で「報告済み」にしていたので、保存に失敗しても同じキーはその 1 時間は
+再試行されず、下書きが 1 件もできないまま、画面(6.4 のヘッダー)には `throttled`(報告済み)と見えた。いまは、失敗した報告のキーを throttle に `forget` させ、同じキーの次の `report()` と次のリフレッシュが、もう一度 `receive` を試みる
+(中身は 6.4 の節の逸脱表 13・14)。`onRefreshResult` を呼ぶ側(`createRefreshResultObserver`)も、
 コールバックが throw したら固定文 `Refresh result observer failed` だけ出して続ける。
 なお、起動時の初回リフレッシュが以前から出している `Refresh error [kind] project=…: detail`(`console.error`)はこの取り込みとは別で、今回は変えていない。
 
@@ -1086,11 +1088,14 @@ status が 500 未満の応答にもヘッダーは付けない。
 | `/api/tunnel*`・`/api/chat*`・`/api/runs*`・`/api/sessions*`(前方一致) | `HTTP <status>` と、`error` のラベル(`[A-Za-z0-9 _,'-]` の 80 文字までのものだけ)または例外のクラス名だけ。`detail`・message・stack・本文のほかの欄は取り込まない(接続の URL・認証・会話の本文、エージェントへの指示・作業のパスが入りうるため) |
 | `Error` でない値の throw | `HTTP 500` と `non-Error value thrown`(値は入れない) |
 
-errorText は reporter が伏せ(6.2 の `createSelfErrorMasker`)、`selfErrorKey(source, 伏せた文)` で throttle に聞く。同じルートの同じ失敗を 50 回起こしても `receive` は 1 回。
+errorText は reporter が伏せ(6.2 の `createSelfErrorMasker`)、`selfErrorKey(source, 伏せた文)` で throttle に聞く。同じルートの同じ失敗を 50 回起こしても `receive` は 1 回(保存に成功している間。失敗したキーは下の「ヘッダー」と逸脱表 13 のとおり記録を残さない)。
 
-**ヘッダー `X-Bdboard-Error-Draft`**(画面が同じ失敗を二重に報告しないための印): `recorded`(下書きに保存した)・`throttled`(1 時間以内に報告済みで送らなかった)・`skipped`(拾わない種類・形の合わない source・保存できなかった・内部の失敗・時間切れ)。
+**ヘッダー `X-Bdboard-Error-Draft`**(画面が同じ失敗を二重に報告しないための印): `recorded`(この要求が下書きに保存した)・`throttled`(同じ出どころ・同じエラー文が、1 時間以内に**保存できている**ので送らなかった。
+保存中の同じキーの 1 回目が成功した場合を含む)・`skipped`(拾わない種類・形の合わない source・**保存できなかった**・内部の失敗・時間切れ。保存中の同じキーの 1 回目が失敗した場合を含む)。
+**`throttled` は「下書きができている」だけを言う**(4y8q.6.10。以前の版は、保存の前に throttle に記録していたので、保存に失敗しても 1 時間 `throttled` を返し、画面は「報告済み」と読んでしまった)。保存に失敗した失敗は
+間引きの記録を残さないので、**次の同じ失敗がもう一度保存を試みる**(その応答が `recorded` か、また失敗なら `skipped`)。画面(4y8q.6.5)は `skipped` を「サーバーが下書きにしたとは限らない」と読み、自分の報告を送ってよい(時間切れの `skipped` は、下の 2 秒の説明のとおり保存が裏で成功することもある)。
 `report()` の戻り値が `Promise<'recorded' | 'throttled' | 'skipped'>` になったため、ヘッダーはその値をそのまま使う。**middleware は `report()` の完了を待ってから応答を返す**(保存はディスクの IO を含む)。
-ただし待つのは**最大 2 秒**で、超えたら `skipped` を付けて返す(保存は裏で続くことがあり、この `skipped` は「保存しなかった」とは限らない。画面(4y8q.6.5)の報告は source が違うので指紋も違い、サーバーは 1 件にまとめない。画面は時間切れの `skipped` で二重に報告しうる前提で扱う)。`BDBOARD_SELF_ERROR_DRAFTS=off` のときは reporter が無く
+ただし待つのは**最大 2 秒**で、超えたら `skipped` を付けて返す(保存は裏で続くことがあり、この `skipped` は「保存しなかった」とは限らない。画面(4y8q.6.5)の報告は source が違うので指紋も違い、サーバーは 1 件にまとめない。画面は時間切れの `skipped` で二重に報告しうる前提で扱う。時間切れのあと保存が成功すれば、同じ失敗の次の応答は `throttled`)。`BDBOARD_SELF_ERROR_DRAFTS=off` のときは reporter が無く
 middleware を mount しないので**ヘッダーは付かない**(`skipped` も付けない)。
 
 **止め方**: 6.3 と同じ `BDBOARD_SELF_ERROR_DRAFTS`(`off` / `0` / `false`)。止めているときは 5xx を拾わず、ヘッダーも付かない。500 の JSON を返す `app.onError` は**止めていても付く**(応答の形は取り込みの設定ではないため)。
@@ -1119,6 +1124,9 @@ middleware を mount しないので**ヘッダーは付かない**(`skipped` �
 | 10 | 限界: 新規下書き 20 件/時の共有の枠 | 上の (3)。2 つの形で起きる: ① 伏せられないデータベース名が違う失敗(逸脱表 9)。② **1 つの原因が複数のルートを 5xx にする**(bd が壊れていると、読み取りの API がどれも 502 になる)と、source にルートが入るので**ルートごとに別の下書き**になる。どちらも枠(新規 20 件/時)を使い切ると、残りは 4節の「大量発生」の 1 件に丸め込まれる(本体エラーの下書き全体の枠なので、リフレッシュの失敗も同じ枠から出る)。ルートをまたいで束ねる・API の報告に予算を置く、は 6.4 の範囲外とした(後続の判断) |
 | 11 | 限界: 環境による 503 | チャットのエージェントが無いときの `chat agent unavailable`(503)のように、利用者の環境が原因の 5xx も、チケットの除外(501・507)に無いので拾う(`/api/chat*` はラベルだけ、1 時間に 1 回) |
 | 12 | `report()` の都度、伏せる正規表現を作る | `report()` は呼ばれるたびに `createSelfErrorMasker` を作る(間引きの判断に伏せた文が要るため)。プロジェクト数に比例する。1 秒に何度も 5xx が出る状況で CPU を食う場合の最適化(伏せた表の使い回し・生の文での先行の間引き)は、していない |
+| 13 | 保存に失敗した報告の間引き(bdboard-4y8q.6.10。Opus レビュー minor 3) | 4y8q.6.3〜6.4 の初版は、伏せたあとに throttle へ記録してから `receive` を呼んだので、保存に失敗しても同じキーは 1 時間 `throttled` を返し、下書きは 1 件もできなかった(6.4 で `X-Bdboard-Error-Draft` に出るようになり、画面は `throttled` を「報告済み」と読んでしまう)。**記録は保存の前に取り(同じキーが同時に来ても二重の下書きにならない)、保存に失敗したら `forget` で取り消す**方式にした。「保存に成功した時だけ記録する」にしなかった理由: 保存が終わらない間に来た同じキーも throttle を通ってしまい、reporter が保存中のキーを別に持って弾く必要があり、tracker(6.2)は聞いた時点で記録するので `observeRefresh` 側は結局取り消しが要る。取り消し方式は throttle の API(`forget` は既存)を変えない。**同じキーが同時に 2 回来たとき**(1 回目の `receive` が終わっていない間の 2 回目)は、reporter が保存中のキーを持ち、**2 回目は 1 回目の結果を待つ**: 1 回目が成功なら `throttled`、失敗なら `skipped`(2 回目は保存しない。同時に来た全員が失敗のたびに再試行して、壊れた保存先を押しつぶさないため)。1 回目が失敗したキーは記録が残らないので、**次の `report()` がもう一度 `receive` に届く**。`receive` が `{ok:false}` を返す・reject する・同期 throw する、のどれでも同じ。`forget` が throw しても `report()` は reject しない(ログは code だけ)。テスト: `self-error-reporter-receive-failure.test.ts`・`server-error-capture-receive-failure.test.ts` |
+| 14 | `observeRefresh`(リフレッシュの失敗)も同じ(4y8q.6.10) | **範囲に入れた**。tracker(6.2)は聞いた時点で throttle に記録する(同じ throttle を共有するので、同じ問題があった)。reporter が、tracker の報告の `receive` が失敗したとき、その報告のキー(`selfErrorKey(<kind>, 伏せた文)`。報告の source `bd-refresh:<kind>` から `<kind>` を取る)を `forget` する。tracker 自体(domain)は変えていない。次のリフレッシュは、同じエラーがまだ続いていれば再び報告を作る(3 回続けて見えてから報告する種類は、数えた回数が閾値で頭打ちなので、失敗した次の更新で再び届く)。重なったリフレッシュは今までどおり、記録が残っている間は同じキーを報告しない。キーの組み立てを tracker と合わせる前提は、本物の tracker を通すテストで固定した |
+| 15 | 限界: 保存が壊れ続けているとき(4y8q.6.10) | 保存先が失敗し続ける間(`storage-full`・ディスクの書き込みエラーなど)、**`report()` の呼び出しごと・リフレッシュごとに 1 回ずつ `receive` を試み、そのたびにログが 1 行出る**(`self error draft not saved (<reason>)` / `self error draft failed (<code>)`)。以前は同じキーは 1 時間に 1 回だった。失敗の後に間を空ける再試行はしていない(受け入れが「次の `report()` で再び `receive` に届く」ため)。同時に来た同じ `report()` は 1 回の試みにまとまる。ログの量や保存先への負荷が問題になる場合は、失敗したキーだけ短い間隔(数分)の記録に置き換える、が次の手 |
 
 ## 5. 公開本文の組み立てと置き換え(項目 e、bdboard-4y8q.2)
 
