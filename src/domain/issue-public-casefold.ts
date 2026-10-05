@@ -44,7 +44,7 @@ function hexEscape(codePoint: number): string {
  * (2) により BMP の文字の代表は BMP、astral の文字の代表は astral なので、BMP は bmp を引くだけでよく、canonical を引くのは
  * サロゲート対の文字だけ。使えないエンジンでは null。
  */
-interface CaseTable {
+export interface CaseTable {
   readonly canonical: ReadonlyMap<number, number>;
   readonly bmp: Uint16Array;
 }
@@ -69,8 +69,14 @@ function caseVariableCharacters(): { readonly codePoints: readonly number[]; rea
 
 const engineRepresentatives = new Map<number, number>();
 
-/** 表を使わず、正規表現エンジンの /…/giu と同じ同値類の最小コードポイントへたたむ。 */
+/**
+ * 表を使わず、正規表現エンジンに尋ねて、1 コードポイントを /…/giu で一致する文字の最小のコードポイントへたたむ (表が使えないときの退避)。
+ * エンジンの関係が同値関係で、大文字小文字で変わりうる文字の中で閉じているとき (表を作るときの (1)(3) が成り立つとき) は、本体の
+ * `/…/giu` と同じ同値類の代表になる。(1)(3) が崩れたエンジンでは食い違いうる。引数は 1 コードポイントだけ。
+ */
 export function engineFoldCodePoint(point: string): string {
+  // 大文字小文字で変わらない文字は自分だけの類 (表の外の文字と同じ前提)。尋ねるのは約 3,000 文字だけで、キャッシュもその数に収まる。
+  if (!CASE_VARIABLE.test(point)) return point;
   const codePoint = point.codePointAt(0);
   if (codePoint === undefined) return point;
   const cached = engineRepresentatives.get(codePoint);
@@ -82,14 +88,21 @@ export function engineFoldCodePoint(point: string): string {
   return representative === codePoint ? point : String.fromCodePoint(representative);
 }
 
-/** 1 コードポイントを、本体検索と同じ同値類の代表へたたむ。 */
-export function foldCodePoint(point: string): string {
+/**
+ * 表で 1 コードポイントをたたむ。表が null (使えないエンジン) のときは engineFoldCodePoint に退避する。foldCodePoint の本体で、
+ * 退避の配線をテストできるよう、表を引数で渡せるように分けてある。引数は 1 コードポイントだけ (複数を渡すと先頭の 1 つだけを見て、後ろを落とす)。
+ */
+export function foldCodePointWith(point: string, caseTableValue: CaseTable | null): string {
   const codePoint = point.codePointAt(0);
   if (codePoint === undefined) return point;
-  const caseTableValue = caseTable();
   if (caseTableValue === null) return engineFoldCodePoint(point);
   const target = codePoint <= 0xffff ? caseTableValue.bmp[codePoint] ?? codePoint : caseTableValue.canonical.get(codePoint) ?? codePoint;
   return target === codePoint ? point : String.fromCodePoint(target);
+}
+
+/** 1 コードポイントを、本体検索と同じ同値類の代表へたたむ (表が使えるときは表、使えないときはエンジンに尋ねる)。引数は 1 コードポイントだけ。 */
+export function foldCodePoint(point: string): string {
+  return foldCodePointWith(point, caseTable());
 }
 
 function buildTable(): CaseTable | null {

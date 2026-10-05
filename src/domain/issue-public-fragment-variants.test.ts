@@ -71,3 +71,15 @@ describe('the edge check folds case the way the body search does (bdboard-2ydj)'
     ]);
   });
 });
+
+describe('a self-overlapping name whose second occurrence ends the field (review of bdboard-2ydj)', () => {
+  // 本体は左から重ならずに探すので、1 つ目と重なる 2 つ目の出現は拾わない。端の検査が末尾の全体の一致も返さないと、
+  // 2 つ目の出現の後ろ (鍵の末尾 4 コードポイント) が残る。以前 (toLowerCase) は ς と σ を別にしていたので、ς 版は偶然伏せていた。
+  it.each([
+    ['final sigma in the text', '-baς-baσ-ba', 'log: -baς-baς-baς-ba'],
+    ['plain ASCII', '-ba1-ba1-ba', 'log: -ba1-ba1-ba1-ba'],
+  ])('%s', (_name, value, errorText) => {
+    const result = buildPublicIssueBody({ ...BASE, errorText }, { projectRoots: [], properNouns: [{ category: 'project', value }] });
+    expect(result.body).toContain('log: <project>\n');
+  });
+});

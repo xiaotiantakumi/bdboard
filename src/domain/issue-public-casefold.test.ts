@@ -5,6 +5,7 @@ import {
   engineFoldCodePoint,
   escapeRegExp,
   foldCodePoint,
+  foldCodePointWith,
   literalSearcher,
 } from './issue-public-casefold.js';
 
@@ -44,6 +45,21 @@ describe('case-insensitive literal search (bdboard-uudb)', () => {
     }
     // 大文字小文字で変わらない文字と孤立サロゲートは、そのまま。
     for (const value of ['7', '漢', '\uD800']) expect(foldCodePoint(value)).toBe(value);
+  });
+
+  it('goes through the engine when the table is unusable (the wiring of the fallback, not only engineFoldCodePoint)', () => {
+    // toLowerCase では別になる対。表が null のときに toLowerCase などへ退避する配線にすると、ここが落ちる。
+    const pairs = [
+      ['µ', 'μ'],
+      ['ς', 'σ'],
+      ['ϑ', 'θ'],
+      ['ſ', 's'],
+      ['ι', 'ι'],
+    ] as const;
+    for (const [left, right] of pairs) {
+      expect(foldCodePointWith(left, null)).toBe(foldCodePointWith(right, null));
+      expect(foldCodePointWith(left, null)).toBe(foldCodePoint(left));
+    }
   });
 
   it('gives the same representative from the engine alone as from the table (the path for an engine without a usable table)', () => {
