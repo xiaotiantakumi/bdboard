@@ -50,7 +50,8 @@ export function wireSelfErrorReporter(deps: WireSelfErrorReporterDeps): WiredSel
   return {
     reporter,
     onRefreshResult: (result, projects) => {
-      void reporter.observeRefresh(result, projects);
+      // observeRefresh は reject しない約束だが、catch の中の log が投げた場合の未処理の reject でプロセスを落とさないための防御。
+      void reporter.observeRefresh(result, projects).catch(() => undefined);
     },
   };
 }
