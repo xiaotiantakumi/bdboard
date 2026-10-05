@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { judgeCheckRows } from './merge-pr/github.mjs';
-import { cancelledChecksSteps } from './merge-pr/messages.mjs';
+import { cancelledChecksSteps, mergeInstructions } from './merge-pr/messages.mjs';
 import { calls, PR, registerTempRepoHooks, run, setup, stateFile, writeFake } from './merge-pr.test-support.mjs';
 
 const JOB = (runId, jobId) => `https://github.com/example/demo/actions/runs/${runId}/job/${jobId}`;
@@ -77,6 +77,16 @@ describe('cancelledChecksSteps', () => {
 
   it('says nothing when nothing was cancelled', () => {
     expect(cancelledChecksSteps([])).toEqual([]);
+  });
+});
+
+describe('mergeInstructions', () => {
+  it('tells the base branch policy refusal (gh pr merge, mergeStateStatus=BLOCKED) apart from the permission refusal and forbids --auto', () => {
+    const lines = mergeInstructions(PR).join('\n');
+    expect(lines).toContain('the base branch policy prohibits the merge');
+    expect(lines).toContain('権限判定の拒否ではない');
+    expect(lines).toContain(`gh pr checks ${PR} --required --json name,bucket`);
+    expect(lines).toContain('--auto は付けない');
   });
 });
 
@@ -146,6 +156,17 @@ describe.skipIf(process.platform === 'win32')('prepare: required checks are judg
     const prepared = run(['prepare', String(PR)]);
     expect(prepared.status).toBe(75);
     expect(prepared.stderr).toContain('取得できませんでした');
+  });
+
+  it('a non-transient gh error that is not "unknown flag" (no required checks reported) is red (2): no fallback call, no retry', () => {
+    setup();
+    writeFake({ checksError: { [PR]: "no required checks reported on the 'bd/demo-1' branch" } });
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(2);
+    expect(prepared.stderr).toContain('必須チェックが green ではありません');
+    expect(prepared.stderr).toContain('no required checks reported');
+    expect(calls('gh', 'checks')).toHaveLength(1);
+    expect(existsSync(stateFile())).toBe(false);
   });
 
   describe('a gh without gh pr checks --json falls back to the exit code', () => {

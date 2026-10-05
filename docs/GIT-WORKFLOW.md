@@ -334,7 +334,11 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   wait for green, then `prepare` again. A GraphQL quota / network error is still exit 75. A gh that
   has no `pr checks --json` falls back to the old exit-code judgement and says so (it cannot tell a
   cancel from a pass). A required check that never reported at all is not in gh's list either; that
-  case is not covered here.
+  case is not covered here. If `gate`'s `gh pr merge` still answers `is not mergeable: the base
+  branch policy prohibits the merge`, that is gh's own check of `mergeStateStatus=BLOCKED` (the
+  required checks / reviews are not satisfied), not the permission classifier: run `finish`, look at
+  `gh pr checks <N> --required --json name,bucket`, and do not add the `--auto` gh suggests
+  (auto-merge would land outside the slot, the CAS and the landed verify).
 - **The merge line is printed, not run by the script** (decision 4 of bdboard-ulxa §6): if the
   permission classifier refuses `gh pr merge`, running it from inside a script would be a
   bypass. Refused → do not retry, run `finish` (it returns the slot), then the human gate
