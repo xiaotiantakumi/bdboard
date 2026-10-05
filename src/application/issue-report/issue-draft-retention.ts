@@ -191,7 +191,12 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
     // (実測の合計が、書き込みの差分を足し続けた棚卸し前の合計より小さい)。何も空いていない掃除では戻さない
     // (毎時戻すと、1 時間に 6 回測り直す元の木阿弥)。
     if (removed.size > 0 || freedOutOfBand) pinnedSurveys = 0;
-    deps.onPruned?.(survey, removed);
+    // 「投げない」の約束をここで守る: 索引を置く側 (onPruned) が投げても、掃除も受け取りも落とさない。
+    try {
+      deps.onPruned?.(survey, removed);
+    } catch (error) {
+      warnOnce(`issue draft index could not be seeded from the prune (${errorCode(error)})`);
+    }
   }
 
   return {

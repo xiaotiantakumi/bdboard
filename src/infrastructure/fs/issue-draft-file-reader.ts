@@ -37,6 +37,16 @@ export function classifyReadError(code: string | undefined, platform: NodeJS.Pla
   return 'unlisted';
 }
 
+/**
+ * draft.json の読み出し (または stat) の失敗が、一覧に抜けを残すか (bdboard-xvo2)。ENOENT (無い) と恒久の失敗 (ENOTDIR など) は
+ * 残さない。あとで通るかもしれないもの (ファイル単位・プロセス全体・未列挙) は残す。棚卸しの索引の材料の complete が
+ * scan() と同じ判定になるよう、棚卸しの stat の失敗もここで分類する。
+ */
+export function readFailureLeavesGap(code: string | undefined, platform: NodeJS.Platform): boolean {
+  if (code === 'ENOENT') return false;
+  return classifyReadError(code, platform) !== 'permanent';
+}
+
 export type RawDraftRead =
   | { readonly kind: 'ok'; readonly raw: string }
   | { readonly kind: 'missing' }

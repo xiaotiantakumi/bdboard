@@ -599,8 +599,8 @@ describe('receive: the index is cached only when the listing is complete', () =>
       .mockImplementation(async () => ({ drafts: (await realScan()).drafts, complete: listing.complete }));
     // この describe は scan() 経由の索引づくりを確かめる。indexSeed を付けない storage では scan で作る前提にする。
     vi.spyOn(storage, 'survey').mockImplementation(async () => {
-      const { indexSeed: _indexSeed, ...survey } = await realSurvey();
-      return survey;
+      const full = await realSurvey();
+      return { drafts: full.drafts, totalBytes: full.totalBytes, unmeasured: full.unmeasured };
     });
     return { ...createHarness(undefined, storage), scan };
   }

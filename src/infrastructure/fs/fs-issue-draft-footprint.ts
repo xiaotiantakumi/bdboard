@@ -4,7 +4,7 @@ import type { Stats } from 'node:fs';
 import { isDraftId, type IssueDraft } from '../../domain/issue-draft.js';
 import type { DraftFootprint } from '../../domain/issue-draft-retention.js';
 import type { DraftIndexEntry, DraftSurvey } from '../../application/ports/issue-draft-storage.js';
-import { classifyReadError } from './issue-draft-file-reader.js';
+import { readFailureLeavesGap } from './issue-draft-file-reader.js';
 
 /**
  * 下書きディレクトリの棚卸しと削除 (bdboard-00qh)。fs-issue-draft-storage.ts から切り出した。
@@ -85,9 +85,9 @@ export function createFsDraftFootprints(
       jsonStat = await fs.stat(path.join(deps.draftDir(id), DRAFT_FILE));
     } catch (error) {
       noteUnmeasured(error, unmeasured);
-      // scan() が同じ draft.json を読んだときと同じ判定: 無い (ENOENT) と恒久 (ENOTDIR など) は一覧を欠かさない。
-      // それ以外 (あとで通るかもしれない失敗) は、stat しか試さない棚卸しの索引の材料を欠けた扱いにする。
-      statIncomplete = errorCode(error) !== 'ENOENT' && classifyReadError(errorCode(error), deps.platform) !== 'permanent';
+      // scan() が同じ draft.json を読んだときと同じ判定 (readFailureLeavesGap): 無い (ENOENT) と恒久 (ENOTDIR など) は
+      // 一覧を欠かさない。それ以外 (あとで通るかもしれない失敗) は、索引の材料を欠けた扱いにする。
+      statIncomplete = readFailureLeavesGap(errorCode(error), deps.platform);
     }
     const imageBytes = await measureImages(id, unmeasured);
     const bytes = (jsonStat?.isFile() ? jsonStat.size : 0) + imageBytes;

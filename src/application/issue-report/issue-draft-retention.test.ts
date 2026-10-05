@@ -47,6 +47,21 @@ describe('createDraftRetention', () => {
     expect(onPruned).not.toHaveBeenCalled();
   });
 
+  it('keeps its promise not to throw when onPruned throws: one code-only warning, the prune still counts', async () => {
+    const storage = stubStorage({ drafts: [dismissedFootprint('1-aaaaaaaaaaaaaaaa', 40, 20)], totalBytes: 20, unmeasured: [] });
+    const warn = vi.fn();
+    const onPruned = vi.fn(() => {
+      throw Object.assign(new Error('example-user private message'), { code: 'EFAULT' });
+    });
+    const retention = createDraftRetention({ storage, now: () => NOW, onPruned, warn });
+
+    await expect(retention.pruneNow()).resolves.toBeUndefined();
+
+    expect(storage.remove).toHaveBeenCalledWith('1-aaaaaaaaaaaaaaaa');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('issue draft index could not be seeded from the prune (EFAULT)');
+  });
+
   it('refuses when a removal fails and the ones that did go are not enough, warning with the id and code only', async () => {
     const storage = stubStorage({
       drafts: [dismissedFootprint('1-aaaaaaaaaaaaaaaa', 9, 60), dismissedFootprint('2-bbbbbbbbbbbbbbbb', 5, 60)],

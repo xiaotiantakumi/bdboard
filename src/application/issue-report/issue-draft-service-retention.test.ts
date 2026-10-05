@@ -134,11 +134,13 @@ describe('startup: the first receive waits for one walk of the directory, not tw
     age(base, id, ISSUE_DRAFT_RETENTION_MS + 1);
     const h = createHarness({}, base);
     const scan = vi.spyOn(h.storage, 'scan');
+    const get = vi.spyOn(h.storage, 'get');
     await h.service.pruneOnStart();
     const recreated = await h.service.receive({ kind: 'A', catalogSlug: 'slug-expired', symptom: 'symptom', envInfo: ENV });
     expect(recreated).toMatchObject({ ok: true, outcome: 'created' });
     expect(scan).not.toHaveBeenCalled();
     if (recreated.ok) expect(recreated.draft.fingerprint).toBe(fingerprint);
+    expect(get).not.toHaveBeenCalledWith(id); // 索引に消した id が残っていれば、受け取りがそれを読みに行く
   });
 
   it('falls back to scan when the survey index seed is incomplete or absent', async () => {
@@ -147,7 +149,8 @@ describe('startup: the first receive waits for one walk of the directory, not tw
       const realSurvey = h.storage.survey.bind(h.storage);
       vi.spyOn(h.storage, 'survey').mockImplementation(async () => {
         const result = await realSurvey();
-        return seed === undefined ? (({ indexSeed: _seed, ...rest }) => rest)(result) : { ...result, indexSeed: seed };
+        const withoutSeed = { drafts: result.drafts, totalBytes: result.totalBytes, unmeasured: result.unmeasured };
+        return seed === undefined ? withoutSeed : { ...withoutSeed, indexSeed: seed };
       });
       const scan = vi.spyOn(h.storage, 'scan');
       await h.service.pruneOnStart();

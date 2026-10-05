@@ -201,7 +201,8 @@ describe('retention and the size cap on real files', () => {
     it('seeds the same complete index entries as scan, excluding directories, corrupt JSON and a file that is not a directory', async () => {
       const { storage } = setup();
       await seed(storage, makeDraft(ID_OLD), 0);
-      await seed(storage, makeDraft(ID_OPEN, { status: 'pending', dismissReason: undefined }), 0);
+      await seed(storage, makeDraft(ID_OPEN, { status: 'pending', dismissReason: undefined, lastOccurredAt: '2026-08-02T00:00:00.000Z' }), 0);
+      await fs.mkdir(path.join(baseDir, ID_EXACT, 'images'), { recursive: true }); // draft.json の無いディレクトリ (stat が ENOENT: 欠けない)
       await fs.writeFile(path.join(baseDir, ID_UNDER), 'not a directory'); // draft.json の stat が ENOTDIR (恒久: 一覧は欠けない)
       await fs.mkdir(path.join(baseDir, ID_BAD), { recursive: true });
       await fs.writeFile(path.join(baseDir, ID_BAD, 'draft.json'), '{ broken');
@@ -249,12 +250,22 @@ describe('retention and the size cap on real files', () => {
       vi.resetAllMocks();
       vi.restoreAllMocks();
       const realStat = fs.stat.bind(fs) as unknown as (...args: unknown[]) => Promise<unknown>;
-      vi.spyOn(fs, 'stat').mockImplementation(((...args: unknown[]) => String(args[0]).endsWith(`${ID_BAD}/draft.json`)
+      vi.spyOn(fs, 'stat').mockImplementation(((...args: unknown[]) => String(args[0]).endsWith(path.join(ID_BAD, 'draft.json'))
         ? Promise.reject(Object.assign(new Error('io'), { code: 'EIO' }))
         : realStat(...args)) as unknown as typeof fs.stat);
       const statSurvey = await storage.survey();
       expect(statSurvey.indexSeed?.complete).toBe(false);
       expect(statSurvey.unmeasured).toContain('EIO');
+    });
+
+    it.each([['win32', false], ['linux', true]] as const)('a draft.json stat EPERM on %s: complete is %s (per-file on win32, permanent elsewhere)', async (platform, complete) => {
+      const { storage } = setup({}, { platform });
+      await seed(storage, makeDraft(ID_BAD), 0);
+      const realStat = fs.stat.bind(fs) as unknown as (...args: unknown[]) => Promise<unknown>;
+      vi.spyOn(fs, 'stat').mockImplementation(((...args: unknown[]) => String(args[0]).endsWith(path.join(ID_BAD, 'draft.json'))
+        ? Promise.reject(Object.assign(new Error('perm'), { code: 'EPERM' }))
+        : realStat(...args)) as unknown as typeof fs.stat);
+      expect((await storage.survey()).indexSeed?.complete).toBe(complete);
     });
 
     it('is draft.json plus every file under images/, and carries the status and mtime that retention needs', async () => {
