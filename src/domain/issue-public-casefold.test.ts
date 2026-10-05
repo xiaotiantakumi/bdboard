@@ -157,6 +157,44 @@ describe('case-insensitive literal search (bdboard-uudb)', () => {
     expect(literalSearcher(second)(key)).toEqual([]);
   });
 
+  it('does not reuse the fold of a different text of the same length and the same tail, or the same head and tail (bdboard-qoxj)', () => {
+    // 長さと末尾 (または先頭と末尾) だけで比べる実装は、中身の違う本文に前の本文のたたみを返す。同じ長さで先頭だけが同じ組 (上のテスト) と
+    // 合わせて、先頭・末尾・長さのどれか 1 つ、または先頭と末尾の組で比べる実装をすべて落とす。
+    const head = 'p'.repeat(64);
+    const tail = 'q'.repeat(64);
+    const key = caseInsensitiveLiteral('boundary', false);
+    const pairs = [
+      [`xxBoundaryxx${tail}`, `xxxxxxxxxxxx${tail}`], // 同じ長さ・同じ末尾
+      [`${head}xxBoundaryxx${tail}`, `${head}xxxxxxxxxxxx${tail}`], // 同じ長さ・同じ先頭と末尾 (違うのは真ん中だけ)
+    ] as const;
+    for (const [first, second] of pairs) {
+      expect(first.length).toBe(second.length);
+      for (const text of [first, second, first, second]) {
+        expect(literalSearcher(text)(key)).toEqual(regexSpans(text, 'boundary', false));
+      }
+      expect(literalSearcher(first)(key)).toHaveLength(1);
+      expect(literalSearcher(second)(key)).toEqual([]);
+    }
+  });
+
+  it('reads a lone high surrogate as itself, not as the first half of a pair with the unit after it (bdboard-qoxj)', () => {
+    // 孤立した上位サロゲートの直後が、たたみで変わる文字 (b、サロゲートの対の Deseret) のとき。対として読むと、直後の文字を飲み込んで
+    // たたまず (またはでたらめな単位を書き)、鍵が一致しなくなる。入力は normalizeInline で孤立サロゲートが取れるが、ここは casefold 単体の性質。
+    const HIGH = '\uD800';
+    const cases = [
+      { key: 'b', text: `${HIGH}b` },
+      { key: 'b', text: `qqq${HIGH}bq` },
+      { key: '\u{10400}', text: `a${HIGH}\u{10428}a` },
+      { key: `${HIGH}b`, text: `${HIGH}B${HIGH}b` },
+      { key: 'b', text: `\uDC00b${HIGH}` },
+    ];
+    for (const { key, text } of cases) {
+      const expected = regexSpans(text, key, false);
+      expect(expected.length, `${JSON.stringify({ key, text })}`).toBeGreaterThan(0);
+      expect(literalSearcher(text)(caseInsensitiveLiteral(key, false))).toEqual(expected);
+    }
+  });
+
   it('does not search a text shorter than the key, and keeps the root follower rule at the end of the text', () => {
     const key = caseInsensitiveLiteral('/work/Example', true);
     expect(literalSearcher('/work/exampl')(key)).toEqual([]);

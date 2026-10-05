@@ -29,7 +29,7 @@
  * これは best-effort の機械処理であり、唯一の防御ではない。投稿の前に人が見ることが本来の防御。
  */
 import type { DraftKind } from './issue-draft.js';
-import { forgetFoldedText } from './issue-public-casefold.js';
+import { withFoldedTextMemo } from './issue-public-casefold.js';
 import { prepareKeys, type PreparedKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
 import { codeBlock, codeSpan, type MarkdownPiece } from './issue-public-markdown.js';
@@ -166,6 +166,11 @@ export function buildPublicIssueBody<I extends PublicBuildInput>(
   input: NoExtraKeys<PublicBuildInput, I>,
   keys: LocalOnlyKeys,
 ): PublicBuildResult {
+  // たたんだ本文の覚え (手元のパスやトークンを含みうる) は、この組み立ての間だけ。途中で投げても、次の組み立てまで持ち越さない。
+  return withFoldedTextMemo(() => composePublicIssueBody(input, keys));
+}
+
+function composePublicIssueBody(input: PublicBuildInput, keys: LocalOnlyKeys): PublicBuildResult {
   const prepared = prepareKeys(keys);
   const kindLabel = kindLabelOf(input.kind);
   const name = nameOf(input);
@@ -215,8 +220,6 @@ export function buildPublicIssueBody<I extends PublicBuildInput>(
     ...detectSuspectedLeaks('title', title.text, redactions, prepared),
     ...detectSuspectedLeaks('body', body.text, redactions, prepared),
   ];
-  // たたんだ本文の覚え (手元のパスやトークンを含みうる) を、次の組み立てまで持ち越さない。
-  forgetFoldedText();
   return { title: title.text, body: body.text, redactions, suspectedLeaks, keysTruncated: prepared.truncated };
 }
 

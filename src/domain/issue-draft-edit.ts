@@ -2,6 +2,7 @@ import { ISSUE_DRAFT_MAX_JSON_BYTES, type DraftSuspectedLeak, type IssueDraft, t
 import { cutKeepingHead } from './issue-draft-cut.js';
 import { foldHomePaths, hasVisibleText } from './issue-draft-identifier.js';
 import { draftJsonBytes } from './issue-draft-size.js';
+import { withFoldedTextMemo } from './issue-public-casefold.js';
 import { prepareKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
 import type { LocalOnlyKeys } from './issue-public-types.js';
@@ -105,10 +106,11 @@ export function scanEditedText(text: DraftTextToScan, keys: LocalOnlyKeys): Draf
     ? [{ field: 'body', kind: 'key-overflow', start: 0, end: 0 }]
     : [];
   const fields = scannedFieldsOf(text);
-  const found = [
+  // 検出がたたんだ本文の覚え (手元のパスやトークンを含みうる) は、この走査の間だけ。withRescannedLeaks (編集・受け取り) もここを通る。
+  const found = withFoldedTextMemo(() => [
     ...(fields.title !== undefined ? detectSuspectedLeaks('title', fields.title, [], prepared) : []),
     ...(fields.body !== undefined ? detectSuspectedLeaks('body', fields.body, [], prepared) : []),
-  ].map(({ field, kind, start, end }): DraftSuspectedLeak => ({ field, kind, start, end }));
+  ]).map(({ field, kind, start, end }): DraftSuspectedLeak => ({ field, kind, start, end }));
   const all = [...overflow, ...found];
   return {
     suspectedLeaks: all.slice(0, ISSUE_DRAFT_MAX_SUSPECTED_LEAKS),

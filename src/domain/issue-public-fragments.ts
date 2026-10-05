@@ -5,7 +5,7 @@
  * (issue-draft-cut.ts)、近くに改行の無い長い行では行の途中で切る。その切れ目が公開本文の欄の端になり、名前・根・トークンの
  * 途中で切れた断片 ("/work/example-proj"・"ghp_" + 15 文字・頭の欠けた "ample-project/src") は、完全な形を探す置き換えに
  * 一致しない。ここは欄の端だけを見て、断片を置き換えの一致 (種別 'fragment'、印は <redacted-fragment>) として返す:
- *   - 末尾: プロジェクトの根・LONG の固有名詞 (変種を含む) の、4 コードポイント以上で全体より短い前置部分。TOKEN_PREFIX_AT_END の
+ *   - 末尾: プロジェクトの根・LONG の固有名詞 (変種を含む) の、4 コードポイント以上の前置部分 (末尾では全体の一致も)。TOKEN_PREFIX_AT_END の
  *     途中までのトークン。ローカル部と "@" から始まる途中までのメール。
  *   - 先頭 (呼び出し側が start を立てた欄だけ。末尾だけを取る送り手がいるのはエラー文): 根・LONG の固有名詞の、4 コードポイント以上で
  *     全体より短い後置部分。先頭が欠けたトークンは本体だけが残り、形が無いので拾えない (5節「カバーしないもの」)。
@@ -15,7 +15,9 @@
  * 重なる出現も探す (bdboard-0hj9) ので、ここは二重の網になる)。
  *
  * 大文字小文字: 各コードポイントを、本体の探索と同じ表 (issue-public-casefold.ts) の代表にたたんで比べる。表が使えないエンジンでは、
- * エンジンに直接尋ねて同じ同値類にたたむ。以前は toLowerCase で、µ/μ・ς/σ・ϑ/θ・ſ/s・U+1FBE/ι が本体と端で別だった。
+ * エンジンに直接尋ねて同じ同値類にたたむ (エンジンの関係が同値関係で、大文字小文字で変わりうる文字の中で閉じているとき、つまり表を作るときの
+ * 検査 (1)(3) が成り立つときは、本体の `/…/giu` と同じ同値類。崩れたエンジンでは食い違いうる)。
+ * 以前は toLowerCase で、µ/μ・ς/σ・ϑ/θ・ſ/s・U+1FBE/ι が本体と端で別だった。
  * prepareKeys は検索の鍵をまとめても、変種はすべてここの鍵に渡す。鍵ごとに KMP の失敗関数を前もって作り、欄の端から鍵の長さぶんだけを読むので、
  * 鍵 1 つあたり O(鍵の長さ) で、欄の長さによらない。
  */
@@ -145,7 +147,7 @@ function longestKey(keys: readonly FragmentKey[]): number {
 
 type Range = { readonly start: number; readonly end: number };
 
-/** 末尾: 鍵の、全体より短い前置部分で終わるもの。 */
+/** 末尾: 鍵の、4 コードポイント以上の前置部分 (全体の一致も) で終わるもの。 */
 function keyPrefixesAtEnd(text: string, keys: readonly FragmentKey[]): Range[] {
   const tail = windowOf(Array.from(text.slice(codeUnitIndexBeforeTailCodePoints(text, longestKey(keys)))));
   const spans: Range[] = [];
