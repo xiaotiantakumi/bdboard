@@ -96,7 +96,9 @@ describe.skipIf(realProcessLockTestsSkipped)('verify.mjs holds the worktree lock
     children.push(slotHolder);
     fs.writeFileSync(path.join(worktree.slotDir, `holder-${slotHolder.pid}.json`), JSON.stringify({ pid: slotHolder.pid, joinedAt: Date.now() - 1_000, cwd: '/fake' }));
     const queued = startVerify(worktree, 'queued', { BDBOARD_VERIFY_SLOTS: '1', BDBOARD_VERIFY_SLOT_WAIT_MS: '30000' });
-    await waitFor(() => probeLock(worktree.lockPath, 'SH') === 'free' && probeLock(worktree.lockPath, 'EX') === 'busy', 10_000, 'queued verify holds SH (after its brief EX)');
+    // probe は 2 回で原子的でない: SH=free は verify が EX を取る前、EX=busy はその直後 (owner 行を書く前) に当たりうる。
+    // owner 行は EX の間に書かれ、そのあと SH へ変換されるので、行が見えてから SH=free && EX=busy を見れば SH 保持中だと言える。
+    await waitFor(() => readOwner(worktree.lockPath) !== null && probeLock(worktree.lockPath, 'SH') === 'free' && probeLock(worktree.lockPath, 'EX') === 'busy', 10_000, 'queued verify holds SH (after its brief EX)');
     expect(readOwner(worktree.lockPath)).toMatchObject({ by: 'npm run verify', pid: queued.child.pid, phase: 'verify' });
     expect(npmRan(worktree, 'queued')).toBe(false); // まだスロット待ち
     queued.child.kill('SIGTERM');
