@@ -186,9 +186,14 @@ function matchesOutside(text: string, pattern: RegExp, covered: readonly RangeLi
   return kept;
 }
 
-/** すでに数えた範囲の外に始まる一致を、範囲を作らず件数だけ数える。 */
+/**
+ * すでに数えた範囲の外に始まる一致を、範囲を作らず件数だけ数える。`pattern` には `g` フラグが要る (無いと `exec` は
+ * lastIndex を見ずに最初の一致を返し続け、ループが止まらない。`matchAll` はこの誤りを TypeError で止めていた)。
+ */
 function countMatchesOutside(text: string, pattern: RegExp, covered: readonly RangeList[]): number {
-  // RAW_URL は共有の正規表現だが、この同期走査は null で終わると lastIndex が 0 に戻る。
+  if (!pattern.global) throw new TypeError('countMatchesOutside needs a RegExp with the g flag');
+  // RAW_URL は共有の正規表現。前の呼び出しが途中で投げた場合に備えて 0 から始め、null で終わると lastIndex が 0 に戻るので
+  // 次の呼び出しに位置を残さない。
   pattern.lastIndex = 0;
   let count = 0;
   let match: RegExpExecArray | null;

@@ -1,6 +1,8 @@
 /**
  * 変更前の実装 (PR #914 時点) の写し。bdboard-4367 の差分ファズ用。
- * 本体を直したときはこの写しを直さない (写しは固定の基準)。
+ * 本体を直したときはこの写しを直さない (写しは固定の基準)。食い違ったら、まず本体の変更が意図しない挙動の変化かを疑う。
+ * 数え方を意図して変える PR では、写しを合わせて通すのではなく、このファイルを消す (理由をコミットに書く)。
+ * この写しが守るのは、結果を変えない書き換え (速さ・確保のための変更) だけである。
  */
 import { describe, expect, it } from 'vitest';
 import { countLinks, type LinkCheck } from './external-issue-links.js';
@@ -193,14 +195,20 @@ describe('countLinks differential fuzz (PR #914 reference)', () => {
     const interleaved = Array.from({ length: 2000 }, (_, index) =>
       index % 2 === 0 ? `https://raw${index}.example` : `[x${index}](dest${index})`,
     ).join(' ');
-    const cases = [interleaved, `[\n${'https://a.example\n'.repeat(3000)}](x)`];
+    // 大きい並びの二分探索で、覆われる生の URL (リンクの宛先・定義・autolink の中) と、範囲の終わりちょうどで始まる生の URL を混ぜる。
+    const covered = Array.from({ length: 3000 }, (_, index) =>
+      [`[x](https://in${index}.example)`, `<https://auto${index}.example>`, `[x](d)https://edge${index}.example`][index % 3] ?? '',
+    ).join(' ');
+    const definitions = '[d]: https://def.example\nhttps://raw.example\n'.repeat(1500);
+    const cases = [interleaved, `[\n${'https://a.example\n'.repeat(3000)}](x)`, covered, definitions];
     for (const input of cases) {
       expect(countLinks(input), `large input length=${input.length}`).toEqual(referenceCountLinks(input));
     }
   });
 
   it('does not leak the shared raw URL regexp lastIndex between calls', () => {
-    const input = '[x](https://inside.example) https://outside.example';
+    // 数える生の URL を先頭に置く: 前の呼び出しが lastIndex を 1 でも残すと、この 1 件を取りこぼす。
+    const input = 'https://outside.example [x](https://inside.example)';
     const expected = referenceCountLinks(input);
     expect(countLinks(input)).toEqual(expected);
     countLinks('www.interleaved.example <https://other.example>');
