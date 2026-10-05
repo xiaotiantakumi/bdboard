@@ -25,6 +25,28 @@ afterEach(() => {
 });
 
 describe('createDraftRetention', () => {
+  it('calls onPruned once with the survey and only successfully removed ids', async () => {
+    const surveyResult: DraftSurvey = { drafts: [dismissedFootprint('1-aaaaaaaaaaaaaaaa', 40, 20), dismissedFootprint('2-bbbbbbbbbbbbbbbb', 40, 20)], totalBytes: 40, unmeasured: [] };
+    const storage = stubStorage(surveyResult);
+    storage.remove.mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'EBUSY' }));
+    const onPruned = vi.fn();
+    const retention = createDraftRetention({ storage, now: () => NOW, onPruned });
+    await retention.pruneNow();
+    expect(onPruned).toHaveBeenCalledTimes(1);
+    expect(onPruned).toHaveBeenCalledWith(surveyResult, new Set(['2-bbbbbbbbbbbbbbbb']));
+  });
+
+  it('does not call onPruned when survey fails or during ensureRoom resurvey', async () => {
+    const storage = stubStorage({ drafts: [], totalBytes: 200, unmeasured: [] });
+    const onPruned = vi.fn();
+    const retention = createDraftRetention({ storage, now: () => NOW, maxTotalBytes: 100, onPruned });
+    storage.survey.mockRejectedValueOnce(Object.assign(new Error('failed'), { code: 'EIO' }));
+    await retention.pruneNow();
+    expect(onPruned).not.toHaveBeenCalled();
+    await retention.ensureRoom(1);
+    expect(onPruned).not.toHaveBeenCalled();
+  });
+
   it('refuses when a removal fails and the ones that did go are not enough, warning with the id and code only', async () => {
     const storage = stubStorage({
       drafts: [dismissedFootprint('1-aaaaaaaaaaaaaaaa', 9, 60), dismissedFootprint('2-bbbbbbbbbbbbbbbb', 5, 60)],

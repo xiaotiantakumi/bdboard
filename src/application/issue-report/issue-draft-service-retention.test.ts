@@ -93,6 +93,80 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('startup: the first receive waits for one walk of the directory, not two (bdboard-xvo2)', () => {
+  it('uses the startup survey as the receive index and excludes drafts removed by pruning', async () => {
+    const base = createHarness();
+    await createdId(base.service, 'a');
+    await createdId(base.service, 'b');
+    const expired = await dismissed(base.service, 'c');
+    age(base, expired, ISSUE_DRAFT_RETENTION_MS + 1);
+    const h = createHarness({}, base);
+    const survey = vi.spyOn(h.storage, 'survey');
+    const scan = vi.spyOn(h.storage, 'scan');
+    const list = vi.spyOn(h.storage, 'list');
+    await Promise.all([h.service.pruneOnStart(), receive(h.service, 'new')]);
+    // 修正前は survey 1 + scan 1 = 2。
+    expect(survey).toHaveBeenCalledTimes(1);
+    expect(scan).toHaveBeenCalledTimes(0);
+    expect(list).toHaveBeenCalledTimes(0);
+    expect(await h.service.pendingCount()).toBe(3);
+    expect(await receive(h.service, 'a')).toMatchObject({ outcome: 'merged' });
+    expect(scan).toHaveBeenCalledTimes(0);
+    expect(h.storage.drafts.has(expired)).toBe(false);
+  });
+
+  it('starts with no walk when pruning has already completed', async () => {
+    const h = createHarness();
+    await h.service.pruneOnStart();
+    const survey = vi.spyOn(h.storage, 'survey');
+    const scan = vi.spyOn(h.storage, 'scan');
+    const list = vi.spyOn(h.storage, 'list');
+    await receive(h.service, 'first');
+    expect(survey).not.toHaveBeenCalled();
+    expect(scan).not.toHaveBeenCalled();
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it('does not retain an expired draft fingerprint in the seeded index', async () => {
+    const base = createHarness();
+    const id = await dismissed(base.service, 'expired');
+    const fingerprint = base.storage.drafts.get(id)!.fingerprint;
+    age(base, id, ISSUE_DRAFT_RETENTION_MS + 1);
+    const h = createHarness({}, base);
+    const scan = vi.spyOn(h.storage, 'scan');
+    await h.service.pruneOnStart();
+    const recreated = await h.service.receive({ kind: 'A', catalogSlug: 'slug-expired', symptom: 'symptom', envInfo: ENV });
+    expect(recreated).toMatchObject({ ok: true, outcome: 'created' });
+    expect(scan).not.toHaveBeenCalled();
+    if (recreated.ok) expect(recreated.draft.fingerprint).toBe(fingerprint);
+  });
+
+  it('falls back to scan when the survey index seed is incomplete or absent', async () => {
+    for (const seed of [{ entries: [], complete: false } as const, undefined]) {
+      const h = createHarness();
+      const realSurvey = h.storage.survey.bind(h.storage);
+      vi.spyOn(h.storage, 'survey').mockImplementation(async () => {
+        const result = await realSurvey();
+        return seed === undefined ? (({ indexSeed: _seed, ...rest }) => rest)(result) : { ...result, indexSeed: seed };
+      });
+      const scan = vi.spyOn(h.storage, 'scan');
+      await h.service.pruneOnStart();
+      await receive(h.service, 'fallback');
+      expect(scan).toHaveBeenCalledTimes(1);
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('does not replace an index already loaded by receive', async () => {
+    const h = createHarness();
+    const first = await receive(h.service, 'first');
+    expect(first.ok).toBe(true);
+    await h.service.pruneOnStart();
+    expect(await receive(h.service, 'first')).toMatchObject({ outcome: 'merged' });
+  });
+});
+
 describe('retention: terminal drafts older than 30 days are pruned on receive', () => {
   it('deletes a dismissed draft past 30 days with its images, and keeps one at exactly 30 days and one just under', async () => {
     const base = createHarness();

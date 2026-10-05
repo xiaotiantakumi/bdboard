@@ -525,7 +525,9 @@ describe('createFsIssueDraftStorage', () => {
       await service.receive({ kind: 'A', catalogSlug: 'first' });
       await service.receive({ kind: 'A', catalogSlug: 'second' });
       await service.receive({ kind: 'A', catalogSlug: `slug-${ID_1}` });
-      expect(scan).toHaveBeenCalledTimes(1);
+      // ディレクトリでないもの (draft.json の stat が ENOTDIR) は恒久の飛ばし: 棚卸しの材料も完全で、起動時の掃除が作った
+      // 索引がそのままキャッシュされる (scan() も呼ばない)。
+      expect(scan).toHaveBeenCalledTimes(0);
     });
 
     // 完全な索引をキャッシュしたあとで、既知の下書きが握られて読めなくなったとき (N5 の「キャッシュ済みの完全な索引のあと」)。
@@ -538,9 +540,9 @@ describe('createFsIssueDraftStorage', () => {
       const scan = vi.spyOn(storage, 'scan');
       const draftJson = path.join(baseDir, ID_2, 'draft.json');
 
-      // 最初の受け取りが完全な索引を作ってキャッシュする (ID_2 の指紋もこの索引にある)。
+      // 起動時の掃除が完全な索引を作る (ID_2 の指紋もこの索引にある)。
       expect(await service.receive({ kind: 'A', catalogSlug: 'first' })).toMatchObject({ outcome: 'created' });
-      expect(scan).toHaveBeenCalledTimes(1);
+      expect(scan).toHaveBeenCalledTimes(0);
       const before = await fs.readFile(draftJson);
 
       // ここから ID_2 の draft.json は読むたびに EBUSY (握られたまま)。
@@ -549,7 +551,7 @@ describe('createFsIssueDraftStorage', () => {
       const result = await service.receive({ kind: 'A', catalogSlug: `slug-${ID_2}` });
 
       expect(reads.calls).toBe(4); // get(ID_2) が 4 回読んで諦めた
-      expect(scan).toHaveBeenCalledTimes(1); // 索引はキャッシュ済みなので読み直していない
+      expect(scan).toHaveBeenCalledTimes(0); // 起動時の掃除が索引を作るので scan() で読み直していない
       expect(result).toMatchObject({ ok: true, outcome: 'created' });
       const createdId = result.ok ? result.draft.id : undefined;
       expect(createdId).toBeDefined();

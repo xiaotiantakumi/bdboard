@@ -8,7 +8,7 @@ import {
   selectExpiredDrafts,
   type DraftFootprint,
 } from '../../domain/issue-draft-retention.js';
-import type { IssueDraftStoragePort } from '../ports/issue-draft-storage.js';
+import type { DraftSurvey, IssueDraftStoragePort } from '../ports/issue-draft-storage.js';
 
 /**
  * 不具合報告の下書きの保持期限と合計容量 (bdboard-00qh、docs/ISSUE-REPORTING.md 4節「保持期限と合計容量」)。
@@ -42,6 +42,12 @@ export interface DraftRetentionOptions {
 export interface DraftRetentionDeps extends DraftRetentionOptions {
   readonly storage: Pick<IssueDraftStoragePort, 'survey' | 'remove'>;
   readonly now: () => Date;
+  /**
+   * 掃除 (pruneNow) が棚卸しを終え、期限切れを消し終えたあとに、その棚卸しと「消せた id」を渡す。サービスが受け取りの
+   * 索引をここから作る (起動直後の最初の受け取りが全件をもう一度読まないため、bdboard-xvo2)。容量の測り直し (ensureRoom) の
+   * 棚卸しや、失敗した棚卸しでは呼ばない。メモリ内だけの処理で、投げない前提。
+   */
+  readonly onPruned?: (survey: DraftSurvey, removedIds: ReadonlySet<string>) => void;
 }
 
 export interface DraftRetention {
@@ -116,7 +122,7 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
     return totalBytes === undefined || totalBytes + incomingBytes <= maxTotalBytes;
   }
 
-  async function takeSnapshot(): Promise<boolean> {
+  async function takeSnapshot(): Promise<DraftSurvey | undefined> {
     lastSurveyAtMs = deps.now().getTime();
     try {
       const survey = await deps.storage.survey();
@@ -126,19 +132,19 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
         const codes = [...new Set(survey.unmeasured)].sort().join(', ');
         warnOnce(`issue draft sizes are undercounted: ${survey.unmeasured.length} location(s) could not be measured (${codes})`);
       }
-      return true;
+      return survey;
     } catch (error) {
       // 測れない = 合計が分からない。前回の合計や一覧で判断し続けず、容量の確認は通す側 (fail-open) に倒す。
       totalBytes = undefined;
       snapshot = [];
       // 試みは 1 時間 (掃除) と 1 分 (容量) に 1 回までなので、毎回警告を出してよい。
       warn(`issue draft survey failed (${errorCode(error)})`);
-      return false;
+      return undefined;
     }
   }
 
-  /** 消せたものの数を返す (消せなかったものは警告して残す)。 */
-  async function removeAll(targets: readonly DraftFootprint[]): Promise<number> {
+  /** 消せたものの id を返す (消せなかったものは警告して残す)。 */
+  async function removeAll(targets: readonly DraftFootprint[]): Promise<ReadonlySet<string>> {
     const removed = new Set<string>();
     for (const target of targets) {
       try {
@@ -150,7 +156,7 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
       }
     }
     snapshot = snapshot.filter((draft) => !removed.has(draft.id));
-    return removed.size;
+    return removed;
   }
 
   /** いまの測り直しの間隔: 張り付いた回数だけ倍にして、resurveyGapMaxMs で止める。 */
@@ -176,14 +182,16 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
     const nowMs = deps.now().getTime();
     lastPruneAtMs = nowMs;
     const totalBefore = totalBytes;
-    if (!(await takeSnapshot())) return;
+    const survey = await takeSnapshot();
+    if (survey === undefined) return;
     // 棚卸し直後の実測 (期限切れを消す前)。持っていた合計より小さい = 外で手で消された。
     const freedOutOfBand = totalBefore !== undefined && totalBytes !== undefined && totalBytes < totalBefore;
-    const removedCount = await removeAll(selectExpiredDrafts(snapshot, nowMs, retentionMs));
+    const removed = await removeAll(selectExpiredDrafts(snapshot, nowMs, retentionMs));
     // 掃除の棚卸しが空きを見つけたときだけ、張り付いて伸ばした間隔を戻す: 期限切れを消せた、または外で消されていた
     // (実測の合計が、書き込みの差分を足し続けた棚卸し前の合計より小さい)。何も空いていない掃除では戻さない
     // (毎時戻すと、1 時間に 6 回測り直す元の木阿弥)。
-    if (removedCount > 0 || freedOutOfBand) pinnedSurveys = 0;
+    if (removed.size > 0 || freedOutOfBand) pinnedSurveys = 0;
+    deps.onPruned?.(survey, removed);
   }
 
   return {

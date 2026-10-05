@@ -3,7 +3,8 @@ import path from 'node:path';
 import type { Stats } from 'node:fs';
 import { isDraftId, type IssueDraft } from '../../domain/issue-draft.js';
 import type { DraftFootprint } from '../../domain/issue-draft-retention.js';
-import type { DraftSurvey } from '../../application/ports/issue-draft-storage.js';
+import type { DraftIndexEntry, DraftSurvey } from '../../application/ports/issue-draft-storage.js';
+import { classifyReadError } from './issue-draft-file-reader.js';
 
 /**
  * 下書きディレクトリの棚卸しと削除 (bdboard-00qh)。fs-issue-draft-storage.ts から切り出した。
@@ -29,9 +30,16 @@ export interface FsDraftFootprintDeps {
   readonly baseDir: string;
   /** id を検証してパスを返す (ストアの draftDir)。 */
   readonly draftDir: (id: string) => string;
-  /** 読めて使える下書きだけ返す。読めない・壊れているものは undefined (ストアの get と同じ扱い)。 */
-  readonly readDraft: (id: string) => Promise<IssueDraft | undefined>;
+  /** 読めて使える下書きだけ ok で返す。読めない・壊れているものは unusable (ストアの get と同じ扱い。incomplete もそのまま)。 */
+  readonly readDraft: (id: string) => Promise<FootprintRead>;
+  /** draft.json の stat の失敗を、読み出しと同じ分類 (classifyReadError) で扱うための OS。 */
+  readonly platform: NodeJS.Platform;
 }
+
+export type FootprintRead =
+  | { readonly kind: 'ok'; readonly draft: IssueDraft }
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'unusable'; readonly incomplete: boolean };
 
 function errorCode(error: unknown): string {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
@@ -67,19 +75,35 @@ export function createFsDraftFootprints(
     return bytes;
   }
 
-  async function footprintOf(id: string, unmeasured: string[]): Promise<DraftFootprint> {
+  async function footprintOf(
+    id: string,
+    unmeasured: string[],
+  ): Promise<{ readonly footprint: DraftFootprint; readonly entry?: DraftIndexEntry; readonly incomplete: boolean }> {
     let jsonStat: Stats | undefined;
+    let statIncomplete = false;
     try {
       jsonStat = await fs.stat(path.join(deps.draftDir(id), DRAFT_FILE));
     } catch (error) {
       noteUnmeasured(error, unmeasured);
+      // scan() が同じ draft.json を読んだときと同じ判定: 無い (ENOENT) と恒久 (ENOTDIR など) は一覧を欠かさない。
+      // それ以外 (あとで通るかもしれない失敗) は、stat しか試さない棚卸しの索引の材料を欠けた扱いにする。
+      statIncomplete = errorCode(error) !== 'ENOENT' && classifyReadError(errorCode(error), deps.platform) !== 'permanent';
     }
     const imageBytes = await measureImages(id, unmeasured);
     const bytes = (jsonStat?.isFile() ? jsonStat.size : 0) + imageBytes;
-    // draft.json を stat できないものは読みにも行かない (状態を知らない = 消さない)。
-    const draft = jsonStat?.isFile() ? await deps.readDraft(id) : undefined;
-    if (draft === undefined || jsonStat === undefined) return { id, bytes };
-    return { id, bytes, known: { status: draft.status, updatedAtMs: jsonStat.mtimeMs } };
+    const read = jsonStat?.isFile() ? await deps.readDraft(id) : undefined;
+    if (read?.kind !== 'ok' || jsonStat === undefined) {
+      return {
+        footprint: { id, bytes },
+        incomplete: statIncomplete || (read?.kind === 'unusable' && read.incomplete),
+      };
+    }
+    const draft = read.draft;
+    return {
+      footprint: { id, bytes, known: { status: draft.status, updatedAtMs: jsonStat.mtimeMs } },
+      entry: { id: draft.id, fingerprint: draft.fingerprint, firstOccurredAt: draft.firstOccurredAt, status: draft.status },
+      incomplete: false,
+    };
   }
 
   return {
@@ -88,17 +112,24 @@ export function createFsDraftFootprints(
       try {
         names = await fs.readdir(deps.baseDir);
       } catch (error) {
-        if (errorCode(error) === 'ENOENT') return { drafts: [], totalBytes: 0, unmeasured: [] };
+        if (errorCode(error) === 'ENOENT') return { drafts: [], totalBytes: 0, unmeasured: [], indexSeed: { entries: [], complete: true } };
         throw error;
       }
       const ids = names.filter(isDraftId);
       const unmeasured: string[] = [];
       const drafts: DraftFootprint[] = [];
+      const entries: DraftIndexEntry[] = [];
+      let complete = true;
       for (let start = 0; start < ids.length; start += SURVEY_BATCH_SIZE) {
         const batch = ids.slice(start, start + SURVEY_BATCH_SIZE);
-        drafts.push(...(await Promise.all(batch.map((id) => footprintOf(id, unmeasured)))));
+        const results = await Promise.all(batch.map((id) => footprintOf(id, unmeasured)));
+        for (const result of results) {
+          drafts.push(result.footprint);
+          if (result.entry !== undefined) entries.push(result.entry);
+          if (result.incomplete) complete = false;
+        }
       }
-      return { drafts, totalBytes: drafts.reduce((sum, draft) => sum + draft.bytes, 0), unmeasured };
+      return { drafts, totalBytes: drafts.reduce((sum, draft) => sum + draft.bytes, 0), unmeasured, indexSeed: { entries, complete } };
     },
 
     async remove(id) {
