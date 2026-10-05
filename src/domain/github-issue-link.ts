@@ -60,18 +60,10 @@ export function findUnlinkedIssues<T extends { readonly number: number }>(
 }
 
 /**
- * GitHub の issues API は PR も返す。`pullRequest: true` の行を除き、残りから `pullRequest`
- * の項目を取り除く。
+ * GitHub の issues API は PR も返す。`pullRequest: true` の行を除く (残りの行はそのまま)。
  */
 export function excludePullRequests<T extends { readonly pullRequest: boolean }>(
   rows: readonly T[],
-): Array<Omit<T, 'pullRequest'>> {
-  return rows
-    .filter((row) => !row.pullRequest)
-    .map(
-      (row) =>
-        Object.fromEntries(
-          Object.entries(row).filter(([key]) => key !== 'pullRequest'),
-        ) as Omit<T, 'pullRequest'>,
-    );
+): T[] {
+  return rows.filter((row) => !row.pullRequest);
 }

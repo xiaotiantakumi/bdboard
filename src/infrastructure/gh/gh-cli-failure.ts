@@ -8,12 +8,12 @@
 // のいずれかと併記されている場合のみ rate limit 扱いとする (実際の gh の
 // rate-limit メッセージは "API rate limit exceeded ... (HTTP 403)" のように
 // 文言を伴うため、これでも正規の検知漏れは起きない。bdboard-v538)。
-export const RATE_LIMIT_TEXT_PATTERNS = [
+const RATE_LIMIT_TEXT_PATTERNS = [
   /api rate limit/i,
   /rate limit exceeded/i,
   /secondary rate limit/i,
 ];
-export const RATE_LIMIT_HTTP_429_PATTERN = /\bHTTP\s+429\b/i;
+const RATE_LIMIT_HTTP_429_PATTERN = /\bHTTP\s+429\b/i;
 
 /** gh は認証が要る (未ログイン・トークン無し) ときに exit 4 で終わる。 */
 export const GH_EXIT_CODE_AUTH_REQUIRED = 4;

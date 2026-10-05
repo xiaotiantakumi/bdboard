@@ -89,18 +89,18 @@ describe('findUnlinkedIssues', () => {
 });
 
 describe('excludePullRequests', () => {
-  it('removes pull requests and drops the pullRequest marker from the rest', () => {
+  it('removes the pull request rows and keeps the others as they are', () => {
     const rows = [
       { number: 431, title: 'issue', pullRequest: false },
       { number: 432, title: 'PR', pullRequest: true },
     ];
-    expect(excludePullRequests(rows)).toEqual([{ number: 431, title: 'issue' }]);
-    expect('pullRequest' in excludePullRequests(rows)[0]).toBe(false);
+    expect(excludePullRequests(rows)).toEqual([{ number: 431, title: 'issue', pullRequest: false }]);
+    expect(excludePullRequests([])).toEqual([]);
   });
 
   it('does not mutate its input', () => {
-    const rows = [{ number: 1, pullRequest: false }];
+    const rows = [{ number: 1, pullRequest: true }, { number: 2, pullRequest: false }];
     excludePullRequests(rows);
-    expect(rows).toEqual([{ number: 1, pullRequest: false }]);
+    expect(rows).toHaveLength(2);
   });
 });

@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  GH_EXIT_CODE_AUTH_REQUIRED,
-  looksLikeGhUnauthenticated,
-  looksLikeRateLimit,
-} from './gh-cli-failure.js';
+import { looksLikeGhUnauthenticated, looksLikeRateLimit } from './gh-cli-failure.js';
 
 describe('looksLikeRateLimit', () => {
   it.each([
@@ -45,10 +41,4 @@ describe('looksLikeGhUnauthenticated', () => {
       expect(looksLikeGhUnauthenticated(text)).toBe(false);
     },
   );
-});
-
-describe('GH_EXIT_CODE_AUTH_REQUIRED', () => {
-  it('is the exit code gh uses when authentication is required', () => {
-    expect(GH_EXIT_CODE_AUTH_REQUIRED).toBe(4);
-  });
 });

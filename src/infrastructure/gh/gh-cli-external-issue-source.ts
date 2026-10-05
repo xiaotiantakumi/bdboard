@@ -6,7 +6,7 @@ import type {
   ExternalIssueSourcePort,
 } from '../../application/ports/external-issue-source.js';
 import { parseRepoSlug } from '../../domain/github-issue-link.js';
-import { assertReadOnlyGhApiArgs } from './gh-api-readonly.js';
+import { GH_API_HOSTNAME, assertReadOnlyGhApiArgs } from './gh-api-readonly.js';
 import {
   GH_EXIT_CODE_AUTH_REQUIRED,
   looksLikeGhUnauthenticated,
@@ -20,13 +20,15 @@ const DEFAULT_MAX_PAGES = 3;
 const DEFAULT_REPO_SLUG = 'xiaotiantakumi/bdboard';
 const ISSUES_PER_PAGE = 100;
 const DETAIL_MAX_CHARS = 300;
+const TIMEOUT_DETAIL = 'gh timed out (no response within the time limit)';
 
 /**
- * 本文は先頭 20,001 文字で切る (第三者の文章の量を抑える。20,000 文字ちょうどと超過を
- * 区別するため 1 文字多く取り、切る前の長さは bodyLength で渡す)。PR は pullRequest で印を付けて
+ * 本文は先頭 20,001 コードポイントで切る (第三者の文章の量を抑える。20,000 ちょうどと超過を
+ * 区別するため 1 つ多く取り、切る前の長さは bodyLength で渡す)。jq の切り出しと length は
+ * コードポイント単位で、JS の String.length (UTF-16 の単位) とは数が違いうる。PR は pullRequest で印を付けて
  * 後で除く。author は削除済みユーザーだと null になる。
  */
-export const OPEN_ISSUES_JQ =
+const OPEN_ISSUES_JQ =
   '.[] | {number, title, body: ((.body // "")[0:20001]), bodyLength: ((.body // "") | length), updatedAt: .updated_at, author: .user.login, authorAssociation: .author_association, pullRequest: has("pull_request")} | @json';
 
 export interface GhCliExternalIssueSourceOptions {
@@ -39,11 +41,19 @@ export interface GhCliExternalIssueSourceOptions {
   readonly baseEnv?: NodeJS.ProcessEnv;
 }
 
-/** 画面に出しうる文字列なので、制御文字を空白にして 300 文字に切る。 */
+/**
+ * 画面に出しうる文字列なので、制御文字 (C0/C1 と、文字の向きを変える双方向制御文字
+ * U+200E/200F/061C/202A–202E/2066–2069) を空白にして、300 コードポイントに切る。
+ * UTF-16 の `slice` だとサロゲートの対を途中で割るので、コードポイントで切る。
+ */
 function toDetail(text: string): string {
   const trimmed = text.trim() === '' ? 'gh command failed' : text.trim();
-  // eslint-disable-next-line no-control-regex
-  return trimmed.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').slice(0, DETAIL_MAX_CHARS);
+  const cleaned = trimmed.replace(
+    // eslint-disable-next-line no-control-regex
+    /[\u0000-\u001f\u007f-\u009f؜‎‏‪-‮⁦-⁩]/g,
+    ' ',
+  );
+  return Array.from(cleaned).slice(0, DETAIL_MAX_CHARS).join('');
 }
 
 function failure(kind: ExternalIssueFailureKind, text: string): ExternalIssueListResult {
@@ -59,7 +69,7 @@ function classifyFailure(result: CommandResult): ExternalIssueListResult {
     return failure('gh-missing', result.stderr);
   }
   if (result.failureKind === 'timeout') {
-    return failure('failed', result.stderr);
+    return failure('failed', TIMEOUT_DETAIL);
   }
   if (result.exitCode === GH_EXIT_CODE_AUTH_REQUIRED) {
     return failure('gh-unauthenticated', result.stderr);
@@ -89,6 +99,9 @@ function buildArgs(slug: string, page: number): string[] {
     'api',
     '--method',
     'GET',
+    // 継いだ GH_HOST が GHE を指していても、github.com で組んだ url と食い違わないよう固定する。
+    '--hostname',
+    GH_API_HOSTNAME,
     `repos/${slug}/issues?state=open&per_page=${ISSUES_PER_PAGE}&page=${page}`,
     '--jq',
     OPEN_ISSUES_JQ,
@@ -108,11 +121,15 @@ export function createGhCliExternalIssueSource(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const slug = parseRepoSlug(options?.repoSlug ?? DEFAULT_REPO_SLUG);
   const maxPages = options?.maxPages ?? DEFAULT_MAX_PAGES;
+  if (!Number.isInteger(maxPages) || maxPages < 1) {
+    throw new Error(`maxPages must be a positive integer: ${maxPages}`);
+  }
   const env = buildChildEnv(options?.baseEnv ?? process.env);
 
   return {
     async listOpenIssues(): Promise<ExternalIssueListResult> {
       const issues: ExternalIssue[] = [];
+      const seenNumbers = new Set<number>();
       let skippedLines = 0;
       let pagesFetched = 0;
       let truncatedByPageLimit = false;
@@ -125,8 +142,8 @@ export function createGhCliExternalIssueSource(
         try {
           commandResult = await commandRunner.run(ghPath, args, { timeoutMs, env });
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          return failure(looksLikeRateLimit(message) ? 'rate-limited' : 'failed', message);
+          // CommandRunner は投げない契約 (spawn 失敗も結果で返す)。守られなくても外へは出さない。
+          return failure('failed', error instanceof Error ? error.message : String(error));
         }
         // 1 ページでも読めなければ、途中までの結果は返さず failed にする。
         if (commandResult.exitCode !== 0) {
@@ -138,7 +155,14 @@ export function createGhCliExternalIssueSource(
         if (parsed.allUnreadable) {
           return failure('failed', 'gh output format was not recognized');
         }
-        issues.push(...parsed.issues);
+        // 1 ページ目と 2 ページ目の間に新しい issue ができると、押し出された同じ番号が両方の
+        // ページに現れる。番号で重複を除く (先に読んだほうを残す)。
+        for (const issue of parsed.issues) {
+          if (!seenNumbers.has(issue.number)) {
+            seenNumbers.add(issue.number);
+            issues.push(issue);
+          }
+        }
         skippedLines += parsed.skippedLines;
 
         if (parsed.lineCount < ISSUES_PER_PAGE) {

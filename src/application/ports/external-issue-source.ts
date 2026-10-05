@@ -8,11 +8,14 @@ export interface ExternalIssue {
   readonly number: number;
   readonly title: string;
   /**
-   * gh の jq で先頭 20,001 文字に切った本文。20,000 文字への切り詰めと「省略」の印は
+   * gh の jq で先頭 20,001 **コードポイント**に切った本文。20,000 への切り詰めと「省略」の印は
    * 後段の純粋関数が行う。
    */
   readonly body: string;
-  /** 切る前の本文の文字数。 */
+  /**
+   * 切る前の本文の**コードポイント**数 (jq の `length`)。JS の `String.length` は UTF-16 の
+   * 単位 (絵文字などは 2) なので、`body.length` や `[...body].length` と混ぜて比べるときは単位に注意する。
+   */
   readonly bodyLength: number;
   readonly updatedAt: string;
   /** 削除済みユーザーなどで取れないときは null。 */

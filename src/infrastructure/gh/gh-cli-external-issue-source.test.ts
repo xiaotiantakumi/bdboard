@@ -60,6 +60,8 @@ const expectedArgs = (pageNumber: number): string[] => [
   'api',
   '--method',
   'GET',
+  '--hostname',
+  'github.com',
   `repos/xiaotiantakumi/bdboard/issues?state=open&per_page=100&page=${pageNumber}`,
   '--jq',
   EXPECTED_JQ,
@@ -96,6 +98,9 @@ describe('createGhCliExternalIssueSource: what it asks gh', () => {
       expect(call.args.some((arg) => /^(--field|--raw-field|--input)=/.test(arg))).toBe(false);
       expect(call.args.filter((arg) => arg === '--method')).toHaveLength(1);
       expect(call.args[call.args.indexOf('--method') + 1]).toBe('GET');
+      // 継いだ GH_HOST が GHE を指していても、github.com で組んだ url と食い違わない。
+      expect(call.args[call.args.indexOf('--hostname') + 1]).toBe('github.com');
+      expect(call.args.filter((arg) => arg === '--hostname')).toHaveLength(1);
     }
   });
 
@@ -108,7 +113,7 @@ describe('createGhCliExternalIssueSource: what it asks gh', () => {
     }).listOpenIssues();
 
     expect(calls[0].command).toBe('/opt/homebrew/bin/gh');
-    expect(calls[0].args[3]).toBe('repos/owner/repo/issues?state=open&per_page=100&page=1');
+    expect(calls[0].args[5]).toBe('repos/owner/repo/issues?state=open&per_page=100&page=1');
   });
 
   it('inherits the environment, adds the prompt / update-notifier switches, and times out at 20 seconds', async () => {
@@ -134,6 +139,14 @@ describe('createGhCliExternalIssueSource: what it asks gh', () => {
     expect(() => createGhCliExternalIssueSource(runner, { repoSlug: '../bad' })).toThrow();
     expect(() => createGhCliExternalIssueSource(runner, { repoSlug: 'o/r?x=1' })).toThrow();
   });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'refuses maxPages %s when it is created (only positive integers)',
+    (maxPages) => {
+      const { runner } = createFakeRunner([]);
+      expect(() => createGhCliExternalIssueSource(runner, { maxPages })).toThrow(/maxPages/);
+    },
+  );
 });
 
 describe('createGhCliExternalIssueSource: paging', () => {
@@ -179,6 +192,19 @@ describe('createGhCliExternalIssueSource: paging', () => {
 
     expect(result).toMatchObject({ ok: true, pagesFetched: 3, truncatedByPageLimit: false });
     expect(result.ok && result.issues).toHaveLength(207);
+  });
+
+  it('drops an issue that appears on two pages (a new issue pushed it across the boundary), by number', async () => {
+    // 1 ページ目の末尾の #100 が、ページの間に新しい issue ができて 2 ページ目の先頭にも現れる。
+    const { runner } = createFakeRunner([ok(page(1, 100)), ok(page(100, 6))]);
+
+    const result = await createGhCliExternalIssueSource(runner).listOpenIssues();
+
+    expect(result).toMatchObject({ ok: true, pagesFetched: 2, skippedLines: 0 });
+    const numbers = result.ok ? result.issues.map((issue) => issue.number) : [];
+    expect(numbers).toHaveLength(105);
+    expect(new Set(numbers).size).toBe(105);
+    expect(numbers.filter((number) => number === 100)).toHaveLength(1);
   });
 
   it('honours a smaller maxPages', async () => {
@@ -320,19 +346,25 @@ describe('createGhCliExternalIssueSource: failures', () => {
   });
 
   it('returns a failure when the runner throws (it should not, but must not escape)', async () => {
-    const rateLimited: CommandRunner = {
-      run: () => Promise.reject(new Error('API rate limit exceeded')),
-    };
     const broken: CommandRunner = { run: () => Promise.reject(new Error('boom')) };
 
-    expect(await createGhCliExternalIssueSource(rateLimited).listOpenIssues()).toMatchObject({
-      ok: false,
-      kind: 'rate-limited',
-    });
     expect(await createGhCliExternalIssueSource(broken).listOpenIssues()).toMatchObject({
       ok: false,
       kind: 'failed',
+      detail: 'boom',
     });
+  });
+
+  it('says it timed out in a fixed message, whatever stderr holds', async () => {
+    const { runner } = createFakeRunner([
+      { stdout: '', stderr: 'partial output', exitCode: -1, failureKind: 'timeout' },
+    ]);
+
+    const result = await createGhCliExternalIssueSource(runner).listOpenIssues();
+
+    expect(result).toMatchObject({ ok: false, kind: 'failed' });
+    expect(!result.ok && result.detail).toContain('timed out');
+    expect(!result.ok && result.detail).not.toContain('partial output');
   });
 
   it('keeps detail short and free of control characters', async () => {
@@ -348,6 +380,25 @@ describe('createGhCliExternalIssueSource: failures', () => {
       expect(/[\u0000-\u001f\u007f-\u009f]/.test(result.detail)).toBe(false);
       expect(result.detail.startsWith('gh: bad [2J thing ')).toBe(true);
     }
+  });
+
+  it('does not cut a surrogate pair when it trims to 300 code points', async () => {
+    // 299 文字 + 絵文字 (UTF-16 で 2 単位) + 続き。UTF-16 の slice(0, 300) だと絵文字が割れる。
+    const { runner } = createFakeRunner([failed(`${'x'.repeat(299)}\u{1F600}tail`)]);
+
+    const result = await createGhCliExternalIssueSource(runner).listOpenIssues();
+
+    expect(!result.ok && result.detail).toBe(`${'x'.repeat(299)}\u{1F600}`);
+    expect(!result.ok && /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(result.detail)).toBe(false);
+  });
+
+  it('replaces bidirectional control characters in detail', async () => {
+    const controls = '\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069';
+    const { runner } = createFakeRunner([failed(`gh: a${controls}b`)]);
+
+    const result = await createGhCliExternalIssueSource(runner).listOpenIssues();
+
+    expect(!result.ok && result.detail).toBe(`gh: a${' '.repeat(controls.length)}b`);
   });
 
   it('gives a fixed message when stderr is empty', async () => {
