@@ -28,6 +28,10 @@ describe('wireSelfErrorReporter', () => {
     const result = { refreshed: [], reused: [], removed: [], errors: [new BdError('unknown', 'p', 'database "epic_haslett_00ae14" not found on dolt server at 127.0.0.1:3307')] };
     expect(wired.onRefreshResult).toBeDefined();
     expect(wired.reporter).toBeDefined();
+    // kind unknown は 3 回続けて見えてから下書きにする (bdboard-f2ob)。1 回目と 2 回目では何も作らない。
+    await wired.reporter?.observeRefresh(result, [p]);
+    await wired.reporter?.observeRefresh(result, [p]);
+    expect((await service.listWithPendingCount()).drafts).toHaveLength(0);
     wired.onRefreshResult?.(result, [p]);
     await vi.waitFor(async () => expect((await service.listWithPendingCount()).drafts).toHaveLength(1));
     // 同じ失敗をもう一度流しても、1 時間は同じ下書きに足されない (throttle)。
