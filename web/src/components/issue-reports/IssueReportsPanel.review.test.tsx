@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../../api';
 import type {
   IssueDraftDetailDto,
   IssueDraftDetailResponseDto,
@@ -54,8 +55,12 @@ function image(fileName: string, url: string): IssueDraftImageDto {
   return { fileName, url, byteLength: 2048, createdAt: '2026-10-04T00:00:00.000Z' };
 }
 
-async function openDraft(draft: IssueDraftDetailDto, images: readonly IssueDraftImageDto[] = []) {
-  const response: IssueDraftDetailResponseDto = { draft, images: [...images], latestHarnessVersion: null };
+async function openDraft(
+  draft: IssueDraftDetailDto,
+  images: readonly IssueDraftImageDto[] = [],
+  latestHarnessVersion: string | null = null,
+) {
+  const response: IssueDraftDetailResponseDto = { draft, images: [...images], latestHarnessVersion };
   vi.mocked(fetchIssueDrafts).mockResolvedValue({ drafts: [{ ...summary, status: draft.status }], pendingCount: 1 });
   vi.mocked(fetchIssueDraft).mockResolvedValue(response);
   const user = userEvent.setup();
@@ -181,7 +186,7 @@ describe('IssueReportsPanel review fixes (bdboard-4y8q.3.2)', () => {
     await user.click(screen.getByRole('button', { name: '直す' }));
     const bodyBox = screen.getByRole('textbox', { name: /本文/ });
     await user.type(bodyBox, ' my unsaved edit');
-    await act(() => {
+    act(() => {
       client.setQueryData<IssueDraftDetailResponseDto>(['issue-reports', 'detail', ID], (previous) =>
         previous === undefined ? previous : { ...previous, draft: { ...previous.draft, title: 'Rebuilt', body: 'body!', occurrenceCount: 10 } },
       );
@@ -200,5 +205,53 @@ describe('IssueReportsPanel review fixes (bdboard-4y8q.3.2)', () => {
     expect(client.getQueryCache().find({ queryKey: ['issue-reports', 'list'] })?.options).toMatchObject({ refetchInterval: 60_000 });
     await user.click(screen.getByRole('button', { name: /^見送り \(/ }));
     expect(screen.queryByRole('article', { name: '下書きの中身' })).toBeNull();
+  });
+
+  it('explains a 409 from another screen, closes the editor and shows the unsaved input to copy (re-review MINOR-A, N8/N9)', async () => {
+    const { user } = await openDraft(localDraft);
+    await user.click(screen.getByRole('button', { name: '直す' }));
+    await user.type(screen.getByRole('textbox', { name: /^本文/ }), ' a long careful edit');
+    // 別の画面で見送られた: PATCH は 409、読み直すと dismissed。
+    vi.mocked(fetchIssueDraft).mockResolvedValue({
+      draft: { ...localDraft, status: 'dismissed', dismissReason: 'dup' },
+      images: [],
+      latestHarnessVersion: null,
+    });
+    vi.mocked(patchIssueDraft).mockRejectedValue(
+      new ApiError(409, 'draft is not pending', {
+        body: JSON.stringify({ error: 'draft is not pending', status: 'dismissed' }),
+        errorMessage: 'draft is not pending',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(
+      await screen.findByText(/別の画面で「見送り」になっていたので、編集を閉じました。入力していた内容は保存していません/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '入力していた本文' })).toHaveValue('body a long careful edit');
+    expect(screen.queryByRole('textbox', { name: /^本文/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: '直す' })).toBeNull();
+  });
+
+  it('explains a close by a background reload even without unsaved input, until another view is chosen (re-review MINOR-A)', async () => {
+    const { user, client } = await openDraft(localDraft);
+    await user.click(screen.getByRole('button', { name: '直す' }));
+    act(() => {
+      client.setQueryData<IssueDraftDetailResponseDto>(['issue-reports', 'detail', ID], (previous) =>
+        previous === undefined ? previous : { ...previous, draft: { ...previous.draft, status: 'posted' } },
+      );
+    });
+    expect(await screen.findByText('別の画面で「投稿済み」になっていたので、編集を閉じました。')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '入力していた本文' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'プレビュー' }));
+    expect(screen.queryByText(/編集を閉じました/)).toBeNull();
+  });
+
+  it('prefers the version recorded at occurrence over the one in the env info (re-review NIT-R4, M20)', async () => {
+    await openDraft(
+      { ...localDraft, harnessVersionAtOccurrence: '1.3.0', localOnly: { errorTextTruncated: false, envInfo: { harnessVersion: '1.0.0' } } },
+      [],
+      '1.3.0',
+    );
+    expect(screen.getByText(/最新の版で起きています/)).toBeInTheDocument();
   });
 });

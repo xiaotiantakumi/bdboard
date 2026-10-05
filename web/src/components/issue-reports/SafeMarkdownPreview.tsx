@@ -9,8 +9,12 @@
  *   - 生の HTML (`<img src=…>` など) は react-markdown の既定どおり描かない (rehype-raw を入れない)。
  * MarkdownContent (チケット本文用) はリンクを開けるので使い回さない。
  *
- * 描けない本文 (深い入れ子でスタックが尽きる・長い強調の並びで主スレッドが止まる) では、タブ全体を落とさず、
- * 生の本文に倒す (レビュー MINOR-2)。見送り・編集はそのまま使える。
+ * 重い本文は描かずに生の本文に倒す (レビュー MINOR-2 / MINOR-B)。見送り・編集はそのまま使える。描く前に 3 つの上限で倒す:
+ *   - 強調・リンクの記号 (`*` `_` `~` `[`) の合計: micromark の強調の解決は記号の数に対して二乗で効き、2 万文字未満でも
+ *     記号を並べた本文で主スレッドが 10 秒以上止まる。いちばん効く上限。コードブロックの中も数えるが、倒れる先は生の本文なので害は小さい。
+ *   - 行頭の入れ子の深さ: 深い引用・リストでスタックが尽きる。
+ *   - 文字数: 上の 2 つに当たらない長い本文の描画の重さを抑える保険。
+ * それでも描画が throw したら、小さな境界 (PreviewBoundary) で生の本文に倒す (タブ全体は落とさない)。
  */
 import { Component, memo, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
@@ -21,8 +25,10 @@ export interface SafeMarkdownPreviewProps {
   readonly className?: string;
 }
 
-/** これより長い本文はプレビューを描かない (長い強調の並びは描画に数秒〜十数秒かかる)。投稿の上限は 65536 文字。 */
+/** これより長い本文はプレビューを描かない (保険。重さの主因は記号の数で、下の SAFE_PREVIEW_MAX_MARKS が先に効く)。投稿の上限は 65536 文字。 */
 export const SAFE_PREVIEW_MAX_CHARS = 20_000;
+/** 強調・リンクの記号 (`*` `_` `~` `[`) の合計がこれを超える本文はプレビューを描かない (1,000 で描画は 0.5 秒程度。レビュー MINOR-B)。 */
+export const SAFE_PREVIEW_MAX_MARKS = 1_000;
 /** 行頭の入れ子 (引用の `>`・リストの印・字下げ) がこれより深い本文はプレビューを描かない (スタックが尽きる)。 */
 export const SAFE_PREVIEW_MAX_NESTING = 32;
 
@@ -60,7 +66,17 @@ export function maxLineNesting(text: string): number {
   return deepest;
 }
 
+/** 強調・リンクの記号 (`*` `_` `~` `[`) の数。 */
+export function countEmphasisMarks(text: string): number {
+  let count = 0;
+  for (const char of text) {
+    if (char === '*' || char === '_' || char === '~' || char === '[') count += 1;
+  }
+  return count;
+}
+
 function tooHeavyReason(text: string): string | null {
+  if (countEmphasisMarks(text) > SAFE_PREVIEW_MAX_MARKS) return '強調やリンクの記号が多いので、プレビューは省きました。';
   if (text.length > SAFE_PREVIEW_MAX_CHARS) return '本文が長いので、プレビューは省きました。';
   if (maxLineNesting(text) > SAFE_PREVIEW_MAX_NESTING) return '入れ子が深いので、プレビューは省きました。';
   return null;

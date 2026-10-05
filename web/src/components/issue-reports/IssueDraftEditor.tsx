@@ -18,12 +18,16 @@ export interface IssueDraftEditorProps {
   readonly draft: IssueDraftDetailDto;
   readonly onCancel: () => void;
   readonly onSaved: (response: IssueDraftEditResponseDto) => void;
+  /** 入力が変わるたびに今の入力 (編集を始めたときの値のままなら null)。編集が外から閉じられたときに見せるため。 */
+  readonly onInputChange?: (input: IssueDraftTextInput | null) => void;
 }
 
-interface TextBase {
+export interface IssueDraftTextInput {
   readonly title: string;
   readonly body: string;
 }
+
+type TextBase = IssueDraftTextInput;
 
 /**
  * 変えた欄だけを送る (サーバーは渡された欄にだけ「直した」印を立てる)。比べる相手は編集を始めたときの値: 編集中に
@@ -40,7 +44,7 @@ function changedFields(base: TextBase, title: string, body: string): IssueDraftT
  * 公開される題名・本文をその場で直す (PATCH drafts/:id)。保存に成功したら中身の問い合わせを応答で置き換え、
  * 一覧・件数も読み直す。失敗はステータスごとに利用者の言葉で出す (issueDraftErrors.ts)。
  */
-export function IssueDraftEditor({ draft, onCancel, onSaved }: IssueDraftEditorProps) {
+export function IssueDraftEditor({ draft, onCancel, onSaved, onInputChange }: IssueDraftEditorProps) {
   const queryClient = useQueryClient();
   // 編集を始めたときの値。中身の問い合わせが裏で読み直されても (同じ指紋の新しい発生で自動の題名・本文が作り直される)、
   // 入力は消さずに残し、変わったことだけ知らせる (bdboard-4y8q.3.2 レビュー MINOR-1)。
@@ -54,6 +58,8 @@ export function IssueDraftEditor({ draft, onCancel, onSaved }: IssueDraftEditorP
   const bodyId = useId();
 
   const tooLong = title.length > ISSUE_DRAFT_TITLE_MAX_CHARS || body.length > ISSUE_DRAFT_BODY_MAX_CHARS;
+  const report = (nextTitle: string, nextBody: string) =>
+    onInputChange?.(nextTitle !== base.title || nextBody !== base.body ? { title: nextTitle, body: nextBody } : null);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -103,7 +109,10 @@ export function IssueDraftEditor({ draft, onCancel, onSaved }: IssueDraftEditorP
         className="issue-draft-editor-title"
         type="text"
         value={title}
-        onChange={(event) => setTitle(event.target.value)}
+        onChange={(event) => {
+          setTitle(event.target.value);
+          report(event.target.value, body);
+        }}
       />
       <label htmlFor={bodyId} className="issue-draft-editor-label">
         本文 (Markdown)
@@ -116,7 +125,10 @@ export function IssueDraftEditor({ draft, onCancel, onSaved }: IssueDraftEditorP
         className="issue-draft-editor-body"
         value={body}
         rows={14}
-        onChange={(event) => setBody(event.target.value)}
+        onChange={(event) => {
+          setBody(event.target.value);
+          report(title, event.target.value);
+        }}
       />
       {error !== null && (
         <p className="error-message" role="alert">

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { IssueDraftDetailDto, IssueDraftEditResponseDto } from '../../api/issue-reports';
 import { togglePressedProps } from '../toggleGroupA11y';
-import { IssueDraftEditor } from './IssueDraftEditor';
+import { IssueDraftEditClosedNotice } from './IssueDraftEditClosedNotice';
+import { IssueDraftEditor, type IssueDraftTextInput } from './IssueDraftEditor';
 import { describeLeaks, omittedLeakCount, segmentMarkedText } from './issueDraftText';
 import { SafeMarkdownPreview } from './SafeMarkdownPreview';
 
@@ -65,10 +66,17 @@ function LeakWarnings({ draft }: { readonly draft: IssueDraftDetailDto }) {
  * その場の編集。見送り・投稿済みの下書きは直せない (サーバーも 409 にする)。
  */
 export function IssueDraftPublicSection({ draft, onSaved }: IssueDraftPublicSectionProps) {
-  const [selectedMode, setMode] = useState<PublicMode>('preview');
+  const [selectedMode, setSelectedMode] = useState<PublicMode>('preview');
+  // 編集中の入力 (編集を始めたときの値のままなら null)。編集が外から閉じられたときに見せる。
+  const [unsavedInput, setUnsavedInput] = useState<IssueDraftTextInput | null>(null);
   const editable = draft.status === 'pending';
-  // 編集中に別の画面で見送り・投稿済みになったら (409 のあとの読み直しなど)、編集欄を閉じてプレビューに戻す。
-  const mode: PublicMode = selectedMode === 'edit' && !editable ? 'preview' : selectedMode;
+  // 編集中に別の画面で見送り・投稿済みになったら (409 のあとの読み直しなど)、編集欄を閉じてプレビューに戻し、そのことを説明する。
+  const closedFromOutside = selectedMode === 'edit' && !editable;
+  const mode: PublicMode = closedFromOutside ? 'preview' : selectedMode;
+  const setMode = (next: PublicMode) => {
+    setUnsavedInput(null);
+    setSelectedMode(next);
+  };
   const leaks = draft.suspectedLeaks ?? [];
   const rangesOf = (field: 'title' | 'body') => leaks.filter((leak) => leak.field === field);
   const modes: { mode: PublicMode; label: string }[] = [
@@ -95,6 +103,7 @@ export function IssueDraftPublicSection({ draft, onSaved }: IssueDraftPublicSect
           </button>
         ))}
       </div>
+      {closedFromOutside && <IssueDraftEditClosedNotice status={draft.status} input={unsavedInput} />}
       <LeakWarnings draft={draft} />
       {mode === 'preview' && (
         <div className="issue-draft-preview">
@@ -121,6 +130,7 @@ export function IssueDraftPublicSection({ draft, onSaved }: IssueDraftPublicSect
           key={draft.id}
           draft={draft}
           onCancel={() => setMode('preview')}
+          onInputChange={setUnsavedInput}
           onSaved={(response) => {
             setMode('preview');
             onSaved(response);
