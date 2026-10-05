@@ -26,6 +26,11 @@ export interface DailyDigestInput {
    * 効いていない pendingDecisions にだけ適用する。
    */
   readonly selectedProjectIds: readonly string[];
+  /**
+   * 不具合報告の未処理の下書きの件数 (bdboard-4y8q.3.2)。プロジェクトの絞り込みは効かない (下書きはボード全体で 1 か所)。
+   * null は読めなかった、省略は載せない (古い呼び出し元・テスト)。
+   */
+  readonly issueReportPendingCount?: number | null;
 }
 
 function normalizeText(value: string): string {
@@ -156,6 +161,11 @@ function formatPendingDecisionLine(
   return `- [${project}] ${decision.id}${titlePart} — ${questionPart}`;
 }
 
+function formatIssueReportSection(count: number | null): string {
+  const line = count === null ? '- 未処理の件数を読み込めませんでした' : `- 未処理 ${count}件`;
+  return `## 不具合報告\n${line}`;
+}
+
 function formatSection(heading: string, lines: readonly string[]): string {
   const body = lines.length === 0 ? '- なし' : lines.join('\n');
   return `## ${heading} (${lines.length}件)\n${body}`;
@@ -170,6 +180,7 @@ export function buildDailyDigestMarkdown(input: DailyDigestInput): string {
     pendingDecisions,
     projectNames,
     selectedProjectIds,
+    issueReportPendingCount,
   } = input;
 
   const closedEvents = activityEvents.filter((event) => event.kind === 'closed');
@@ -206,5 +217,6 @@ export function buildDailyDigestMarkdown(input: DailyDigestInput): string {
     formatSection('進行中', inProgressLines),
     formatSection('ブロック中', blockedLines),
     formatSection('決定待ち', pendingLines),
+    ...(issueReportPendingCount !== undefined ? [formatIssueReportSection(issueReportPendingCount)] : []),
   ].join('\n\n');
 }

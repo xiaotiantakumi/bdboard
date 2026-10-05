@@ -15,6 +15,8 @@ export interface AppHeaderProps {
   view: ViewMode;
   onViewChange: (view: ViewMode) => void;
   notificationUnreadCount: number;
+  /** 不具合報告の未処理件数 (bdboard-4y8q.3.2)。null・省略時はタブに出さない。 */
+  issueReportPendingCount?: number | null;
   onOpenSearch: () => void;
   connection: {
     streamState: StreamState;
@@ -94,6 +96,7 @@ export function AppHeader({
   view,
   onViewChange,
   notificationUnreadCount,
+  issueReportPendingCount = null,
   onOpenSearch,
   connection,
   sessions,
@@ -114,6 +117,7 @@ export function AppHeader({
           view={view}
           onViewChange={onViewChange}
           notificationUnreadCount={notificationUnreadCount}
+          issueReportPendingCount={issueReportPendingCount}
           onOpenSearch={onOpenSearch}
           streamState={connection.streamState}
           connectStalled={connection.connectStalled}

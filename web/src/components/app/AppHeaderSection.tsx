@@ -1,3 +1,4 @@
+import { useIssueReportPendingCount } from '../../hooks/useIssueReportPendingCount';
 import { AppHeader } from './AppHeader';
 import type { useAppController } from './useAppController';
 
@@ -41,12 +42,15 @@ export function AppHeaderSection({ controller }: AppHeaderSectionProps) {
     chatAvailable,
     nextUpBatchRun,
   } = controller;
+  // 不具合報告の未処理件数 (bdboard-4y8q.3.2)。下書きは bd の外にあるのでボードのデータとは別に読む。
+  const issueReportPending = useIssueReportPendingCount();
 
   return (
     <AppHeader
       view={view}
       onViewChange={setView}
       notificationUnreadCount={notificationEvents.unreadCount}
+      issueReportPendingCount={issueReportPending.count}
       onOpenSearch={overlays.handleOpenSearch}
       connection={{
         streamState,

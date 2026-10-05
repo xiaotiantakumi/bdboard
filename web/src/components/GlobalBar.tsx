@@ -11,6 +11,8 @@ export interface GlobalBarProps {
   view: ViewMode;
   onViewChange: (view: ViewMode) => void;
   notificationUnreadCount: number;
+  /** 不具合報告の未処理件数 (bdboard-4y8q.3.2)。1 件以上のときだけタブに出す。読めないとき・省略時は出さない。 */
+  issueReportPendingCount?: number | null;
   onOpenSearch: () => void;
   streamState: StreamState;
   connectStalled?: boolean;
@@ -40,6 +42,7 @@ export function GlobalBar({
   view,
   onViewChange,
   notificationUnreadCount,
+  issueReportPendingCount = null,
   onOpenSearch,
   streamState,
   connectStalled = false,
@@ -117,7 +120,7 @@ export function GlobalBar({
         window.removeEventListener('resize', updateScrollHints);
       }
     };
-  }, [updateScrollHints, view, notificationUnreadCount]);
+  }, [updateScrollHints, view, notificationUnreadCount, issueReportPendingCount]);
 
   const scrollerClassName = [
     'view-switcher-scroller',
@@ -147,6 +150,9 @@ export function GlobalBar({
                 {item.label}
                 {item.view === 'events' && notificationUnreadCount > 0
                   ? ` (${notificationUnreadCount})`
+                  : ''}
+                {item.view === 'issue-reports' && issueReportPendingCount !== null && issueReportPendingCount > 0
+                  ? ` (${issueReportPendingCount})`
                   : ''}
               </button>
             ))}

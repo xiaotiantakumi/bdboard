@@ -38,8 +38,8 @@ import {
  *   - 受け取り (POST drafts) と画像の追加 (POST drafts/:id/images): ローカル直アクセスのみ。
  *     createPrivilegedApiGuardMiddleware にトンネル用の依存を渡さないことで、
  *     「強パスワード + セッション Cookie のトンネル」でも通さない (設計 3節の1行)。
- *   - 一覧・画像の取得 (GET): ほかの読み取り API と同じ。トンネルではトンネルの
- *     認証 (Basic 認証) を通れば読める。
+ *   - 一覧の取得 (GET): ほかの読み取り API と同じ。トンネルではトンネルの認証 (Basic 認証) を通れば読める。
+ *   - 画像の取得 (GET drafts/:id/images/:fileName): ローカル直アクセスのみ (bdboard-4y8q.3.2。生ログと同じ扱い)。
  *   - 1 件の取得 (GET drafts/:id): 全部を返すのはローカル直アクセスだけ。トンネル経由は
  *     生ログ・自由記述の生の文・絶対パスを除いた形 (`restricted: true`、toDetailDto)。
  *   - 見送り (PATCH dismiss) と題名・本文の編集 (PATCH drafts/:id、issue-report-edit-routes.ts): 通常の write-guard
@@ -262,7 +262,9 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
     return c.json({ image: toImageDto(id, result.image) }, 201);
   });
 
-  app.get(`${ISSUE_DRAFTS_PATH}/:id/images/:fileName`, async (c) => {
+  // 画像はローカル直アクセスだけ (bdboard-4y8q.3.2)。スクリーンショットには生ログと同じ種類の秘密が写りうるので、
+  // トンネル経由では生ログと同じく見せない。画面もトンネル経由では画像をリンクにしない。
+  app.get(`${ISSUE_DRAFTS_PATH}/:id/images/:fileName`, localOnlyGuard, async (c) => {
     const id = c.req.param('id');
     if (!isDraftId(id)) return c.json({ error: 'invalid draft id' }, 400);
     const fileName = c.req.param('fileName');

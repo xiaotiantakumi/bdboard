@@ -10,6 +10,7 @@ export type ViewMode =
   | 'graph'
   | 'hygiene'
   | 'events'
+  | 'issue-reports'
   | 'settings';
 
 export const DEFAULT_VIEW: ViewMode = 'split';
@@ -26,6 +27,7 @@ export const VIEW_ITEMS: readonly { view: ViewMode; label: string }[] = [
   { view: 'hygiene', label: '健全性' },
   { view: 'graph', label: '依存グラフ' },
   { view: 'events', label: 'イベント' },
+  { view: 'issue-reports', label: '不具合報告' },
   { view: 'settings', label: '設定' },
 ];
 
@@ -58,6 +60,7 @@ export function validateViewMode(value: unknown): ViewMode | null {
     value === 'graph' ||
     value === 'hygiene' ||
     value === 'events' ||
+    value === 'issue-reports' ||
     value === 'settings'
   ) {
     return value;

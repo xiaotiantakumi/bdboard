@@ -1,0 +1,309 @@
+/* bdboard-4y8q.3.2: 「不具合報告」タブ。左に一覧、右に中身。狭い幅では 1 列にし、選んでいる間は中身だけを出す。 */
+.issue-reports-panel {
+  display: grid;
+  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+  min-width: 0;
+}
+
+.issue-reports-list-pane,
+.issue-reports-detail-pane {
+  min-width: 0;
+}
+
+.issue-reports-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.issue-reports-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.issue-reports-status-toggle {
+  flex-wrap: wrap;
+}
+
+.issue-draft-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.issue-draft-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.issue-draft-row.selected {
+  border-color: var(--color-accent);
+}
+
+.issue-draft-row-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.issue-draft-row-meta,
+.issue-draft-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+
+.issue-draft-kind,
+.issue-draft-status {
+  align-self: flex-start;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--badge-neutral-bg);
+  color: var(--badge-neutral-fg);
+  font-size: 0.8rem;
+}
+
+.issue-draft-muted {
+  color: var(--color-text-secondary);
+}
+
+.issue-draft-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.issue-reports-back {
+  display: none;
+  align-self: flex-start;
+}
+
+.issue-draft-section {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  min-width: 0;
+}
+
+.issue-draft-section-title {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+summary.issue-draft-section-title {
+  margin: 0;
+  cursor: pointer;
+}
+
+.issue-draft-notice {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-grouped);
+}
+
+.issue-draft-leaks {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+}
+
+.issue-draft-leaks-title,
+.issue-draft-leaks-omitted,
+.issue-draft-leaks-note {
+  margin: 0 0 4px;
+}
+
+.issue-draft-leaks-list {
+  margin: 0 0 4px;
+  padding-left: 1.2em;
+}
+
+.issue-draft-leak-field,
+.issue-draft-leak-kind {
+  margin-right: 8px;
+}
+
+.issue-draft-leak-excerpt,
+.issue-draft-fingerprint,
+.issue-draft-project-path {
+  overflow-wrap: anywhere;
+}
+
+.issue-draft-preview,
+.issue-draft-raw {
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.issue-draft-preview-title {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.safe-preview-url,
+.safe-preview-note {
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.issue-draft-raw-title,
+.issue-draft-raw-body,
+.issue-draft-local-pre {
+  margin: 0 0 8px;
+  padding: 8px;
+  max-height: 480px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  background: var(--color-bg-grouped);
+  border-radius: var(--radius-sm);
+}
+
+.issue-draft-raw-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+}
+
+.issue-draft-mark {
+  color: inherit;
+  border-radius: 2px;
+}
+
+.issue-draft-mark-redaction {
+  background: var(--badge-label-bg);
+}
+
+.issue-draft-mark-leak {
+  background: var(--badge-stalled-bg);
+  outline: 1px solid var(--color-warning);
+}
+
+.issue-draft-editor,
+.issue-draft-dismiss-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.issue-draft-editor-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.issue-draft-editor-count {
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.issue-draft-editor-title,
+.issue-draft-editor-body,
+.issue-draft-dismiss-reason {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+}
+
+.issue-draft-editor-body {
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+.issue-draft-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* .issue-draft-local-list は <details> の直下なので、display は [open] の中だけで当てる
+   (閉じていても中身が出る罠: harness pack の references/frontend-gotchas.md)。 */
+.issue-draft-local[open] > .issue-draft-local-list,
+.issue-draft-version-list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 8px 0;
+}
+
+.issue-draft-local-list dd,
+.issue-draft-version-list dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.issue-draft-env-row {
+  display: contents;
+}
+
+.issue-draft-projects,
+.issue-draft-images {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.issue-draft-local-heading {
+  margin: 12px 0 4px;
+  font-size: 0.9rem;
+}
+
+.issue-draft-version-message {
+  margin: 0;
+}
+
+.issue-draft-version-different {
+  font-weight: 600;
+}
+
+@media (max-width: 700px) {
+  .issue-reports-panel {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 8px;
+  }
+
+  .issue-reports-panel.has-selection .issue-reports-list-pane {
+    display: none;
+  }
+
+  .issue-reports-panel:not(.has-selection) .issue-reports-detail-pane {
+    display: none;
+  }
+
+  .issue-reports-back {
+    display: inline-flex;
+  }
+
+  .issue-draft-local[open] > .issue-draft-local-list,
+  .issue-draft-version-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
