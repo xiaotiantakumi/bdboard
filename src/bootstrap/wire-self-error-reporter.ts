@@ -8,6 +8,7 @@ import type { IssueDraftService } from '../application/issue-report/issue-draft-
 import type { Project } from '../domain/project.js';
 import { createSelfErrorThrottle } from '../domain/self-error-throttle.js';
 import type { ApplicationVersionProvider } from '../application/ports/application-version.js';
+import type { BdVersionSource } from '../application/bd/bd-version-snapshot.js';
 import { serverEnvInfo } from './wire-issue-draft-service.js';
 
 export interface WireSelfErrorReporterDeps {
@@ -15,6 +16,7 @@ export interface WireSelfErrorReporterDeps {
   readonly service: Pick<IssueDraftService, 'receive'>;
   readonly cache: Pick<BoardCache, 'listProjects' | 'listProjectRefs'>;
   readonly applicationVersion: ApplicationVersionProvider;
+  readonly bdVersion?: BdVersionSource;
   readonly now?: () => Date;
   readonly log?: (message: string) => void;
 }
@@ -43,7 +45,7 @@ export function wireSelfErrorReporter(deps: WireSelfErrorReporterDeps): WiredSel
     service: deps.service,
     throttle: createSelfErrorThrottle(),
     listProjects: () => readProjectRefs(deps.cache),
-    envInfo: serverEnvInfo(deps.applicationVersion),
+    envInfo: serverEnvInfo(deps.applicationVersion, deps.bdVersion),
     log,
     ...(deps.now !== undefined ? { now: deps.now } : {}),
   });

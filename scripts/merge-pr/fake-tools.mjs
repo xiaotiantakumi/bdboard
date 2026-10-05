@@ -4,7 +4,9 @@
 // PATH にもシェバンにも依存しない — scripts/fake-gh.mjs と同じ理由)。状態は
 // BDBOARD_MERGE_FAKE_STATE の JSON ファイルに置き、呼び出しのたびに読み書きする:
 //   pulls[n]            gh api repos/R/pulls/n の応答 (REST の形)
-//   checks[n]           gh pr checks n --required の終了コード (既定 0)
+//   checks[n]           gh pr checks n --required の終了コード (既定 0)。--json のときは行 (checksRows の既定) に直し、終了コードは 0
+//   checksRows[n]       あれば gh pr checks n の行 [{ name, state, bucket, link }] (bdboard-bsc3。cancel の再現)。表形式の終了コードは gh の規則 (fail=1 / pending=8 / 他=0)
+//   checksJsonUnsupported  true なら gh pr checks --json は "unknown flag" で exit 1 (--json を持たない古い gh)
 //   statuses[sha]       gh api repos/R/commits/sha/status の statuses 配列
 //   bdShow[id]          bd show の応答。'not-found' / 'unreachable' / 'bad-json' は異常系 sentinel
 //   statusQueue[sha]    あれば GET のたびに先頭を取り出して statuses[sha] に据える (待ちの再現)
@@ -29,15 +31,58 @@ function flagValue(name) {
   return index === -1 ? undefined : args[index + 1];
 }
 
-function gh() {
-  if (args[0] === 'pr' && args[1] === 'checks' && state.checksError?.[args[2]]) {
-    err = `${state.checksError[args[2]]}\n`;
+// bdboard-bsc3: gh pr checks の行 ({ name, state, bucket, link })。checksRows[n] があればそれ、
+// 無ければ checks[n] (終了コード) から作る。bucket は gh の aggregateChecks と同じ綴り
+// (pass / fail / pending / skipping / cancel)。
+function checkRows(pr) {
+  const rows = state.checksRows?.[pr];
+  if (Array.isArray(rows)) {
+    return rows;
+  }
+  const exit = state.checks?.[pr] ?? 0;
+  if (exit === 0) {
+    return [
+      { name: 'verify', state: 'SUCCESS', bucket: 'pass', link: 'https://github.com/example/demo/actions/runs/1001/job/2001' },
+      { name: 'e2e', state: 'SUCCESS', bucket: 'pass', link: 'https://github.com/example/demo/actions/runs/1001/job/2002' },
+    ];
+  }
+  const kind = exit === 8 ? { state: 'IN_PROGRESS', bucket: 'pending' } : { state: 'FAILURE', bucket: 'fail' };
+  return [{ name: 'verify', ...kind, link: 'https://github.com/example/demo/actions/runs/1001/job/2001' }];
+}
+
+function checks() {
+  const pr = args[2];
+  if (state.checksError?.[pr]) {
+    err = `${state.checksError[pr]}\n`;
     code = 1;
     return;
   }
+  const rows = checkRows(pr);
+  if (args.includes('--json')) {
+    if (state.checksJsonUnsupported) {
+      err = 'unknown flag: --json\n';
+      code = 1;
+      return;
+    }
+    // 本物の gh は --json のとき、チェックが fail / pending でも終了コード 0 で JSON を書いて終わる
+    // (checksRun は Exporter.Write を、終了コードを決める counts.Failed / Pending の判定より先に返す。
+    // cli/cli v2.86.0 pkg/cmd/pr/checks/checks.go)。終了コードで判定していた旧 requiredChecks が、cancel を pass に倒した。
+    out = JSON.stringify(rows.map(({ name, state: rowState, bucket, link }) => ({ name, state: rowState, bucket, link })));
+    return;
+  }
+  if (Array.isArray(state.checksRows?.[pr])) {
+    // 表形式: 本物の gh と同じく fail があれば 1、無ければ pending があれば 8。cancel は数えない (cancel だけなら 0)。
+    out = rows.map((row) => `${row.name}\t${row.bucket}\t0\t${row.link}\t\n`).join('');
+    code = rows.some((row) => row.bucket === 'fail') ? 1 : rows.some((row) => row.bucket === 'pending') ? 8 : 0;
+    return;
+  }
+  code = state.checks?.[pr] ?? 0;
+  out = code === 0 ? 'verify\tpass\ne2e\tpass\n' : 'verify\tpending\n';
+}
+
+function gh() {
   if (args[0] === 'pr' && args[1] === 'checks') {
-    code = state.checks?.[args[2]] ?? 0;
-    out = code === 0 ? 'verify\tpass\ne2e\tpass\n' : 'verify\tpending\n';
+    checks();
     return;
   }
   if (args[0] !== 'api') {

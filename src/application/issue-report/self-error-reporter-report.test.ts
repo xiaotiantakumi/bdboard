@@ -108,7 +108,9 @@ describe('report(): the mask list is the cache list plus the discovery list seen
 describe('report() shares the throttle with the refresh tracker (6.4 review point 3)', () => {
   it('records both kinds of key in the one throttle, and one noisy key does not use the other one up', async () => {
     const { reporter, receive, throttle } = setup();
-    await reporter.observeRefresh(refresh('cached', 'bd failed'), [cached]);
+    // 1 回で報告される種類 (schema-mismatch) を使う。ほかの種類は連続 3 回で報告する (bdboard-f2ob)。
+    const shapeError = { refreshed: [], removed: [], errors: [{ kind: 'schema-mismatch', projectId: 'cached', detail: 'bd failed' }] };
+    await reporter.observeRefresh(shapeError, [cached]);
     await reporter.report({ source: 'api:GET /api/board', errorText: 'bd failed' });
     expect(throttle.size()).toBe(2);
     for (let round = 0; round < 50; round += 1) await reporter.report({ source: 'api:GET /api/board', errorText: 'bd failed' });

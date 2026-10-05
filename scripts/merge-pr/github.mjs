@@ -1,7 +1,8 @@
 // bdboard-ulxa.1: merge-pr が使う GitHub 呼び出し。PR 情報と commit status は REST
 // (`gh api`) で読む — GraphQL の枠切れで止まった実績がある (failure-catalog の
 // graphql-quota-exhaustion)。必須チェックの判定だけは `gh pr checks --required` に任せる
-// (どれが required かは ruleset 由来で、REST で組み立てると二重管理になる)。
+// (どれが required かは ruleset 由来で、REST で組み立てると二重管理になる)。ただし判定は終了コードではなく
+// --json の行ごとの bucket で行う (bdboard-bsc3: cancel は終了コードに現れない)。
 import { run } from './exec.mjs';
 
 const TRANSIENT = /graphql|rate limit|HTTP 5\d\d|timed? ?out|ETIMEDOUT|could not resolve|connection (refused|reset)|network/i;
@@ -38,19 +39,78 @@ export function getPull(ctx, pr) {
   };
 }
 
+// bdboard-bsc3: gh pr checks --json の行の bucket (gh の aggregateChecks。cli/cli v2.86.0
+// pkg/cmd/pr/checks/aggregate.go) のうち、必須チェックとして満たされているもの。skipping は
+// SKIPPED / NEUTRAL (GitHub の ruleset も満たしたものとして扱う)。これ以外 — fail・cancel・未知の綴り・
+// 欠落 — は green ではない。pending だけは待てば変わるので別に数える。
+const GREEN_BUCKETS = new Set(['pass', 'skipping']);
+
 /**
- * 必須チェックの状態。`gh pr checks` の終了コードは 0 = 全 pass / 8 = pending /
- * それ以外 = 失敗。取得エラーと分かるものは 'unknown'。
+ * `gh pr checks --required --json name,state,bucket,link` の stdout を判定する (純粋)。
+ * 行は全部読む: fail・cancel・未知の bucket は 'fail'、pending が残れば 'pending'、全部 pass / skipping なら 'pass'。
+ * 読めない出力 (JSON でない・配列でない) は 'unknown'、空の配列は 'fail' (gh は必須チェックが 0 件のとき自分で失敗する)。
+ * cancelled は cancel の行 ({ name, link }) で、prepare が流し直しの案内に使う。
+ */
+export function judgeCheckRows(stdout) {
+  let rows;
+  try {
+    rows = JSON.parse(stdout);
+  } catch {
+    rows = null;
+  }
+  if (!Array.isArray(rows)) {
+    return { verdict: 'unknown', output: String(stdout).trim(), cancelled: [] };
+  }
+  const cell = (value) => (typeof value === 'string' ? value : '');
+  const lines = rows.map((row) => `${cell(row?.name)}\t${cell(row?.bucket)}\t${cell(row?.state)}\t${cell(row?.link)}`);
+  const buckets = rows.map((row) => cell(row?.bucket));
+  const cancelled = rows
+    .filter((row) => cell(row?.bucket) === 'cancel')
+    .map((row) => ({ name: cell(row?.name), link: cell(row?.link) }));
+  let verdict = 'pass';
+  if (rows.length === 0) {
+    verdict = 'fail';
+    lines.push('(gh pr checks が必須チェックを 1 件も返しませんでした)');
+  } else if (buckets.some((bucket) => !GREEN_BUCKETS.has(bucket) && bucket !== 'pending')) {
+    verdict = 'fail';
+  } else if (buckets.includes('pending')) {
+    verdict = 'pending';
+  }
+  return { verdict, output: lines.join('\n'), cancelled };
+}
+
+// --json を持たない古い gh の stderr (cobra の unknown flag / gh の Unknown JSON field)。
+const JSON_UNSUPPORTED = /unknown (shorthand )?flag|unknown json field/i;
+
+/**
+ * 必須チェックの状態。bdboard-bsc3: `gh pr checks --json` の行ごとの bucket で判定する。終了コードは使えない:
+ * cancel は fail にも pending にも数えられず (必須が cancel だけなら 0)、--json では fail / pending でも 0 になる。
+ * 取得エラーと分かるものは 'unknown'。--json を持たない gh だけは従来の終了コード
+ * (0 = 全 pass / 8 = pending / それ以外 = 失敗) に落ち、source: 'exit-code' を返す (cancel は見分けられない)。
  */
 export function requiredChecks(ctx, pr) {
-  const result = run('gh', ['pr', 'checks', String(pr), '--required'], { cwd: ctx.cwd });
+  const result = run('gh', ['pr', 'checks', String(pr), '--required', '--json', 'name,state,bucket,link'], { cwd: ctx.cwd });
+  if (result.status === 0) {
+    return { ...judgeCheckRows(result.stdout), source: 'json' };
+  }
+  if (JSON_UNSUPPORTED.test(result.stderr)) {
+    return { ...requiredChecksByExitCode(ctx, pr), source: 'exit-code' };
+  }
+  return { ...verdictByExitCode(result), source: 'json' };
+}
+
+function requiredChecksByExitCode(ctx, pr) {
+  return verdictByExitCode(run('gh', ['pr', 'checks', String(pr), '--required'], { cwd: ctx.cwd }));
+}
+
+function verdictByExitCode(result) {
   let verdict = result.status === 0 ? 'pass' : result.status === 8 ? 'pending' : 'fail';
   // gh pr checks は GraphQL。枠切れ・ネットワーク・タイムアウトを「CI が赤」と取り違えない
   // (stderr だけを見る。stdout はチェック名の一覧で、名前に network 等が入りうる)。
   if (verdict === 'fail' && TRANSIENT.test(result.stderr)) {
     verdict = 'unknown';
   }
-  return { verdict, output: `${result.stdout}${result.stderr}`.trim() };
+  return { verdict, output: `${result.stdout}${result.stderr}`.trim(), cancelled: [] };
 }
 
 /** sha の commit status のうち statusContext のもの (無ければ null)。 */
