@@ -14,6 +14,7 @@ import { classifyForMode, describeClass } from './mode-class.mjs';
 import { PREDICTED_MODES } from './config.mjs';
 import { EXIT, fail, fetchedMain, ticketIdFor } from './context.mjs';
 import { assertExternalRefLinked } from './external-ref.mjs';
+import { assertConventionalTitle } from './pr-title.mjs';
 import { getLandedStatus, getPull, requiredChecks } from './github.mjs';
 import { brokenMainSteps, keptLightFailureSteps, rebaseSteps } from './messages.mjs';
 import { verifyPredicted } from './predicted.mjs';
@@ -153,6 +154,7 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
   }
   const pull = getPull(ctx, pr);
   assertOpenPull(ctx, pull, pr);
+  await assertConventionalTitle(pull, pr, { phase: 'prepare' });
   const ticket = assertReviewRecorded(ctx, pull, pr);
   const head = assertLocalHead(ctx, pull, pr);
   const id = ticketIdFor(pull.headRef, pr);

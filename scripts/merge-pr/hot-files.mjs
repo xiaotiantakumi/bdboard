@@ -46,6 +46,8 @@ export const MERGE_PROCEDURE_FILES = Object.freeze([
   'scripts/merge-pr.mjs',
   'scripts/check-drift/**',
   'scripts/check-drift.mjs',
+  'scripts/check-commit-parse/**', // bdboard-07q8: prepare / gate が PR タイトルの検査に使う (merge-pr/pr-title.mjs が動的 import)
+  'scripts/check-commit-parse.mjs',
   'scripts/process-identity.mjs',
   'scripts/process-tree.mjs',
   'scripts/verify-slot.mjs',

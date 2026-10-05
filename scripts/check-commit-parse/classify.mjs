@@ -26,6 +26,11 @@ export function checkCommitMessage(message) {
   }
 }
 
+/** 件名が conventional commits の書式か。 */
+export function isConventionalSubject(subject) {
+  return CONVENTIONAL_SUBJECT.test(String(subject));
+}
+
 /**
  * 件名 1 行目が CHANGELOG に載る conventional コミットか。
  */

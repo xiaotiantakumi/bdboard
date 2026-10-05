@@ -31,6 +31,7 @@ describe('check-commit-parse.mjs export surface', () => {
       [
         'KNOWN_UNPARSABLE',
         'checkCommitMessage',
+        'isConventionalSubject', // bdboard-07q8: merge-pr の PR タイトル検査が使う
         'isChangelogRelevant',
         'isValidAllowlistEntry',
         'findUnparsableCommits',

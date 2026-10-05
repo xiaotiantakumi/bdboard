@@ -325,6 +325,24 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   bypass. Refused → do not retry, run `finish` (it returns the slot), then the human gate
   (ticket-flow). `--match-head-commit` makes GitHub reject the merge (409) if someone pushed to
   the branch after `prepare`; that also ends in `finish` + `prepare`.
+- **`prepare` checks the PR title before anything slow, and `gate` checks it again before taking the
+  slot** (bdboard-07q8). The squash subject `gate` prints is `<PR title> (#<N>)`. `gh pr create --fill`
+  on a branch with several commits takes the branch name as the title (PR #920 / #921: `bd/bdboard
+  4y8q.6.4`), and the line `gate` printed would have put `bd/bdboard 4y8q.6.4 (#920)` on main, which
+  release-please cannot read, so the commit would vanish from CHANGELOG.md. Right after the PR is
+  confirmed open (before the review record, the required checks, the class and any predicted-tree
+  verify) `prepare` builds that same subject and runs it through the rule `npm run check:commits`
+  uses: release-please's own parser must accept it (`checkCommitMessage`) and it must have the shape
+  `type(scope)!: description` (`isConventionalSubject`; both in `scripts/check-commit-parse.mjs`).
+  If not, exit `2` and the message prints `gh pr edit <N> --title "<type>(<ticket-id>): <English
+  summary>"`; fix the title and run `prepare` again. A title edit does not change the head, so
+  there is no push and no CI rerun. It also runs under `--dry-run` and in S0 (the title is wrong
+  for any merge mode). `gate` repeats the check right after its own PR read, before the layer-3
+  wait and `acquire`: no slot is held yet, so nothing has to be returned, and the `prepare` record
+  is left as it is (fix the title and run `gate` again). The subject it checks is the one it then
+  prints, built from the same PR read (`squashSubject` in `scripts/merge-pr/pr-title.mjs`). The
+  checker is loaded lazily, so `finish` does not depend on it; if it cannot be loaded (no
+  `npm install`), `prepare` / `gate` exit `1` instead of letting a subject through unchecked.
 - **Exit code `8`: a stale `refs/remotes/origin/main.lock` is not a 75** (bdboard-1syo). If the
   `git fetch origin main` that opens every phase fails because a lock file is in the way
   (`Unable to create '….lock': File exists` — a fetch only takes the lock when it has a ref to
@@ -692,7 +710,8 @@ File overlap still never decides whether to merge without a rebase; it only pick
   repair. That list is `MERGE_PROCEDURE_FILES` in `scripts/merge-pr/hot-files.mjs` (not in the
   contract): `scripts/merge-pr/**`, `scripts/merge-pr.mjs`, `scripts/check-drift/**`,
   `scripts/check-drift.mjs`, and the `scripts/` modules `merge-pr` imports
-  (`scripts/process-identity.mjs`, `scripts/process-tree.mjs`, `scripts/verify-slot.mjs`,
+  (`scripts/check-commit-parse.mjs` and `scripts/check-commit-parse/**` since bdboard-07q8,
+  `scripts/process-identity.mjs`, `scripts/process-tree.mjs`, `scripts/verify-slot.mjs`,
   `scripts/verify-slot-files.mjs`, `scripts/verify-slot-queue.mjs`, `scripts/verify-slot-wait.mjs`;
   `scripts/merge-pr.s3.test.mjs` walks the imports and fails when one is missing).
 - **Why `harness/**` and `.claude/**` are in the default blind list (bdboard-ulxa.7, decided).**
