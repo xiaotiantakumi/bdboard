@@ -845,6 +845,15 @@ function normalizeErrorText(text: string): string {
   出すためのもので、比べる相手は最後に起きたときの版(最初の版と比べると、もう直った版での発生を古い版の発生と見誤る)。最初の版が
   要るなら欄を足す(`firstEnvInfo` など)。見送り済み・投稿済み(回数だけ足す)と「大量発生」の下書きの版は替えない。
 
+**受け取りの置き場所(bdboard-4y8q.6.1、設計からのずれは無い)**
+
+`src/application/issue-report/issue-draft-service.ts` が ESLint の行数(空行・コメントを除く 200 行)に迫ったので、受け取り
+(統合・新規作成・「大量発生」への丸め込み)の本体を `src/application/issue-report/issue-draft-receive.ts` の
+`receiveDraftLocked(ctx, input)` へ移した。**移しただけで挙動は変わらない**。サービスは `exclusive(() => receiveDraftLocked(ctx, input))`
+を呼ぶだけで、排他(mutex)・索引・掃除・容量の判定はサービスの中に残り、`DraftReceiveContext`(storage の `get`・`indexCache.get`・
+`pruneIfDue`・`saveWithinCap`・`now`・`newId`)として渡す。`ReceiveDraftResult` の型は同じファイルへ移し、サービスから再エクスポートする
+(外から見える名前は変わらない)。
+
 ## 5. 公開本文の組み立てと置き換え(項目 e、bdboard-4y8q.2)
 
 `domain` 層の純粋関数(`src/domain/issue-public-*.ts`、入口は `issue-public-build.ts` の `buildPublicIssueBody`)。
