@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TOKEN_SHAPES, findEmailSpans, findTokenSpans } from './issue-public-secrets.js';
+import { LINEAR_TIME_TEST_TIMEOUT_MS, expectLinearTime } from './linear-time-test-support.js';
 
 // トークンは明らかに偽の値を実行時に組み立てる (リポジトリにシークレットスキャナが反応する文字列を置かない)。
 const SHAPES: readonly (readonly [string, () => string])[] = [
@@ -265,51 +266,54 @@ describe('Stripe and JWT glued to other characters (reported by the loose mode, 
 });
 
 describe('linear time on hostile 100k inputs', () => {
-  it('scans every finder (strict and loose) in well under three seconds', () => {
-    const hostile = [
-      'a'.repeat(100_000),
-      'a@'.repeat(50_000),
-      'a%40'.repeat(25_000),
-      'sk-'.repeat(33_000),
-      'sk-' + 'a'.repeat(100_000),
-      'ghp_'.repeat(25_000),
-      'Bearer '.repeat(14_000),
-      'Bearer%20'.repeat(11_000),
-      'eyJ'.repeat(33_000),
-      ('eyJ' + 'a'.repeat(10) + '.').repeat(7_000),
-      'eyJaaaaaaaaa.eyJaaaaaaaaa'.repeat(4_000),
-      '\\n'.repeat(50_000),
-      '%0A'.repeat(33_000),
-      'a.'.repeat(50_000),
-      'x@' + 'a.'.repeat(50_000),
-      ('a@b' + 'b'.repeat(50)).repeat(1_800),
-      'Bearer' + ' '.repeat(100_000),
-      String.fromCharCode(0xd83d).repeat(100_000),
-      '😀'.repeat(50_000),
-      'AKIA'.repeat(25_000),
-      'akia'.repeat(25_000),
-      'github_pat_'.repeat(9_000),
-      'sk_live_'.repeat(12_000),
-      'xapp-'.repeat(20_000),
-      'ya29.'.repeat(20_000),
-      'x@' + '1.'.repeat(50_000),
-      'x@' + 'a1.'.repeat(33_000),
-      'x@' + '1.'.repeat(50_000) + 'a',
-      'x@10.0.0.' + '1'.repeat(100_000),
-      'a@b' + '.c.1'.repeat(25_000),
-      'x@a.b' + '.1'.repeat(50_000),
-      ('a@b.1.' + 'x'.repeat(10) + '.').repeat(6_000),
-      '.eyJ'.repeat(25_000),
-      '.eyJaaaaaaaa'.repeat(7_000),
-      ('.eyJaaaaaaaa.' + 'b'.repeat(7)).repeat(5_000),
-      'k_live_' + 'x'.repeat(100_000),
-    ];
-    const started = performance.now();
-    for (const value of hostile) {
-      findTokenSpans(value);
-      findTokenSpans(value, true);
-      findEmailSpans(value);
-    }
-    expect(performance.now() - started).toBeLessThan(3000);
-  });
+  // bdboard-0101: 壁時計の絶対値 (3000ms) ではなく、同じ形を 1/10 の長さと元の長さで測った比で線形を見る。
+  it('scans every finder (strict and loose) in time linear in the input length', () => {
+    expectLinearTime('issue-public-secrets: hostile 100k inputs', (n) => {
+      const hostile = [
+        'a'.repeat(n(100_000)),
+        'a@'.repeat(n(50_000)),
+        'a%40'.repeat(n(25_000)),
+        'sk-'.repeat(n(33_000)),
+        'sk-' + 'a'.repeat(n(100_000)),
+        'ghp_'.repeat(n(25_000)),
+        'Bearer '.repeat(n(14_000)),
+        'Bearer%20'.repeat(n(11_000)),
+        'eyJ'.repeat(n(33_000)),
+        ('eyJ' + 'a'.repeat(10) + '.').repeat(n(7_000)),
+        'eyJaaaaaaaaa.eyJaaaaaaaaa'.repeat(n(4_000)),
+        '\\n'.repeat(n(50_000)),
+        '%0A'.repeat(n(33_000)),
+        'a.'.repeat(n(50_000)),
+        'x@' + 'a.'.repeat(n(50_000)),
+        ('a@b' + 'b'.repeat(50)).repeat(n(1_800)),
+        'Bearer' + ' '.repeat(n(100_000)),
+        String.fromCharCode(0xd83d).repeat(n(100_000)),
+        '😀'.repeat(n(50_000)),
+        'AKIA'.repeat(n(25_000)),
+        'akia'.repeat(n(25_000)),
+        'github_pat_'.repeat(n(9_000)),
+        'sk_live_'.repeat(n(12_000)),
+        'xapp-'.repeat(n(20_000)),
+        'ya29.'.repeat(n(20_000)),
+        'x@' + '1.'.repeat(n(50_000)),
+        'x@' + 'a1.'.repeat(n(33_000)),
+        'x@' + '1.'.repeat(n(50_000)) + 'a',
+        'x@10.0.0.' + '1'.repeat(n(100_000)),
+        'a@b' + '.c.1'.repeat(n(25_000)),
+        'x@a.b' + '.1'.repeat(n(50_000)),
+        ('a@b.1.' + 'x'.repeat(10) + '.').repeat(n(6_000)),
+        '.eyJ'.repeat(n(25_000)),
+        '.eyJaaaaaaaa'.repeat(n(7_000)),
+        ('.eyJaaaaaaaa.' + 'b'.repeat(7)).repeat(n(5_000)),
+        'k_live_' + 'x'.repeat(n(100_000)),
+      ];
+      return () => {
+        for (const value of hostile) {
+          findTokenSpans(value);
+          findTokenSpans(value, true);
+          findEmailSpans(value);
+        }
+      };
+    });
+  }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });

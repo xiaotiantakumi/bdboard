@@ -3,6 +3,7 @@ import { prepareKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
 import { findLeakSpans, findReportOnlySpans } from './issue-public-spans.js';
 import type { LocalOnlyKeys, ProperNounCategory, RedactionMark } from './issue-public-types.js';
+import { LINEAR_TIME_TEST_TIMEOUT_MS, expectLinearTime } from './linear-time-test-support.js';
 
 const mark = (field: 'title' | 'body', start: number, end: number): RedactionMark => ({ field, kind: 'token', start, end });
 
@@ -188,18 +189,22 @@ describe('findReportOnlySpans: the subset the elision cut avoids (no key-side sc
 });
 
 describe('detectSuspectedLeaks: scale', () => {
-  it('stays fast with tens of thousands of marks and candidates', () => {
+  // bdboard-0101: 壁時計の絶対値 (2000ms) ではなく、同じ形を 1/10 の個数と元の個数で測った比で線形を見る。
+  it('grows linearly with tens of thousands of marks and candidates', () => {
     const keys: LocalOnlyKeys = { projectRoots: [], properNouns: [{ category: 'user', value: 'ab' }] };
     const prepared = prepareKeys(keys);
-    const marks: RedactionMark[] = [];
-    let text = '';
-    for (let index = 0; index < 20_000; index += 1) {
-      marks.push(mark('body', text.length, text.length + 7));
-      text += '<email> ab ';
-    }
-    const started = performance.now();
-    const leaks = detectSuspectedLeaks('body', text, marks, prepared);
-    expect(performance.now() - started).toBeLessThan(2000);
-    expect(leaks).toHaveLength(20_000);
-  });
+    expectLinearTime('issue-public-leaks: 20k marks and candidates', (n) => {
+      const count = n(20_000);
+      const marks: RedactionMark[] = [];
+      let text = '';
+      for (let index = 0; index < count; index += 1) {
+        marks.push(mark('body', text.length, text.length + 7));
+        text += '<email> ab ';
+      }
+      return () => {
+        const leaks = detectSuspectedLeaks('body', text, marks, prepared);
+        expect(leaks).toHaveLength(count);
+      };
+    });
+  }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });

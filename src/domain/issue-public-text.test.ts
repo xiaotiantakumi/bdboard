@@ -8,6 +8,7 @@ import {
   normalizeInline,
   removeLoneSurrogates,
 } from './issue-public-text.js';
+import { LINEAR_TIME_TEST_TIMEOUT_MS, expectLinearTime } from './linear-time-test-support.js';
 
 // 孤立サロゲートや行区切りは、テストの文字列リテラルに直接書かず実行時に組み立てる (ツールやエディタに壊されないため)。
 const HIGH = String.fromCharCode(0xd83d);
@@ -178,27 +179,30 @@ describe('ANSI escape sequences are removed whole, not just the ESC character', 
     }
   });
 
+  // bdboard-0101: 壁時計の絶対値 (3000ms) ではなく、同じ形を 1/10 の長さと元の長さで測った比で線形を見る。
   it('stays linear on 100k of escape-like text', () => {
-    const hostile = [
-      `${ESC}[`.repeat(50_000),
-      `${ESC}[1`.repeat(30_000),
-      `${ESC}]0;`.repeat(25_000),
-      `${ESC}]` + 'x'.repeat(100_000),
-      `${ESC}[` + '1;'.repeat(50_000),
-      `${BS}u001b[`.repeat(15_000),
-      `${BS}e[`.repeat(30_000),
-      `${ESC}[/`.repeat(40_000),
-      `${ESC}[C:${BS}`.repeat(25_000),
-      `${ESC}(`.repeat(50_000),
-      `${ESC}[ `.repeat(30_000),
-    ];
-    const started = performance.now();
-    for (const value of hostile) {
-      normalizeInline(value);
-      normalizeBlock(value);
-    }
-    expect(performance.now() - started).toBeLessThan(3000);
-  });
+    expectLinearTime('issue-public-text: escape-like 100k text', (n) => {
+      const hostile = [
+        `${ESC}[`.repeat(n(50_000)),
+        `${ESC}[1`.repeat(n(30_000)),
+        `${ESC}]0;`.repeat(n(25_000)),
+        `${ESC}]` + 'x'.repeat(n(100_000)),
+        `${ESC}[` + '1;'.repeat(n(50_000)),
+        `${BS}u001b[`.repeat(n(15_000)),
+        `${BS}e[`.repeat(n(30_000)),
+        `${ESC}[/`.repeat(n(40_000)),
+        `${ESC}[C:${BS}`.repeat(n(25_000)),
+        `${ESC}(`.repeat(n(50_000)),
+        `${ESC}[ `.repeat(n(30_000)),
+      ];
+      return () => {
+        for (const value of hostile) {
+          normalizeInline(value);
+          normalizeBlock(value);
+        }
+      };
+    });
+  }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });
 
 describe('code point helpers', () => {
@@ -231,26 +235,29 @@ describe('code point helpers', () => {
 });
 
 describe('linear time on hostile 100k inputs', () => {
-  it('normalizes long runs of whitespace, blank lines, tabs and invisible text quickly', () => {
-    const hostile = [
-      ' '.repeat(100_000) + 'x',
-      '\n'.repeat(100_000) + 'x',
-      'x' + '\n'.repeat(100_000),
-      '\t'.repeat(100_000) + 'x',
-      String.fromCodePoint(0xa0).repeat(100_000) + 'x',
-      'a '.repeat(50_000),
-      ' \n'.repeat(50_000) + 'x',
-      HIGH.repeat(100_000),
-      PAIR.repeat(50_000),
-      ZWSP.repeat(100_000),
-    ];
-    const started = performance.now();
-    for (const value of hostile) {
-      normalizeInline(value);
-      normalizeBlock(value);
-      removeLoneSurrogates(value);
-      codePointLength(value);
-    }
-    expect(performance.now() - started).toBeLessThan(3000);
-  });
+  // bdboard-0101: 壁時計の絶対値 (3000ms) ではなく、同じ形を 1/10 の長さと元の長さで測った比で線形を見る。
+  it('normalizes long runs of whitespace, blank lines, tabs and invisible text in linear time', () => {
+    expectLinearTime('issue-public-text: whitespace and invisible 100k text', (n) => {
+      const hostile = [
+        ' '.repeat(n(100_000)) + 'x',
+        '\n'.repeat(n(100_000)) + 'x',
+        'x' + '\n'.repeat(n(100_000)),
+        '\t'.repeat(n(100_000)) + 'x',
+        String.fromCodePoint(0xa0).repeat(n(100_000)) + 'x',
+        'a '.repeat(n(50_000)),
+        ' \n'.repeat(n(50_000)) + 'x',
+        HIGH.repeat(n(100_000)),
+        PAIR.repeat(n(50_000)),
+        ZWSP.repeat(n(100_000)),
+      ];
+      return () => {
+        for (const value of hostile) {
+          normalizeInline(value);
+          normalizeBlock(value);
+          removeLoneSurrogates(value);
+          codePointLength(value);
+        }
+      };
+    });
+  }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { IssueDraft } from './issue-draft.js';
 import { buildPublicIssueBody } from './issue-public-build.js';
 import { TOKEN_SHAPES, findEmailSpans, findTokenSpans } from './issue-public-secrets.js';
+import { LINEAR_TIME_TEST_TIMEOUT_MS, expectLinearTime } from './linear-time-test-support.js';
 import type { LocalOnlyKeys, PublicBuildInput, PublicBuildResult, RedactionKind } from './issue-public-types.js';
 
 // 孤立サロゲート・行区切りは実行時に組み立てる。トークンも実行時に組み立てる (シークレットスキャナに反応させない)。
@@ -1007,40 +1008,43 @@ describe('determinism and shared state', () => {
 });
 
 describe('linear time on hostile 100k inputs', () => {
-  it('builds in well under three seconds for every hostile shape and field', () => {
-    const hostile = [
-      'a'.repeat(100_000),
-      'a@'.repeat(50_000),
-      'sk-'.repeat(33_000),
-      'ghp_'.repeat(25_000),
-      'Bearer '.repeat(14_000),
-      BEGIN.repeat(3_000),
-      '/'.repeat(100_000),
-      'eyJ'.repeat(30_000),
-      'a.'.repeat(50_000),
-      HIGH.repeat(100_000),
-      '😀'.repeat(50_000),
-      ' '.repeat(100_000) + 'x',
-      '\n'.repeat(100_000) + 'x',
-      '\t'.repeat(100_000) + 'x',
-      '`'.repeat(100_000),
-      '/Users/'.repeat(14_000),
-      'C:\\Users\\a '.repeat(8_000),
-      'example-project'.repeat(6_000),
-      'example-user@'.repeat(7_000),
-    ];
-    const started = performance.now();
-    for (const value of hostile) {
-      for (const result of [
-        buildPublicIssueBody({ ...BASE, errorText: value }, KEYS),
-        buildPublicIssueBody({ ...BASE, symptom: value, source: value }, KEYS),
-        buildPublicIssueBody({ ...BASE, agentNote: value, versions: { ...BASE.versions, os: value } }, KEYS),
-      ]) {
-        expect(isWellFormed(result.title + result.body)).toBe(true);
-      }
-    }
-    expect(performance.now() - started).toBeLessThan(3000);
-  });
+  // bdboard-0101: 壁時計の絶対値 (3000ms) ではなく、同じ形を 1/10 の長さと元の長さで測った比で線形を見る。
+  it('grows linearly in the input length for every hostile shape and field', () => {
+    expectLinearTime('issue-public-build: hostile 100k inputs', (n) => {
+      const hostile = [
+        'a'.repeat(n(100_000)),
+        'a@'.repeat(n(50_000)),
+        'sk-'.repeat(n(33_000)),
+        'ghp_'.repeat(n(25_000)),
+        'Bearer '.repeat(n(14_000)),
+        BEGIN.repeat(n(3_000)),
+        '/'.repeat(n(100_000)),
+        'eyJ'.repeat(n(30_000)),
+        'a.'.repeat(n(50_000)),
+        HIGH.repeat(n(100_000)),
+        '😀'.repeat(n(50_000)),
+        ' '.repeat(n(100_000)) + 'x',
+        '\n'.repeat(n(100_000)) + 'x',
+        '\t'.repeat(n(100_000)) + 'x',
+        '`'.repeat(n(100_000)),
+        '/Users/'.repeat(n(14_000)),
+        'C:\\Users\\a '.repeat(n(8_000)),
+        'example-project'.repeat(n(6_000)),
+        'example-user@'.repeat(n(7_000)),
+      ];
+      return () => {
+        for (const value of hostile) {
+          for (const result of [
+            buildPublicIssueBody({ ...BASE, errorText: value }, KEYS),
+            buildPublicIssueBody({ ...BASE, symptom: value, source: value }, KEYS),
+            buildPublicIssueBody({ ...BASE, agentNote: value, versions: { ...BASE.versions, os: value } }, KEYS),
+          ]) {
+            expect(isWellFormed(result.title + result.body)).toBe(true);
+          }
+        }
+      };
+    });
+  }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });
 
 describe('seeded mixed-input safety properties', () => {

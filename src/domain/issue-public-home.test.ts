@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { foldHomePaths } from './issue-draft-identifier.js';
 import { findLooseHomeRanges, findPublicHomeRanges } from './issue-public-home.js';
+import { LINEAR_TIME_TEST_TIMEOUT_MS, expectLinearTime } from './linear-time-test-support.js';
 
 // 名前はすべて偽の値 (jdoe)。バックスラッシュは String.raw で書く。
 const BS = '\\';
@@ -190,35 +191,38 @@ describe('state and time', () => {
     expect(found('/home/jdoe/x')).toEqual(['/home/jdoe/']);
   });
 
-  it('scans hostile 100k inputs in well under three seconds', () => {
-    const hostile = [
-      '/Users/'.repeat(14_000),
-      '/home/'.repeat(16_000),
-      `C:${BS}Users${BS}`.repeat(10_000),
-      '%2FUsers%2F'.repeat(9_000),
-      `${BS}n/Users/a`.repeat(9_000),
-      '/Users/' + 'a '.repeat(50_000),
-      `C:${BS}Users${BS}` + 'a '.repeat(50_000),
-      `C:${BS}Users${BS}` + '('.repeat(100_000),
-      '/Volumes/' + 'a '.repeat(50_000),
-      '/Volumes/a'.repeat(10_000),
-      '/mnt/c/'.repeat(14_000),
-      `${BS}${BS}wsl$${BS}`.repeat(14_000),
-      '/'.repeat(100_000),
-      'a'.repeat(100_000),
-      '%2F'.repeat(33_000),
-      '%5C'.repeat(33_000),
-      '%2FUsers%2F' + '%E5'.repeat(33_000),
-      '%2FUsers%2F' + 'a%'.repeat(50_000),
-      '-I'.repeat(50_000),
-      `C:${BS}Users${BS}`.repeat(3) + BS.repeat(100_000),
-      'C:' + BS.repeat(100_000),
-    ];
-    const started = performance.now();
-    for (const value of hostile) {
-      findPublicHomeRanges(value);
-      findLooseHomeRanges(value);
-    }
-    expect(performance.now() - started).toBeLessThan(3000);
-  });
+  // bdboard-0101: 壁時計の絶対値 (3000ms) ではなく、同じ形を 1/10 の長さと元の長さで測った比で線形を見る。
+  it('scans hostile 100k inputs in time linear in their length', () => {
+    expectLinearTime('issue-public-home: hostile 100k inputs', (n) => {
+      const hostile = [
+        '/Users/'.repeat(n(14_000)),
+        '/home/'.repeat(n(16_000)),
+        `C:${BS}Users${BS}`.repeat(n(10_000)),
+        '%2FUsers%2F'.repeat(n(9_000)),
+        `${BS}n/Users/a`.repeat(n(9_000)),
+        '/Users/' + 'a '.repeat(n(50_000)),
+        `C:${BS}Users${BS}` + 'a '.repeat(n(50_000)),
+        `C:${BS}Users${BS}` + '('.repeat(n(100_000)),
+        '/Volumes/' + 'a '.repeat(n(50_000)),
+        '/Volumes/a'.repeat(n(10_000)),
+        '/mnt/c/'.repeat(n(14_000)),
+        `${BS}${BS}wsl$${BS}`.repeat(n(14_000)),
+        '/'.repeat(n(100_000)),
+        'a'.repeat(n(100_000)),
+        '%2F'.repeat(n(33_000)),
+        '%5C'.repeat(n(33_000)),
+        '%2FUsers%2F' + '%E5'.repeat(n(33_000)),
+        '%2FUsers%2F' + 'a%'.repeat(n(50_000)),
+        '-I'.repeat(n(50_000)),
+        `C:${BS}Users${BS}`.repeat(3) + BS.repeat(n(100_000)),
+        'C:' + BS.repeat(n(100_000)),
+      ];
+      return () => {
+        for (const value of hostile) {
+          findPublicHomeRanges(value);
+          findLooseHomeRanges(value);
+        }
+      };
+    });
+  }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });
