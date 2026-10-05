@@ -369,7 +369,9 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
      of the same tree rules out a deterministic failure of that tree, so one failure can only mean
      "non-deterministic (environment or flake)", which a single run cannot tell apart. The decision
      is `scripts/merge-pr/green-tree.mjs`. Class L's `lightTree` is never evidence (the light check
-     runs no tests), and an L landing is the merge-tree, not the head's tree, so (b) does not match it.
+     runs no tests), and an L landing is the merge-tree, which normally differs from the head's tree,
+     so (b) normally does not match it (it does when the main move adds nothing to the head — a commit
+     and its revert).
   2. **`timeouts`** (bdboard-xdk8; only when there is no identical-tree evidence). On 2026-10-04 a
      docs-only PR's landed verify failed twice under machine load and the main-broken slot stopped
      every merge. `scripts/merge-pr/load-retry.mjs` reads the log: only if the failing step is a
@@ -732,7 +734,7 @@ File overlap still never decides whether to merge without a rebase; it only pick
   measurements and its rollback rule keep counting class F only (a `light-tree … match=false` means
   the same thing, GitHub's merge and git's disagree, and is reported the same way) — and audits the
   landed verify as `light-landed … result=success|failure|error by=finish|manual|self-heal`, with
-  `retried=1` at the end when the landed verify was re-run once after a load-induced failure (the
+  `retried=1` at the end when the landed verify was re-run once, whatever the reason (the
   same rule as `finish`'s `landed-verify` line; for `by=self-heal` this is the only line that carries
   it, because the gate self-heal writes no `landed-verify` line). One landed SHA can get several `light-landed` lines (an
   `error` and then a re-verify); count the last `success` / `failure` per `new=`.
