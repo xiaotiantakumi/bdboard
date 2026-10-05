@@ -7,7 +7,7 @@
  * これで (本文の走査そのものは数 ms)、1 回の組み立てが 117〜233 秒かかった。
  *
  * ここでは、正規表現エンジン自身に「どの文字どうしを同じとみなすか」を 1 文字ずつ尋ねて表を作り、本文と鍵の両方を表の代表の文字に
- * たたんでから、ふつうの indexOf で探す。表は 1 プロセスで 1 回だけ作る (数十 ms)。
+ * たたんでから、ふつうの indexOf で探す。表は 1 プロセスで 1 回だけ作る (0.1〜0.2 秒)。本文のたたみは BMP を型付き配列で引き、同じ本文は 1 回だけたたむ。
  *
  * 以前の `/…/giu` と同じ一致になる理由 (u フラグの i: 2 つの文字は Canonicalize = 単純な大文字小文字のたたみが等しいとき一致する):
  *   - リテラルの各文字は、本文の 1 コードポイントにだけ一致する。鍵が位置 p で一致する ⇔ 各コードポイントが同じ同値類にある。
@@ -37,10 +37,19 @@ function hexEscape(codePoint: number): string {
   return `\\u{${codePoint.toString(16)}}`;
 }
 
-/** 表: 表に入る文字のコードポイント → 代表のコードポイント。使えないエンジンでは null。 */
-let table: ReadonlyMap<number, number> | null | undefined;
+/**
+ * 表。canonical は表に入る文字のコードポイント → 代表のコードポイント。bmp は BMP のコード単位 → 代表 (表の外は自分)。
+ * (2) により BMP の文字の代表は BMP、astral の文字の代表は astral なので、BMP は bmp を引くだけでよく、canonical を引くのは
+ * サロゲート対の文字だけ。使えないエンジンでは null。
+ */
+interface CaseTable {
+  readonly canonical: ReadonlyMap<number, number>;
+  readonly bmp: Uint16Array;
+}
 
-function buildTable(): ReadonlyMap<number, number> | null {
+let table: CaseTable | null | undefined;
+
+function buildTable(): CaseTable | null {
   const variable: number[] = [];
   for (let codePoint = 0; codePoint <= 0x10ffff; codePoint += 1) {
     if (codePoint === 0xd800) codePoint = 0xe000;
@@ -70,10 +79,17 @@ function buildTable(): ReadonlyMap<number, number> | null {
     if (!canonical.has(codePoint)) chunk.push(String.fromCodePoint(codePoint));
   }
   if (anyVariable.test(chunk.join(''))) return null;
-  return canonical;
+  const bmp = new Uint16Array(0x10000);
+  for (let unit = 0; unit < 0x10000; unit += 1) bmp[unit] = unit;
+  for (const [codePoint, target] of canonical) {
+    if (codePoint > 0xffff) continue;
+    if (target > 0xffff) return null; // (2) と同じ: 長さが変わるなら使わない。
+    bmp[codePoint] = target;
+  }
+  return { canonical, bmp };
 }
 
-function caseTable(): ReadonlyMap<number, number> | null {
+function caseTable(): CaseTable | null {
   if (table === undefined) table = buildTable();
   return table;
 }
@@ -83,22 +99,55 @@ export function caseFoldingTableUsable(): boolean {
   return caseTable() !== null;
 }
 
-/** 文字列の各コードポイントを、i フラグで同じとみなされる文字の代表にたたむ。UTF-16 の長さと位置は変わらない。 */
-export function foldCase(value: string, canonical: ReadonlyMap<number, number>): string {
-  let pieces: string[] | undefined;
-  let copied = 0;
-  for (let index = 0; index < value.length; ) {
-    const codePoint = value.codePointAt(index) ?? 0;
-    const width = codePoint > 0xffff ? 2 : 1;
-    const target = canonical.get(codePoint);
-    if (target !== undefined && target !== codePoint) {
-      pieces ??= [];
-      pieces.push(value.slice(copied, index), String.fromCodePoint(target));
-      copied = index + width;
+const DECODE_CHUNK = 8192;
+
+/**
+ * 文字列の各コードポイントを、i フラグで同じとみなされる文字の代表にたたむ。UTF-16 の長さと位置は変わらない。
+ * コードポイントの区切りは codePointAt と同じ (上位サロゲートの直後が下位サロゲートのときだけ 1 文字。孤立サロゲートは自分のまま)。
+ */
+function foldCase(value: string, { canonical, bmp }: CaseTable): string {
+  const units = new Uint16Array(value.length);
+  let changed = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff && index + 1 < value.length) {
+      const low = value.charCodeAt(index + 1);
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        const codePoint = (unit - 0xd800) * 0x400 + (low - 0xdc00) + 0x10000;
+        const target = canonical.get(codePoint) ?? codePoint;
+        if (target !== codePoint) changed = true;
+        units[index] = 0xd800 + ((target - 0x10000) >> 10);
+        units[index + 1] = 0xdc00 + ((target - 0x10000) & 0x3ff);
+        index += 1;
+        continue;
+      }
     }
-    index += width;
+    const target = bmp[unit] ?? unit;
+    if (target !== unit) changed = true;
+    units[index] = target;
   }
-  return pieces === undefined ? value : pieces.join('') + value.slice(copied);
+  if (!changed) return value;
+  const pieces: string[] = [];
+  for (let start = 0; start < units.length; start += DECODE_CHUNK) {
+    // 展開 (...) は型付き配列の反復子を回すので 7 倍ほど遅い。apply は配列のように読む。
+    pieces.push(Reflect.apply(String.fromCharCode, null, units.subarray(start, start + DECODE_CHUNK)) as string);
+  }
+  return pieces.join('');
+}
+
+/**
+ * 直前にたたんだ本文とその結果。1 回の置き換えでは、根・LONG の名前・最後の網が同じ本文を続けて探すので、たたむのは 1 回で済む。
+ * 純粋な関数の結果を覚えるだけなので、一致の結果は変わらない。
+ */
+let lastText: string | undefined;
+let lastFolded = '';
+
+function foldText(text: string, caseTableValue: CaseTable): string {
+  if (text !== lastText) {
+    lastFolded = foldCase(text, caseTableValue);
+    lastText = text;
+  }
+  return lastFolded;
 }
 
 /** 大文字小文字を区別せずに探す鍵 1 つ (根なら直後の文字の条件つき)。 */
@@ -117,13 +166,13 @@ export interface LiteralSpan {
 }
 
 export function caseInsensitiveLiteral(value: string, root: boolean): CaseInsensitiveLiteral {
-  const canonical = caseTable();
+  const caseTableValue = caseTable();
   const codePoints = Array.from(value).length;
-  if (canonical === null) {
+  if (caseTableValue === null) {
     const suffix = root ? '(?![\\p{L}\\p{N}_-])' : '';
     return { folded: value, fallback: new RegExp(`${escapeRegExp(value)}${suffix}`, 'giu'), codePoints, root };
   }
-  return { folded: foldCase(value, canonical), fallback: undefined, codePoints, root };
+  return { folded: foldCase(value, caseTableValue), fallback: undefined, codePoints, root };
 }
 
 function rootFollowerAt(text: string, index: number): boolean {
@@ -142,8 +191,8 @@ export function literalSearcher(text: string): (key: CaseInsensitiveLiteral) => 
       key.fallback.lastIndex = 0;
       return Array.from(text.matchAll(key.fallback), (match) => ({ start: match.index, end: match.index + match[0].length }));
     }
-    const canonical = caseTable();
-    folded ??= canonical === null ? text : foldCase(text, canonical);
+    const caseTableValue = caseTable();
+    folded ??= caseTableValue === null ? text : foldText(text, caseTableValue);
     const spans: LiteralSpan[] = [];
     let from = 0;
     for (;;) {
