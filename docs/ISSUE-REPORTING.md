@@ -129,7 +129,7 @@ bdboard-727y(添付画像の保存先バグ)は PR #782 で 2026-09-25 にマー
 
 ## 3. 受け口の API とローカル直アクセス限定(項目 c)
 
-4つの経路があり、要求される認可の強さが異なる。
+次の経路があり(届いた issue の 2 本は 8 節の 4y8q.9.4)、要求される認可の強さが異なる。
 
 | 経路 | メソッド/パス | 呼び出し元 | 必要な認可 |
 |---|---|---|---|
@@ -137,6 +137,8 @@ bdboard-727y(添付画像の保存先バグ)は PR #782 で 2026-09-25 にマー
 | 手書きの受け取り | `POST /api/issue-reports/manual-drafts` | 不具合報告タブの「新しく報告」(4y8q.6.8) | **ローカル直アクセスのみ**(トンネル不可。書き込み許可つきのセッションがあっても 403)。詳しくは下の「手書きの下書き」 |
 | 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss`、`GET /api/issue-reports/pending-count` | 不具合報告タブの UI | PATCH は通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル)。GET は `createWriteGuardMiddleware` の対象外(メソッドで素通しする)なので、ほかの読み取り API と同じく、トンネルではトンネルの認証(Basic 認証)を通れば読める(パスワードの強度は問わない)。**ただし `GET .../:id` だけは、全部を返すのはローカル直アクセスのみ**(下の「1 件の取得はトンネルでは絞る」) |
 | 投稿 | `POST /api/issue-reports/drafts/:id/publish` | 不具合報告タブの投稿ボタン | **ローカル直アクセスのみ** |
+| 届いた issue の読み取り | `GET /api/issue-reports/external` | 不具合報告タブ(4y8q.9.5 が使う) | 読み取りなのでトンネルからも読める(U10。トンネルの認証の内側)。サーバーが持っている一覧を返すだけで、gh は起動しない |
+| 届いた issue の今すぐ確認 | `POST /api/issue-reports/external/refresh` | 不具合報告タブ(4y8q.9.5 が使う) | **ローカル直アクセスのみ**。1 分に 1 回まで(超えると 429) |
 
 エピック決定 4「投稿はローカル直アクセスからだけ。トンネル経由では、見る・直す・見送るまで」
 と決定 5「受け口はローカル直アクセスからだけ」をそのまま2段の認可に落とした形。
@@ -1838,6 +1840,74 @@ reader、メンテナ環境の判定)。一覧の組み立て・写しの保存�
 | 9 | 同時に 1 本 | `poll` の実行中に `poll` を呼ぶと、新しく始めずその実行の結果を返す。写しの読み → 書き → 一覧の差し替えと `resnapshot` は同じ排他で 1 本ずつ流す(読んだ写しを古いまま上書きし合い、取り直した写しを `poll` の印の書き込みが潰すのを防ぐ。テストで順序を固定している) |
 | 10 | `resnapshot(number)` | **直近の一覧にある現在の内容**で写しを取り直し(`needsRejudge` を下ろす、`snapshotAt` を更新)、一覧の要約も更新する。GitHub は読み直さない: 判定に渡した内容とカードに見せた内容を同じにするため。直前の内容を取りたいときは、呼び出し側(4y8q.10)が先に `poll` する。一覧に無い番号は `not-listed`、保存の失敗は `storage-failed`(どちらも投げない)。HTTP には出さない |
 | 11 | 保存層 | `<基点>/external-issues/<number>.json`(基点は `resolveDataDirBase`)。ディレクトリは作るとき 0700、ファイルは 0600(umask 任せにしない)。同じディレクトリの `<number>.json.<hex>.tmp` に書いて rename。`number` は `^[1-9][0-9]{0,9}$` だけで、外れた値は投げる(読み取りの失敗ではなくプログラムの誤り)。読むファイル名も同じ形に限り、一時ファイルや迷い込んだファイルは読まない。置き場を環境変数で差し替える口は作っていない(配線は 4y8q.9.4)。**権限の 0600/0700 は POSIX だけで意味がある**(Windows の Node はモードのビットを無視する。テストは Windows では飛ばす)。クラッシュで残った一時ファイルの掃除はしない(下書きの保存層と同じ) |
+
+### 実装との差分(4y8q.9.4、定期の確認・読み取り API・gh の呼び出し回数の上限)
+
+4y8q.9.4 は、9.3 のサービスをメンテナ環境だけで定期的に動かし、結果を読む API を出す配線。画面は 4y8q.9.5、判定は 4y8q.10。
+ここに無い点は設計どおり。
+
+| ファイル | 中身 |
+|---|---|
+| `src/domain/external-issue-poll-policy.ts` | 頻度の定数と、間隔の丸め `resolveExternalIssuePollIntervalMs`・延ばし方 `nextExternalIssuePollDelayMs`(IO なし) |
+| `src/application/issue-report/external-issue-scheduler.ts` | 1 本ずつ置くタイマー(`start` / `stop`) |
+| `src/application/issue-report/call-budget.ts` | gh の呼び出しの枠 `createSlidingWindowBudget`(1 時間の窓に 12 回) |
+| `src/application/issue-report/min-gap-gate.ts` | 手動 refresh の間隔 `createMinGapGate`(60 秒) |
+| `src/infrastructure/gh/budgeted-command-runner.ts` | 枠を通らないと gh を起動しない `createBudgetedCommandRunner` |
+| `src/bootstrap/wire-external-issues.ts` | メンテナ環境の判定・ポートの組み立て・タイマーの開始。`wire-issue-reports.ts` がルートに載せ、`wire-shutdown.ts` が止める |
+| `src/interface/http/external-issue-routes.ts` / `external-issue-dto.ts` | 上の 2 本の API と、応答の形(欄を 1 つずつ写す) |
+
+#### 確認の頻度
+
+| 項目 | 内容 |
+|---|---|
+| 動くのはメンテナ環境だけ | `<repoRoot>/.beads` がある(`isMaintainerEnvironment`)ときだけ。そうでなければ、タイマー・写しの置き場・gh・bd のどれも作らない。`GET` は `enabled: false` の固定の形、`POST refresh` は 404(`external-issues-disabled`)。`commandRunner` が渡されない(テスト)ときも無効 |
+| 最初の確認 | 起動の 60 秒後 |
+| 通常の間隔 | `BDBOARD_EXTERNAL_ISSUES_INTERVAL_MS`(既定 900000 = 15 分)。5 分(300000)未満は 5 分に**切り上げる**。数値でない値・空は既定。**上限 24 時間は設計に無かったが足した**(Node のタイマーは約 24.8 日を超える値だと直ちに発火してしまうため) |
+| 失敗したとき | `rate-limited` と `failed` のときだけ、前の間隔の 2 倍に延ばす(通常の間隔の 2 倍、4 倍、…)。上限は 1 時間(通常の間隔がそれより長ければ、通常のまま)。成功するか、それ以外の種類の失敗(`gh-missing`・`gh-unauthenticated`・`bd-failed`・`storage-failed`・`unexpected`)では通常の間隔に戻る |
+| タイマーの扱い | 確認が終わってから次を 1 本だけ置く(遅い確認が重ならない)。`unref` する(これだけでプロセスを生かさない)。終了時は `wire-shutdown` が止める。確認が失敗してもログには種類(`kind`)だけを出す(`detail` には gh の stderr の一部が入りうる) |
+
+#### gh は `gh api --method GET` だけ(U7)
+
+読み取りは 9.2 の `createGhCliExternalIssueSource` が `gh api --method GET --hostname github.com repos/xiaotiantakumi/bdboard/issues?...` で行う。gh が無い・未ログイン・rate limit
+でも、認証無しの REST・fetch・curl には**落ちない**(失敗の種類として一覧の `error` に出るだけ)。GitHub への書き込みは無い。bd は `--readonly` の読み取りだけ。対象のリポジトリ(`xiaotiantakumi/bdboard`)は環境変数で差し替えられない。gh と bd のパスは既存の `BDBOARD_GH_PATH` / `BDBOARD_BD_PATH` を使う。
+
+#### 「gh の呼び出しは 1 時間に 12 回まで」の数え方と保証
+
+**数え方**: gh を起動する(`CommandRunner.run` を呼ぶ)たびに 1 回。1 ページ = 1 回で、1 回の確認は最大 3 ページ(`EXTERNAL_ISSUE_GH_MAX_PAGES`、100 件 x 3 = 300 件)なので 1 回の確認が最大 3 回。bd の呼び出しは数えない(gh ではない)。
+
+| 経路 | 1 時間の最大 |
+|---|---|
+| 定期の確認だけ(既定 15 分)| 4 確認 x 3 ページ = 12 回。ちょうど上限 |
+| 定期の確認だけ(最短の 5 分)| 12 確認 x 3 ページ = 36 回。**上限を超える** |
+| 手動 refresh(1 分に 1 回まで)| 60 確認 x 3 ページ = 180 回。**上限を超える** |
+
+つまり確認の頻度を決めるだけでは守れない(最短の間隔・手動 refresh・ページ送りの組み合わせで超える)。そこで**回数の枠そのものを関所にした**:
+
+- gh を起動する道は、`createBudgetedCommandRunner` を通る 1 つだけ(`wire-external-issues.ts` が枠を 1 つ作り、gh のソースにだけ渡す)。定期の確認・手動 refresh・ページ送りのどれも同じ枠を使う。
+- 枠は「直近 1 時間(3,600,000 ms)に受け付けた起動が 12 回まで」のスライディングウィンドウ。時計は単調時計(`performance.now()`。壁時計が戻されても早く空かない)。
+- 枠が尽きていると、gh を**起動せず**、失敗の結果を返す。サービスはそれを `failed`(`error.detail` は `gh call limit reached: at most 12 gh calls per hour (local limit); try again later`)として扱い、一覧は直近の成功のまま。確認の途中(2 ページ目など)で尽きたら、途中までの結果は返さず失敗にする(9.2 の「1 ページでも読めなければ failed」と同じ)。定期の確認は `failed` なので間隔が延びる。
+- **保証**: 枠が受け付けた起動の時刻を並べたとき、連続する 13 回の間は必ず 1 時間以上開いている。したがって、どの 1 時間の窓にも 12 回を超えて入らない。
+- テストで固定している: `call-budget.test.ts`(乱数 5 万手で、どの 1 時間の窓も 12 回以内)、`wire-external-issues.test.ts`(12 回目まで起動し、13 回目は起動せず `failed`、1 時間後に再開。1 回の確認の 3 ページを 3 回と数える)、`external-issues-gh-calls-per-hour.test.ts`(仮想の時計で 3 時間: 最短間隔 + 毎分の refresh + 3 ページ、既定の間隔 + 3 ページ、毎分の refresh + 1 ページ、GET を 1000 回。枠を外すと 216 回・64 回起動して落ちる)。
+
+**限界**(設計との差):
+
+- 枠はメモリ上にある。サーバーを再起動すると空に戻るので、再起動を繰り返すと 1 時間に 12 回を超えうる(再起動 1 回につき、最初の確認の最大 3 回が増える)。認証済みの gh の rate limit(1 時間 5000 回)には遠いので、永続化はしなかった。
+- 枠が尽きたことは `rate-limited` ではなく `failed` として出る(`rate-limited` は GitHub 側の制限を指す種類として残す)。`detail` で手元の上限と分かる。
+
+#### 読み取り API の形
+
+`GET /api/issue-reports/external` は `{ enabled, state, fetchedAt, error, truncated, skippedLines, issues[] }`。`issues[]` の各要素は
+`number, title, body, author, authorAssociation, url, updatedAt, titleTruncated, bodyTruncated, titleLength, bodyLength, checks, snapshotAt, needsRejudge, updatedAtChanged`
+(欄を 1 つずつ写す。9.3 の一覧の内部の欄や写しの入れ子は出さない)。9.3 の `snapshot` の入れ子は**平らにした**(`snapshotAt` / `needsRejudge` / `updatedAtChanged` が直下。写しの `updatedAt` は出さない)。題名・本文は第三者の文章で、JSON のデータとしてだけ返す(画面側は文字列として出す)。
+
+- `GET` は一覧を返すだけで確認を始めない(読むたびに gh を呼ばない。1000 回読んでも gh は 0 回)。
+- `POST refresh` は、ローカル直アクセスの確認(トンネルのヘッダー・ローカルでない送り元・Host・CSRF)→ 無効なら 404 → 間隔(`createMinGapGate`、60 秒)の順。断られた要求は間隔を使わない。間隔の中の 2 回目は **429**(`refresh-rate-limited`、`Retry-After` と `retryAfterSeconds`)。確認が失敗しても HTTP は **200** で、本文の `state: 'error'` と `error` に出る(HTTP の失敗は「受け付けなかった」だけにする)。
+- **`needsRejudge` の意味は 9.3 のまま**(題名か本文が写しと違うとき。`updatedAt` だけの変化では立たない)。API はそれを変えず、そのまま返す。**既知の穴(bdboard-g2ti、この PR の範囲外)**: 使えない写しを作り直したとき、`needsRejudge` が黙って false に戻る。API の側から区別する手段は無い。
+- 応答の大きさ: 最大 500 件 x 本文 20,000 文字(切った後)で、数 MB になりうる。今の規模では遠いが、画面(9.5)が使うときにページ分けを検討する。
+
+#### main.ts の変更
+
+`src/main.ts` は 2 行だけ(`wireIssueReports` に `commandRunner` を渡す、`wireShutdown` に `externalIssues` を渡す)。配線の本体は `wire-external-issues.ts`(max-lines の 200 行に収めるため。並行の 4y8q.6.4 も `main.ts` / `mount-routes.ts` を触るので、差を小さくした)。
 
 ### 2体のエージェント(4y8q.10)
 

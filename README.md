@@ -213,7 +213,8 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_UPDATE_CHECK_CACHE_MS` | 新バージョン確認のキャッシュ TTL(ミリ秒)。未認証の GitHub API は IP あたり 60 req/h なので短くしない。負値や数値以外は既定に戻る(確認を止めるなら `BDBOARD_UPDATE_CHECK_DISABLED`) | `21600000`(6時間) |
 | `BDBOARD_UPDATE_CHECK_TIMEOUT_MS` | 新バージョン確認のタイムアウト(ミリ秒)。超過・失敗は黙って無視される | `3000`(3秒) |
 | `BDBOARD_UPDATE_CHECK_REPO` | 新バージョンを確認する GitHub リポジトリ(`owner/repo`) | `xiaotiantakumi/bdboard` |
-| `BDBOARD_GH_PATH` | GitHub CLI (`gh`) のパス/名前。PR 状態取得と worktree 作成に使う | `gh` |
+| `BDBOARD_GH_PATH` | GitHub CLI (`gh`) のパス/名前。PR 状態取得と worktree 作成、メンテナ環境の「届いた issue」の確認(`gh api --method GET`。bdboard-4y8q.9.4)に使う | `gh` |
+| `BDBOARD_EXTERNAL_ISSUES_INTERVAL_MS` | メンテナ環境(`.beads` のある checkout)だけで、公開リポジトリに届いた issue を定期的に確かめる間隔(ミリ秒。bdboard-4y8q.9.4)。起動の 60 秒後に最初の確認、以後この間隔。300000(5 分)未満は 300000 に切り上げ、上限は 24 時間。数値でない値は既定。gh の rate limit と失敗(`rate-limited` / `failed`)のときは間隔を倍々に延ばし、1 時間で止める。gh の起動は、定期・手動 refresh・ページ送りを合わせて 1 時間に 12 回までに抑える(超えた確認は失敗として出る。[docs/ISSUE-REPORTING.md](docs/ISSUE-REPORTING.md) 8節)。メンテナ環境以外では何も動かない | `900000`(15 分) |
 | `BDBOARD_AI_QUOTA_DISABLED` | `1` または `true`(大小無視)で AI クォータウィジェットを無効化 | `false` |
 | `BDBOARD_AI_QUOTA_PATH` | AI クォータ取得コマンドのパス/名前 | `ai-quota` |
 | `BDBOARD_AI_QUOTA_TIMEOUT_MS` | 上記コマンドのタイムアウト(ミリ秒) | `70000`(70秒。`ai-quota all` の agy/Codex probe を順次待つ) |

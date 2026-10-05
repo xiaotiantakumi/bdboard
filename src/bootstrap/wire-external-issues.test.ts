@@ -23,6 +23,7 @@ describe('wireExternalIssues', () => {
 
   afterEach(async () => {
     for (const each of wired.splice(0)) each.stop();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.useRealTimers();
     await removeRoot();
