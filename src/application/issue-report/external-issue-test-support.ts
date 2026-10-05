@@ -39,7 +39,7 @@ export function okListing(
   return { ok: true, issues, pagesFetched: 1, truncatedByPageLimit: false, skippedLines: 0, ...extra };
 }
 
-/** list / save / remove を失敗させられる in-memory の写しの保存先。保存のたびに structuredClone して、ディスクを模す。 */
+/** list (と listUnusable) / save / remove を失敗させられる in-memory の写しの保存先。保存のたびに structuredClone して、ディスクを模す。 */
 export interface InMemorySnapshotStorage extends ExternalIssueSnapshotStoragePort {
   readonly files: Map<number, StoredExternalIssueSnapshot>;
   readonly saves: number[];
