@@ -37,13 +37,6 @@ import { createGhCliExternalIssueSource } from '../infrastructure/gh/gh-cli-exte
 export const EXTERNAL_ISSUES_REPO_SLUG = 'xiaotiantakumi/bdboard';
 
 /**
- * `1` または `true` (大小無視) のとき、メンテナ環境でも届いた issue の確認を作らない (bdboard-em45)。
- * メンテナ環境の判定 (`.beads` の有無) の手前で見るので、無効のときは `.beads` も見ない。
- * e2e のサーバー (test/e2e/global-setup.ts) が、メインチェックアウトから起動されたときに本物の gh を呼ばないために立てる。
- */
-export const EXTERNAL_ISSUES_DISABLED_ENV = 'BDBOARD_EXTERNAL_ISSUES_DISABLED';
-
-/**
  * 上限に達したときに画面へ出る理由 (一覧の `error.detail`)。gh の rate limit や未ログインの文言 (`gh-cli-failure.ts` のパターン)
  * に当たらない文面にする: 当たると、読み取りの層がその種類に分類して、手元の上限だと分からなくなる。
  */
@@ -118,7 +111,11 @@ export function wireExternalIssues(deps: WireExternalIssuesDeps): WiredExternalI
   const maintainer = deps.isMaintainerEnvironment ?? isMaintainerEnvironment;
 
   // 環境変数で止められているか、メンテナ環境でなければ何も作らない (タイマーも、写しの置き場も、gh・bd の呼び出しも)。
-  if (envBool(deps.env, EXTERNAL_ISSUES_DISABLED_ENV) || !maintainer(deps.repoRoot)) {
+  // BDBOARD_EXTERNAL_ISSUES_DISABLED が `1` または `true` (大小無視) のときは、メンテナ環境でも作らない (bdboard-em45)。
+  // メンテナ環境の判定 (`.beads` の有無) の手前で見るので、止まっているときは `.beads` も見ない。e2e のサーバー
+  // (test/e2e/global-setup.ts) が、メインチェックアウトから起動されたときに本物の gh を呼ばないために立てる。
+  // env 名はリテラルで書く (src/readme-env-vars.test.ts が env の読み取りをリテラルから拾い、README の表と突き合わせる)。
+  if (envBool(deps.env, 'BDBOARD_EXTERNAL_ISSUES_DISABLED') || !maintainer(deps.repoRoot)) {
     return { enabled: false, service: undefined, now, stop: () => undefined };
   }
   const ports = deps.ports ?? (deps.commandRunner === undefined ? undefined : createPortsFromRunner(deps, deps.commandRunner, now));
