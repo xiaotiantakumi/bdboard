@@ -24,7 +24,7 @@ describe('wireIssueReports manual drafts', () => {
       repoRoot: root,
       env: { BDBOARD_ISSUE_DRAFTS_DIR: draftsDir },
       writeAccess: {},
-      packRegistry: { listPacks: vi.fn(async () => []) },
+      packRegistry: { listPacks: vi.fn(() => Promise.resolve([])) },
       applicationVersion: { getVersion: () => '9.8.7' },
       log: vi.fn(),
     });
