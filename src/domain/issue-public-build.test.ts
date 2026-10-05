@@ -1043,6 +1043,11 @@ describe('linear time on hostile 100k inputs', () => {
           }
         }
       };
+    }, {
+      // build は redaction の後で切り詰める (本文 8000、エラー文の端 1000 など) ので、切り詰めた後の処理は入力の長さに依らず、
+      // 比に現れない。それを見るための絶対の上限を、既定の 30 秒ではなく 10 秒 (CPU 時間。素は約 1 秒、
+      // load average 15 でも約 2.5 秒) にする (PR #890 のレビュー)。
+      maxAbsoluteMs: 10_000,
     });
   }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });
