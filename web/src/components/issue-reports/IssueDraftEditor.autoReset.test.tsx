@@ -205,6 +205,66 @@ describe('IssueDraftEditor automatic text reset (bdboard-494n)', () => {
     });
   });
 
+  // 押したボタンは「直した」印が外れて消える (画面の流れは IssueReportsPanel.autoReset.test.tsx)。フォーカスを body へ落とさず、戻した欄へ移す。
+  it('moves focus to the field it put back, with or without the confirmation', async () => {
+    vi.mocked(patchIssueDraft).mockResolvedValue({ draft: { ...handEdited, body: AUTO_BODY, bodyEditedByUser: false }, errorTextTrimmed: false });
+    const { user, unmount } = mount(legacy);
+    await user.click(resetButton('本文'));
+    await waitFor(() => expect(bodyBox()).toHaveValue(AUTO_BODY));
+    expect(bodyBox()).toHaveFocus();
+    unmount();
+    const second = mount(handEdited);
+    await second.user.click(resetButton('題名'));
+    vi.mocked(patchIssueDraft).mockResolvedValue({ draft: { ...handEdited, title: AUTO_TITLE, titleEditedByUser: false }, errorTextTrimmed: false });
+    await second.user.click(screen.getByRole('button', { name: '捨てて戻す' }));
+    await waitFor(() => expect(titleBox()).toHaveValue(AUTO_TITLE));
+    expect(titleBox()).toHaveFocus();
+  });
+
+  it('does not take the focus back when it was moved out of the editor while the reset was in flight', async () => {
+    let finish: (value: { draft: IssueDraftDetailDto; errorTextTrimmed: boolean }) => void = () => {};
+    vi.mocked(patchIssueDraft).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const outside = document.createElement('button');
+    outside.textContent = 'outside';
+    document.body.append(outside);
+    try {
+      const { user } = mount(legacy);
+      await user.click(resetButton('本文'));
+      outside.focus();
+      finish({ draft: { ...legacy, body: AUTO_BODY, bodyEditedByUser: false }, errorTextTrimmed: false });
+      await waitFor(() => expect(bodyBox()).toHaveValue(AUTO_BODY));
+      expect(outside).toHaveFocus();
+    } finally {
+      outside.remove();
+    }
+  });
+
+  // もう片方の欄の未保存の入力を残す (本文を戻す向きは上のテスト)。題名を戻す向きも、応答の本文で入力を上書きしない。
+  it('keeps the unsaved body input when the title is put back, and a later save sends only the body', async () => {
+    vi.mocked(patchIssueDraft).mockResolvedValue({ draft: { ...handEdited, title: AUTO_TITLE, titleEditedByUser: false }, errorTextTrimmed: false });
+    const { user, props } = mount(handEdited);
+    await user.type(bodyBox(), ' more');
+    await user.click(resetButton('題名'));
+    await user.click(screen.getByRole('button', { name: '捨てて戻す' }));
+    await waitFor(() => expect(titleBox()).toHaveValue(AUTO_TITLE));
+    expect(bodyBox()).toHaveValue('My body more');
+    expect(props.onInputChange).toHaveBeenLastCalledWith({ title: AUTO_TITLE, body: 'My body more' });
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(patchIssueDraft).toHaveBeenCalledTimes(2));
+    expect(patchIssueDraft).toHaveBeenLastCalledWith(ID, { body: 'My body more' });
+  });
+
+  it('keeps the confirmation buttons disabled while a save is in flight, so a reset cannot race the save', async () => {
+    vi.mocked(patchIssueDraft).mockReturnValue(new Promise(() => undefined));
+    const { user } = mount(handEdited);
+    await user.type(titleBox(), '!');
+    await user.click(resetButton('本文'));
+    await user.click(screen.getByRole('button', { name: '保存' }));
+    expect(screen.getByRole('button', { name: '捨てて戻す' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '戻すのをやめる' })).toBeDisabled();
+    expect(patchIssueDraft).toHaveBeenCalledTimes(1);
+  });
+
   it('disables the buttons and keeps the inputs read-only while the reset is in flight', async () => {
     let finish: (value: { draft: IssueDraftDetailDto; errorTextTrimmed: boolean }) => void = () => {};
     vi.mocked(patchIssueDraft).mockReturnValue(new Promise((resolve) => { finish = resolve; }));

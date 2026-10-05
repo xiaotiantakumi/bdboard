@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 import { ApiError } from '../../api';
 import {
   patchIssueDraft,
@@ -66,6 +66,9 @@ export function IssueDraftEditor({ draft, onCancel, onSaved, onInputChange }: Is
   const [resetNotice, setResetNotice] = useState<string | null>(null);
   const titleId = useId();
   const bodyId = useId();
+  const formRef = useRef<HTMLFormElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   const busy = saving || resetting !== null;
   const tooLong = title.length > ISSUE_DRAFT_TITLE_MAX_CHARS || body.length > ISSUE_DRAFT_BODY_MAX_CHARS;
@@ -134,6 +137,11 @@ export function IssueDraftEditor({ draft, onCancel, onSaved, onInputChange }: Is
       setResetNotice(
         `${FIELD_LABELS[field]}を自動の文に戻しました。${response.errorTextTrimmed ? ERROR_TEXT_TRIMMED_NOTE : ''}`,
       );
+      // 押したボタンは「直した」印が外れて消えるので、フォーカスを戻した欄へ移す (body へ落とさない)。編集欄の外へ移していたら奪わない。
+      const active = document.activeElement;
+      if (active === null || active === document.body || formRef.current?.contains(active) === true) {
+        (field === 'title' ? titleRef : bodyRef).current?.focus();
+      }
     } catch (caught) {
       showFailure(caught);
     } finally {
@@ -156,7 +164,7 @@ export function IssueDraftEditor({ draft, onCancel, onSaved, onInputChange }: Is
   };
 
   return (
-    <form className="issue-draft-editor" onSubmit={(event) => void handleSubmit(event)}>
+    <form ref={formRef} className="issue-draft-editor" onSubmit={(event) => void handleSubmit(event)}>
       {changedUnderneath && (
         <p className="issue-draft-notice" role="status">
           編集中に、この下書きが裏で更新されました (いま {draft.occurrenceCount} 回)。入力はそのまま残しています。保存すると、直した欄は今の入力で上書きします。
@@ -169,6 +177,7 @@ export function IssueDraftEditor({ draft, onCancel, onSaved, onInputChange }: Is
         </span>
       </label>
       <input
+        ref={titleRef}
         id={titleId}
         className="issue-draft-editor-title"
         type="text"
@@ -187,6 +196,7 @@ export function IssueDraftEditor({ draft, onCancel, onSaved, onInputChange }: Is
         </span>
       </label>
       <textarea
+        ref={bodyRef}
         id={bodyId}
         className="issue-draft-editor-body"
         value={body}

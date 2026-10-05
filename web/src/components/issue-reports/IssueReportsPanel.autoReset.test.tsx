@@ -78,6 +78,8 @@ describe('IssueReportsPanel automatic text reset (bdboard-494n)', () => {
     expect(screen.getByText('本文を自動の文に戻しました。')).toBeInTheDocument();
     // 「直した」印が外れた応答で中身が置き換わり、戻すボタンは消える。裏の更新の知らせも (自分で戻したぶんは) 残らない。
     await waitFor(() => expect(screen.queryByRole('button', { name: '本文を自動の文に戻す' })).toBeNull());
+    // 押したボタンが消えても、フォーカスは body へ落ちず、戻した本文の欄にある。
+    expect(screen.getByRole('textbox', { name: /^本文/ })).toHaveFocus();
     await waitFor(() => expect(screen.queryByText(/裏で更新されました/)).toBeNull());
 
     await user.click(screen.getByRole('button', { name: 'プレビュー' }));
