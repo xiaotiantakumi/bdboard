@@ -74,16 +74,6 @@ describe('the list count and pendingCount() agree after the drafts were changed 
     expect(await service.pendingCount()).toBe(1);
   });
 
-  it('reconciles on list() too, not only on listWithPendingCount()', async () => {
-    const { service, storage } = setup();
-    const one = await receive(service, 'one');
-    await receive(service, 'two');
-    storage.drafts.delete(one.id);
-
-    expect(await service.list()).toHaveLength(1);
-    expect(await service.pendingCount()).toBe(1);
-  });
-
   it('keeps both numbers equal through dismiss, merge and receive', async () => {
     const { service } = setup();
     const one = await receive(service, 'one');
@@ -109,7 +99,7 @@ describe('the list count and pendingCount() agree after the drafts were changed 
     await receive(seeded.service, 'one');
     const { service, storage } = setup(seeded.storage);
     const scan = vi.spyOn(storage, 'scan');
-    await service.list();
+    await service.listWithPendingCount();
     expect(scan).toHaveBeenCalledTimes(1);
     await service.pendingCount(); // 索引はここで初めて読む
     expect(scan).toHaveBeenCalledTimes(2);

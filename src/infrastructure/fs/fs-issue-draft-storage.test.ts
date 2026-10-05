@@ -102,7 +102,7 @@ describe('createFsIssueDraftStorage', () => {
     },
   );
 
-  it('lists every draft and skips a corrupt draft.json instead of failing the whole list', async () => {
+  it('scans every draft and skips a corrupt draft.json instead of failing the whole listing', async () => {
     const storage = createFsIssueDraftStorage(baseDir);
     await storage.save(makeDraft(ID_1));
     await storage.save(makeDraft(ID_2));
@@ -110,7 +110,7 @@ describe('createFsIssueDraftStorage', () => {
     await fs.writeFile(path.join(baseDir, '1758812345680-c1b2c3d4e5f6a7b8', 'draft.json'), '{ not json');
     await fs.mkdir(path.join(baseDir, 'stray-dir'), { recursive: true });
 
-    const ids = (await storage.list()).map((draft) => draft.id).sort();
+    const ids = (await storage.scan()).drafts.map((draft) => draft.id).sort();
     expect(ids).toEqual([ID_1, ID_2]);
   });
 
@@ -124,7 +124,7 @@ describe('createFsIssueDraftStorage', () => {
       await storage.save(makeDraft(ID_1));
       await breakIt();
 
-      expect((await storage.list()).map((draft) => draft.id)).toEqual([ID_1]);
+      expect((await storage.scan()).drafts.map((draft) => draft.id)).toEqual([ID_1]);
       expect(await storage.get(BROKEN_ID)).toBeUndefined();
       expect(warn).toHaveBeenCalledTimes(1);
       const message = String(warn.mock.calls[0][0]);
@@ -136,7 +136,7 @@ describe('createFsIssueDraftStorage', () => {
       expect(message).not.toContain(path.dirname(baseDir));
       expect(message).not.toMatch(/draft\.json/);
       // 同じ下書きの同じ理由は繰り返し警告しない (一覧は何度も呼ばれる)。
-      await storage.list();
+      await storage.scan();
       expect(warn).toHaveBeenCalledTimes(1);
       // 恒久の理由で飛ばしただけなら、一覧は欠けていない扱い (受け取りの索引はキャッシュされる)。
       expect(await storage.scan()).toMatchObject({ complete: true });
@@ -246,7 +246,7 @@ describe('createFsIssueDraftStorage', () => {
         await storage.save(makeDraft(ID_2));
         await fs.chmod(path.join(baseDir, ID_2), 0o000);
         try {
-          expect((await storage.list()).map((draft) => draft.id)).toEqual([ID_1]);
+          expect((await storage.scan()).drafts.map((draft) => draft.id)).toEqual([ID_1]);
           expect(warn).toHaveBeenCalledWith(expect.stringContaining('EACCES'));
         } finally {
           await fs.chmod(path.join(baseDir, ID_2), 0o700);
@@ -270,7 +270,7 @@ describe('createFsIssueDraftStorage', () => {
       expect(merged).toMatchObject({ ok: true, outcome: 'merged' });
       const created = await service.receive({ kind: 'A', catalogSlug: 'new-one' });
       expect(created).toMatchObject({ ok: true, outcome: 'created' });
-      expect((await service.list()).map((draft) => draft.id).sort()).toEqual([ID_1, '1758812345999-d1b2c3d4e5f6a7b8']);
+      expect((await service.listWithPendingCount()).drafts.map((draft) => draft.id).sort()).toEqual([ID_1, '1758812345999-d1b2c3d4e5f6a7b8']);
     });
   });
 
@@ -338,13 +338,13 @@ describe('createFsIssueDraftStorage', () => {
       await seedTwoDrafts(storage);
       const reads = failReadingId2((call) => (call <= 2 ? withCode(code) : undefined));
 
-      expect((await storage.list()).map((draft) => draft.id).sort()).toEqual([ID_1, ID_2]);
+      expect((await storage.scan()).drafts.map((draft) => draft.id).sort()).toEqual([ID_1, ID_2]);
       expect(reads.calls).toBe(3);
       expect(waits).toEqual([20, 40]);
       expect(warn).not.toHaveBeenCalled();
     });
 
-    // 本物の ACL の拒否は #859 までは飛ばしていた。投げると、読めない 1 件のせいで list() と全部の受け取りが 500 になる
+    // 本物の ACL の拒否は #859 までは飛ばしていた。投げると、読めない 1 件のせいで一覧と全部の受け取りが 500 になる
     // (クライアントは再送しない)。4 回読んでも駄目ならその 1 件だけを飛ばし、一覧は欠けた扱い (索引をキャッシュしない)。
     it.each(['EPERM', 'EACCES'])(
       'win32: %s that never clears skips that one draft after four reads (one warning, listing incomplete), like get()',
@@ -356,7 +356,6 @@ describe('createFsIssueDraftStorage', () => {
         expect(await storage.scan()).toEqual({ drafts: [makeDraft(ID_1)], complete: false });
         expect(reads.calls).toBe(4);
         expect(waits).toEqual([20, 40, 80]);
-        expect((await storage.list()).map((draft) => draft.id)).toEqual([ID_1]);
         expect(await storage.get(ID_2)).toBeUndefined();
         expect(warn).toHaveBeenCalledTimes(1);
         const message = String(warn.mock.calls[0][0]);
@@ -369,7 +368,7 @@ describe('createFsIssueDraftStorage', () => {
 
     // EBUSY: OneDrive などの同期クライアントがそのファイルを長く握る (ticket の例)。どの OS でも、4 回読んで駄目ならその 1 件だけを飛ばす。
     it.each(['linux', 'win32'] as const)(
-      'EBUSY that never clears (%s) skips that one draft after four reads: list() returns the others, scan() is incomplete, get() is undefined',
+      'EBUSY that never clears (%s) skips that one draft after four reads: scan() returns the others and is incomplete, get() is undefined',
       async (platform) => {
         const { storage, warn, waits } = makeStorage({ platform });
         await seedTwoDrafts(storage);
@@ -378,9 +377,8 @@ describe('createFsIssueDraftStorage', () => {
         expect(await storage.scan()).toEqual({ drafts: [makeDraft(ID_1)], complete: false });
         expect(reads.calls).toBe(4);
         expect(waits).toEqual([20, 40, 80]);
-        expect((await storage.list()).map((draft) => draft.id)).toEqual([ID_1]);
         expect(await storage.get(ID_2)).toBeUndefined();
-        expect(reads.calls).toBe(12);
+        expect(reads.calls).toBe(8);
         expect(warn).toHaveBeenCalledTimes(1);
         const message = String(warn.mock.calls[0][0]);
         expect(message).toContain(ID_2);
@@ -414,20 +412,19 @@ describe('createFsIssueDraftStorage', () => {
     });
 
     // プロセス全体の不足 (ファイルを開きすぎなど) はどの下書きを読んでも起きる。1 件ずつ飛ばすと一覧のほとんどが空になるので、
-    // 使い切ったら元のエラーを投げる (list()・scan()・get() が同じエラーオブジェクトで reject する)。
+    // 使い切ったら元のエラーを投げる (scan()・get() が同じエラーオブジェクトで reject する)。
     it.each(['EMFILE', 'ENFILE', 'EAGAIN'])(
-      'a process-wide error (%s) that never clears fails list(), scan() and get() with the same error: nothing skipped, nothing warned',
+      'a process-wide error (%s) that never clears fails scan() and get() with the same error: nothing skipped, nothing warned',
       async (code) => {
         const { storage, warn, waits } = makeStorage();
         await seedTwoDrafts(storage);
         const error = withCode(code);
         const reads = failReadingId2(() => error);
 
-        await expect(storage.list()).rejects.toBe(error);
         await expect(storage.scan()).rejects.toBe(error);
         await expect(storage.get(ID_2)).rejects.toBe(error);
-        expect(reads.calls).toBe(12);
-        expect(waits).toEqual([20, 40, 80, 20, 40, 80, 20, 40, 80]);
+        expect(reads.calls).toBe(8);
+        expect(waits).toEqual([20, 40, 80, 20, 40, 80]);
         expect(warn).not.toHaveBeenCalled();
       },
     );
@@ -449,19 +446,18 @@ describe('createFsIssueDraftStorage', () => {
       });
     });
 
-    // EIO・ELOOP・2GiB 超 (ERR_FS_FILE_TOO_LARGE)・code の無いエラーは「未列挙」。以前は list() と全部の受け取りが 500 になった。
+    // EIO・ELOOP・2GiB 超 (ERR_FS_FILE_TOO_LARGE)・code の無いエラーは「未列挙」。以前は一覧と全部の受け取りが 500 になった。
     it.each(['EIO', 'ELOOP', 'ERR_FS_FILE_TOO_LARGE', undefined])(
-      'an unlisted error (%s) skips that one draft: list() still returns the others, with one warning, and the listing is incomplete',
+      'an unlisted error (%s) skips that one draft: scan() still returns the others, with one warning, and the listing is incomplete',
       async (code) => {
         const { storage, warn, waits } = makeStorage();
         await seedTwoDrafts(storage);
         const reads = failReadingId2(() => withCode(code));
 
-        expect((await storage.list()).map((draft) => draft.id)).toEqual([ID_1]);
         expect(await storage.scan()).toEqual({ drafts: [makeDraft(ID_1)], complete: false });
         expect(await storage.get(ID_2)).toBeUndefined();
         expect(await storage.get(ID_1)).toEqual(makeDraft(ID_1));
-        expect(reads.calls).toBe(3); // 再試行しない: 読みごとに 1 回
+        expect(reads.calls).toBe(2); // 再試行しない: 読みごとに 1 回
         expect(waits).toEqual([]);
         // 警告は id と理由 (code) だけ。message もパスも出さない。同じ下書きの同じ理由は 1 回。
         expect(warn).toHaveBeenCalledTimes(1);
@@ -694,7 +690,7 @@ describe('createFsIssueDraftStorage', () => {
 
   it('returns an empty list before anything was saved, and undefined for an unknown or invalid draft', async () => {
     const storage = createFsIssueDraftStorage(baseDir);
-    expect(await storage.list()).toEqual([]);
+    expect((await storage.scan()).drafts).toEqual([]);
     expect(await storage.get(ID_1)).toBeUndefined();
     await fs.mkdir(path.join(baseDir, ID_1), { recursive: true });
     await fs.writeFile(path.join(baseDir, ID_1, 'draft.json'), JSON.stringify({ id: ID_1, kind: 'Z' }));
