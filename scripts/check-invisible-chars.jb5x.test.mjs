@@ -1,4 +1,5 @@
-// bdboard-jb5x: check:invisible-chars の異体字セレクタ・新しい範囲 (.sh / 拡張子の無い stub / yml)・診断文のテスト。
+// bdboard-jb5x: check:invisible-chars の異体字セレクタ・新しい範囲 (.sh / 拡張子の無い stub / yml)・診断文・
+// 表に名前の無い Default_Ignorable_Code_Point のテスト。
 // 追加文字 (U+034F ほか) と isTargetPath の表、「this repository」の自己検査は scripts/check-invisible-chars.test.mjs にある。
 //
 // このファイル自身も検査の対象 (scripts/ 配下の .mjs) なので、検査が止める文字は生で書かない。入力は String.fromCodePoint で
@@ -18,7 +19,7 @@ import {
   escapeForDisplay,
   findInvisibleChars,
 } from './check-invisible-chars.mjs';
-import { fixAdvice } from './check-invisible-chars/advice.mjs';
+import { fixAdvice, jsEscape, shellEscape, yamlEscape } from './check-invisible-chars/advice.mjs';
 import { isEmojiVariationSelector, isVariationSelector } from './check-invisible-chars/chars.mjs';
 import { RM_OPTIONS, useQuietGitProcessEnv } from './test-support/quiet-git.mjs';
 
@@ -227,6 +228,72 @@ describe('fixAdvice (bdboard-jb5x)', () => {
       expect(fixAdvice({ encoding: 'utf8', kind: 'js', codePoint })).not.toContain('emoji');
     }
   });
+
+  // \uXXXX の 4 桁に BMP 外を詰めると別の文字になる (\uE0100 は U+E010 + '0')。見つけたコードポイントそのものの書き方を出す。
+  it.each([
+    ['js', 0x202e, '\\u202E'],
+    ['js', 0xe0100, '\\u{E0100}'],
+    ['yaml', 0x202e, '\\u202E'],
+    ['yaml', 0xe0100, '\\U000E0100'],
+    ['shell', 0x202e, "$'\\xE2\\x80\\xAE'"],
+    ['shell', 0xe0100, "$'\\xF3\\xA0\\x84\\x80'"],
+  ])('shows the %s escape of the code point itself (%i -> %s)', (kind, codePoint, escape) => {
+    expect(fixAdvice({ encoding: 'utf8', kind, codePoint })).toContain(escape);
+  });
+
+  it('gives bash the UTF-8 bytes of the code point ($\'\\u...\' is not portable to macOS /bin/bash 3.2 or the C locale)', () => {
+    for (const codePoint of [0x00ad, 0x202e, 0xfeff, 0xe0041, 0xe0100, 0xe01ef]) {
+      const match = /^\$'((?:\\x[0-9A-F]{2})+)'$/.exec(shellEscape(codePoint));
+      expect(match).not.toBeNull();
+      expect(Buffer.from(match[1].replaceAll('\\x', ''), 'hex').toString('utf8')).toBe(cp(codePoint));
+    }
+    expect(jsEscape(0xfeff)).toBe('\\uFEFF');
+    expect(yamlEscape(0xe007f)).toBe('\\U000E007F');
+  });
+
+  it('tells a UTF-8 file that starts with U+FEFF to drop the BOM, and gives a U+FEFF elsewhere the escape', () => {
+    const atStart = fixAdvice({ encoding: 'utf8', kind: 'js', codePoint: 0xfeff, atFileStart: true });
+    expect(atStart).toContain('byte order mark');
+    expect(atStart).not.toContain('escape');
+    expect(fixAdvice({ encoding: 'utf8', kind: 'js', codePoint: 0xfeff })).toContain('\\uFEFF');
+    expect(fixAdvice({ encoding: 'utf8', kind: 'js', codePoint: 0x202e, atFileStart: true })).toContain('\\u202E');
+  });
+});
+
+describe('every Default_Ignorable_Code_Point is flagged (bdboard-jb5x review)', () => {
+  // 未割り当ての DI は「何も描かない」決まりなので、表から漏れた範囲は GlassWorm 型の隠し込みにそのまま使える。
+  it('names every \\p{Default_Ignorable_Code_Point} of the running Node', () => {
+    const ignorable = /\p{Default_Ignorable_Code_Point}/u;
+    const unnamed = [];
+    for (let codePoint = 0; codePoint <= 0x10ffff; codePoint += 1) {
+      if (codePoint >= 0xd800 && codePoint <= 0xdfff) continue;
+      if (ignorable.test(cp(codePoint)) && charName(codePoint) === undefined) unnamed.push(hex(codePoint));
+    }
+    expect(unnamed).toEqual([]);
+  });
+
+  it.each([
+    [0x2065, 'RESERVED DEFAULT IGNORABLE'],
+    [0xfff0, 'RESERVED DEFAULT IGNORABLE'],
+    [0xfff8, 'RESERVED DEFAULT IGNORABLE'],
+    [0x1bca0, 'SHORTHAND FORMAT CONTROL'],
+    [0x1bca3, 'SHORTHAND FORMAT CONTROL'],
+    [0x1d173, 'MUSICAL SYMBOL FORMAT CONTROL'],
+    [0x1d17a, 'MUSICAL SYMBOL FORMAT CONTROL'],
+    [0xe0080, 'RESERVED DEFAULT IGNORABLE'],
+    [0xe00ff, 'RESERVED DEFAULT IGNORABLE'],
+    [0xe01f0, 'RESERVED DEFAULT IGNORABLE'],
+    [0xe0fff, 'RESERVED DEFAULT IGNORABLE'],
+  ])('flags %i as %s', (codePoint, name) => {
+    expect(charName(codePoint)).toBe(name);
+    expect(findInvisibleChars(`a${cp(codePoint)}b`)).toEqual([finding(1, 2, codePoint)]);
+  });
+
+  it('flags a GlassWorm-style payload moved past the selectors (U+E0200-U+E0207), with the right columns', () => {
+    const payload = range(0xe0200, 0xe0207);
+    const text = `const s = '${payload.map(cp).join('')}';\n`;
+    expect(findInvisibleChars(text)).toEqual(payload.map((codePoint, index) => finding(1, 12 + 2 * index, codePoint)));
+  });
 });
 
 describe('check-invisible-chars CLI: new scope, variation selectors and diagnostics (bdboard-jb5x)', () => {
@@ -335,5 +402,13 @@ describe('check-invisible-chars CLI: new scope, variation selectors and diagnost
     expect(line).toContain('escape');
     expect(line).not.toContain('UTF-16');
     expect(line).not.toContain('save it again');
+  });
+
+  it('tells a UTF-8 file with a BOM to drop it, and gives a U+FEFF later in the file the escape', () => {
+    write('src/bom.ts', `${cp(0xfeff)}export const s = '${cp(0xfeff)}';\n`);
+    const result = run();
+    expect(result.status).toBe(EXIT_FOUND);
+    expect(diagnosticLine(result, 'src/bom.ts:1:1 U+FEFF')).toContain('byte order mark');
+    expect(diagnosticLine(result, 'src/bom.ts:1:20 U+FEFF')).toContain('\\uFEFF');
   });
 });

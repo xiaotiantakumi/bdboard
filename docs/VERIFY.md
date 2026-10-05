@@ -140,9 +140,12 @@ npm run check:boundaries # dependency-cruiser (architecture layering)
 「this repository」が、追跡中のソース拡張子・`.sh`・実行ビット付き (git の mode 100755) のファイル・`.github/` の yml が全部
 対象であることを固定している (落ちたら `targets.mjs` の表を更新する)。
 
-**常に検出する文字**: U+00AD U+034F U+061C U+115F U+1160 U+17B4 U+17B5 U+180B–U+180E U+200B–U+200F U+2028 U+2029
-U+202A–U+202E U+2060–U+2064 U+2066–U+2069 U+206A–U+206F U+3164 U+FEFF U+FFA0 U+E0000–U+E007F。U+2800 (点字の空白) は
-見える空白なので対象外。
+**常に検出する文字**: U+00AD U+034F U+061C U+115F U+1160 U+17B4 U+17B5 U+180B–U+180F U+200B–U+200F U+2028 U+2029
+U+202A–U+202E U+2060–U+206F U+3164 U+FEFF U+FFA0 U+FFF0–U+FFF8 U+1BCA0–U+1BCA3 U+1D173–U+1D17A U+E0000–U+E0FFF
+(うち U+E0100–U+E01EF は下の異体字セレクタの規則)。これで `\p{Default_Ignorable_Code_Point}` が全部入る。未割り当ての
+U+2065・U+FFF0–U+FFF8・U+E0080–U+E00FF・U+E01F0–U+E0FFF も、レンダラが何も描かない決まりなので (HarfBuzz は U+E0000–U+E0FFF を
+丸ごと見えない扱い) GlassWorm 型の隠し込みに使える。漏れは `scripts/check-invisible-chars.jb5x.test.mjs` が実行中の Node の
+ICU と突き合わせて落とす。U+2800 (点字の空白) は見える空白なので対象外。
 
 **異体字セレクタ (U+FE00–U+FE0F と U+E0100–U+E01EF) は「絵文字の直後の U+FE0E / U+FE0F」だけを通す**:
 
@@ -158,12 +161,13 @@ U+202A–U+202E U+2060–U+2064 U+2066–U+2069 U+206A–U+206F U+3164 U+FEFF U+
 - 既知の限界: 絵文字 1 つにつき U+FE0E / U+FE0F を 1 つ付ける形 (見える絵文字が要る) は通る。`\p{Extended_Pictographic}` は
   実行する Node の ICU のバージョンに従うので、新しい Unicode の絵文字は古い Node では止まる (安全側の失敗)。
   異体字列 (IVS。漢字 + U+E0100–U+E01EF) や数学記号の標準異体字列が本当に要るときは、エスケープで書く。
-- 表にまだ無い Default_Ignorable_Code_Point (2026-10-06 時点、Node 22 の ICU): U+2065、U+FFF0–U+FFF8、U+1BCA0–U+1BCA3、
-  U+1D173–U+1D17A、U+E0080–U+E00FF、U+E01F0–U+E0FFF。使用ゼロで割り当ても無いか、特殊用途の書式文字。必要になったら
-  `chars.mjs` の表に足す。
 
-**診断の直し方**: UTF-8 のファイルには `\uXXXX` のエスケープで書くよう案内する (JS / TS は JSX のテキストと属性ではエスケープが
-解釈されないので `{'\u200B'}` のような式を、`.sh` は bash の `$'\uXXXX'`、`.yml` は二重引用符の文字列の `\uXXXX`)。UTF-16
+**診断の直し方**: UTF-8 のファイルには、見つけたコードポイントそのもののエスケープを示す。JS / TS は `\u202E` (BMP 外は
+`\u{E0100}`) で、JSX のテキストと属性ではエスケープが解釈されないので `{'\u202E'}` のような式を案内する。`.yml` は二重引用符の
+文字列の `\u202E` (BMP 外は `\U000E0100`)。`.sh` は UTF-8 のバイト列 `$'\xE2\x80\xAE'` (bash の `$'\u...'` は版とロケールで
+結果が変わり、BMP 外は macOS の /bin/bash 3.2 や C ロケールでエスケープのまま残る)。BMP 外を 4 桁に詰めた `\uE0100` は
+U+E010 + `0` と読まれて別の文字になるので、桁の形も文字ごとに変える。UTF-8 のファイルの先頭の U+FEFF は BOM なので、エスケープでは
+なく BOM を外して保存し直すよう案内する。UTF-16
 (BOM 付き) のファイルは BOM 判定でデコードして同じ規則で検査し、直し方は「UTF-8 で保存し直す」と案内する (エスケープでは
 直らない。BOM の U+FEFF 自体も検出対象)。repo の外を指す symlink は辿らず警告して飛ばし、symlink 経由のパスから直接
 起動しても検査する。

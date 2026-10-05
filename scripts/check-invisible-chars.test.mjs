@@ -79,8 +79,8 @@ describe('findInvisibleChars', () => {
     expect(findInvisibleChars(text).map((finding) => finding.codePoint)).toEqual(TAGS_BLOCK.map(hex));
   });
 
-  it('does not flag the neighbours of the added ranges (U+2800 braille blank is visible, U+2065 / U+E0080 / U+E0100 are outside)', () => {
-    for (const codePoint of [0x2800, 0x2065, 0xe0080, 0xdffff, 0x00ac, 0x00ae, 0x034e, 0x0350, 0x17b3, 0x17b6, 0x180a, 0x1810, 0x115e, 0x1161, 0x3163, 0x3165, 0xff9f, 0xffa1]) {
+  it('does not flag the neighbours of the added ranges (U+2800 braille blank is visible; plane 14 ends at U+E0FFF)', () => {
+    for (const codePoint of [0x2800, 0x205f, 0xffef, 0x1bc9f, 0x1bca4, 0x1d172, 0x1d17b, 0xe1000, 0xdffff, 0x00ac, 0x00ae, 0x034e, 0x0350, 0x17b3, 0x17b6, 0x180a, 0x1810, 0x115e, 0x1161, 0x3163, 0x3165, 0xff9f, 0xffa1]) {
       expect(findInvisibleChars(`a${cp(codePoint)}b`)).toEqual([]);
     }
   });
@@ -214,8 +214,7 @@ describe('isTargetPath', () => {
     'test/fixtures/a.ts',
     'test/a.ts',
     'test/e2e/README.md',
-        'test/e2e/tsconfig.json',
-    'harness/a.mjs',
+    'test/e2e/tsconfig.json',
     'srcx/a.ts',
     'binx/a.mjs',
     'bin/a.md',
@@ -269,7 +268,8 @@ describe('charName', () => {
   it('returns undefined for a code point that is not flagged', () => {
     expect(charName(0x61)).toBeUndefined();
     expect(charName(0x2800)).toBeUndefined();
-    expect(charName(0xe0080)).toBeUndefined();
+    expect(charName(0xe1000)).toBeUndefined();
+    expect(charName(0xe0080)).toBe('RESERVED DEFAULT IGNORABLE');
     expect(charName(0xfe00)).toBe('VARIATION SELECTOR-1');
     expect(charName(0xe0100)).toBe('VARIATION SELECTOR-17');
     expect(charName(0xe01ef)).toBe('VARIATION SELECTOR-256');
@@ -662,9 +662,9 @@ describe('this repository', () => {
     expect(main([`--repo=${REPO_ROOT}`])).toBe(EXIT_OK);
   });
 
-  // 範囲は TARGET_PREFIXES / TARGET_FILES の明示の一覧なので、新しい設定ファイル (ルートの playwright.config.ts など) を
+  // 範囲は check-invisible-chars/targets.mjs の明示の一覧なので、新しい設定ファイル (ルートの playwright.config.ts など) を
   // 足すと黙って範囲外になる。追跡中のソース拡張子のファイルが全部対象であることをここで固定し、足した人に一覧の更新を促す。
-  it('targets every tracked source file of the repository (add a new config file to TARGET_FILES)', () => {
+  it('targets every tracked source file of the repository (add a new config file to TARGET_FILES in targets.mjs)', () => {
     const tracked = execFileSync('git', ['-c', 'core.quotePath=false', 'ls-files', '-z', '--cached'], {
       cwd: REPO_ROOT,
       encoding: 'utf8',

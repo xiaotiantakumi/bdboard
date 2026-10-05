@@ -136,10 +136,10 @@ export function main(argv) {
       count += 1;
       affected.add(relPath);
       const codePoint = Number.parseInt(finding.codePoint.slice(2), 16);
-      // 診断は ASCII だけで書く (生の文字を出力に混ぜない)。JSX のテキスト・属性では \u のエスケープが解釈されないので、その案内も添える。
-      console.error(
-        `invisible-chars: ${shownPath}:${finding.line}:${finding.column} ${finding.codePoint} ${charName(codePoint)} - ${fixAdvice({ encoding: source.encoding, kind: adviceKind(relPath), codePoint })}`,
-      );
+      // 診断は ASCII だけで書く (生の文字を出力に混ぜない)。直し方は文字コード・ファイルの種類・コードポイントで変わる (advice.mjs)。
+      const atFileStart = finding.line === 1 && finding.column === 1;
+      const advice = fixAdvice({ encoding: source.encoding, kind: adviceKind(relPath), codePoint, atFileStart });
+      console.error(`invisible-chars: ${shownPath}:${finding.line}:${finding.column} ${finding.codePoint} ${charName(codePoint)} - ${advice}`);
     }
   }
 

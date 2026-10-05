@@ -53,6 +53,19 @@ const CHAR_NAMES = new Map([
   [0xe0001, 'LANGUAGE TAG'],
   [0xe007f, 'CANCEL TAG'],
 ]);
+// 範囲で持つもの。表に名前の無い Default_Ignorable_Code_Point (DI) もここで全部止める。未割り当ての DI は「何も描かない」決まりで
+// (HarfBuzz は U+E0000-U+E0FFF を丸ごと見えない扱い)、U+E0200 以降に 1 バイト 1 文字で埋める GlassWorm の変種がそのまま通るため。
+// 足し忘れは scripts/check-invisible-chars.jb5x.test.mjs が \p{Default_Ignorable_Code_Point} の全件と突き合わせて落とす。
+const RANGE_NAMES = [
+  [0x2065, 0x2065, 'RESERVED DEFAULT IGNORABLE'],
+  [0xfff0, 0xfff8, 'RESERVED DEFAULT IGNORABLE'],
+  [0x1bca0, 0x1bca3, 'SHORTHAND FORMAT CONTROL'],
+  [0x1d173, 0x1d17a, 'MUSICAL SYMBOL FORMAT CONTROL'],
+  [TAG_FIRST, TAG_LAST, 'TAG CHARACTER'],
+  [0xe0080, 0xe00ff, 'RESERVED DEFAULT IGNORABLE'],
+  [0xe01f0, 0xe0fff, 'RESERVED DEFAULT IGNORABLE'],
+];
+const FIRST_FLAGGED = Math.min(...CHAR_NAMES.keys(), ...RANGE_NAMES.map(([first]) => first), ...VARIATION_RANGES.map(([first]) => first));
 
 // 異体字セレクタ U+FE00-U+FE0F (VS1-16) と U+E0100-U+E01EF (VS17-256)。
 export function isVariationSelector(codePoint) {
@@ -75,16 +88,20 @@ export function isEmojiVariationSelector(codePoint, previous, next) {
   return codePoint === 0xfe0f && next === 0x20e3 && isKeycapBase(previous);
 }
 
-// 検出対象のコードポイントの名前。対象でなければ undefined。Tags ブロック (U+E0000-U+E007F) は範囲で持つ。
+// 検出対象のコードポイントの名前。対象でなければ undefined。Tags ブロック (U+E0000-U+E007F) などは RANGE_NAMES の範囲で持つ。
 // 異体字セレクタは全部名前を返す (ファイル名のエスケープと診断の名前に使う)。検出するかは文脈で決まるので findInvisibleChars が見る。
 export function charName(codePoint) {
+  // 表の最小 (U+00AD) より下はここで素通しする。全コードポイントで呼ばれるので、ソースの大半を占める ASCII に範囲の走査をさせない。
+  if (codePoint < FIRST_FLAGGED) return undefined;
   if (isVariationSelector(codePoint)) {
     const index = codePoint <= 0xfe0f ? codePoint - 0xfe00 + 1 : codePoint - 0xe0100 + 17;
     return `VARIATION SELECTOR-${index}`;
   }
   const named = CHAR_NAMES.get(codePoint);
   if (named !== undefined) return named;
-  if (codePoint >= TAG_FIRST && codePoint <= TAG_LAST) return 'TAG CHARACTER';
+  for (const [first, last, name] of RANGE_NAMES) {
+    if (codePoint >= first && codePoint <= last) return name;
+  }
   return undefined;
 }
 
