@@ -245,7 +245,7 @@ describe('DraftIndexCache.getForCount', () => {
     expect(await cache.loaded()).toBeUndefined();
   });
 
-  it('drops the remembered incomplete index once a complete one is cached', async () => {
+  it('keeps returning the complete index once one is cached, with no more reads even after the reuse window', async () => {
     let now = 1_000;
     const storage = scanning([incomplete, complete]);
     const cache = createDraftIndexCache(storage, { now: () => now });
@@ -258,7 +258,7 @@ describe('DraftIndexCache.getForCount', () => {
     expect(storage.scan).toHaveBeenCalledTimes(2);
   });
 
-  it('drops the remembered incomplete index when a complete seed arrives', async () => {
+  it('returns the complete seed instead of the incomplete index it remembered, without reading', async () => {
     const storage = scanning([incomplete]);
     const cache = createDraftIndexCache(storage, { now: () => 1_000 });
     const partial = await cache.getForCount();

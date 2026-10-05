@@ -115,7 +115,7 @@ describe('PATCH /api/issue-reports/drafts/:id — the fields it writes', () => {
       { title: 1 },
       { body: null },
       { title: 'two\nlines' },
-      { title: '​ ‍' },
+      { title: 'two\u2060words' },
       '{nope',
     ]) {
       const res = await app.request(`${DRAFTS}/${id}`, patch(body), LOCAL_ENV);
@@ -148,7 +148,8 @@ describe('PATCH /api/issue-reports/drafts/:id — the fields it writes', () => {
   it('413s (draft-too-large) a body within the length cap that would still push draft.json over 200KB, instead of a 500', async () => {
     const { app } = setup();
     const id = await createDraft(app);
-    const res = await app.request(`${DRAFTS}/${id}`, patch({ body: '\u0001'.repeat(65_536) }), LOCAL_ENV);
+    // 見える文字が無い本文は自動へ戻る (bdboard-ov0t) ので、末尾に 1 文字足す。
+    const res = await app.request(`${DRAFTS}/${id}`, patch({ body: `${'\u0001'.repeat(65_535)}x` }), LOCAL_ENV);
     expect(res.status).toBe(413);
     expect(await res.json()).toEqual({ error: 'draft would exceed the size limit', code: 'draft-too-large' });
   });
