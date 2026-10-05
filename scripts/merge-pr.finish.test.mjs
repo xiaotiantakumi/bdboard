@@ -58,7 +58,9 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     const finished = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' });
     expect(finished.status).toBe(6);
     expect(finished.stderr).toContain('revert');
+    // bdboard-xw00: 着地木 = PR head の木 (green=ci-head) なので、1 回だけ再実行してから failure を書く (2 回目の pending)。
     expect(posted().map(({ sha, state }) => [sha, state])).toEqual([
+      [landed, 'pending'],
       [landed, 'pending'],
       [landed, 'failure'],
     ]);

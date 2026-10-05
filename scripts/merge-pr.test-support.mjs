@@ -75,6 +75,11 @@ export const auditText = () => (existsSync(env.BDBOARD_MERGE_AUDIT_LOG) ? readFi
 export const stateFile = () => path.join(mainCheckout, '.git', 'bdboard-merge', `pr-${PR}.json`);
 export const status = (state, updatedAt = new Date().toISOString()) => ({ state, context: CONTEXT, description: state, updated_at: updatedAt });
 
+/**
+ * merge-pr を子プロセスで 1 回走らせる。bdboard-xw00 (2bif の残り): spawnSync 自体の失敗 (60 秒の時間切れ = ETIMEDOUT、
+ * 起動できない等) は result.error を捨てずに投げる。捨てると status が null のまま返り、テストの見出しが
+ * `expected null to be <n>` になって原因 (時間切れ) が読めない。投げれば `Error: spawnSync … ETIMEDOUT` が見出しになる。
+ */
 export function run(args, extraEnv = {}, cwd = work) {
   const result = spawnSync(process.execPath, [SCRIPT, ...args], {
     cwd,
@@ -82,6 +87,9 @@ export function run(args, extraEnv = {}, cwd = work) {
     encoding: 'utf8',
     timeout: 60_000,
   });
+  if (result.error) {
+    throw result.error;
+  }
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
 
