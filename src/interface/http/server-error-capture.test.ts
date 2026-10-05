@@ -22,6 +22,7 @@ function buildApp(reporter: Pick<SelfErrorReporter, 'report'>): Hono {
 }
 
 afterEach(() => {
+  vi.resetAllMocks();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -197,7 +198,7 @@ describe('createServerErrorCapture', () => {
     const app = buildApp(reporter);
     app.get('/api/big', (c) => c.json({ error: 'big', detail: 'x'.repeat(20_000) }, 500));
     app.get('/api/text', (c) => c.text('plain failure text', 500));
-    app.get('/api/broken', (c) => new Response('{"error": ', { status: 500, headers: { 'content-type': 'application/json' } }));
+    app.get('/api/broken', () => new Response('{"error": ', { status: 500, headers: { 'content-type': 'application/json' } }));
     for (const path of ['/api/big', '/api/text', '/api/broken']) {
       const res = await app.request(path);
       expect(res.status).toBe(500);

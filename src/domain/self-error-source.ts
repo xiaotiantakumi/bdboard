@@ -28,9 +28,9 @@ function routeOf(route: string): string {
 /** `api:<METHOD> <route>` を組む。メソッドは大文字にして許可リストに無ければ `OTHER`、ルートは形が合わなければ `(unknown route)`。 */
 export function selfErrorApiSource(method: string, route: string): SelfErrorApiSource {
   const upper = method.toUpperCase();
-  const head = `api:${API_METHODS.includes(upper) ? upper : SELF_ERROR_OTHER_METHOD}`;
-  const source: SelfErrorApiSource = `${head} ${routeOf(route)}`;
-  return source.length <= SELF_ERROR_SOURCE_MAX_LENGTH ? source : `${head} ${SELF_ERROR_UNKNOWN_ROUTE}`;
+  const verb = API_METHODS.includes(upper) ? upper : SELF_ERROR_OTHER_METHOD;
+  const source: SelfErrorApiSource = `api:${verb} ${routeOf(route)}`;
+  return source.length <= SELF_ERROR_SOURCE_MAX_LENGTH ? source : `api:${verb} ${SELF_ERROR_UNKNOWN_ROUTE}`;
 }
 
 /** `report()` が受け付ける source か (上の形に一致するものだけ)。 */

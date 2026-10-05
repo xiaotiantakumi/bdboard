@@ -162,6 +162,7 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
 
 describe('mountRoutes 5xx capture (bdboard-4y8q.6.4)', () => {
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 
