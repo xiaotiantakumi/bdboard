@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { codeBlock, codeSpan } from './issue-public-markdown.js';
 import { elide, type RedactedText, type TextMark } from './issue-public-redact.js';
-import { LINEAR_TIME_TEST_TIMEOUT_MS, expectLinearTime, type ScaleCount } from './linear-time-test-support.js';
+import {
+  LINEAR_TIME_TEST_TIMEOUT_MS,
+  MIN_SAMPLE_MS,
+  expectLinearTime,
+  type LinearTimeOptions,
+  type ScaleCount,
+} from './linear-time-test-support.js';
 
 // bdboard-ncbb (PR #890 のレビュー MINOR-3 の残り): codeSpan / codeBlock (issue-public-markdown.ts) と elide
 // (issue-public-redact.ts) の線形時間を、1 つずつ・切り詰めない入力で検査する。
@@ -20,6 +26,11 @@ import { LINEAR_TIME_TEST_TIMEOUT_MS, expectLinearTime, type ScaleCount } from '
 // 孤立サロゲートは実行時に組み立てる (他のテストと同じ)。
 const HIGH = String.fromCharCode(0xd83d);
 const NO_MARKS: readonly TextMark[] = [];
+
+// many marks は 1 回の呼び出しで 10 万個の印のオブジェクトを作る (約 15ms)。30ms のサンプルには 2 回分しか入らず、GC が入るかどうかで
+// 1 回あたりが 11ms と 40ms に割れて、正しいコードでも比が 7〜42 に散る (PR #897 のレビューの実測。31 回中 1 回は 3 試行とも 31.5 で落ちた)。
+// サンプルを 200ms 以上にして GC を平均に含める (20 回で初回の比が 15.4 以下)。Windows は既定の 160ms より少し長いだけ。
+const ALLOCATING: LinearTimeOptions = { minSampleMs: Math.max(MIN_SAMPLE_MS, 200) };
 
 /** 内容と、その中のバッククォートの連なりの最長 (形の作り方から分かる値で、実装を呼んで出さない)。 */
 interface Content {
@@ -129,7 +140,7 @@ describe('codeSpan: linear time on hostile content', () => {
         expect(piece.marks).toHaveLength(input.marks.length);
         expect(piece.marks.at(-1)?.start).toBe((input.marks.at(-1)?.start ?? 0) + 1);
       };
-    });
+    }, ALLOCATING);
   }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });
 
@@ -182,7 +193,7 @@ describe('codeBlock: linear time on hostile content', () => {
         expect(piece.marks).toHaveLength(input.marks.length);
         expect(piece.marks.at(-1)?.start).toBe((input.marks.at(-1)?.start ?? 0) + 8);
       };
-    });
+    }, ALLOCATING);
   }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });
 
@@ -238,7 +249,7 @@ describe('elide: linear time on long text that the build would have cut', () => 
         expect(result.text.length).toBe(expectedLength);
         expect(result.marks).toHaveLength(888 + 111);
       };
-    });
+    }, ALLOCATING);
   }, LINEAR_TIME_TEST_TIMEOUT_MS);
 
   it('cuts text with many separate ranges to avoid, handed over in reverse order', () => {

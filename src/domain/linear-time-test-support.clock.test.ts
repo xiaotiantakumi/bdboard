@@ -5,6 +5,8 @@ import { MIN_SAMPLE_MS, cpuTimeMs, defaultMinSampleMs } from './linear-time-test
 // CPU 時計の分解能の 10 倍以上であることを固定する。win32 の 160 を 30 に戻しても、Linux / macOS の CI では他のどのテストも
 // 落ちない (30 は Linux / macOS の値なので正しい)。この退行は Windows でしか現れず、現れたときの症状は線形テストの偶発的な
 // 失敗 (時計の刻みの揺れで比が散る) なので、原因を後から辿りにくい。
+// 限界: 呼び出し側を `defaultMinSampleMs('linux')` に固定する退行は、Linux / macOS では 30 のままで何も落ちない。
+// それを捕まえるのは Windows で走る verify-windows だけ (「follows the platform」と実測の分解能のテストが落ちる)。
 
 /** Windows の CPU 時間 (GetProcessTimes) の刻み。クロック tick の約 15.625ms。 */
 const WINDOWS_CPU_TICK_MS = 15.625;
@@ -47,6 +49,8 @@ describe('the default size of one measurement (minSampleMs)', () => {
   });
 
   // 実測: この環境の CPU 時計の分解能。Windows の CI では約 15.6ms (>= 156ms が要る) を測る。
+  // Windows の CPU 時間は 15.625ms の整数倍でしか進まないので、測る値は 15.625 ちょうどになり、160 と 156.25 の差 (約 2.4%) は
+  // 雑音の余白ではない。落ちるのは 6 回すべてが 2 tick 以上で進んだときだけで、実質起きない。
   it('is at least 10 times the measured resolution of the CPU clock of this machine', () => {
     const resolution = measureCpuClockResolutionMs();
     expect(resolution, 'the CPU clock must move while this test keeps the CPU busy').toBeLessThan(Infinity);
