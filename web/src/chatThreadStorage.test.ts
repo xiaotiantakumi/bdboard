@@ -16,7 +16,9 @@ function thread(sessionId: string): ChatThreadDto {
 }
 
 describe('chatThreadStorage v2', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+  });
 
   it('round-trips ordered active sessions and selection', () => {
     writePersistedChatThreadState('project-a', {
@@ -37,7 +39,9 @@ describe('chatThreadStorage v2', () => {
 });
 
 describe('resolvePersistedSelectionAfterClose (bdboard-e5cz)', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+  });
 
   it('keeps the persisted selection when it is still among the next active sessions', () => {
     writePersistedChatThreadState('project-a', {
@@ -61,7 +65,9 @@ describe('resolvePersistedSelectionAfterClose (bdboard-e5cz)', () => {
 });
 
 describe('writePersistedChatThreadState with an explicitly empty active set (bdboard-ij6e)', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+  });
 
   it('keeps the per-project entry (does not delete it) when the caller persists an empty active set', () => {
     // closeThread (chat/useChatThreadLists.ts) が最後の1つの開いているスレッドを
@@ -89,7 +95,9 @@ describe('writePersistedChatThreadState with an explicitly empty active set (bdb
 });
 
 describe('writePersistedChatThread (bdboard-7feq)', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+  });
 
   const threadD = { sessionId: 'sd', agentId: 'claude' };
 
@@ -139,7 +147,9 @@ describe('writePersistedChatThread (bdboard-7feq)', () => {
 
 describe('provisional entry fields (bdboard-521p)', () => {
   const KEY = 'bdboard.chat.thread.v2';
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+  });
   afterEach(() => {
     vi.resetAllMocks();
     vi.restoreAllMocks();
