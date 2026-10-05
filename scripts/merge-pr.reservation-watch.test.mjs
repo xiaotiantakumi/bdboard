@@ -9,7 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { reserveVerifySlot } from './verify-slot.mjs';
 import { HOLDER_FORMAT } from './verify-slot-queue.mjs';
 import { retryHolderAppeared, watchRetryHolder } from './merge-pr/reservation-watch.mjs';
-import { RM_OPTIONS, waitUntil } from './merge-pr.test-support.mjs';
+import { waitUntil } from './merge-pr.test-support.mjs';
+import { RM_OPTIONS } from './test-support/quiet-git.mjs';
 
 const SINCE = 1_700_000_000_000;
 const INTERVAL_MS = 5;

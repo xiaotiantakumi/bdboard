@@ -18,6 +18,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { RM_OPTIONS, quietGitEnv } from './test-support/quiet-git.mjs';
+
 const REAL_SCRIPT = fileURLToPath(new URL('./always-on-server.sh', import.meta.url));
 const REAL_DEPLOY_CHANGED = fileURLToPath(new URL('./deploy-changed.sh', import.meta.url));
 const REAL_GATES = fileURLToPath(new URL('./always-on-server-gates.sh', import.meta.url));
@@ -77,6 +79,7 @@ describe.skipIf(process.platform === 'win32')('always-on-server.sh self-exec gua
   beforeAll(() => {
     tmpRoot = mkdtempSync(path.join(tmpdir(), 'bdboard-self-exec-'));
     env = {
+    ...quietGitEnv(tmpRoot),
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: path.join(tmpRoot, 'home'),
     };
@@ -84,7 +87,7 @@ describe.skipIf(process.platform === 'win32')('always-on-server.sh self-exec gua
   });
 
   afterAll(() => {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(tmpRoot, RM_OPTIONS);
   });
 
   function makeMainAndWorktree(label, { mainHasScript, mainScriptKind = 'marker' }) {

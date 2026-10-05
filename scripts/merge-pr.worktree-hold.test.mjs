@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { RM_OPTIONS } from './test-support/quiet-git.mjs';
+
 vi.mock('./merge-pr/exec.mjs', () => ({
   run: vi.fn((cmd, args) => ({ status: 0, stdout: args[0] === 'rev-parse' ? 'abcdef0123456789\n' : '', stderr: '' })),
 }));
@@ -72,7 +74,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.resetAllMocks();
   vi.restoreAllMocks();
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  rmSync(dir, RM_OPTIONS);
 });
 
 describe('restoreUnderLock (decision a: keep SH between attempts, read the owner after each re-take)', () => {

@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach } from 'vitest';
 
 import { VERIFY_JS } from './merge-pr.test-support-verify-js.mjs';
+import { RM_OPTIONS, quietGitEnv } from './test-support/quiet-git.mjs';
 
 export const SCRIPT = fileURLToPath(new URL('./merge-pr.mjs', import.meta.url));
 const FAKE = fileURLToPath(new URL('./merge-pr/fake-tools.mjs', import.meta.url));
@@ -93,26 +94,6 @@ export function run(args, extraEnv = {}, cwd = work) {
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
 
-/**
- * bdboard-myla: 一時ディレクトリの後始末 (rmSync) に渡す共通オプション。git の子 (detach した保守など) が
- * 親の git の終了後も少しだけ .git に書くことがあり、その最中に消すと ENOTEMPTY になる。Node の rmSync は
- * maxRetries を渡すと ENOTEMPTY / EBUSY / EPERM などを retryDelay ミリ秒おきに再試行する (時間は固定しない)。
- */
-export const RM_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
-
-/**
- * bdboard-myla: 一時リポジトリの git の自動保守を止める。git は commit / fetch / receive-pack のたびに
- * `git maintenance run --auto --quiet --detach` を起こし、これは親の git が終わった後もバックグラウンドで
- * .git (objects/maintenance.lock など) に触りうる。テストの末尾の rmSync と競ると .git が ENOTEMPTY になる
- * (CI の verify が無関係の PR で落ちた)。一時 repo は gc を要する大きさにならないので止めて失うものは無い。
- * receive.autogc は push を受ける側 (origin.git) が `gc --auto` を起こすのを止める。
- */
-export function quietGit(repo) {
-  git(repo, ['config', 'maintenance.auto', 'false']);
-  git(repo, ['config', 'gc.auto', '0']);
-  git(repo, ['config', 'receive.autogc', 'false']);
-}
-
 export function commitAll(cwd, message, extraEnv = {}) {
   git(cwd, ['add', '-A']);
   git(cwd, ['commit', '-q', '-m', message], extraEnv);
@@ -143,6 +124,7 @@ export function setup({ merge = {}, mainDate, branchFiles = {} } = {}) {
     GIT_AUTHOR_EMAIL: 'bdboard-test@example.invalid',
     GIT_COMMITTER_NAME: 'bdboard-test',
     GIT_COMMITTER_EMAIL: 'bdboard-test@example.invalid',
+    ...quietGitEnv(tmp),
     BDBOARD_MERGE_GH: tool('gh'),
     BDBOARD_MERGE_BD: tool('bd'),
     BDBOARD_MERGE_NPM: tool('npm'),
@@ -157,8 +139,6 @@ export function setup({ merge = {}, mainDate, branchFiles = {} } = {}) {
   };
   git(tmp, ['init', '-q', '--bare', '-b', 'main', origin]);
   git(tmp, ['init', '-q', '-b', 'main', mainCheckout]);
-  quietGit(origin);
-  quietGit(mainCheckout); // git worktree add で作る work は main の .git/config を共有するので、これで足りる
   const contract = {
     version: 1,
     verify: 'node verify.cjs',

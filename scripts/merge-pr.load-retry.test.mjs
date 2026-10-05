@@ -27,7 +27,6 @@ import {
   readFake,
   readState,
   registerTempRepoHooks,
-  RM_OPTIONS,
   run,
   setup,
   simulateMerge,
@@ -40,6 +39,7 @@ import {
 } from './merge-pr.test-support.mjs';
 import { VERIFY_JS } from './merge-pr.test-support-verify-js.mjs';
 import { SLOT_IDENTITY_ENV } from './verify-slot.mjs';
+import { RM_OPTIONS } from './test-support/quiet-git.mjs';
 
 const banner = (script, command) => `\n> bdboard@0.1.2 ${script}\n> ${command}\n`;
 const vitestLog = (body, summary) =>

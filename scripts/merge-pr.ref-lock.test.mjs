@@ -8,7 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { refetchMain } from './merge-pr/context.mjs';
 import { refLockFailure, refLockLines } from './merge-pr/ref-lock.mjs';
-import { git, mainCheckout, peerCommit, PR, registerTempRepoHooks, RM_OPTIONS, run, setup, tmp, work } from './merge-pr.test-support.mjs';
+import { git, mainCheckout, peerCommit, PR, registerTempRepoHooks, run, setup, tmp, work } from './merge-pr.test-support.mjs';
+import { RM_OPTIONS } from './test-support/quiet-git.mjs';
 
 /**
  * lock が効くのは fetch が tracking ref を更新するときだけ (最新なら lock を取りに行かない)。

@@ -39,6 +39,7 @@ import {
   formatDriftReport,
   parseMergeTreeConflictFiles,
 } from './check-drift.mjs';
+import { RM_OPTIONS, useQuietGitProcessEnv } from './test-support/quiet-git.mjs';
 
 const CTX = {
   mergeBase: '0123456789abcdef',
@@ -209,6 +210,7 @@ describe('merge-tree conflict output parser', () => {
  * 実際に走らせる層を足す。verify-slot.test.mjs が subprocess を起こす前例。
  */
 describe('check-drift CLI', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
+  useQuietGitProcessEnv();
   // bdboard-b0yd R2-3: `git merge-base --is-ancestor` で peer の新旧が分かるので、
   // バケットC (衝突パスが自分のファイル外) はもう両論併記しない。peer が
   // origin/main を取り込み済みなら rename、そうでなければ peer 自身の
@@ -350,7 +352,7 @@ describe('check-drift CLI', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
   // フックには describe の timeout が継承されない (既定 hookTimeout は10s)。後片付けの削除も
   // テスト本体と同じランナー全体のスローダウンを受けるので、同じ判定閾値を渡す。
   afterEach(() => {
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, RM_OPTIONS);
   }, CLI_TEST_TIMEOUT_MS);
 
   beforeAll(() => {
@@ -358,7 +360,7 @@ describe('check-drift CLI', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
   });
 
   afterAll(() => {
-    fs.rmSync(templateRoot, { recursive: true, force: true });
+    fs.rmSync(templateRoot, RM_OPTIONS);
   }, CLI_TEST_TIMEOUT_MS);
 
   // bdboard-ypjz: z4h0→8r5b→pqhe で per-test に 15000 を個別に付け、npf9 で Windows の全体

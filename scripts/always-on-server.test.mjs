@@ -12,6 +12,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { RM_OPTIONS, quietGitEnv } from './test-support/quiet-git.mjs';
+
 const SCRIPT = fileURLToPath(new URL('./always-on-server.sh', import.meta.url));
 
 const FAKE_SERVER = `
@@ -92,6 +94,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     writeFileSync(path.join(repo, 'server.js'), FAKE_SERVER);
     port = await findFreePort();
     env = {
+    ...quietGitEnv(tmpRoot),
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: path.join(tmpRoot, 'home'),
       BDBOARD_SERVER_LOG: path.join(tmpRoot, 'server.log'),
@@ -124,7 +127,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
         // already gone
       }
     }
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(tmpRoot, RM_OPTIONS);
   });
 
   it('prints usage for --help and rejects unknown actions / missing arguments', () => {
@@ -290,6 +293,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     const origin = path.join(tmpRoot, 'origin.git');
     port = await findFreePort();
     env = {
+    ...quietGitEnv(tmpRoot),
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: path.join(tmpRoot, 'home'),
       BDBOARD_SERVER_LOG: path.join(tmpRoot, 'server.log'),
@@ -321,7 +325,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
         // already gone
       }
     }
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(tmpRoot, RM_OPTIONS);
   });
 
   it('proceeds as before when the running node satisfies engines.node', () => {
@@ -582,6 +586,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     const origin = path.join(tmpRoot, 'origin.git');
     port = await findFreePort();
     env = {
+    ...quietGitEnv(tmpRoot),
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: path.join(tmpRoot, 'home'),
       BDBOARD_SERVER_LOG: path.join(tmpRoot, 'server.log'),
@@ -622,7 +627,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
         // already gone
       }
     }
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(tmpRoot, RM_OPTIONS);
   });
 
   it('--dry-run announces the artifact check after build:web, and omits it with --no-build', () => {
@@ -820,6 +825,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     const origin = path.join(tmpRoot, 'origin.git');
     port = await findFreePort();
     env = {
+    ...quietGitEnv(tmpRoot),
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: path.join(tmpRoot, 'home'),
       BDBOARD_SERVER_LOG: path.join(tmpRoot, 'server.log'),
@@ -860,7 +866,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
         // already gone
       }
     }
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(tmpRoot, RM_OPTIONS);
   });
 
   it('a deploy stopped by a failing build:web is completed by running the same command again', () => {
