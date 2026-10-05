@@ -22,7 +22,8 @@ describe('wireCoreInfra bdVersion', () => {
     root = '';
   });
 
-  it('shares one startup read between the startup check and the snapshot', async () => {
+  // 偽の bd は #!/bin/sh のスクリプトで、Windows の spawn (shell なし) では起動できない (ほかのシェルスクリプトのテストと同じく飛ばす)。
+  it.skipIf(process.platform === 'win32')('shares one startup read between the startup check and the snapshot', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'bdboard-core-infra-'));
     const calls = path.join(root, 'calls');
     const fakeBd = path.join(root, 'bd');
@@ -42,9 +43,10 @@ describe('wireCoreInfra bdVersion', () => {
 
     // wireCoreInfra は読み取りを待たずに返り、読み終わるまでは 'unknown'。
     expect(infra.bdVersion()).toBe('unknown');
-    await vi.waitFor(() => expect(infra.bdVersion()).toBe('9.9.9'));
+    // 既定の 1 秒は、負荷の高いときの sh の起動 + sleep 0.2 には短い (テストの既定の 5 秒には収める)。
+    await vi.waitFor(() => expect(infra.bdVersion()).toBe('9.9.9'), { timeout: 4_000 });
     // 起動時の診断も同じ読み取りの結果で動く (EXPECTED_BD_VERSION と違う 9.9.9 なので mismatch の警告が出る)。
-    await vi.waitFor(() => expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('found 9.9.9')));
+    await vi.waitFor(() => expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('found 9.9.9')), { timeout: 4_000 });
     expect((await fs.readFile(calls, 'utf8')).trim().split('\n')).toHaveLength(1);
   });
 
@@ -62,7 +64,7 @@ describe('wireCoreInfra bdVersion', () => {
     cache = infra.cache;
 
     // 起動時の診断が終わった (= 読み取りが失敗で終わった) あとも 'unknown'。
-    await vi.waitFor(() => expect(log.log).toHaveBeenCalled());
+    await vi.waitFor(() => expect(log.log).toHaveBeenCalled(), { timeout: 4_000 });
     expect(infra.bdVersion()).toBe('unknown');
   });
 });

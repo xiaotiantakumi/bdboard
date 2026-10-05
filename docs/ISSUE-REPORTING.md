@@ -1036,10 +1036,16 @@ reporter の中で握って**ログに code だけ**出す: `self error draft fa
 `main.ts` が `infra.bdVersion` を `wireIssueDraftService` と `wireSelfErrorReporter` の両方へ渡す(application 層は infrastructure を import せず、wiring が関数で渡す)。
 
 **まだ読めていない・読めなかったとき**: `createBdVersionSnapshot` は**同期の getter** で、読み終わるまでは `'unknown'`、読めた(空でない)ら前後の空白を除いたその版を返す。
-bd が無い・壊れている・出力が読めない・timeout(`readBdVersion` は `null` を返す)ときは `'unknown'` のまま。Promise を `await` する形にしなかったのは、
+bd が無い・壊れている・出力が読めない・timeout(`readBdVersion` は `null` を返す)ときは `'unknown'` のまま。版は外のコマンドの出力なので、HTTP の受け取りの `envInfo` と同じく
+1 行(`isSingleLineText`)・100 文字までのものだけ受け、ほかは `'unknown'` にする(サーバーが埋める `envInfo` は入口の schema を通らず、暫定の本文の `- bd: …` の行にそのまま入る)。Promise を `await` する形にしなかったのは、
 `envInfo` が同期の関数で(async にすると `IssueDraftService` と `createSelfErrorReporter` の型が変わる)、読み取りを待つとリフレッシュの失敗の報告や起動が最大 3 秒(timeout)遅れるため。
-その代わり、読み取りが終わる前(起動直後の初回リフレッシュの失敗など)に作った下書きの `bdVersion` は `unknown` になる。同じ下書きが再発したときは `envInfo` が
-最後の発生の値に置き換わる(`issue-draft-build.ts` の版の扱い)ので、次の報告(同じ文は 1 時間に 1 回しか報告しないので、続いていれば 1 時間後)で読めた版に直る。bd が壊れているときに読めないのは変わらない(`unknown` が出る = 切り分けの手がかりの 1 つ)。
+その代わり、読み取りが終わる前に作った下書きの `bdVersion` は `unknown` になる。ただし実際に起きるのはまれ: 初回リフレッシュの結果は discovery と(変わったプロジェクトの)`bd list` が
+全部終わってから届き、`bd version` はそれより前に起動していて DB を開かない。API の 5xx と手書きの下書きは、初回リフレッシュの後に listen してから来る。
+`bd version` が初回リフレッシュ全体より遅いときだけ、その結果の下書きが `unknown` になる(timeout で `null` になったときは、その後もずっと `unknown`)。同じ **pending の** 下書きが再発したときは `envInfo` が
+最後の発生の値に置き換わる(`issue-draft-build.ts` の `latestEnvironment`)ので、次の報告(同じ文は 1 時間に 1 回しか報告しないので、続いていれば 1 時間後。再起動すれば throttle は空になる)で読めた版に直る。
+見送り(`dismissed`)の下書きは回数だけ足すので置き換わらず、「大量発生」の下書きは最初の報告の `envInfo` のまま。bd が壊れているときに読めないのは変わらない(`unknown` が出る = 切り分けの手がかりの 1 つ)。
+**既知の限界(起動後の bd の入れ替え)**: 版は起動時の 1 回分なので、bdboard を動かしたまま bd を更新すると(`brew upgrade` など)、再起動までの下書きには**更新前の版**が入る。
+schema-mismatch はまさに bd の更新の直後に起きやすいので、この間の下書きの `bdVersion` は失敗した bd の版ではないことがある(再起動の後の再発で直る)。
 受け入れは `wire-core-infra.test.ts`(偽の bd の呼び出しが 1 回・読めるまで `unknown`・起動できないと `unknown`)、`bd-version-snapshot.test.ts`、`wire-self-error-reporter.test.ts`
 (読み終わる前は `unknown`・後は版)、`wire-issue-draft-service.test.ts`(手書きの下書き)。
 

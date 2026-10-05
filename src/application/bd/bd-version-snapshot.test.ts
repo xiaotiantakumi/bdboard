@@ -20,10 +20,16 @@ describe('createBdVersionSnapshot', () => {
     expect(version()).toBe('1.0.4');
   });
 
-  it.each([null, '', '   '])('stays unknown when the read resolves with %j', async (value) => {
+  it.each([null, '', '   ', '1.2.1\n## injected', 'x'.repeat(101)])('stays unknown when the read resolves with %j', async (value) => {
     const version = createBdVersionSnapshot(Promise.resolve(value));
     await flush();
     expect(version()).toBe(BD_VERSION_UNKNOWN);
+  });
+
+  it('accepts a version of exactly the length limit', async () => {
+    const version = createBdVersionSnapshot(Promise.resolve('9'.repeat(100)));
+    await flush();
+    expect(version()).toBe('9'.repeat(100));
   });
 
   it('stays unknown and raises no unhandled rejection when the read rejects', async () => {
