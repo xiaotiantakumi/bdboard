@@ -36,11 +36,23 @@ const esc = (codePoint) =>
     : `\\u${codePoint.toString(16).toUpperCase().padStart(4, '0')}`;
 const range = (from, to) => Array.from({ length: to - from + 1 }, (_, offset) => from + offset);
 
+// 本物の scripts/ を指すディレクトリのリンク (Windows ではジャンクション) を作って run を呼び、後始末の再帰 rmSync より
+// 先に unlinkSync でリンクだけを外す。Node 23 以降の C++ 版 rmSync にはディレクトリへのリンクを辿って指す先を消す
+// 不具合があり (nodejs/node#61040 で修正)、Windows のジャンクションでも同様の報告があるので、tmp の後始末に任せない。
+function withLinkedScriptsDir(linkedDir, run) {
+  fs.symlinkSync(path.dirname(SCRIPT_PATH), linkedDir, 'junction');
+  try {
+    return run();
+  } finally {
+    fs.unlinkSync(linkedDir);
+  }
+}
+
 // bdboard-ekvi で指定した集合: bidi 制御 + ゼロ幅 / 見えない書式文字。
 const BIDI = [0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069];
 const ZERO_WIDTH = [0x200b, 0x200c, 0x200d, 0x2060, 0xfeff];
 // bdboard-rqzv で足した集合: 見えない識別子・書式文字・行/段落区切り・タグ文字。
-const SOFT_HYPHEN_AND_FILLERS = [0x00ad, 0x180e, 0x3164, 0xffa0];
+const SOFT_HYPHEN_AND_FILLERS = [0x00ad, 0x115f, 0x1160, 0x180e, 0x3164, 0xffa0];
 const INVISIBLE_OPERATORS = range(0x2061, 0x2064);
 const DEPRECATED_FORMAT = range(0x206a, 0x206f);
 const LINE_PARAGRAPH_SEPARATORS = [0x2028, 0x2029];
@@ -63,7 +75,7 @@ describe('findInvisibleChars', () => {
   });
 
   it('does not flag the neighbours of the added ranges (U+2800 braille blank is visible, U+2065 / U+E0080 / U+E0100 are outside)', () => {
-    for (const codePoint of [0x2800, 0x2065, 0xe0080, 0xe0100, 0xdffff, 0x00ac, 0x00ae, 0x3163, 0x3165, 0xff9f, 0xffa1]) {
+    for (const codePoint of [0x2800, 0x2065, 0xe0080, 0xe0100, 0xdffff, 0x00ac, 0x00ae, 0x115e, 0x1161, 0x3163, 0x3165, 0xff9f, 0xffa1]) {
       expect(findInvisibleChars(`a${cp(codePoint)}b`)).toEqual([]);
     }
   });
@@ -181,6 +193,8 @@ describe('charName', () => {
       expect(charName(codePoint)).toMatch(/^[A-Z0-9][A-Z0-9 ()-]*$/);
     }
     expect(charName(0x00ad)).toBe('SOFT HYPHEN');
+    expect(charName(0x115f)).toBe('HANGUL CHOSEONG FILLER');
+    expect(charName(0x1160)).toBe('HANGUL JUNGSEONG FILLER');
     expect(charName(0x180e)).toBe('MONGOLIAN VOWEL SEPARATOR');
     expect(charName(0x3164)).toBe('HANGUL FILLER');
     expect(charName(0xffa0)).toBe('HALFWIDTH HANGUL FILLER');
@@ -285,8 +299,9 @@ describe('isDirectRun', () => {
 
   it('is true when argv[1] reaches the module through a symlinked directory (macOS /tmp -> /private/tmp)', () => {
     const linkedDir = path.join(tmpRoot, 'linked-scripts');
-    fs.symlinkSync(path.dirname(SCRIPT_PATH), linkedDir, 'junction');
-    expect(isDirectRun(pathToFileURL(SCRIPT_PATH).href, path.join(linkedDir, path.basename(SCRIPT_PATH)))).toBe(true);
+    withLinkedScriptsDir(linkedDir, () => {
+      expect(isDirectRun(pathToFileURL(SCRIPT_PATH).href, path.join(linkedDir, path.basename(SCRIPT_PATH)))).toBe(true);
+    });
   });
 });
 
@@ -392,40 +407,48 @@ describe('check-invisible-chars CLI', () => {
   });
 
   // bdboard-rqzv (N6): 配布される入口・e2e・設定ファイル・.jsx / .cts も検査する。
-  it.each([
-    'bin/bdboard.mjs',
-    'test/e2e/smoke.spec.ts',
-    'test/e2e/fixtures/helpers.ts',
-    'vitest.config.ts',
-    'eslint.config.mjs',
-    '.dependency-cruiser.cjs',
-    'web/vite.config.ts',
-    'web/vitest.config.ts',
-    'web/vitest.setup.ts',
-    'src/Widget.jsx',
-    'src/legacy.cts',
-  ])('catches a literal character in %s', (relPath) => {
-    write(relPath, `${cp(0x202e)}x\n`);
+  // パスごと・文字ごとに git init と node の起動を繰り返さず 1 回の実行で確かめる (Windows ランナーは子プロセスの
+  // 起動が遅く、件数がそのまま per-test タイムアウトの火種になる。bdboard-51qb)。
+  it('catches a literal character in each newly covered path, in one run', () => {
+    const paths = [
+      'bin/bdboard.mjs',
+      'test/e2e/smoke.spec.ts',
+      'test/e2e/fixtures/helpers.ts',
+      'vitest.config.ts',
+      'eslint.config.mjs',
+      '.dependency-cruiser.cjs',
+      'web/vite.config.ts',
+      'web/vitest.config.ts',
+      'web/vitest.setup.ts',
+      'src/Widget.jsx',
+      'src/legacy.cts',
+    ];
+    for (const relPath of paths) write(relPath, `${cp(0x202e)}x\n`);
     const result = run();
     expect(result.status).toBe(EXIT_FOUND);
-    expect(result.stderr).toContain(`${relPath}:1:1 U+202E`);
+    expect(paths.filter((relPath) => !result.stderr.includes(`${relPath}:1:1 U+202E`))).toEqual([]);
+    expect(result.stderr).toContain(`${paths.length} 件を ${paths.length} ファイル`);
   });
 
-  it.each([
-    [0x00ad, 'SOFT HYPHEN'],
-    [0x180e, 'MONGOLIAN VOWEL SEPARATOR'],
-    [0x3164, 'HANGUL FILLER'],
-    [0xffa0, 'HALFWIDTH HANGUL FILLER'],
-    [0x2063, 'INVISIBLE SEPARATOR'],
-    [0x206f, 'NOMINAL DIGIT SHAPES'],
-    [0x2028, 'LINE SEPARATOR'],
-    [0xe0041, 'TAG CHARACTER'],
-  ].map(([codePoint, name]) => [hex(codePoint), codePoint, name]))('names the added code point %s in the diagnostic without printing it', (_label, codePoint, name) => {
-    write('src/a.ts', `export const s = '${cp(codePoint)}';\n`);
+  it('names each added code point in the diagnostic without printing it, in one run', () => {
+    const added = [
+      [0x00ad, 'SOFT HYPHEN'],
+      [0x115f, 'HANGUL CHOSEONG FILLER'],
+      [0x180e, 'MONGOLIAN VOWEL SEPARATOR'],
+      [0x3164, 'HANGUL FILLER'],
+      [0xffa0, 'HALFWIDTH HANGUL FILLER'],
+      [0x2063, 'INVISIBLE SEPARATOR'],
+      [0x206f, 'NOMINAL DIGIT SHAPES'],
+      [0x2028, 'LINE SEPARATOR'],
+      [0xe0041, 'TAG CHARACTER'],
+    ];
+    write('src/a.ts', added.map(([codePoint], index) => `export const s${index} = '${cp(codePoint)}';\n`).join(''));
     const result = run();
     expect(result.status).toBe(EXIT_FOUND);
-    expect(result.stderr).toContain(`${hex(codePoint)} ${name}`);
-    expect(result.stderr).not.toContain(cp(codePoint));
+    added.forEach(([codePoint, name], index) => {
+      expect(result.stderr).toContain(`src/a.ts:${index + 1}:20 ${hex(codePoint)} ${name}`);
+      expect(result.stderr).not.toContain(cp(codePoint));
+    });
   });
 
   // bdboard-rqzv (N2): ファイル名の中の制御文字は診断にそのまま出さない。
@@ -456,10 +479,9 @@ describe('check-invisible-chars CLI', () => {
   it('still checks when the script is started through a symlinked directory (it used to exit 0 without checking)', () => {
     write('src/bad.ts', `export const s = '${cp(0x202e)}';\n`);
     const linkedDir = path.join(tmpRoot, 'linked-scripts');
-    fs.symlinkSync(path.dirname(SCRIPT_PATH), linkedDir, 'junction');
-    const result = spawnSync(process.execPath, [path.join(linkedDir, 'check-invisible-chars.mjs'), `--repo=${work}`], {
-      encoding: 'utf8',
-    });
+    const result = withLinkedScriptsDir(linkedDir, () =>
+      spawnSync(process.execPath, [path.join(linkedDir, 'check-invisible-chars.mjs'), `--repo=${work}`], { encoding: 'utf8' }),
+    );
     expect(result.status).toBe(EXIT_FOUND);
     expect(result.stderr).toContain('src/bad.ts:1:19 U+202E');
   });
@@ -562,6 +584,20 @@ describe('check-invisible-chars CLI', () => {
 describe('this repository', () => {
   it('has no literal invisible characters in the target source files (the 4 files fixed by bdboard-ekvi included)', () => {
     expect(main([`--repo=${REPO_ROOT}`])).toBe(EXIT_OK);
+  });
+
+  // 範囲は TARGET_PREFIXES / TARGET_FILES の明示の一覧なので、新しい設定ファイル (ルートの playwright.config.ts など) を
+  // 足すと黙って範囲外になる。追跡中のソース拡張子のファイルが全部対象であることをここで固定し、足した人に一覧の更新を促す。
+  it('targets every tracked source file of the repository (add a new config file to TARGET_FILES)', () => {
+    const tracked = execFileSync('git', ['-c', 'core.quotePath=false', 'ls-files', '-z', '--cached'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    })
+      .split('\0')
+      .filter(Boolean);
+    const sources = tracked.filter((relPath) => /\.(?:ts|tsx|mts|cts|mjs|js|cjs|jsx)$/.test(relPath));
+    expect(sources.length).toBeGreaterThan(0);
+    expect(sources.filter((relPath) => !isTargetPath(relPath))).toEqual([]);
   });
 
   it('wires check:invisible-chars into verify:steps and verify:light', () => {

@@ -107,7 +107,7 @@ by import is not enough, and neither is sitting next to files that are checked.
 
 ```bash
 npm run check:file-size  # git ls-files 対象のファイル行数ガード (baseline との突き合わせ)
-npm run check:invisible-chars  # src/ web/src/ scripts/ bin/ test/e2e/ と、ルートの vitest.config.ts・eslint.config.mjs・.dependency-cruiser.cjs、web/ の vite.config.ts・vitest.config.ts・vitest.setup.ts の .ts/.tsx/.mts/.cts/.mjs/.js/.cjs/.jsx に、生の bidi 制御文字・見えない文字 (U+00AD U+061C U+180E U+200B–U+200F U+2028/U+2029 U+202A–U+202E U+2060–U+2064 U+2066–U+2069 U+206A–U+206F U+3164 U+FEFF U+FFA0 U+E0000–U+E007F。U+2800 は見える空白なので対象外) があれば落ちる。ファイル:行:列と U+XXXX を出す (文字そのものは出さない。ファイル名の制御文字・見えない文字も \uXXXX のエスケープで出す)。ソースにはこれらを \uXXXX / \u{XXXXX} のエスケープで書く。UTF-16 (BOM 付き) のファイルはデコードして検査し、repo の外を指す symlink は辿らず警告して飛ばす。symlink 経由のパスから直接起動しても検査する (bdboard-ekvi, bdboard-rqzv)
+npm run check:invisible-chars  # src/ web/src/ scripts/ bin/ test/e2e/ と、ルートの vitest.config.ts・eslint.config.mjs・.dependency-cruiser.cjs、web/ の vite.config.ts・vitest.config.ts・vitest.setup.ts の .ts/.tsx/.mts/.cts/.mjs/.js/.cjs/.jsx に、生の bidi 制御文字・見えない文字 (U+00AD U+061C U+115F U+1160 U+180E U+200B–U+200F U+2028/U+2029 U+202A–U+202E U+2060–U+2064 U+2066–U+2069 U+206A–U+206F U+3164 U+FEFF U+FFA0 U+E0000–U+E007F。U+2800 は見える空白なので対象外) があれば落ちる。ファイル:行:列と U+XXXX を出す (文字そのものは出さない。ファイル名の制御文字・見えない文字も \uXXXX のエスケープで出す)。ソースにはこれらを \uXXXX / \u{XXXXX} のエスケープで書く。UTF-16 (BOM 付き) のファイルはデコードして検査し、repo の外を指す symlink は辿らず警告して飛ばす。symlink 経由のパスから直接起動しても検査する (bdboard-ekvi, bdboard-rqzv)
 npm run lint             # ESLint + typescript-eslint (src/ web/src/ scripts/、max-lines はラチェット許可リスト。warning を含め全件出力)
 npm run lint:verify      # verify から呼ぶ版。error は全文出力し exit code も同じだが、warning は件数のみ1行で出す
 npm run lint:warnings    # warning を含む全件を見たいときの単独実行 (中身は npm run lint と同じ)

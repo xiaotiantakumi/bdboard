@@ -7,6 +7,9 @@ const TAG_LAST = 0xe007f;
 const CHAR_NAMES = new Map([
   [0x00ad, 'SOFT HYPHEN'],
   [0x061c, 'ARABIC LETTER MARK'],
+  // U+115F / U+1160 は U+3164 / U+FFA0 と同じ Hangul filler で、単独で JS の識別子になる見えない文字。
+  [0x115f, 'HANGUL CHOSEONG FILLER'],
+  [0x1160, 'HANGUL JUNGSEONG FILLER'],
   [0x180e, 'MONGOLIAN VOWEL SEPARATOR'],
   [0x200e, 'LEFT-TO-RIGHT MARK'],
   [0x200f, 'RIGHT-TO-LEFT MARK'],

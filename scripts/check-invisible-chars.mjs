@@ -8,7 +8,7 @@
 // 生の文字そのものは診断に含めず、コードポイント・名前・位置だけを表示する。ファイル名も同じで、
 // 制御文字・書式文字・見えない文字は \uXXXX (BMP 外は \u{XXXXX}) のエスケープにして出す (bdboard-rqzv)。
 //
-// bdboard-rqzv: 範囲 (bin・e2e・設定ファイル・.jsx/.cts) と文字 (U+00AD U+180E U+3164 U+FFA0
+// bdboard-rqzv: 範囲 (bin・e2e・設定ファイル・.jsx/.cts) と文字 (U+00AD U+115F U+1160 U+180E U+3164 U+FFA0
 // U+2061-2064 U+206A-206F U+E0000-E007F U+2028/2029) を広げた。あわせて、symlink を含むパスから
 // 起動しても直接起動と判定する (N5)、UTF-16 (BOM 付き) のファイルをデコードして検査する (N7)、
 // repo の外を指す symlink は辿らず警告して読み飛ばす (N7) ようにした。
@@ -66,13 +66,15 @@ export function decodeSource(buffer) {
 
 // Node は main モジュールの symlink を実体に解決した URL を import.meta.url にするが、process.argv[1] は
 // 渡されたパスのまま (macOS の /tmp -> /private/tmp など)。文字列の比較では外れて、何も検査せず exit 0 になる。
-// 両方を realpath にして比べる。解決できなければ従来の比較に戻す (どちらかが存在しないなら実体比較は意味が無い)。
+// 先に従来の文字列比較を見て、外れたときだけ両方を realpath にして比べる (従来 true だった起動は必ず true のまま。
+// Windows のパス表記の揺れで realpath の結果だけがずれても、検査せず exit 0 に退行しない)。
 export function isDirectRun(moduleUrl, scriptArg) {
   if (scriptArg === undefined) return false;
+  if (moduleUrl === pathToFileURL(scriptArg).href) return true;
   try {
     return fs.realpathSync(fileURLToPath(moduleUrl)) === fs.realpathSync(scriptArg);
   } catch {
-    return moduleUrl === pathToFileURL(scriptArg).href;
+    return false;
   }
 }
 
