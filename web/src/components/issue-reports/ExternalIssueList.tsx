@@ -1,20 +1,73 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { refreshExternalIssues, refreshWaitSeconds, type ExternalIssueListDto } from '../../api/issue-reports-external';
-import { formatAbsoluteTime } from '../../formatAbsoluteTime';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { refreshExternalIssues } from '../../api/issue-reports-external';
 import { useExternalIssues } from '../../hooks/useIssueReportPendingCount';
 import { LoadingIndicator } from '../LoadingIndicator';
-import { externalStateMessage, retryLaterText } from './externalIssueText';
 import { ExternalIssueCard } from './ExternalIssueCard';
+import { externalStaleNote, externalStateMessage, refreshFailureMessage } from './externalIssueText';
 
-export function ExternalIssueList({localAccess}:{readonly localAccess:boolean}) {
- const query=useExternalIssues();const client=useQueryClient();const [refreshing,setRefreshing]=useState(false);const [error,setError]=useState('');
- const list=query.data as ExternalIssueListDto|undefined;
- async function refresh(){setRefreshing(true);setError('');try{client.setQueryData(['issue-reports','external'],await refreshExternalIssues());}catch(e){const wait=refreshWaitSeconds(e);setError(wait?`確認は 1 分に 1 回までです。${retryLaterText(wait)}`:e instanceof Error&&'status'in e&&e.status===429?'確認は 1 分に 1 回までです。しばらくしてからもう一度押してください。':'今すぐ確認できませんでした。しばらくしてからもう一度押してください。');}finally{setRefreshing(false);}}
- if(query.isLoading)return <LoadingIndicator/>;
- if(query.isError||!list)return <p className="error-message" role="alert">届いた issue を読み込めませんでした。</p>;
- const message=externalStateMessage(list);
- return <div className="external-issue-list-wrap"><p role="status">{message}</p>{list.state==='error'&&list.fetchedAt&&<p>最後に確かめられたのは {formatAbsoluteTime(list.fetchedAt)} です (一覧はそのときのものです)。</p>}{list.state==='error'&&localAccess&&list.error?.detail&&<p>詳細: {list.error.detail}</p>}{list.truncated&&<p>続きがあります。一覧は上限までです。</p>}{list.skippedLines>0&&<p>GitHub の応答のうち読めなかった行が {list.skippedLines} 行あります。</p>}
- {localAccess&&<button type="button" className="btn" disabled={refreshing} onClick={()=>void refresh()}>{refreshing?'確認しています…':'今すぐ確認'}</button>}{refreshing&&<p role="status">確認しています…</p>}{error&&<p role="alert">{error}</p>}
- <ul className="external-issue-list">{list.issues.map(issue=><ExternalIssueCard key={issue.number} issue={issue}/>)}</ul></div>;
+export interface ExternalIssueListProps {
+  /**
+   * 開いているページがローカル直アクセスか (「新しく報告」と同じ判定。manualDraftAccess の isLoopbackHostname)。
+   * 「今すぐ確認」と、gh の失敗の detail はローカルの読み手にだけ出す (サーバーの POST はローカル直アクセスだけ。detail はトンネル越しにも読めるが画面では出さない)。
+   */
+  readonly localAccess: boolean;
+}
+
+/**
+ * 「届いた issue」の一覧 (bdboard-4y8q.9.5)。上に状態の文 (確認できたか・止まった理由)、続けてカード。
+ * 状態は種類ごとの固定文で、gh の stderr を整えた `error.detail` はローカルのときだけ添える。
+ */
+export function ExternalIssueList({ localAccess }: ExternalIssueListProps) {
+  const query = useExternalIssues();
+  const client = useQueryClient();
+  const refresh = useMutation({
+    mutationFn: refreshExternalIssues,
+    // 確認が失敗しても HTTP は 200 で、一覧の state: 'error' に出る。返った一覧をそのまま入れる。
+    onSuccess: (list) => client.setQueryData(['issue-reports', 'external'], list),
+  });
+
+  if (query.isLoading) return <LoadingIndicator />;
+  const list = query.data;
+  if (query.isError || list === undefined) {
+    return (
+      <p className="error-message" role="alert">
+        届いた issue を読み込めませんでした。
+      </p>
+    );
+  }
+
+  const staleNote = externalStaleNote(list);
+  const showDetail = localAccess && list.state === 'error' && list.error !== null && list.error.detail !== '';
+
+  return (
+    <div className="external-issue-list-wrap">
+      <div className="external-issue-status">
+        <p role="status" className="external-issue-state-message">
+          {externalStateMessage(list)}
+        </p>
+        {staleNote !== null && <p className="issue-draft-muted">{staleNote}</p>}
+        {showDetail && <p className="issue-draft-muted">詳細: {list.error?.detail}</p>}
+        {list.truncated && <p className="issue-draft-muted">続きがあります。一覧は上限までです。</p>}
+        {list.skippedLines > 0 && (
+          <p className="issue-draft-muted">GitHub の応答のうち読めなかった行が {list.skippedLines} 行あります。</p>
+        )}
+        {localAccess && (
+          <button type="button" className="btn" disabled={refresh.isPending} onClick={() => refresh.mutate()}>
+            今すぐ確認
+          </button>
+        )}
+        {refresh.isPending && <p role="status">確認しています…</p>}
+        {refresh.isError && (
+          <p className="error-message" role="alert">
+            {refreshFailureMessage(refresh.error)}
+          </p>
+        )}
+      </div>
+      <ul className="external-issue-list">
+        {list.issues.map((issue) => (
+          <ExternalIssueCard key={issue.number} issue={issue} />
+        ))}
+      </ul>
+    </div>
+  );
 }

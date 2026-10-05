@@ -2026,36 +2026,38 @@ reader、メンテナ環境の判定)。一覧の組み立て・写しの保存�
 - `GET` は一覧を返すだけで確認を始めない(読むたびに gh を呼ばない。1000 回読んでも gh は 0 回)。
 - `POST refresh` は、ローカル直アクセスの確認(トンネルのヘッダー・ローカルでない送り元・Host・CSRF)→ 無効なら 404 → 間隔(`createMinGapGate`、60 秒)の順。断られた要求は間隔を使わない。間隔の中の 2 回目は **429**(`refresh-rate-limited`、`Retry-After` と `retryAfterSeconds`)。確認が失敗しても HTTP は **200** で、本文の `state: 'error'` と `error` に出る(HTTP の失敗は「受け付けなかった」だけにする)。定期の確認が走っている最中の refresh は新しい確認を始めず、その確認の結果を返す(それでも 60 秒の間隔は使う)。
 - **`needsRejudge` の意味は 9.3 のまま**(題名か本文が写しと違うとき。`updatedAt` だけの変化では立たない)。API はそれを変えず、そのまま返す。**既知の穴(bdboard-g2ti、この PR の範囲外)**: 使えない写しを作り直したとき、`needsRejudge` が黙って false に戻る。API の側から区別する手段は無い。
-- 応答の大きさ: 件数は gh の 3 ページ(300 件)で先に頭打ちになる(写しの上限 500 件より小さい)。本文は切った後で 20,000 文字なので、300 件 x 20,000 文字で、UTF-8 と JSON のエスケープ次第では数十 MB になりうる。`GET` は読むたびに一覧を JSON に組み直す。今の規模では遠いが、画面(9.5)が使うときに、本文を一覧から外す・ページ分け・一覧が変わらない間は組んだ JSON を使い回す(ETag)のどれかを検討する。
-
-→ 9.5 の逸脱表 1
-
-### 実装との差分(4y8q.9.5、届いた issue の画面)
-
-| ファイル | 中身 |
-|---|---|
-| `web/src/api/issue-reports-external.ts` | 読み取り・手動確認 API とサーバー DTO の web 側定義 |
-| `web/src/components/issue-reports/externalIssueText.ts` | 見えない文字の印、本文分割、検査数と状態文 |
-| `ExternalIssueCard.tsx` / `ExternalIssueBody.tsx` / `ExternalIssueList.tsx` | 折りたたみカード、生本文と安全なプレビュー、一覧 |
-| `web/src/hooks/useIssueReportPendingCount.ts` / `IssueReportsPanel.tsx` | 外部 issue の定期取得、合計バッジ、タブ切り替え |
-| `web/src/styles/issue-reports-external.css` | 外部 issue 表示のレイアウト |
-| `web/src/api/issue-reports-external.test.ts` / `externalIssueText.test.ts` / `ExternalIssueCard.test.tsx` | API、不可視文字表 parity、本文表示の検証 |
-| `docs/help-content.json` | 利用者向けヘルプ |
-
-| # | 項目 | 実装 |
-|---:|---|---|
-| 1 | 一覧の重さ | API は変えず、ETag もページ送りも入れない。一覧応答の重さは未対策で、画面は本文を最初から描かない（カードの折りたたみ）だけ。 |
-| 2 | 「後で」の 2 種 | 手動確認の 429 は `retryAfterSeconds` を表示する。予算切れの `failed` は「しばらくしてから」と表示し、時刻は出さない。サーバーは再開時刻を返さない。予算切れは `detail` 先頭の `gh call limit reached` で分類し、`detail` は表示しない。 |
-| 3 | `error.detail` | `isLoopbackHostname` によるローカル読み手だけに表示し、トンネル越しには状態ごとの固定文だけを出す。 |
-| 4 | API ファイル | 呼び出しは `issue-reports.ts` ではなく `issue-reports-external.ts` に置いた。並行 PR #925 との競合を避けるためで、チケット本文からの差分。 |
-| 5 | 不可視文字表 | web 側に二重定義する（web から src は import できない）。`externalIssueText.test.ts` がサーバーソースを読み、全コードポイントで集合一致を検証する。 |
-| 6 | 本文表示 | 既定は印付き生本文。プレビューは `SafeMarkdownPreview` でリンクを `<a href>` にせず画像も読み込まない。重い本文では `previewHeavyReason` により選べない。描画 throw 時の既存 fallback は印の無い生文字になる。`⟦ ⟧` が本文にあれば偽の印にもなるため検査数も見る。 |
-| 7 | バッジの数 | 未処理下書き + 届いた issue。片方が読めなければ読めた側だけ、両方読めなければ不明。`updatedAtChanged` だけの変化は画面に出さない（U9）。 |
-| 8 | 切り替え | `enabled: false`（メンテナ環境でない）では表示しない。 |
+- 応答の大きさ: 件数は gh の 3 ページ(300 件)で先に頭打ちになる(写しの上限 500 件より小さい)。本文は切った後で 20,000 文字なので、300 件 x 20,000 文字で、UTF-8 と JSON のエスケープ次第では数十 MB になりうる。`GET` は読むたびに一覧を JSON に組み直す。今の規模では遠いが、画面(9.5)が使うときに、本文を一覧から外す・ページ分け・一覧が変わらない間は組んだ JSON を使い回す(ETag)のどれかを検討する。**→ 9.5 は画面の折りたたみだけにした(9.5 の逸脱表 1)。**
 
 #### main.ts の変更
 
 `src/main.ts` は 2 行だけ(`wireIssueReports` に `commandRunner` を渡す、`wireShutdown` に `externalIssues` を渡す)。配線の本体は `wire-external-issues.ts`(max-lines の 200 行に収めるため。並行の 4y8q.6.4 も `main.ts` / `mount-routes.ts` を触るので、差を小さくした)。
+
+### 実装との差分(4y8q.9.5、届いた issue の画面)
+
+4y8q.9.5 は、9.4 の読み取り API を使って、不具合報告タブに 4 つ目の切り替え「届いた issue」を足す画面(web のみ。サーバーは変えない)。
+機械の検査の結果は数だけで出し、判定の言葉は使わない。判定(4y8q.10)と bd への取り込みはまだ無い。設計との食い違いと、実装で決めたこと
+(4y8q.11 の規則)。ここに無い点は設計どおり。
+
+| ファイル | 中身 |
+|---|---|
+| `web/src/api/issue-reports-external.ts` | サーバー DTO の web 側の型、`fetchExternalIssues`、`refreshExternalIssues`(POST)、429 の待ち秒数 `refreshWaitSeconds` |
+| `web/src/components/issue-reports/externalIssueText.ts` | 見えない文字の集合と印・本文の区切り (`segmentExternalText`)・検査の数の整形・状態の固定文・「今すぐ確認」の失敗の文(IO なしの純粋関数) |
+| `ExternalIssueCard.tsx` / `ExternalIssueBody.tsx` / `ExternalMarkedText.tsx` / `ExternalIssueList.tsx` | 折りたたみのカード、生の本文とプレビュー、印を付けた文字の表示、状態の文と「今すぐ確認」を持つ一覧 |
+| `web/src/hooks/useIssueReportPendingCount.ts` | `useExternalIssues`(キー `['issue-reports', 'external']`、60 秒)と、下書き + 届いた issue のバッジの数 |
+| `IssueReportsPanel.tsx` / `SafeMarkdownPreview.tsx` | 切り替えの追加だけ / `previewHeavyReason` の export だけ |
+| `web/src/styles/issue-reports-external.css` | カードと印の見た目(右ペインは隠し、一覧を全幅にする) |
+
+| # | 項目 | 実装 |
+|---:|---|---|
+| 1 | 一覧の重さ(9.4 のレビューの申し送り 1) | **API は変えず、ETag もページ送りも入れない。一覧の応答の重さは未対策**(300 件 x 本文 20,000 文字の JSON を毎回読む)で、画面は本文を最初から描かず、カードを開いたときだけ描く(折りたたみ)だけにした。一覧の応答そのものは 60 秒ごとに読み直すので、件数が増えて重くなったら、本文を一覧から外す・ETag を別チケットで扱う |
+| 2 | 「後で」の 2 種(申し送り 2) | 「今すぐ確認」の 429 は、本文の `retryAfterSeconds`(Retry-After と同じ秒)を文言に出す。予算切れの `failed` は「しばらくしてから」と出し、**時刻は出さない**(サーバーが再開の時刻を返さない)。予算切れかどうかは `error.detail` の先頭 `gh call limit reached` で**分類するだけ**で、`detail` は表示しない(サーバーの文言と web の先頭は `externalIssueText.test.ts` が一致を確かめる)。429 に秒が無いときは「しばらくしてから」。それ以外の失敗は固定文(サーバーの文言や例外を出さない) |
+| 3 | `error.detail`(申し送り 3) | ローカルの読み手(開いているページの hostname が `localhost` / `127.0.0.1` / `[::1]`。「新しく報告」「今すぐ確認」と同じ `isLoopbackHostname`)にだけ「詳細: …」と出す。リモート(トンネル越し)には状態ごとの固定文だけ(`gh-missing` / `gh-unauthenticated` / `rate-limited` / `failed` / `bd-failed` / `storage-failed` / `unexpected`、それ以外の種類は「確認が止まりました。」)。サーバーの GET の応答は変えない(detail は今もトンネル越しの GET に載る。画面で出さないだけ) |
+| 4 | API の呼び出しの置き場 | チケットは `web/src/api/issue-reports.ts` に足すとしたが、並行する下書き側の PR(#925)がそのファイルを触るので、衝突を避けて **`issue-reports-external.ts` に分けた**。`IssueReportsPanel.tsx` の変更も切り替えの追加に絞った |
+| 5 | 見えない文字の集合 | サーバーの検査(`external-issue-hidden-text.ts` の `INVISIBLE_CHARS`。17 文字 + タグ文字 U+E0000–E007F)と**同じ集合**を web 側に二重に持つ(web から src は import できない。dependency-cruiser の `web-no-server-src`)。`externalIssueText.test.ts` がサーバーのソースを**文字として読み**、U+0000–U+10FFFF の全コードポイントで一致を確かめる(表の行が 18 行あることも確かめ、読み損ねで通らない)。サーバーが文字を足したら、このテストが落ちる |
+| 6 | 本文の表示 | 既定は生の本文。見えない文字は `⟦U+200B⟧` の印に置き換え(連続は 1 つの印にまとめて DOM を増やさない。タグ文字などサロゲートの対は 1 文字)、HTML コメントは `⟦HTML コメント⟧`(閉じていなければ `(閉じていない)`)を先頭に付け、コメントの文字は `<!-- … -->` ごとそのまま残す。人が「プレビュー」を押したときだけ `SafeMarkdownPreview`(リンクは `<a href>` にせず文字、画像は読み込まず文字、生の HTML は描かない)で出す。プレビューは見えない文字と HTML コメントが見えないので、そう警告する。重い本文(`previewHeavyReason`)ではプレビューのボタンを無効にして、印の付いた生の本文のままにする。題名にも同じ印を付ける。GitHub の URL・作者・関係は文字として出す(`<a>` は使わない) |
+| 7 | 本文の表示の限界 | `SafeMarkdownPreview` の描画が throw したときの自前のフォールバックは、印の無い生の文字(既存のまま。プレビューの中でだけ)。印の `⟦ ⟧` は、本文に同じ文字が書かれていれば偽の印にもなる(数は機械の検査の数を見る)。HTML コメントは 9.1 と同じく、コードブロックの中のものも数え・印を付ける |
+| 8 | バッジの数 | 下書きの未処理 + 届いた issue の数。**どちらかが読めなくても壊れず、読めたほうだけ**を数える。`enabled: false`(メンテナ環境でない)は足すものが無いので読めないのと同じ扱いで、下書きも読めなければ「不明」(null)のまま。両方読めないときだけ「不明」。届いた issue は 0 件のとき下書きの数だけ。一覧と同じキー・同じ 60 秒で、バッジと切り替えの件数が食い違わない |
+| 9 | 切り替え | `enabled: true` のときだけ 4 つ目のボタン「届いた issue (件数)」を出す。`enabled: false`・読み込み中・読めないときは出さない。押すと一覧の場所にカードを出し、右ペインは隠す(選んでいる下書きと「新しく報告」の画面は閉じる)。`updatedAtChanged` だけの変化は画面に出さない(U9。コメントの追加でも進むので、`needsRejudge` だけを出す) |
 
 ### 2体のエージェント(4y8q.10)
 
