@@ -27,6 +27,7 @@ import {
   readFake,
   readState,
   registerTempRepoHooks,
+  RM_OPTIONS,
   run,
   setup,
   simulateMerge,
@@ -177,7 +178,7 @@ describe('retryLandedFailure: the retry reservation never outlives the call (bdb
           process.env[name] = value;
         }
       }
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, RM_OPTIONS);
     }
   });
 

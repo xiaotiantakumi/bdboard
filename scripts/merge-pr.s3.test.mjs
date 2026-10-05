@@ -37,6 +37,7 @@ import {
   readState,
   REPO_ROOT,
   registerTempRepoHooks,
+  RM_OPTIONS,
   run,
   setup,
   simulateMerge,
@@ -236,7 +237,7 @@ describe('merge-pr S3 pure helpers (bdboard-ulxa.3)', () => {
     } finally {
       spy.mockRestore();
       vi.unstubAllEnvs();
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, RM_OPTIONS);
     }
     expect(written).toHaveLength(2);
     expect(written[0]).toMatch(/^merge-pr: 警告: クラス L の記録 \(状態ファイル\) の読み出しに失敗しました \(マージ手順は続けます\): .+\n$/);

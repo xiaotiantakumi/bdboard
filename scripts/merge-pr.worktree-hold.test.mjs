@@ -72,7 +72,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.resetAllMocks();
   vi.restoreAllMocks();
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe('restoreUnderLock (decision a: keep SH between attempts, read the owner after each re-take)', () => {

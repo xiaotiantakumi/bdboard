@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { refetchMain } from './merge-pr/context.mjs';
 import { refLockFailure, refLockLines } from './merge-pr/ref-lock.mjs';
-import { git, mainCheckout, peerCommit, PR, registerTempRepoHooks, run, setup, tmp, work } from './merge-pr.test-support.mjs';
+import { git, mainCheckout, peerCommit, PR, registerTempRepoHooks, RM_OPTIONS, run, setup, tmp, work } from './merge-pr.test-support.mjs';
 
 /**
  * lock が効くのは fetch が tracking ref を更新するときだけ (最新なら lock を取りに行かない)。
@@ -30,7 +30,7 @@ describe('merge-pr ref lock handling (bdboard-1syo)', { timeout: 30_000 }, () =>
   const tempDirs = [];
   afterEach(() => {
     for (const dir of tempDirs.splice(0)) {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, RM_OPTIONS);
     }
   });
 

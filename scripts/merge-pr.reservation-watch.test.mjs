@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { reserveVerifySlot } from './verify-slot.mjs';
 import { HOLDER_FORMAT } from './verify-slot-queue.mjs';
 import { retryHolderAppeared, watchRetryHolder } from './merge-pr/reservation-watch.mjs';
-import { waitUntil } from './merge-pr.test-support.mjs';
+import { RM_OPTIONS, waitUntil } from './merge-pr.test-support.mjs';
 
 const SINCE = 1_700_000_000_000;
 const INTERVAL_MS = 5;
@@ -29,7 +29,7 @@ beforeEach(() => {
   writeFileSync(reservationPath, JSON.stringify({ v: HOLDER_FORMAT, pid: 101, joinedAt: SINCE + 1, since: SINCE, priority: 'landed', reserved: true }));
 });
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, RM_OPTIONS);
 });
 
 describe('retryHolderAppeared', () => {
