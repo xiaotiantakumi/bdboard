@@ -1,5 +1,4 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { createManualIssueDraft, type IssueDraftSummaryDto } from '../../api/issue-reports';
 import { IssueDraftImageFailures } from './IssueDraftImageFailures';
 import { IssueDraftImagePicker } from './IssueDraftImagePicker';
@@ -8,10 +7,8 @@ import {
   ISSUE_DRAFT_TITLE_MAX_CHARS,
   describeIssueDraftManualError,
 } from './issueDraftErrors';
-import { findImagesAlreadyStored } from './issueDraftImageResend';
-import { uploadIssueDraftImages, type ImageUploadFailure, type PickedImage } from './issueDraftImageUpload';
-import { useMountedRef } from '../../hooks/useMountedRef';
 import { type ReportProject } from './manualDraftAccess';
+import { useIssueDraftImageSend } from './useIssueDraftImageSend';
 import { useIssueDraftImages } from './useIssueDraftImages';
 
 export interface IssueDraftManualFormProps {
@@ -32,14 +29,6 @@ export interface IssueDraftManualFormProps {
   readonly onResultShownChange?: (shown: boolean) => void;
 }
 
-/** 下書きは作れたが、画像が付かなかったもの。ここにある間は、書く画面の代わりに失敗の画面を出す。 */
-interface PartialOutcome {
-  readonly draft: IssueDraftSummaryDto;
-  readonly failures: readonly ImageUploadFailure[];
-  /** サーバーに付いたと分かっている画像の、サーバー側の file 名。送り直しで同じ画像を二重に付けない目印 (issueDraftImageResend.ts)。 */
-  readonly storedFileNames: ReadonlySet<string>;
-}
-
 /**
  * 人が手で書く下書き (「新しく報告」、bdboard-4y8q.6.8。POST /api/issue-reports/manual-drafts、docs/ISSUE-REPORTING.md 3節「手書きの下書き」)。
  * 題名 (1 行・256 文字まで) と説明 (8000 文字まで) を書いて送る。説明は手元だけに保存され、公開される本文には入らない (今は「直す」で本文を書く)。
@@ -57,7 +46,6 @@ export function IssueDraftManualForm({
   onCancel,
   onResultShownChange,
 }: IssueDraftManualFormProps) {
-  const queryClient = useQueryClient();
   const titleId = useId();
   const descriptionId = useId();
   const descriptionHintId = useId();
@@ -67,57 +55,12 @@ export function IssueDraftManualForm({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const imageDraft = useIssueDraftImages();
-  const [progress, setProgress] = useState<{ sent: number; total: number } | null>(null);
-  const [partial, setPartial] = useState<PartialOutcome | null>(null);
-  const mounted = useMountedRef();
-
-  const resultShown = partial !== null;
-  useEffect(() => {
-    onResultShownChange?.(resultShown);
-    return () => onResultShownChange?.(false);
-  }, [resultShown, onResultShownChange]);
-
-  // 失敗の一覧に出す名前。同じ名前の画像を見分けるため、送る前の一覧での位置を付ける。
-  const failureItems = useMemo(
-    () =>
-      (partial?.failures ?? []).map((failure) => ({
-        label: `${imageDraft.images.findIndex((image) => image.id === failure.id) + 1} 枚目「${failure.name}」`,
-        reason: failure.reason,
-      })),
-    [partial, imageDraft.images],
-  );
-
-  /**
-   * 画像を送り、一覧を読み直して、全部付いたら下書きを選ばせる。付かなかった分があれば失敗の画面を (新しく) 出す。
-   * 送る画像が無ければ (画像なし・トンネル) 送信も進み具合も出さず、読み直しと onCreated だけ。
-   * `knownFileNames` は、前の回までに付いたと分かっている画像のサーバー側の file 名 (送り直しのとき)。
-   */
-  const finishCreated = async (
-    draft: IssueDraftSummaryDto,
-    targets: readonly PickedImage[],
-    knownFileNames: ReadonlySet<string> = new Set(),
-  ) => {
-    let failures: readonly ImageUploadFailure[] = [];
-    const storedFileNames = new Set(knownFileNames);
-    if (targets.length > 0) {
-      failures = await uploadIssueDraftImages(
-        draft.id,
-        targets,
-        (sent, total) => setProgress({ sent, total }),
-        (_image, fileName) => storedFileNames.add(fileName),
-      );
-      setProgress(null);
-    }
-    await queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
-    // 送っている間に一覧から別の下書きを選ぶと、この画面は閉じる。画像は送り終えて一覧も読み直すが、作った下書きを選び直して
-    // 利用者が選んだ下書きを奪わない (付いた画像は、その下書きを開けば見られる)。
-    if (!mounted.current) return;
-    if (failures.length === 0) {
-      onCreated(draft);
-    } else {
-      setPartial({ draft, failures, storedFileNames });
-    }
-  };
+  // 下書きを作ったあとの画像の送信・送り直し・失敗の画面に出す結果 (useIssueDraftImageSend.ts)。
+  const { progress, partial, failureItems, finishCreated, retry } = useIssueDraftImageSend({
+    images: imageDraft.images,
+    onCreated,
+    onResultShownChange,
+  });
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -163,24 +106,10 @@ export function IssueDraftManualForm({
     }
   };
 
-  const retryFailedImages = async (outcome: PartialOutcome) => {
-    const failedIds = new Set(outcome.failures.map((failure) => failure.id));
-    const maybeStoredIds = new Set(outcome.failures.filter((failure) => failure.mayBeStored === true).map((failure) => failure.id));
-    const failed = imageDraft.images.filter((image) => failedIds.has(image.id));
+  const retryFailedImages = async (outcome: NonNullable<typeof partial>) => {
     setSending(true);
     try {
-      // 送ったのに応答が届かなかった画像は、サーバーに保存できているかもしれない。同じ画像を二重に付けないよう、送る前に下書きの画像を
-      // 取り直して、もう付いているものは送らない (サーバーが断った失敗は付いていないので、確かめない)。bdboard-8zwi。
-      const alreadyStored = await findImagesAlreadyStored(
-        outcome.draft.id,
-        failed.filter((image) => maybeStoredIds.has(image.id)),
-        outcome.storedFileNames,
-      );
-      await finishCreated(
-        outcome.draft,
-        failed.filter((image) => !alreadyStored.has(image.id)),
-        new Set([...outcome.storedFileNames, ...alreadyStored.values()]),
-      );
+      await retry(outcome);
     } finally {
       setSending(false);
     }
