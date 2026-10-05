@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '../../api';
-import { TUNNEL_WRITE_HELP } from '../../writeAccessMessage';
+import { CROSS_SITE_HELP, NETWORK_FETCH_HELP, RATE_LIMITED_HELP, TUNNEL_WRITE_HELP } from '../../writeAccessMessage';
 import {
   DRAFT_CHANGED_ELSEWHERE_HELP,
   DRAFT_TOO_LARGE_HELP,
+  MANUAL_BAD_REQUEST_HELP,
+  MANUAL_ENDPOINT_MISSING_HELP,
+  MANUAL_LOCAL_ONLY_HELP,
+  MANUAL_RATE_LIMITED_HELP,
+  MANUAL_REQUEST_TOO_LARGE_HELP,
   REQUEST_TOO_LARGE_HELP,
   STORAGE_FULL_HELP,
   describeIssueDraftDismissError,
   describeIssueDraftEditError,
+  describeIssueDraftManualError,
 } from './issueDraftErrors';
 
 function apiError(status: number, body: Record<string, unknown>): ApiError {
@@ -73,5 +79,29 @@ describe('describeIssueDraftDismissError (bdboard-4y8q.3.2)', () => {
     expect(describeIssueDraftDismissError(apiError(409, { error: 'draft is not pending', status: 'posted' }))).toContain(
       '今の状態: 投稿済み',
     );
+  });
+});
+
+describe('describeIssueDraftManualError (bdboard-4y8q.6.8)', () => {
+  it('handles manual rate limits and local-only access before generic access messages', () => {
+    expect(describeIssueDraftManualError(apiError(429, { error: 'rate limited', code: 'manual-rate-limited' }))).toBe(MANUAL_RATE_LIMITED_HELP);
+    expect(describeIssueDraftManualError(apiError(429, { error: 'rate limited' }))).toBe(RATE_LIMITED_HELP);
+    expect(describeIssueDraftManualError(apiError(403, { error: 'local access only' }))).toBe(MANUAL_LOCAL_ONLY_HELP);
+    expect(describeIssueDraftManualError(apiError(403, { error: 'cross-site write blocked' }))).toBe(CROSS_SITE_HELP);
+  });
+
+  it('explains storage, payload validation, network errors, and unknown failures', () => {
+    expect(describeIssueDraftManualError(apiError(507, { error: 'full' }))).toBe(STORAGE_FULL_HELP);
+    expect(describeIssueDraftManualError(apiError(413, { error: 'large' }))).toBe(MANUAL_REQUEST_TOO_LARGE_HELP);
+    expect(describeIssueDraftManualError(apiError(400, { error: 'invalid' }))).toBe(MANUAL_BAD_REQUEST_HELP);
+    expect(describeIssueDraftManualError(new TypeError('Failed to fetch'))).toBe(NETWORK_FETCH_HELP);
+    expect(describeIssueDraftManualError(new Error('other'))).toBe('作れませんでした。');
+  });
+
+  // 受け口の無い古いサーバー (Hono の既定の 404 は本文が JSON でない) に送ったとき、既存の下書きを指す「見つかりませんでした」を出さない。
+  it('says the running server may be older than the page on a 404, not that a draft is missing', () => {
+    const missingRoute = new ApiError(404, '404 Not Found', { body: '404 Not Found' });
+    expect(describeIssueDraftManualError(missingRoute)).toBe(MANUAL_ENDPOINT_MISSING_HELP);
+    expect(describeIssueDraftManualError(missingRoute)).not.toContain('この下書きは見つかりませんでした');
   });
 });

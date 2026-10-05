@@ -16,6 +16,7 @@ import { ErrorBoundary } from '../ErrorBoundary';
 import { EventCenterPanel } from '../EventCenterPanel';
 import { HygienePanel } from '../HygienePanel';
 import { IssueReportsPanel } from '../issue-reports/IssueReportsPanel';
+import { reportProjectOf } from '../issue-reports/manualDraftAccess';
 import { type NextUpRunLoopController } from '../nextUpRunLoop';
 import { SettingsPanel } from '../SettingsPanel';
 import { ThroughputStats } from '../ThroughputStats';
@@ -151,7 +152,16 @@ export function AppViewContent({
       )}
       {view === 'settings' && <SettingsPanel />}
       {view === 'events' && <EventCenterPanel {...notificationEvents} />}
-      {view === 'issue-reports' && <IssueReportsPanel />}
+      {view === 'issue-reports' && (
+        // 「新しく報告」(bdboard-4y8q.6.8): ボードでちょうど 1 つ選んでいるプロジェクトだけを、題名の漏れ検出の鍵として送る。
+        <IssueReportsPanel
+          reportProject={reportProjectOf(
+            boardMeta.selectedProjectIds,
+            boardMeta.projectNames,
+            boardMeta.projectRootPaths,
+          )}
+        />
+      )}
     </ErrorBoundary>
   );
 }

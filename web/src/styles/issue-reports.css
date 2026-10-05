@@ -24,6 +24,13 @@
   font-size: 1.1rem;
 }
 
+.issue-reports-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .issue-reports-status-toggle {
   flex-wrap: wrap;
 }

@@ -10,6 +10,7 @@ import { fetchJson, fetchJsonWithEtag } from './http';
 
 export const ISSUE_DRAFTS_API_PATH = '/api/issue-reports/drafts';
 export const ISSUE_REPORTS_PENDING_COUNT_API_PATH = '/api/issue-reports/pending-count';
+export const ISSUE_MANUAL_DRAFTS_API_PATH = '/api/issue-reports/manual-drafts';
 
 export type IssueDraftKind = 'A' | 'B' | 'C';
 export type IssueDraftStatus = 'pending' | 'posted' | 'dismissed';
@@ -34,6 +35,10 @@ export interface IssueDraftListDto {
   readonly drafts: readonly IssueDraftSummaryDto[];
   readonly pendingCount: number;
 }
+
+export interface ManualIssueDraftProject { readonly name: string; readonly path: string }
+export interface ManualIssueDraftInput { readonly title: string; readonly description: string; readonly project?: ManualIssueDraftProject }
+export interface ManualIssueDraftResponseDto { readonly outcome: 'created'; readonly draft: IssueDraftSummaryDto }
 
 /** 発生時の環境。古い下書きや報告の仕方によって欄が欠けることがある。 */
 export interface IssueDraftEnvInfoDto {
@@ -190,5 +195,14 @@ export function dismissIssueDraft(id: string, reason: string): Promise<{ draft: 
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ reason }),
+  });
+}
+
+export function createManualIssueDraft(input: ManualIssueDraftInput): Promise<ManualIssueDraftResponseDto> {
+  const body = { title: input.title, description: input.description, ...(input.project !== undefined ? { project: input.project } : {}) };
+  return fetchJson<ManualIssueDraftResponseDto>(ISSUE_MANUAL_DRAFTS_API_PATH, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
   });
 }
