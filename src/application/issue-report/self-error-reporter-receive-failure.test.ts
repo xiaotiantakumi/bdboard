@@ -282,7 +282,7 @@ describe('observeRefresh(): a failed save of the report that the kind run issued
     expect(receive).toHaveBeenCalledTimes(1);
     await reporter.observeRefresh(shifting(3), [project]);
     expect(receive).toHaveBeenCalledTimes(2);
-    expect(receive.mock.calls.map(([call]) => call.errorText)).toEqual(['database charlie is not reachable', 'database delta is not reachable']);
+    expect(receive.mock.calls.map(([call]) => (call as { readonly errorText: string }).errorText)).toEqual(['database charlie is not reachable', 'database delta is not reachable']);
   });
 
   it('stops at one draft after the retry was saved, however long the failure lasts (b)', async () => {
