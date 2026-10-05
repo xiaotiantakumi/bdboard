@@ -1,8 +1,8 @@
 // bdboard-ekvi: PR #908 で正規表現の文字クラスに bidi 制御文字が生のまま入り、GitHub の警告と
 // レビュー困難を招いた。Trojan Source に使われる文字や、見えない書式文字の生記述を検出する。
 // ESLint の対象外を含むソースを同じ規則で確認し、追加依存や disable コメントによる回避を防ぐ。
-// 対象は git の追跡ファイルと未追跡・非 ignore ファイルで、下の TARGET_PREFIXES / TARGET_FILES と
-// EXTENSIONS に当たるものに限る (src / web/src / scripts / bin / test/e2e と、ルートと web/ の設定ファイル)。
+// 対象は git の追跡ファイルと未追跡・非 ignore ファイルで、check-invisible-chars/targets.mjs の範囲の表に当たるものに限る
+// (ソース、.sh、e2e の stub、.github/ の yml、設定ファイル。範囲と文字・診断の仕様は docs/VERIFY.md「見えない文字の検査」)。
 // 削除済みパス (ENOENT / ENOTDIR) だけ読み飛ばし、それ以外で読めないファイルと
 // git の一覧取得の失敗は、通ったことにせず検査不能 (exit 2) として失敗する。
 // 生の文字そのものは診断に含めず、コードポイント・名前・位置だけを表示する。ファイル名も同じで、
@@ -12,56 +12,30 @@
 // U+2061-2064 U+206A-206F U+E0000-E007F U+2028/2029) を広げた。あわせて、symlink を含むパスから
 // 起動しても直接起動と判定する (N5)、UTF-16 (BOM 付き) のファイルをデコードして検査する (N7)、
 // repo の外を指す symlink は辿らず警告して読み飛ばす (N7) ようにした。
+//
+// bdboard-jb5x: 文字 (U+034F U+17B4 U+17B5 U+180B-180D U+180F) と異体字セレクタ (絵文字の直後の U+FE0E / U+FE0F だけ通す)、
+// 範囲 (.sh・拡張子の無い e2e の stub・.github/ の yml) を足し、UTF-16 のファイルには「UTF-8 で保存し直す」と案内する。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { charName, escapeForDisplay, findInvisibleChars } from './check-invisible-chars/chars.mjs';
+import { fixAdvice } from './check-invisible-chars/advice.mjs';
+import { GIT_PATHSPECS, isTargetPath, adviceKind } from './check-invisible-chars/targets.mjs';
+import { decodeSource, sourceEncoding } from './check-invisible-chars/source.mjs';
 
-export { charName, escapeForDisplay, findInvisibleChars };
+export { charName, decodeSource, escapeForDisplay, findInvisibleChars, isTargetPath, sourceEncoding };
+export { adviceKind } from './check-invisible-chars/targets.mjs';
 
 export const EXIT_OK = 0;
 export const EXIT_FOUND = 1;
 export const EXIT_UNAVAILABLE = 2;
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.mjs', '.js', '.cjs', '.jsx']);
-// ディレクトリ (末尾 /) は配下すべて、ファイルは完全一致。git ls-files の pathspec も同じ一覧から作る。
-const TARGET_PREFIXES = ['src/', 'web/src/', 'scripts/', 'bin/', 'test/e2e/'];
-const TARGET_FILES = [
-  'vitest.config.ts',
-  'eslint.config.mjs',
-  '.dependency-cruiser.cjs',
-  'web/vite.config.ts',
-  'web/vitest.config.ts',
-  'web/vitest.setup.ts',
-];
-const GIT_PATHSPECS = [...TARGET_PREFIXES.map((prefix) => prefix.slice(0, -1)), ...TARGET_FILES];
-
-export function isTargetPath(relPath) {
-  const normalized = relPath.replaceAll('\\', '/');
-  const inScope = TARGET_PREFIXES.some((prefix) => normalized.startsWith(prefix)) || TARGET_FILES.includes(normalized);
-  return inScope && EXTENSIONS.has(path.posix.extname(normalized));
-}
-
 // 複数行になりうる外部のエラー文 (git の stderr など) を、改行で診断行を偽造されない 1 行にして出す。
 function oneLine(message) {
   return message.trim().split(/\r?\n/).map(escapeForDisplay).join(' / ');
-}
-
-// ファイルの中身を文字列にする。UTF-16 (BOM 付き) で保存されたファイルは UTF-8 として読むと NUL 混じりの
-// 別の文字列になり何も検出できないので、BOM でデコードし分ける。BOM (U+FEFF) 自体は文字列の先頭に残るので、
-// 通常の UTF-8 の BOM と同じく 1:1 の検出になる (リポジトリのソースに BOM は要らない)。BOM の無い UTF-16 は判別しない。
-export function decodeSource(buffer) {
-  if (buffer.length >= 2) {
-    const evenLength = buffer.length - (buffer.length % 2);
-    if (buffer[0] === 0xff && buffer[1] === 0xfe) return Buffer.from(buffer.subarray(0, evenLength)).toString('utf16le');
-    if (buffer[0] === 0xfe && buffer[1] === 0xff) {
-      return Buffer.from(buffer.subarray(0, evenLength)).swap16().toString('utf16le');
-    }
-  }
-  return buffer.toString('utf8');
 }
 
 // Node は main モジュールの symlink を実体に解決した URL を import.meta.url にするが、process.argv[1] は
@@ -111,7 +85,8 @@ function loadSource(repoRoot, realRoot, relPath) {
   }
   if (!isInside(realRoot, realPath)) return { status: 'outside' };
   try {
-    return { status: 'ok', text: decodeSource(fs.readFileSync(realPath)) };
+    const buffer = fs.readFileSync(realPath);
+    return { status: 'ok', text: decodeSource(buffer), encoding: sourceEncoding(buffer) };
   } catch (error) {
     return classifyReadError(error);
   }
@@ -163,7 +138,7 @@ export function main(argv) {
       const codePoint = Number.parseInt(finding.codePoint.slice(2), 16);
       // 診断は ASCII だけで書く (生の文字を出力に混ぜない)。JSX のテキスト・属性では \u のエスケープが解釈されないので、その案内も添える。
       console.error(
-        `invisible-chars: ${shownPath}:${finding.line}:${finding.column} ${finding.codePoint} ${charName(codePoint)} - write it as a \\uXXXX escape, not the raw character (in JSX text or attributes the escape is not interpreted: use a JS expression such as {'\\u200B'})`,
+        `invisible-chars: ${shownPath}:${finding.line}:${finding.column} ${finding.codePoint} ${charName(codePoint)} - ${fixAdvice({ encoding: source.encoding, kind: adviceKind(relPath), codePoint })}`,
       );
     }
   }

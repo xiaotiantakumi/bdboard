@@ -4,6 +4,8 @@
 
 const TAG_FIRST = 0xe0000;
 const TAG_LAST = 0xe007f;
+const VARIATION_RANGES = [[0xfe00, 0xfe0f], [0xe0100, 0xe01ef]];
+const EXTENDED_PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
 const CHAR_NAMES = new Map([
   [0x00ad, 'SOFT HYPHEN'],
   [0x061c, 'ARABIC LETTER MARK'],
@@ -11,6 +13,13 @@ const CHAR_NAMES = new Map([
   [0x115f, 'HANGUL CHOSEONG FILLER'],
   [0x1160, 'HANGUL JUNGSEONG FILLER'],
   [0x180e, 'MONGOLIAN VOWEL SEPARATOR'],
+  [0x034f, 'COMBINING GRAPHEME JOINER'],
+  [0x17b4, 'KHMER VOWEL INHERENT AQ'],
+  [0x17b5, 'KHMER VOWEL INHERENT AA'],
+  [0x180b, 'MONGOLIAN FREE VARIATION SELECTOR ONE'],
+  [0x180c, 'MONGOLIAN FREE VARIATION SELECTOR TWO'],
+  [0x180d, 'MONGOLIAN FREE VARIATION SELECTOR THREE'],
+  [0x180f, 'MONGOLIAN FREE VARIATION SELECTOR FOUR'],
   [0x200e, 'LEFT-TO-RIGHT MARK'],
   [0x200f, 'RIGHT-TO-LEFT MARK'],
   [0x2028, 'LINE SEPARATOR'],
@@ -45,8 +54,34 @@ const CHAR_NAMES = new Map([
   [0xe007f, 'CANCEL TAG'],
 ]);
 
+// 異体字セレクタ U+FE00-U+FE0F (VS1-16) と U+E0100-U+E01EF (VS17-256)。
+export function isVariationSelector(codePoint) {
+  return VARIATION_RANGES.some(([first, last]) => codePoint >= first && codePoint <= last);
+}
+
+function isKeycapBase(codePoint) {
+  return (codePoint >= 0x30 && codePoint <= 0x39) || codePoint === 0x23 || codePoint === 0x2a;
+}
+
+// 異体字セレクタのうち、正当な絵文字の表示指定として通すもの (bdboard-jb5x)。previous / next は直前・直後のコードポイント
+// (無ければ undefined)。GlassWorm 型の隠し込みは ASCII や引用符の後ろに異体字セレクタを連ねるので、通すのは次だけ:
+//  - U+FE0E / U+FE0F の直前が \p{Extended_Pictographic} (絵文字・U+26A0 など)。
+//  - U+FE0F の直前が keycap の元 (0-9 # *) で、直後が U+20E3 (COMBINING ENCLOSING KEYCAP)。
+// 連なりは 2 つめの直前が異体字セレクタなので必ず止まる。U+FE00-U+FE0D と U+E0100-U+E01EF は常に止める。
+export function isEmojiVariationSelector(codePoint, previous, next) {
+  if (codePoint !== 0xfe0e && codePoint !== 0xfe0f) return false;
+  if (previous === undefined) return false;
+  if (EXTENDED_PICTOGRAPHIC.test(String.fromCodePoint(previous))) return true;
+  return codePoint === 0xfe0f && next === 0x20e3 && isKeycapBase(previous);
+}
+
 // 検出対象のコードポイントの名前。対象でなければ undefined。Tags ブロック (U+E0000-U+E007F) は範囲で持つ。
+// 異体字セレクタは全部名前を返す (ファイル名のエスケープと診断の名前に使う)。検出するかは文脈で決まるので findInvisibleChars が見る。
 export function charName(codePoint) {
+  if (isVariationSelector(codePoint)) {
+    const index = codePoint <= 0xfe0f ? codePoint - 0xfe00 + 1 : codePoint - 0xe0100 + 17;
+    return `VARIATION SELECTOR-${index}`;
+  }
   const named = CHAR_NAMES.get(codePoint);
   if (named !== undefined) return named;
   if (codePoint >= TAG_FIRST && codePoint <= TAG_LAST) return 'TAG CHARACTER';
@@ -61,12 +96,15 @@ export function findInvisibleChars(text) {
   const findings = [];
   let line = 1;
   let column = 1;
+  let previous; // 直前のコードポイント (先頭は undefined)。異体字セレクタが絵文字の直後かを見るのに使う
   for (let index = 0; index < text.length; index += 1) {
     const codePoint = text.codePointAt(index);
     const char = String.fromCodePoint(codePoint);
-    if (charName(codePoint) !== undefined) {
+    const next = text.codePointAt(index + char.length);
+    if (charName(codePoint) !== undefined && !isEmojiVariationSelector(codePoint, previous, next)) {
       findings.push({ line, column, codePoint: formatCodePoint(codePoint) });
     }
+    previous = codePoint;
     if (char === '\r') {
       if (text[index + 1] === '\n') index += 1;
       line += 1;

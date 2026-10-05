@@ -107,7 +107,7 @@ by import is not enough, and neither is sitting next to files that are checked.
 
 ```bash
 npm run check:file-size  # git ls-files 対象のファイル行数ガード (baseline との突き合わせ)
-npm run check:invisible-chars  # src/ web/src/ scripts/ bin/ test/e2e/ と、ルートの vitest.config.ts・eslint.config.mjs・.dependency-cruiser.cjs、web/ の vite.config.ts・vitest.config.ts・vitest.setup.ts の .ts/.tsx/.mts/.cts/.mjs/.js/.cjs/.jsx に、生の bidi 制御文字・見えない文字 (U+00AD U+061C U+115F U+1160 U+180E U+200B–U+200F U+2028/U+2029 U+202A–U+202E U+2060–U+2064 U+2066–U+2069 U+206A–U+206F U+3164 U+FEFF U+FFA0 U+E0000–U+E007F。U+2800 は見える空白なので対象外) があれば落ちる。ファイル:行:列と U+XXXX を出す (文字そのものは出さない。ファイル名の制御文字・見えない文字も \uXXXX のエスケープで出す)。ソースにはこれらを \uXXXX / \u{XXXXX} のエスケープで書く。UTF-16 (BOM 付き) のファイルはデコードして検査し、repo の外を指す symlink は辿らず警告して飛ばす。symlink 経由のパスから直接起動しても検査する (bdboard-ekvi, bdboard-rqzv)
+npm run check:invisible-chars  # ソース・hook (.sh)・e2e の stub・workflow (.yml) に生の bidi 制御文字・見えない文字・異体字セレクタがあれば落ちる (範囲・文字・規則は下の「見えない文字の検査」)
 npm run lint             # ESLint + typescript-eslint (src/ web/src/ scripts/、max-lines はラチェット許可リスト。warning を含め全件出力)
 npm run lint:verify      # verify から呼ぶ版。error は全文出力し exit code も同じだが、warning は件数のみ1行で出す
 npm run lint:warnings    # warning を含む全件を見たいときの単独実行 (中身は npm run lint と同じ)
@@ -117,6 +117,53 @@ npm run test:server      # vitest run (src/)
 npm run test:web         # vitest run (web/src/)
 npm run check:boundaries # dependency-cruiser (architecture layering)
 ```
+
+## 見えない文字の検査 (`npm run check:invisible-chars`、bdboard-ekvi / rqzv / jb5x)
+
+ソースに生の bidi 制御文字 (Trojan Source)・見えない書式文字・異体字セレクタ (GlassWorm) を書くと、レビューで見えないまま挙動や
+意味を変えられる。`scripts/check-invisible-chars.mjs` が git の追跡ファイルと未追跡・非 ignore のファイルを読み、見つけたら
+`ファイル:行:列 U+XXXX 名前 - 直し方` を出して exit 1 (git の一覧取得や読み取りの失敗は通ったことにせず exit 2)。文字そのものは
+出さず、ファイル名の制御文字・見えない文字も `\uXXXX` (BMP 外は `\u{XXXXX}`) のエスケープで出す。ソースにはこれらを
+`\uXXXX` / `\u{XXXXX}` のエスケープで書く (テストの入力は `String.fromCodePoint` で組み立てる)。範囲の定義は
+`scripts/check-invisible-chars/targets.mjs`、文字の表と走査は `chars.mjs`。
+
+| 範囲 | 検査するファイル |
+|---|---|
+| `src/` `web/src/` `bin/` `test/e2e/` | `.ts .tsx .mts .cts .mjs .js .cjs .jsx` |
+| `scripts/` | 上と `.sh` |
+| `test/e2e/fixtures/bin/` | 拡張子を問わない (拡張子の無い bash の stub `bd` / `claude`) |
+| `.claude/skills/` `harness/` | `.sh` だけ (hook として実行される `hooks/*.sh` と `scripts/*.sh`。`.claude/skills/bdboard-harness/` は `harness/packs/bdboard-harness/` の注入コピーなので、直すときは正本の `harness/` 側) |
+| `.github/` | `.yml .yaml` (workflow と dependabot) |
+| ルートの `vitest.config.ts` `eslint.config.mjs` `.dependency-cruiser.cjs`、`web/` の `vite.config.ts` `vitest.config.ts` `vitest.setup.ts` | 完全一致 |
+
+範囲は明示の一覧なので、新しい種類のファイルを足すと黙って範囲外になる。`scripts/check-invisible-chars.test.mjs` の
+「this repository」が、追跡中のソース拡張子・`.sh`・実行ビット付き (git の mode 100755) のファイル・`.github/` の yml が全部
+対象であることを固定している (落ちたら `targets.mjs` の表を更新する)。
+
+**常に検出する文字**: U+00AD U+034F U+061C U+115F U+1160 U+17B4 U+17B5 U+180B–U+180E U+200B–U+200F U+2028 U+2029
+U+202A–U+202E U+2060–U+2064 U+2066–U+2069 U+206A–U+206F U+3164 U+FEFF U+FFA0 U+E0000–U+E007F。U+2800 (点字の空白) は
+見える空白なので対象外。
+
+**異体字セレクタ (U+FE00–U+FE0F と U+E0100–U+E01EF) は「絵文字の直後の U+FE0E / U+FE0F」だけを通す**:
+
+- 通す: U+FE0E / U+FE0F の直前のコードポイントが `\p{Extended_Pictographic}` (絵文字の表示指定。例 U+26A0 + U+FE0F)。
+  keycap (`0`–`9` `#` `*` + U+FE0F + U+20E3) も通す。
+- 止める: それ以外すべて。ASCII の英字・記号・引用符・行頭・改行の直後、U+FE00–U+FE0D、U+E0100–U+E01EF (絵文字・漢字の直後でも)。
+  異体字セレクタの連なりは、2 つめの直前が異体字セレクタなので必ず止まる (GlassWorm 型は ASCII や引用符の後ろに
+  U+E0100 以降を連ねてバイト列を埋め込む)。
+- 洗い出した実際の使用 (2026-10-06、追跡 + 未追跡の全テキストファイル): `scripts/bd-prime-guard.mjs` の U+26A0 + U+FE0F
+  (直後は空白) と、`src/domain/issue-draft-invisible-text.test.ts` の引用符の間の単独の U+FE0F の 2 件だけ。前者は規則で通る。
+  後者は「見えない文字だけの値」のテスト入力で、生の文字ではなくエスケープで書くのが本来なので `'\uFE0F'` に直した。
+  U+034F U+17B4 U+17B5 U+180B–U+180D U+180F U+E0100–U+E01EF は使用ゼロ。
+- 既知の限界: 絵文字 1 つにつき U+FE0E / U+FE0F を 1 つ付ける形 (見える絵文字が要る) は通る。`\p{Extended_Pictographic}` は
+  実行する Node の ICU のバージョンに従うので、新しい Unicode の絵文字は古い Node では止まる (安全側の失敗)。
+  異体字列 (IVS。漢字 + U+E0100–U+E01EF) や数学記号の標準異体字列が本当に要るときは、エスケープで書く。
+
+**診断の直し方**: UTF-8 のファイルには `\uXXXX` のエスケープで書くよう案内する (JS / TS は JSX のテキストと属性ではエスケープが
+解釈されないので `{'\u200B'}` のような式を、`.sh` は bash の `$'\uXXXX'`、`.yml` は二重引用符の文字列の `\uXXXX`)。UTF-16
+(BOM 付き) のファイルは BOM 判定でデコードして同じ規則で検査し、直し方は「UTF-8 で保存し直す」と案内する (エスケープでは
+直らない。BOM の U+FEFF 自体も検出対象)。repo の外を指す symlink は辿らず警告して飛ばし、symlink 経由のパスから直接
+起動しても検査する。
 
 ## Lint のログ量 (`npm run lint:verify`、bdboard-ynp1)
 
