@@ -2,7 +2,8 @@
  * bdboard-4y8q.9.4: 届いた issue (ほかの人が出した公開 issue) を定期的に確かめる配線。
  *
  * メンテナ環境 (bdboard 自身の `.beads` がある main checkout) のときだけ、サービスとタイマーを作る。そうでなければ何も作らず、
- * gh も bd も呼ばない (`enabled: false`)。ルートへの載せ方は wire-issue-reports.ts、終了時の停止は wire-shutdown.ts。
+ * gh も bd も呼ばない (`enabled: false`)。メンテナ環境でも `BDBOARD_EXTERNAL_ISSUES_DISABLED=1` なら同じく何も作らない (bdboard-em45。
+ * メインチェックアウトから回す e2e のサーバー用)。ルートへの載せ方は wire-issue-reports.ts、終了時の停止は wire-shutdown.ts。
  *
  * gh を起動する道は、1 時間に 12 回までの関所 (`createBudgetedCommandRunner`) を通る 1 つだけ。定期の確認・手動の refresh・
  * ページ送りのどの組み合わせでも、この関所が上限を保つ (docs/ISSUE-REPORTING.md 8節)。
@@ -25,7 +26,7 @@ import {
   resolveExternalIssuePollIntervalMs,
 } from '../domain/external-issue-poll-policy.js';
 import { createBdCliExternalRefReader } from '../infrastructure/bd/bd-cli-external-ref-reader.js';
-import { envInt, envString } from '../infrastructure/env.js';
+import { envBool, envInt, envString } from '../infrastructure/env.js';
 import { createFsExternalIssueSnapshotStorage } from '../infrastructure/fs/fs-external-issue-snapshot-storage.js';
 import { isMaintainerEnvironment } from '../infrastructure/fs/is-maintainer-environment.js';
 import { resolveExternalIssuesDir } from '../infrastructure/fs/resolve-external-issues-dir.js';
@@ -34,6 +35,13 @@ import { createGhCliExternalIssueSource } from '../infrastructure/gh/gh-cli-exte
 
 /** 読む対象のリポジトリ。gh のソースと、bd の external_ref の紐付けの判定 (サービス) の両方に同じものを渡す。環境変数での差し替えは無い。 */
 export const EXTERNAL_ISSUES_REPO_SLUG = 'xiaotiantakumi/bdboard';
+
+/**
+ * `1` または `true` (大小無視) のとき、メンテナ環境でも届いた issue の確認を作らない (bdboard-em45)。
+ * メンテナ環境の判定 (`.beads` の有無) の手前で見るので、無効のときは `.beads` も見ない。
+ * e2e のサーバー (test/e2e/global-setup.ts) が、メインチェックアウトから起動されたときに本物の gh を呼ばないために立てる。
+ */
+export const EXTERNAL_ISSUES_DISABLED_ENV = 'BDBOARD_EXTERNAL_ISSUES_DISABLED';
 
 /**
  * 上限に達したときに画面へ出る理由 (一覧の `error.detail`)。gh の rate limit や未ログインの文言 (`gh-cli-failure.ts` のパターン)
@@ -109,8 +117,8 @@ export function wireExternalIssues(deps: WireExternalIssuesDeps): WiredExternalI
   const log = deps.log ?? console.log;
   const maintainer = deps.isMaintainerEnvironment ?? isMaintainerEnvironment;
 
-  // メンテナ環境でなければ何も作らない (タイマーも、写しの置き場も、gh・bd の呼び出しも)。
-  if (!maintainer(deps.repoRoot)) {
+  // 環境変数で止められているか、メンテナ環境でなければ何も作らない (タイマーも、写しの置き場も、gh・bd の呼び出しも)。
+  if (envBool(deps.env, EXTERNAL_ISSUES_DISABLED_ENV) || !maintainer(deps.repoRoot)) {
     return { enabled: false, service: undefined, now, stop: () => undefined };
   }
   const ports = deps.ports ?? (deps.commandRunner === undefined ? undefined : createPortsFromRunner(deps, deps.commandRunner, now));
