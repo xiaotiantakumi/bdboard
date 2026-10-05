@@ -11,6 +11,7 @@ import {
   type OccurredProject,
 } from './issue-draft.js';
 import { fitDraftToByteLimit } from './issue-draft-size.js';
+import { withRescannedLeaks } from './issue-draft-edit.js';
 import type { ReceiveDraftInput } from './issue-draft-input.js';
 import {
   buildMassOccurrenceText,
@@ -159,12 +160,37 @@ function countOnly(existing: IssueDraft): IssueDraft {
  */
 export function addOccurrence(existing: IssueDraft, input: ReceiveDraftInput, nowIso: string): IssueDraft {
   if (existing.status !== 'pending') return countOnly(existing);
-  return finalize({
+  const occurredProjects = upsertProject(existing.occurredProjects, input.project, nowIso);
+  const merged: IssueDraft = {
     ...existing,
+    ...latestEnvironment(existing, input),
     occurrenceCount: existing.occurrenceCount + 1,
     lastOccurredAt: nowIso,
-    occurredProjects: upsertProject(existing.occurredProjects, input.project, nowIso),
-  });
+    occurredProjects,
+  };
+  // 新しいプロジェクトが足されたら、漏れ検出の鍵が増えたので、直した欄の疑いをかけ直す (レビュー m-1。保存した疑いが古いと、
+  // 持ち主の画面にだけ警告が出ない)。大きさの確認 (finalize) より前に足す。
+  return finalize(occurredProjects.length > existing.occurredProjects.length ? withRescannedLeaks(merged) : merged);
+}
+
+/**
+ * 手元の版 (envInfo と harnessVersionAtOccurrence) を最後の発生のものにする (#859 のレビュー m-6、bdboard-4y8q.3.1)。
+ * 画面の「版の比較」は、最新の harness pack の版と並べて「最新の版では直っているかもしれない」を出すので、比べるのは
+ * 最後に起きたときの版。最初の発生の版は残さない (残すなら欄を足す。docs/ISSUE-REPORTING.md 4節の状態遷移の表)。
+ * 版の分からない報告 (envInfo の無い報告) では前の値を残す。envInfo があってもハーネスの版が無い報告 (`envInfo: {}` など) では、
+ * envInfo は最後の発生のものにするが、harnessVersionAtOccurrence は前の値を残す (分かっていた版を「分からない」で消さない。
+ * レビュー m-4)。
+ */
+function latestEnvironment(
+  existing: IssueDraft,
+  input: ReceiveDraftInput,
+): Pick<IssueDraft, 'localOnly' | 'harnessVersionAtOccurrence'> {
+  if (input.envInfo === undefined) {
+    return { localOnly: existing.localOnly, harnessVersionAtOccurrence: existing.harnessVersionAtOccurrence };
+  }
+  const envInfo = normalizeEnvInfo(input.envInfo);
+  const harnessVersionAtOccurrence = envInfo.harnessVersion ?? existing.harnessVersionAtOccurrence;
+  return { localOnly: { ...existing.localOnly, envInfo }, harnessVersionAtOccurrence };
 }
 
 /**

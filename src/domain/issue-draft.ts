@@ -51,6 +51,18 @@ export interface OccurredProject {
   readonly lastSeenAt: string;
 }
 
+/**
+ * 置き換え漏れの疑い 1 件 (保存する形)。start / end はその欄 (title / body) の UTF-16 オフセット (半開区間)。
+ * kind は issue-public-types.ts の SuspectedLeakKind (ここから import すると型の循環になるので文字列で持つ)。
+ * 一致した文字列そのものは持たない (欄の切り出しで分かる。draft.json を大きくしない)。
+ */
+export interface DraftSuspectedLeak {
+  readonly field: 'title' | 'body';
+  readonly kind: string;
+  readonly start: number;
+  readonly end: number;
+}
+
 export interface IssueDraft {
   readonly id: string;
   readonly kind: DraftKind;
@@ -75,6 +87,13 @@ export interface IssueDraft {
   readonly issueUrl?: string;
   readonly sourceTicketRef?: string;
   readonly harnessVersionAtOccurrence?: string;
+  /**
+   * 利用者が直した欄 (titleEditedByUser / bodyEditedByUser が true の欄) にかけ直した置き換え漏れの疑い
+   * (bdboard-4y8q.3.1、PATCH drafts/:id。issue-draft-edit.ts)。位置の順で上限まで。一度も直していない下書きには無い。
+   */
+  readonly suspectedLeaks?: readonly DraftSuspectedLeak[];
+  /** suspectedLeaks の上限で落とした件数 (suspectedLeaks と一緒に書く。0 なら落としていない)。 */
+  readonly suspectedLeaksOmitted?: number;
   readonly draftSchemaVersion: 1;
 }
 

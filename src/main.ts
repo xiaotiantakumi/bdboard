@@ -95,12 +95,6 @@ async function main(): Promise<void> {
     writeAccess: auth.writeAccess,
   });
 
-  const issueReports = wireIssueReports({
-    repoRoot,
-    env: process.env,
-    writeAccess: auth.writeAccess,
-  });
-
   const harness = wireHarness({
     repoRoot,
     cache: infra.cache,
@@ -108,6 +102,13 @@ async function main(): Promise<void> {
     writeAccess: auth.writeAccess,
     issueWriter: bdServices.issueWriter,
     refreshProjectByRootPath: boardApi.refreshProjectByRootPath,
+  });
+
+  const issueReports = wireIssueReports({
+    repoRoot,
+    env: process.env,
+    writeAccess: auth.writeAccess,
+    packRegistry: harness.packRegistry,
   });
 
   const misc = wireMiscRoutes({

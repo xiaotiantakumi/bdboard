@@ -64,5 +64,17 @@ export const draftSchema = z.object({
   issueUrl: z.string().optional(),
   sourceTicketRef: z.string().optional(),
   harnessVersionAtOccurrence: z.string().optional(),
+  suspectedLeaks: z
+    .array(
+      z.object({
+        field: z.enum(['title', 'body']),
+        kind: z.string(),
+        start: z.number().int().nonnegative(),
+        end: z.number().int().nonnegative(),
+      })
+      .refine((leak) => leak.start <= leak.end),
+    )
+    .optional(),
+  suspectedLeaksOmitted: z.number().int().nonnegative().optional(),
   draftSchemaVersion: z.literal(1),
 });
