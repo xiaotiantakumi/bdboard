@@ -9,13 +9,12 @@
 // gate でも finish でも、修復の着地後検証が success になるまで返さない。
 import { readCommit, shellQuote } from './exec.mjs';
 import { SLOT_MODES } from './config.mjs';
-import { EXIT, fail, fetchedMain, liveMain, refetchMain } from './context.mjs';
+import { EXIT, assertOpenPull, fail, fetchedMain, liveMain, refetchMain } from './context.mjs';
 import { getPull } from './github.mjs';
 import { waitForLanded } from './landed.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { lightLandedState, reportLightLanded } from './light-landed.mjs';
 import { brokenMainSteps, keptLightFailureSteps, mergeInstructions } from './messages.mjs';
-import { assertOpenPull } from './prepare.mjs';
 import { assertConventionalTitle, squashSubject } from './pr-title.mjs';
 import { recordProblem } from './record.mjs';
 import { acquireSlot, readSlot, releaseSlot } from './slot.mjs';

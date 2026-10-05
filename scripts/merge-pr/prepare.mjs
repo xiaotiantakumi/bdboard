@@ -12,7 +12,7 @@
 import { git, gitOk, run } from './exec.mjs';
 import { classifyForMode, describeClass } from './mode-class.mjs';
 import { PREDICTED_MODES } from './config.mjs';
-import { EXIT, fail, fetchedMain, ticketIdFor } from './context.mjs';
+import { EXIT, assertOpenPull, fail, fetchedMain, ticketIdFor } from './context.mjs';
 import { assertExternalRefLinked } from './external-ref.mjs';
 import { assertConventionalTitle } from './pr-title.mjs';
 import { getLandedStatus, getPull, requiredChecks } from './github.mjs';
@@ -20,22 +20,6 @@ import { brokenMainSteps, cancelledChecksSteps, keptLightFailureSteps, rebaseSte
 import { verifyPredicted } from './predicted.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 import { holdForPrepare } from './worktree-hold.mjs';
-
-/** PR が OPEN・draft でない・base が main であることを確かめる (gate でも使う)。 */
-export function assertOpenPull(ctx, pull, pr) {
-  if (pull.merged) {
-    fail(EXIT.PRECONDITION, `PR #${pr} は既にマージ済みです。`);
-  }
-  if (pull.state !== 'open') {
-    fail(EXIT.PRECONDITION, `PR #${pr} は ${pull.state} です (open ではない)。`);
-  }
-  if (pull.draft) {
-    fail(EXIT.PRECONDITION, `PR #${pr} は draft です。`);
-  }
-  if (pull.baseRef !== ctx.config.mainBranch) {
-    fail(EXIT.PRECONDITION, `PR #${pr} の base は ${pull.baseRef} です (${ctx.config.mainBranch} ではない)。`);
-  }
-}
 
 /** release-please は Beads のチケットを持たないリリース自動 PR。 */
 export function isReleasePleasePull(pull) {
