@@ -14,7 +14,8 @@
  * 処理の順序 (動的な文字列ごと):
  *   (0) 孤立サロゲートの除去 → 行・不可視文字の整形 (1 行の値は 1 行にする) — issue-public-text.ts
  *   (1) 同じ整形後の文字列に全 finder をかけて一致を集め、重なりを統合し、印に置き換える。置き換えの結果にもう一度
- *       (最大 2 回) かけて、印に替わったことで新しく現れた一致 ("<project>sk-…") も置き換える — issue-public-redact.ts
+ *       (最大 2 回) かけて、印に替わったことで新しく現れた一致 ("<project>sk-…") も置き換える — issue-public-redact.ts。
+ *       複数行の欄は、保存の上限などで切れた欄の端の断片も探す (末尾はどの欄も、先頭はエラー文だけ) — issue-public-fragments.ts
  *   (2) 置換「後」にコードポイント単位で省略する (先に切ると、切れ目でトークンが半分になって形に一致しなくなる)
  *   (3) code context で包み、固定の文言と並べる。印の位置は組み立ての場所で最終の title / body の位置へずらす
  *   (4) 最後の網: 完成した title と body に detectSuspectedLeaks をかけ直す。(0)〜(3) とは独立 — issue-public-leaks.ts
@@ -30,6 +31,7 @@ import type { DraftKind } from './issue-draft.js';
 import { prepareKeys, type PreparedKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
 import { codeBlock, codeSpan, type MarkdownPiece } from './issue-public-markdown.js';
+import type { FieldEdges } from './issue-public-fragments.js';
 import { elide, redactText } from './issue-public-redact.js';
 import { findReportOnlySpans } from './issue-public-spans.js';
 import { normalizeBlock, normalizeInline } from './issue-public-text.js';
@@ -48,6 +50,14 @@ const KIND_LABEL: Readonly<Record<DraftKind, string>> = {
   B: 'hook・配布スクリプト',
   C: 'bdboard 本体',
 };
+
+/**
+ * 欄の端の断片を探す端 (bdboard-4y8q.13)。自由記述は保存の上限 (先頭を残す) で末尾だけが切れうる。エラー文はそれに加えて、
+ * 末尾だけを取る送り手 (hook の tail-capture) で先頭も切れうる。人とエージェントが書く自由記述の先頭は切れないので、
+ * 先頭は探さない ("user …" で始まる文を、名前 example-user の後置部分として消さない)。1 行の値は保存で切らない (入口で拒否する)。
+ */
+const FREE_TEXT_EDGES: FieldEdges = Object.freeze({ start: false, end: true });
+const ERROR_TEXT_EDGES: FieldEdges = Object.freeze({ start: true, end: true });
 
 /** 欄ごとの上限 (コードポイント)。置換の「後」に切る。 */
 const CAP = { titleName: 80, name: 120, time: 40, version: 80, freeText: 8000, errorEdge: 1000 } as const;
@@ -102,7 +112,7 @@ function block(value: string | undefined, prepared: PreparedKeys): MarkdownPiece
   const normalized = normalizeBlock(textOf(value) ?? '');
   if (normalized === '') return undefined;
   const label = (count: number): string => `…(以降 ${String(count)} 文字省略)`;
-  return codeBlock(elide(redactText(normalized, prepared), CAP.freeText, 0, label, avoidingLeaks(prepared)));
+  return codeBlock(elide(redactText(normalized, prepared, FREE_TEXT_EDGES), CAP.freeText, 0, label, avoidingLeaks(prepared)));
 }
 
 /** エラー全文: 全文を置換してから、先頭と末尾の 1000 コードポイントに省略する (順序を逆にしない)。 */
@@ -110,7 +120,9 @@ function errorBlock(value: string | undefined, prepared: PreparedKeys): Markdown
   const normalized = normalizeBlock(textOf(value) ?? '');
   if (normalized === '') return undefined;
   const label = (count: number): string => `…(${String(count)} 文字省略)…`;
-  return codeBlock(elide(redactText(normalized, prepared), CAP.errorEdge, CAP.errorEdge, label, avoidingLeaks(prepared)));
+  return codeBlock(
+    elide(redactText(normalized, prepared, ERROR_TEXT_EDGES), CAP.errorEdge, CAP.errorEdge, label, avoidingLeaks(prepared)),
+  );
 }
 
 function appendSection(composer: Composer, heading: string, piece: MarkdownPiece | undefined): void {

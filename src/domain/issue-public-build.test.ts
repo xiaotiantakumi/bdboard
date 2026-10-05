@@ -53,6 +53,7 @@ const PLACEHOLDERS: Readonly<Record<RedactionKind, string>> = {
   'key-block': '<redacted-key-block>',
   token: '<redacted-token>',
   email: '<email>',
+  fragment: '<redacted-fragment>',
 };
 
 function isWellFormed(value: string): boolean {

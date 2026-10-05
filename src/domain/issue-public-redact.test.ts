@@ -14,6 +14,7 @@ const PLACEHOLDERS: Readonly<Record<RedactionKind, string>> = {
   'key-block': '<redacted-key-block>',
   token: '<redacted-token>',
   email: '<email>',
+  fragment: '<redacted-fragment>',
 };
 const BEGIN = '-----' + 'BEGIN PRIVATE KEY' + '-----';
 const END = '-----' + 'END PRIVATE KEY' + '-----';

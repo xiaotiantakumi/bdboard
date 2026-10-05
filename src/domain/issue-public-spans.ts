@@ -6,6 +6,7 @@
  *   - findLeakSpans: 最後の網が報告する一致。置き換えと同じものに加えて、緩めた形 (sk-・Bearer・Stripe・JWT の直前の条件なし、
  *     小文字の akia、開始位置の条件なしの /Users/<名前>・/home/<名前>)・SHORT の固有名詞・鍵ブロックの単独の印。報告するだけで書き換えない。
  */
+import { findEdgeFragmentSpans, NO_EDGES, type FieldEdges } from './issue-public-fragments.js';
 import { findLooseHomeRanges, findPublicHomeRanges } from './issue-public-home.js';
 import {
   findDetectableNounSpans,
@@ -27,7 +28,8 @@ export interface KindSpan {
 /**
  * 重なった一致を 1 つにまとめるとき、どの種別を残すか (大きいほど優先)。秘密 (鍵ブロック・トークン) が最優先:
  * 名前やパスを含む秘密が <project> や ~/ に見えると、人が見て「鍵があった」と分からない (中身はどちらも残らない)。
- * 次にパス (固有名詞より情報が多い)、固有名詞 (カテゴリが利用者に見える印になる)、メールの順。
+ * 次にパス (固有名詞より情報が多い)、固有名詞 (カテゴリが利用者に見える印になる)、メールの順。欄の端の断片 ('fragment') は
+ * いちばん弱い: 完全な一致と重なったら、そちらの種別の印になる (完全なメールや JWT が欄の末尾にあるとき、断片の形にも一致するため)。
  */
 export const PRIORITY: Readonly<Record<RedactionKind, number>> = {
   'key-block': 9,
@@ -39,6 +41,7 @@ export const PRIORITY: Readonly<Record<RedactionKind, number>> = {
   host: 3,
   branch: 2,
   email: 1,
+  fragment: 0,
 };
 
 type SpanSource = readonly { readonly start: number; readonly end: number }[];
@@ -56,12 +59,16 @@ function common(text: string, prepared: PreparedKeys): KindSpan[] {
   ];
 }
 
-/** 置き換える一致 (統合は mergeSpans)。 */
-export function findRedactionSpans(text: string, prepared: PreparedKeys): KindSpan[] {
+/**
+ * 置き換える一致 (統合は mergeSpans)。edges は欄の端の断片を探す端 (issue-public-fragments.ts。1 行の値は保存で切られないので
+ * 既定は探さない)。
+ */
+export function findRedactionSpans(text: string, prepared: PreparedKeys, edges: FieldEdges = NO_EDGES): KindSpan[] {
   return [
     ...common(text, prepared),
     ...findReplaceableNounSpans(text, prepared),
     ...tagged('token', findTokenSpans(text)),
+    ...findEdgeFragmentSpans(text, prepared.fragmentKeys, edges),
   ];
 }
 

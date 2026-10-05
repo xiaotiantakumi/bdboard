@@ -1,4 +1,5 @@
 import { ISSUE_DRAFT_MAX_JSON_BYTES, type DraftSuspectedLeak, type IssueDraft, type OccurredProject } from './issue-draft.js';
+import { cutKeepingHead } from './issue-draft-cut.js';
 import { foldHomePaths } from './issue-draft-identifier.js';
 import { draftJsonBytes } from './issue-draft-size.js';
 import { prepareKeys } from './issue-public-keys.js';
@@ -126,11 +127,13 @@ function trimErrorTextToFit(draft: IssueDraft, limit: number): { readonly draft:
     const excess = draftJsonBytes(current) - limit;
     const raw = current.localOnly.errorTextRaw;
     if (excess <= 0 || raw === undefined || raw.length === 0) return { draft: current, trimmed };
-    // fitDraftToByteLimit の cutTextFrom と同じく、1 文字は最大 3 バイトとして一度に落とす (足りなければもう一周)。
+    // fitDraftToByteLimit の cutTextFrom と同じく、1 文字は最大 3 バイトとして一度に落とす (足りなければもう一周)。切れ目は
+    // 行の終わりへ戻し、サロゲートの対を割らない (issue-draft-cut.ts、bdboard-4y8q.13: 名前・根・トークンの途中で切ると、その
+    // 断片が公開本文の欄の端に残る)。1 回で必ず 1 コード単位以上短くなるので、繰り返しは空になって止まる。
     const cut = Math.max(1, Math.ceil(excess / 3));
     current = {
       ...current,
-      localOnly: { ...current.localOnly, errorTextRaw: raw.slice(0, Math.max(0, raw.length - cut)), errorTextTruncated: true },
+      localOnly: { ...current.localOnly, errorTextRaw: cutKeepingHead(raw, raw.length - cut), errorTextTruncated: true },
     };
     trimmed = true;
   }

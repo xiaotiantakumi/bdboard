@@ -20,6 +20,7 @@
  *
  * RegExp オブジェクトは `g` フラグで lastIndex を持つので、使うたびに lastIndex = 0 に戻す (別の呼び出しの状態を引きずらない)。
  */
+import { fragmentKeyCollector, type FragmentKey } from './issue-public-fragments.js';
 import { codePointLength, normalizeInline } from './issue-public-text.js';
 import { nounVariants, prepareRoot } from './issue-public-key-variants.js';
 import type { LocalOnlyKeys, ProperNounCategory } from './issue-public-types.js';
@@ -44,6 +45,8 @@ export interface PreparedKeys {
   readonly detectableNouns: readonly PreparedNoun[];
   /** detectableNouns のうち SHORT (2〜3 コードポイント。置き換えず報告だけ) のもの。 */
   readonly shortNouns: readonly PreparedNoun[];
+  /** 欄の端の断片を探す鍵 (根と LONG の固有名詞の変種。issue-public-fragments.ts、bdboard-4y8q.13)。 */
+  readonly fragmentKeys: readonly FragmentKey[];
   /** 上限・長さの制限で、一部の鍵を探していない。 */
   readonly truncated: boolean;
 }
@@ -98,6 +101,11 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
   for (const noun of keys.properNouns) addNoun(noun.category, noun.value);
 
   const rootPatterns: RegExp[] = [];
+  // 端の検査の鍵: たたんだ後で同じになる変種は 1 つにし、合計のコードポイント数に上限を置く (記憶量。5節「欄の端の断片」)。
+  const fragments = fragmentKeyCollector();
+  const addFragmentKey = (variant: string): void => {
+    if (!fragments.add(variant)) truncated = true;
+  };
   const seenRoots = new Set<string>();
   for (const raw of keys.projectRoots) {
     const root = prepareRoot(raw);
@@ -109,7 +117,10 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
       truncated = true;
       break;
     }
-    for (const variant of root.variants) rootPatterns.push(literalPattern(variant, '(?![\\p{L}\\p{N}_-])'));
+    for (const variant of root.variants) {
+      rootPatterns.push(literalPattern(variant, '(?![\\p{L}\\p{N}_-])'));
+      addFragmentKey(variant);
+    }
     if (root.basename !== undefined) addNoun('project', root.basename);
   }
 
@@ -132,11 +143,14 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
             }
           : { kind: category, pattern: literalPattern(variant) };
       detectableNouns.push(entry);
-      if (length >= LONG_NOUN_CODE_POINTS) replaceableNouns.push(entry);
-      else shortNouns.push(entry);
+      if (length >= LONG_NOUN_CODE_POINTS) {
+        replaceableNouns.push(entry);
+        addFragmentKey(variant);
+      } else shortNouns.push(entry);
     }
   }
-  return { projectRoots: rootPatterns, replaceableNouns, detectableNouns, shortNouns, truncated };
+  const fragmentKeys: readonly FragmentKey[] = fragments.keys;
+  return { projectRoots: rootPatterns, replaceableNouns, detectableNouns, shortNouns, fragmentKeys, truncated };
 }
 
 function spansOf(text: string, pattern: RegExp): KeySpan[] {
