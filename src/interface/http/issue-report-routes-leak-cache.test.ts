@@ -23,6 +23,8 @@ describe('restricted leak cache in routes', () => {
     await get(); await get();
     expect(spy).toHaveBeenCalledTimes(1);
     await app.request(`${PATH}/${id}`, { method: 'PATCH', headers: { host: 'tunnel.example', 'content-type': 'application/json', ...TUNNEL }, body: JSON.stringify({ body: 'edited again' }) }, { incoming: { socket: { remoteAddress: '203.0.113.9', localPort: 8787 } } });
+    // PATCH の応答もキャッシュを通る (検出は PATCH で 1 回増え、そのあとの GET は同じ内容なので増えない)。
+    expect(spy).toHaveBeenCalledTimes(2);
     await get();
     expect(spy).toHaveBeenCalledTimes(2);
     await app.request(`${PATH}/${id}`, { headers: { host: 'localhost:8787' } }, LOCAL);

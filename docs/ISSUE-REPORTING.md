@@ -197,7 +197,7 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 `sourceTicketRef`、`harnessVersionAtOccurrence`、`suspectedLeaks`・`suspectedLeaksOmitted`(下の「閲覧・編集(PATCH)側のフィールド範囲」。
 トンネル側は、返す(畳んだ)題名・本文にかけ直した値)、`draftSchemaVersion`、`restricted`。画像の一覧は別の API。
 応答の外側には `latestHarnessVersion`(この bdboard の `harness/packs/bdboard-harness/pack.json` の `version`。読めなければ `null`。
-全 pack を読む `listPacks` の結果を 30 秒使い回す: 版が変わるのは bdboard の更新のときで、再起動でも作り直され、ずれるのは版の比較の表示だけ。失敗はキャッシュしない。bdboard-pnvj)も載せる
+全 pack を読む `listPacks` の結果を 30 秒使い回す: 版が変わるのは bdboard の更新のときで、再起動でも作り直され、ずれるのは版の比較の表示だけ。失敗はキャッシュしない。pack が一覧に無い結果(`undefined`)は失敗ではないので 30 秒キャッシュする。bdboard-pnvj)も載せる
 (秘密ではないので、ローカル直アクセスかどうかで分けない)。
 このうち**呼び出し側・利用者の入力がほぼそのまま入る**のは次で、手元の外へ出てよい形に入口で絞る:
 
@@ -353,7 +353,7 @@ head/tail が置き換え後の文章から作られるようになったら、�
     合っているかをトンネルの読み手が確かめられてしまう(レビュー M-1)。そのためトンネルの疑いはローカル直より少ないことがあり、
     パスの疑いは出ない。`GET .../:id` のトンネル応答も同じ。
   - **トンネル側の検出の結果は再利用する**(bdboard-pnvj): トンネル経由の `GET .../:id` と `PATCH` の応答は、返す題名・本文にその場で検出をかけ直す
-    ので、本文 × 鍵の数に比例して毎回かかる(実測: 現実的な鍵で 2〜7ms、鍵が上限いっぱいで 565ms)。`issue-report-leak-cache.ts` が、**下書き id ごと**に
+    ので、本文 × 鍵の数に比例して毎回かかる(実測: 検出は 3〜8ms、指紋の計算は 0.14ms。#882 のレビュー時の 565ms は、鍵ごとに正規表現を作っていた #886 より前の値)。`issue-report-leak-cache.ts` が、**下書き id ごと**に
     入力の指紋(返す題名・本文・直した印・鍵の値の sha256)が同じあいだ結果を持ち回る。内容か鍵(発生したプロジェクトの表示名)が変われば指紋が変わるので、
     再利用は編集と新しいプロジェクトの追加の後に古い結果を返さない。上限は 256 件(いちばん長く使われていないものから落とす)。ローカル直アクセスは保存した
     疑いをそのまま返すので、検出もキャッシュも通らない。

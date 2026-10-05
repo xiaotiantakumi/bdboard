@@ -25,11 +25,20 @@ describe('applyDraftEdit automatic text reset', () => {
     expect(title.titleEditedByUser).toBe(false);
   });
 
+  it('resets a whitespace-only body', () => {
+    const before = { ...draft(), body: 'custom body', bodyEditedByUser: true };
+    const result = applyDraftEdit(before, { body: ' \n ' }).draft;
+    expect(result.body).toContain('種類:');
+    expect(result.bodyEditedByUser).toBe(false);
+  });
+
   it('removes leak fields when both edits are reset and rescans only the remaining edited field', () => {
     const both = withRescannedLeaks({ ...draft(), title: 'proj-name', body: 'proj-name', titleEditedByUser: true, bodyEditedByUser: true });
     const reset = applyDraftEdit(both, { title: '' }).draft;
     expect(reset.titleEditedByUser).toBe(false);
     expect(reset.bodyEditedByUser).toBe(true);
+    // every は空配列でも通るので、本文の検出が残っていること自体も確かめる。
+    expect(reset.suspectedLeaks?.length).toBeGreaterThan(0);
     expect(reset.suspectedLeaks?.every((leak) => leak.field === 'body')).toBe(true);
     const clean = applyDraftEdit(reset, { body: '' }).draft;
     expect(clean).not.toHaveProperty('suspectedLeaks');

@@ -25,7 +25,9 @@ export const ISSUE_REPORTS_PENDING_COUNT_PATH = '/api/issue-reports/pending-coun
 
 /**
  * 題名は 1 行 (見送りの理由と同じ整え方): 貼り付けで混ざるゼロ幅スペースと BOM は落とし、ZWJ・ZWNJ は許し、
- * 改行・制御文字・そのほかの不可視の書式文字は 400。trim 後に空なら自動生成へ戻す指定として受ける。
+ * 改行・制御文字・そのほかの不可視の書式文字は、整える前の値で見て 400 ("abc\n" や "\tdef" も 400)。見える文字が残らないものも 400。
+ * ただし、整えたあとに空白しか残らない (空・空白だけ・ZWSP や BOM だけ) 題名は、400 にせず「自動生成へ戻す」指定として受ける
+ * (bdboard-pnvj。本文の `''` と同じ)。前後の空白は落とす。
  * 本文は複数行の Markdown なので、文字の種類は見ない (見えない文字を可視化して見せるのは投稿前の確認画面の仕事。
  * docs/ISSUE-REPORTING.md 5節「プレビュー表示時の注意」)。長さは型ではなくハンドラーで見て 413 にする。
  */
@@ -34,8 +36,8 @@ const editBodySchema = z
     title: z
       .string()
       .transform(stripPasteArtifacts)
+      .refine((value) => value.trim() === '' || (isSingleLineDisplayText(value) && hasVisibleText(value)))
       .transform((value) => value.trim())
-      .refine((value) => value === '' || (isSingleLineDisplayText(value) && hasVisibleText(value)))
       .optional(),
     body: z.string().optional(),
   })

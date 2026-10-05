@@ -17,6 +17,10 @@ async function patch(app: ReturnType<typeof createIssueReportRoutes>, id: string
   return app.request(`${DRAFTS}/${id}`, { method: 'PATCH', headers: { host: 'localhost:8787', 'content-type': 'application/json' }, body: JSON.stringify(body) }, ENV);
 }
 
+async function receiveAgain(app: ReturnType<typeof createIssueReportRoutes>) {
+  return app.request(DRAFTS, { method: 'POST', headers: { host: 'localhost:8787', 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'B', source: 'hook.sh' }) }, ENV);
+}
+
 describe('PATCH draft reset', () => {
   it('accepts empty title and body, while still rejecting invisible non-whitespace title', async () => {
     const { app, storage, id } = await setup();
@@ -28,5 +32,35 @@ describe('PATCH draft reset', () => {
     expect(storage.drafts.get(id)?.titleEditedByUser).toBe(false);
     expect((await patch(app, id, { title: '   ' })).status).toBe(200);
     expect((await patch(app, id, { title: '⠀' })).status).toBe(400);
+  });
+
+  it('resets a whitespace-only body and a whitespace-only title, including a lone newline', async () => {
+    const { app, storage, id } = await setup();
+    await patch(app, id, { title: 'custom', body: 'custom body' });
+    expect(storage.drafts.get(id)).toMatchObject({ titleEditedByUser: true, bodyEditedByUser: true });
+    expect((await patch(app, id, { body: ' \n ' })).status).toBe(200);
+    expect(storage.drafts.get(id)).toMatchObject({ bodyEditedByUser: false, titleEditedByUser: true });
+    expect(storage.drafts.get(id)?.body).toContain('種類:');
+    expect((await patch(app, id, { title: '\n' })).status).toBe(200);
+    expect(storage.drafts.get(id)).toMatchObject({ titleEditedByUser: false });
+  });
+
+  // 題名は整える前の値で 1 行かを見る。先に trim すると、前後の改行やタブが黙って通ってしまう (main では 400 だった)。
+  it.each(['abc\n', '\tdef', 'a\nb'])('still rejects a title with a newline or tab at the edge: %j', async (title) => {
+    const { app, storage, id } = await setup();
+    const before = storage.drafts.get(id)?.title;
+    expect((await patch(app, id, { title })).status).toBe(400);
+    expect(storage.drafts.get(id)?.title).toBe(before);
+  });
+
+  it('rebuilds the automatic body on the next receive after a reset, but not while it stays edited', async () => {
+    const { app, storage, id } = await setup();
+    await patch(app, id, { body: 'my own text' });
+    await receiveAgain(app);
+    expect(storage.drafts.get(id)?.body).toBe('my own text');
+    await patch(app, id, { body: '' });
+    await receiveAgain(app);
+    expect(storage.drafts.get(id)?.bodyEditedByUser).toBe(false);
+    expect(storage.drafts.get(id)?.body).toContain('発生回数: 3');
   });
 });
