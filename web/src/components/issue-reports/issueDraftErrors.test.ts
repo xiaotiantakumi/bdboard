@@ -41,7 +41,15 @@ describe('describeIssueDraftEditError (bdboard-4y8q.3.2)', () => {
       STORAGE_FULL_HELP,
     );
     expect(describeIssueDraftEditError(apiError(404, { error: 'draft not found' }))).toContain('見つかりません');
-    expect(describeIssueDraftEditError(apiError(400, { error: 'invalid request body' }))).toContain('1 行');
+    expect(describeIssueDraftEditError(apiError(400, { error: 'invalid request body' }))).toBe(
+      '題名は 1 行で、改行・タブなどの制御文字や見えない書式文字を含めないでください。',
+    );
+  });
+
+  // bdboard-pvff: 見える文字が無い題名・本文は、400 ではなく自動生成へ戻る (bdboard-ov0t)。400 になるのは、見える文字があるのに
+  // 改行・制御文字・見えない書式文字を含む題名だけなので、「見える文字を含めてください」とは言わない。
+  it('does not ask for visible characters on a 400 of an edit (an empty title resets to the generated text)', () => {
+    expect(describeIssueDraftEditError(apiError(400, { error: 'invalid request body' }))).not.toContain('見える文字');
   });
 
   it('reuses the tunnel write help for a 403', () => {
