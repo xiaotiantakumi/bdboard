@@ -20,8 +20,12 @@ import {
   findInvisibleChars,
   isDirectRun,
   isTargetPath,
+  sourceEncoding,
   main,
 } from './check-invisible-chars.mjs';
+import { isEmojiVariationSelector, isVariationSelector } from './check-invisible-chars/chars.mjs';
+import { fixAdvice } from './check-invisible-chars/advice.mjs';
+import { adviceKind } from './check-invisible-chars/targets.mjs';
 import { RM_OPTIONS, useQuietGitProcessEnv } from './test-support/quiet-git.mjs';
 
 const SCRIPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-invisible-chars.mjs');
@@ -53,6 +57,7 @@ const BIDI = [0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x
 const ZERO_WIDTH = [0x200b, 0x200c, 0x200d, 0x2060, 0xfeff];
 // bdboard-rqzv で足した集合: 見えない識別子・書式文字・行/段落区切り・タグ文字。
 const SOFT_HYPHEN_AND_FILLERS = [0x00ad, 0x115f, 0x1160, 0x180e, 0x3164, 0xffa0];
+const NEW_CHARS = [0x034f, 0x17b4, 0x17b5, 0x180b, 0x180c, 0x180d, 0x180f];
 const INVISIBLE_OPERATORS = range(0x2061, 0x2064);
 const DEPRECATED_FORMAT = range(0x206a, 0x206f);
 const LINE_PARAGRAPH_SEPARATORS = [0x2028, 0x2029];
@@ -60,7 +65,7 @@ const TAGS_BLOCK = range(0xe0000, 0xe007f);
 const ADDED_BMP = [...SOFT_HYPHEN_AND_FILLERS, ...INVISIBLE_OPERATORS, ...DEPRECATED_FORMAT, ...LINE_PARAGRAPH_SEPARATORS];
 
 describe('findInvisibleChars', () => {
-  it.each([...BIDI, ...ZERO_WIDTH, ...ADDED_BMP, 0xe0000, 0xe0001, 0xe0020, 0xe007e, 0xe007f].map((codePoint) => [
+  it.each([...BIDI, ...ZERO_WIDTH, ...ADDED_BMP, ...NEW_CHARS, 0xe0000, 0xe0001, 0xe0020, 0xe007e, 0xe007f].map((codePoint) => [
     hex(codePoint),
     codePoint,
   ]))('flags a literal %s with its line, column and code point', (_label, codePoint) => {
@@ -74,8 +79,8 @@ describe('findInvisibleChars', () => {
     expect(findInvisibleChars(text).map((finding) => finding.codePoint)).toEqual(TAGS_BLOCK.map(hex));
   });
 
-  it('does not flag the neighbours of the added ranges (U+2800 braille blank is visible, U+2065 / U+E0080 / U+E0100 are outside)', () => {
-    for (const codePoint of [0x2800, 0x2065, 0xe0080, 0xe0100, 0xdffff, 0x00ac, 0x00ae, 0x115e, 0x1161, 0x3163, 0x3165, 0xff9f, 0xffa1]) {
+  it('does not flag the neighbours of the added ranges (U+2800 braille blank is visible; plane 14 ends at U+E0FFF)', () => {
+    for (const codePoint of [0x2800, 0x205f, 0xffef, 0x1bc9f, 0x1bca4, 0x1d172, 0x1d17b, 0xe1000, 0xdffff, 0x00ac, 0x00ae, 0x034e, 0x0350, 0x17b3, 0x17b6, 0x180a, 0x1810, 0x115e, 0x1161, 0x3163, 0x3165, 0xff9f, 0xffa1]) {
       expect(findInvisibleChars(`a${cp(codePoint)}b`)).toEqual([]);
     }
   });
@@ -127,8 +132,37 @@ describe('findInvisibleChars', () => {
     ]);
   });
 
-  it('does not flag ordinary non-ASCII text, emoji, variation selectors or NBSP', () => {
-    expect(findInvisibleChars('日本語のコメント 👩 \u00A0 \uFE0F ★ é\n')).toEqual([]);
+  it('does not flag ordinary non-ASCII text, emoji or NBSP', () => {
+    expect(findInvisibleChars('日本語のコメント 👩 \u00A0 ★ é\n')).toEqual([]);
+  });
+});
+
+describe('variation selectors', () => {
+  it.each([
+    [0x26a0, 0xfe0f, undefined, true], [0x2764, 0xfe0f, undefined, true],
+    [0xa9, 0xfe0f, undefined, true], [0x26a0, 0xfe0e, undefined, true],
+    [0x1f441, 0xfe0f, undefined, true], [0x31, 0xfe0f, 0x20e3, true],
+    [0x23, 0xfe0f, 0x20e3, true], [0x2a, 0xfe0f, 0x20e3, true],
+    [0x61, 0xfe0f, undefined, false], [0x22, 0xfe0e, undefined, false],
+    [undefined, 0xfe0f, undefined, false], [0x1f441, 0xfe00, undefined, false],
+    [0x1f441, 0xe0100, undefined, false], [0x31, 0xfe0f, 0x61, false],
+    [0x61, 0xfe0f, 0x20e3, false], [0x31, 0xfe0e, 0x20e3, false],
+  ])('emoji exception for %s / %s / %s is %s', (previous, codePoint, next, expected) => expect(isEmojiVariationSelector(codePoint, previous, next)).toBe(expected));
+
+  it.each([[0xfdff, false], [0xfe00, true], [0xfe0f, true], [0xfe10, false], [0xe00ff, false], [0xe0100, true], [0xe01ef, true], [0xe01f0, false]])('range boundary U+%s', (codePoint, expected) => expect(isVariationSelector(codePoint)).toBe(expected));
+
+  it('permits emoji presentation selectors and keycaps, but detects other selectors', () => {
+    for (const text of [cp(0x26a0) + cp(0xfe0f) + ' ', cp(0x2764) + cp(0xfe0f), cp(0xa9) + cp(0xfe0f), cp(0x26a0) + cp(0xfe0e), '1' + cp(0xfe0f) + cp(0x20e3), '#' + cp(0xfe0f) + cp(0x20e3), '*' + cp(0xfe0f) + cp(0x20e3)]) expect(findInvisibleChars(text)).toEqual([]);
+    expect(findInvisibleChars(cp(0x1f441) + cp(0xfe0f) + cp(0x200d) + cp(0x1f5e8) + cp(0xfe0f)).map((f) => f.codePoint)).toEqual(['U+200D']);
+    for (const text of ['a' + cp(0xfe0f), '"' + cp(0xfe0e), '\n' + cp(0xfe0f), cp(0x1f441) + cp(0xfe00), cp(0x1f441) + cp(0xe0100), '1' + cp(0xfe0f), 'a' + cp(0xfe0f) + cp(0x20e3), '1' + cp(0xfe0e) + cp(0x20e3)]) expect(findInvisibleChars(text).length).toBeGreaterThan(0);
+  });
+
+  it('detects smuggled selector runs and keeps UTF-16 columns', () => {
+    const run = range(0xe0100, 0xe0107).map(cp).join('');
+    expect(findInvisibleChars('"' + run + '"').map((f) => [f.column, f.codePoint])).toEqual(range(0, 7).map((n) => [n * 2 + 2, hex(0xe0100 + n)]));
+    expect(findInvisibleChars(cp(0x1f441) + cp(0xfe0f) + cp(0xfe0f)).map((f) => f.column)).toEqual([4]);
+    expect(findInvisibleChars('a' + range(0xfe00, 0xfe0f).map(cp).join('')).length).toBe(16);
+    expect(findInvisibleChars(cp(0x1f441) + cp(0xfe0f) + cp(0x200b))).toEqual([{ line: 1, column: 4, codePoint: 'U+200B' }]);
   });
 });
 
@@ -139,6 +173,16 @@ describe('isTargetPath', () => {
     'web/src/a.ts',
     'web/src/components/A.tsx',
     'scripts/a.mjs',
+    'scripts/always-on-server.sh',
+    'scripts/a.sh',
+    '.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh',
+    '.claude/skills/x/scripts/a.sh',
+    'harness/packs/bdboard-harness/hooks/a.sh',
+    'test/e2e/fixtures/bin/bd',
+    'test/e2e/fixtures/bin/claude',
+    '.github/workflows/ci.yml',
+    '.github/workflows/a.yaml',
+    '.github/dependabot.yml',
     'scripts/test-support/quiet-git.d.mts',
     'scripts/a.cjs',
     'src/a.js',
@@ -162,12 +206,15 @@ describe('isTargetPath', () => {
 
   it.each([
     'docs/a.ts',
+    'docs/a.sh', 'web/a.sh', 'src/a.sh', 'bin/a.sh', 'a.sh',
+    '.claude/skills/x/a.mjs', '.claude/skills/x/SKILL.md', '.claude/worktrees/x/a.sh',
+    'harness/a.mjs', 'harness/packs/x/pack.json', '.github/CODEOWNERS',
+    '.github/workflows/README.md', '.agents/skills/beads/agents/openai.yaml',
+    'workflows/ci.yml', 'test/e2e/fixtures/bd/gate.list.json',
     'test/fixtures/a.ts',
     'test/a.ts',
     'test/e2e/README.md',
-    'test/e2e/fixtures/bin/bd',
     'test/e2e/tsconfig.json',
-    'harness/a.mjs',
     'srcx/a.ts',
     'binx/a.mjs',
     'bin/a.md',
@@ -187,11 +234,26 @@ describe('isTargetPath', () => {
   });
 });
 
+describe('adviceKind', () => {
+  it.each([['x.sh', 'shell'], ['test/e2e/fixtures/bin/bd', 'shell'], ['x.yml', 'yaml'], ['x.yaml', 'yaml'], ['x.ts', 'js'], ['x.mjs', 'js']])('%s is %s', (file, kind) => expect(adviceKind(file)).toBe(kind));
+});
+
+describe('fixAdvice', () => {
+  it.each([['utf8', 'js', 0x202e, 'JSX'], ['utf8', 'shell', 0x202e, "$'"], ['utf8', 'yaml', 0x202e, 'double-quoted'], ['utf16le', 'js', 0x202e, 'UTF-8'], ['utf16be', 'yaml', 0x202e, 'without a BOM'], ['utf8', 'js', 0xfe0f, 'accepted only']])('advice is ASCII for %s/%s', (encoding, kind, codePoint, contains) => { const advice = fixAdvice({ encoding, kind, codePoint }); expect(advice).toContain(contains); expect(advice).toMatch(/^[\x20-\x7E]+$/); });
+});
+
 describe('charName', () => {
   it('names every flagged code point with a plain ASCII label', () => {
-    for (const codePoint of [...BIDI, ...ZERO_WIDTH, ...ADDED_BMP, ...TAGS_BLOCK]) {
+    for (const codePoint of [...BIDI, ...ZERO_WIDTH, ...ADDED_BMP, ...NEW_CHARS, ...TAGS_BLOCK]) {
       expect(charName(codePoint)).toMatch(/^[A-Z0-9][A-Z0-9 ()-]*$/);
     }
+    expect(charName(0x034f)).toBe('COMBINING GRAPHEME JOINER');
+    expect(charName(0x17b4)).toBe('KHMER VOWEL INHERENT AQ');
+    expect(charName(0x17b5)).toBe('KHMER VOWEL INHERENT AA');
+    expect(charName(0x180b)).toBe('MONGOLIAN FREE VARIATION SELECTOR ONE');
+    expect(charName(0x180c)).toBe('MONGOLIAN FREE VARIATION SELECTOR TWO');
+    expect(charName(0x180d)).toBe('MONGOLIAN FREE VARIATION SELECTOR THREE');
+    expect(charName(0x180f)).toBe('MONGOLIAN FREE VARIATION SELECTOR FOUR');
     expect(charName(0x00ad)).toBe('SOFT HYPHEN');
     expect(charName(0x115f)).toBe('HANGUL CHOSEONG FILLER');
     expect(charName(0x1160)).toBe('HANGUL JUNGSEONG FILLER');
@@ -206,7 +268,11 @@ describe('charName', () => {
   it('returns undefined for a code point that is not flagged', () => {
     expect(charName(0x61)).toBeUndefined();
     expect(charName(0x2800)).toBeUndefined();
-    expect(charName(0xe0080)).toBeUndefined();
+    expect(charName(0xe1000)).toBeUndefined();
+    expect(charName(0xe0080)).toBe('RESERVED DEFAULT IGNORABLE');
+    expect(charName(0xfe00)).toBe('VARIATION SELECTOR-1');
+    expect(charName(0xe0100)).toBe('VARIATION SELECTOR-17');
+    expect(charName(0xe01ef)).toBe('VARIATION SELECTOR-256');
   });
 });
 
@@ -218,11 +284,15 @@ describe('escapeForDisplay', () => {
   });
 
   it('writes bidi, zero-width, filler and tag characters as \\u escapes (a file name must not reorder the line it is printed in)', () => {
-    for (const codePoint of [...BIDI, ...ZERO_WIDTH, ...ADDED_BMP, 0xe0000, 0xe0041, 0xe007f]) {
+    for (const codePoint of [...BIDI, ...ZERO_WIDTH, ...ADDED_BMP, ...NEW_CHARS, 0xe0000, 0xe0041, 0xe007f]) {
       const shown = escapeForDisplay(`src/a${cp(codePoint)}b.ts`);
       expect(shown).toBe(`src/a${esc(codePoint)}b.ts`);
       expect(shown).toMatch(/^[\x20-\x7E]+$/);
     }
+  });
+
+  it('escapes variation selectors in file names', () => {
+    expect(escapeForDisplay(`a${cp(0xfe0f)}b`)).toBe('a\\uFE0Fb');
   });
 
   it('escapes control characters (a newline would forge a diagnostic line, ESC would drive the terminal)', () => {
@@ -263,6 +333,12 @@ describe('decodeSource', () => {
   it('copes with empty and one-byte input', () => {
     expect(decodeSource(Buffer.alloc(0))).toBe('');
     expect(decodeSource(Buffer.from([0xff]))).toBe(Buffer.from([0xff]).toString('utf8'));
+    expect(sourceEncoding(utf16le('x'))).toBe('utf16le');
+    expect(sourceEncoding(utf16be('x'))).toBe('utf16be');
+    expect(sourceEncoding(Buffer.from('x'))).toBe('utf8');
+    expect(sourceEncoding(Buffer.from([0xef, 0xbb, 0xbf]))).toBe('utf8');
+    expect(sourceEncoding(Buffer.alloc(0))).toBe('utf8');
+    expect(sourceEncoding(Buffer.from([0xff]))).toBe('utf8');
   });
 });
 
@@ -586,18 +662,27 @@ describe('this repository', () => {
     expect(main([`--repo=${REPO_ROOT}`])).toBe(EXIT_OK);
   });
 
-  // 範囲は TARGET_PREFIXES / TARGET_FILES の明示の一覧なので、新しい設定ファイル (ルートの playwright.config.ts など) を
+  // 範囲は check-invisible-chars/targets.mjs の明示の一覧なので、新しい設定ファイル (ルートの playwright.config.ts など) を
   // 足すと黙って範囲外になる。追跡中のソース拡張子のファイルが全部対象であることをここで固定し、足した人に一覧の更新を促す。
-  it('targets every tracked source file of the repository (add a new config file to TARGET_FILES)', () => {
+  it('targets every tracked source file of the repository (add a new config file to TARGET_FILES in targets.mjs)', () => {
     const tracked = execFileSync('git', ['-c', 'core.quotePath=false', 'ls-files', '-z', '--cached'], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
     })
       .split('\0')
       .filter(Boolean);
-    const sources = tracked.filter((relPath) => /\.(?:ts|tsx|mts|cts|mjs|js|cjs|jsx)$/.test(relPath));
+    const sources = tracked.filter((relPath) => /\.(?:ts|tsx|mts|cts|mjs|js|cjs|jsx|sh)$/.test(relPath));
     expect(sources.length).toBeGreaterThan(0);
     expect(sources.filter((relPath) => !isTargetPath(relPath))).toEqual([]);
+  });
+
+  it('targets all tracked executable files and repository shell and workflow files', () => {
+    const records = execFileSync('git', ['ls-files', '-s', '-z'], { cwd: REPO_ROOT, encoding: 'utf8' }).split('\0').filter(Boolean);
+    const executable = records.map((record) => record.split('\t')[0].split(' ')[0] === '100755' ? record.slice(record.indexOf('\t') + 1) : null).filter(Boolean);
+    expect(executable.filter((relPath) => !isTargetPath(relPath))).toEqual([]);
+    const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: REPO_ROOT, encoding: 'utf8' }).split('\0').filter(Boolean);
+    expect(tracked.filter((file) => /^\.github\/.*\.(?:yml|yaml)$/.test(file) && !isTargetPath(file))).toEqual([]);
+    expect(tracked.filter((file) => /^(?:\.claude\/skills|harness)\/.*\.sh$/.test(file) && !isTargetPath(file))).toEqual([]);
   });
 
   it('wires check:invisible-chars into verify:steps and verify:light', () => {

@@ -46,4 +46,17 @@ describe('wireIssueDraftService + wireIssueReports (main.ts composition)', () =>
     const stored = await createFsIssueDraftStorage(draftsDir).get(draft.id);
     expect(stored?.localOnly.envInfo).toEqual({ bdboardVersion: '9.8.7', os: process.platform, nodeVersion: process.version });
   });
+
+  it.each(['1.2.3', 'unknown'])('includes bdVersion %s in a manual draft', async (bdVersion) => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'bdboard-draft-service-version-'));
+    const draftsDir = path.join(root, 'drafts');
+    const env = { BDBOARD_ISSUE_DRAFTS_DIR: draftsDir };
+    const service = wireIssueDraftService({ repoRoot: root, env, applicationVersion: { getVersion: () => '9.8.7' }, bdVersion: () => bdVersion, log: vi.fn() });
+    const { issueReportsRouter } = wireIssueReports({ repoRoot: root, env, service, writeAccess: {}, packRegistry: { listPacks: vi.fn(() => Promise.resolve([])) }, log: vi.fn() });
+    const res = await issueReportsRouter.request('/api/issue-reports/manual-drafts', { method: 'POST', headers: { 'content-type': 'application/json', host: 'localhost:8787' }, body: JSON.stringify({ title: 'The board hangs', description: 'it froze' }) }, LOCAL_ENV);
+    expect(res.status).toBe(201);
+    const { draft } = (await res.json()) as { draft: { id: string } };
+    const stored = await createFsIssueDraftStorage(draftsDir).get(draft.id);
+    expect(stored?.localOnly.envInfo).toEqual({ bdboardVersion: '9.8.7', os: process.platform, nodeVersion: process.version, bdVersion });
+  });
 });

@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { createIssueDraftService } from '../application/issue-report/issue-draft-service.js';
 import type { IssueDraftService } from '../application/issue-report/issue-draft-service.js';
 import type { ApplicationVersionProvider } from '../application/ports/application-version.js';
+import type { BdVersionSource } from '../application/bd/bd-version-snapshot.js';
 import type { DraftEnvInfo } from '../domain/issue-draft.js';
 import { createFsIssueDraftStorage } from '../infrastructure/fs/fs-issue-draft-storage.js';
 import { resolveIssueDraftsDir } from '../infrastructure/fs/resolve-issue-drafts-dir.js';
@@ -15,13 +16,23 @@ export interface WireIssueDraftServiceDeps {
    * wireIssueReports へ渡すので、ここで渡し忘れると手書きの下書きの版が黙って 'unknown' になる。
    */
   readonly applicationVersion: ApplicationVersionProvider;
+  /** main.ts は infra.bdVersion を渡す。渡し忘れると手書きの下書きに bdVersion が入らない。 */
+  readonly bdVersion?: BdVersionSource;
   readonly now?: () => Date;
   readonly log?: (message: string) => void;
 }
 
-/** サーバーが埋める版 (bdboard・OS・Node)。手書きの下書き (4y8q.6.7) と本体エラー (4y8q.6.3) の共通の元。 */
-export function serverEnvInfo(applicationVersion: ApplicationVersionProvider): () => DraftEnvInfo {
-  return () => ({ bdboardVersion: applicationVersion.getVersion(), os: process.platform, nodeVersion: process.version });
+/**
+ * サーバーが埋める版 (bdboard・OS・Node・bd)。手書きの下書き (4y8q.6.7) と本体エラー (4y8q.6.3) の共通の元。
+ * bd の版 (bdboard-424g) は起動時に 1 回読んだ結果の getter (読めない・まだなら 'unknown')。渡さなければ bdVersion のキーは入れない (テスト用の経路)。
+ */
+export function serverEnvInfo(applicationVersion: ApplicationVersionProvider, bdVersion?: BdVersionSource): () => DraftEnvInfo {
+  return () => ({
+    bdboardVersion: applicationVersion.getVersion(),
+    os: process.platform,
+    nodeVersion: process.version,
+    ...(bdVersion !== undefined ? { bdVersion: bdVersion() } : {}),
+  });
 }
 
 export function wireIssueDraftService(deps: WireIssueDraftServiceDeps): IssueDraftService {
@@ -34,7 +45,7 @@ export function wireIssueDraftService(deps: WireIssueDraftServiceDeps): IssueDra
     // 添付画像と同じ採番規約: <epochMs>-<16桁hex> (ソート可能・衝突耐性・パスとして安全)。
     newId: () => `${Date.now()}-${randomBytes(8).toString('hex')}`,
     // 手書きの下書きの envInfo はサーバーが埋める (画面からは受けない)。
-    envInfo: serverEnvInfo(deps.applicationVersion),
+    envInfo: serverEnvInfo(deps.applicationVersion, deps.bdVersion),
   });
   void service.pruneOnStart().catch((error: unknown) => {
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
