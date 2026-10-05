@@ -4,6 +4,7 @@ import {
   REFRESH_ERROR_MAX_KEYS_PER_PROJECT,
   REFRESH_ERROR_TRANSIENT_THRESHOLD,
   createRefreshErrorTracker,
+  selfErrorKey,
 } from './refresh-error-tracker.js';
 import type { RefreshErrorInput, RefreshErrorProject } from './refresh-error-tracker.js';
 import { createSelfErrorThrottle } from './self-error-throttle.js';
@@ -38,8 +39,8 @@ const result = (
 ): RefreshErrorInput => ({ errors, refreshed, removed });
 
 describe('constants', () => {
-  it('reports only the deterministic kinds at once; every other kind needs three sightings in a row', () => {
-    expect(REFRESH_ERROR_IMMEDIATE_KINDS).toEqual(['schema-mismatch', 'not-a-beads-project']);
+  it('reports only the deterministic kind at once; every other kind needs three sightings in a row', () => {
+    expect(REFRESH_ERROR_IMMEDIATE_KINDS).toEqual(['schema-mismatch']);
     expect(REFRESH_ERROR_TRANSIENT_THRESHOLD).toBe(3);
     expect(REFRESH_ERROR_MAX_KEYS_PER_PROJECT).toBe(20);
   });
@@ -66,22 +67,36 @@ describe('an error that keeps appearing', () => {
   it('describes the report with the source, the masked text and the project', () => {
     const tracker = createRefreshErrorTracker();
     const [report] = tracker.observe(
-      result([err('alpha', 'not-a-beads-project', 'database "alpha-project" not found on dolt server at 127.0.0.1:3307')]),
+      result([err('alpha', 'schema-mismatch', 'database "alpha-project" not found on dolt server at 127.0.0.1:3307')]),
       projects,
       at(0),
     );
     expect(report).toEqual({
-      source: 'bd-refresh:not-a-beads-project',
+      source: 'bd-refresh:schema-mismatch',
       errorText: 'database "<project>" not found on dolt server at 127.0.0.1:3307',
       project: { name: 'alpha-project', path: '/work/alpha' },
     });
   });
 
-  it('reports the deterministic kinds at the first sighting', () => {
-    for (const kind of ['schema-mismatch', 'not-a-beads-project']) {
-      const tracker = createRefreshErrorTracker();
-      expect(tracker.observe(result([err('alpha', kind)]), projects, at(0))).toHaveLength(1);
-    }
+  it('reports the deterministic kind (schema-mismatch) at the first sighting', () => {
+    const tracker = createRefreshErrorTracker();
+    expect(tracker.observe(result([err('alpha', 'schema-mismatch')]), projects, at(0))).toHaveLength(1);
+  });
+
+  // classifyBdError は出力に `beads directory` があるだけでこの種類にする (bd の警告や `bd init` の最中にも当たる) ので、決定的とは見ない。
+  it('makes not-a-beads-project wait for three sightings in a row, like the other kinds that can be transient', () => {
+    const tracker = createRefreshErrorTracker();
+    const seen = result([err('alpha', 'not-a-beads-project', 'beads directory not set')]);
+    expect(tracker.observe(seen, projects, at(0))).toEqual([]);
+    expect(tracker.observe(seen, projects, at(1))).toEqual([]);
+    expect(tracker.observe(seen, projects, at(2))).toEqual([
+      { source: 'bd-refresh:not-a-beads-project', errorText: 'beads directory not set', project: { name: 'alpha-project', path: '/work/alpha' } },
+    ]);
+    // 1 回きりで消えれば、下書きにならない。
+    const once = createRefreshErrorTracker();
+    expect(once.observe(seen, projects, at(0))).toEqual([]);
+    expect(once.observe(result([], ['alpha']), projects, at(1))).toEqual([]);
+    expect(once.observe(result([], ['alpha']), projects, at(2))).toEqual([]);
   });
 
   it('keeps different kinds, and different texts, apart', () => {
@@ -95,10 +110,10 @@ describe('an error that keeps appearing', () => {
       projects,
       at(0),
     );
+    // not-a-beads-project は 1 回目では報告されない。schema-mismatch は文ごとに別の報告。
     expect(reports.map((report) => `${report.source}:${report.errorText}`)).toEqual([
       'bd-refresh:schema-mismatch:one',
       'bd-refresh:schema-mismatch:two',
-      'bd-refresh:not-a-beads-project:one',
     ]);
   });
 
@@ -305,16 +320,55 @@ describe('a connection refused to the Dolt server (kind unknown, bdboard-f2ob)',
     expect(throttle.size()).toBe(0);
   });
 
-  it('is counted per text: a failure with a different text starts its own count', () => {
+  it('is counted per kind: three failed refreshes in a row are reported once even when the text changes in between', () => {
     const tracker = createRefreshErrorTracker();
     const other = result([err('alpha', 'unknown', 'something else broke')]);
-    tracker.observe(failing(), projects, at(0));
-    tracker.observe(other, projects, at(1));
-    tracker.observe(failing(), projects, at(2));
-    // refused は 3 回目に届いたが、間に別の文が挟まっても数えは途切れない (キーごとに数える。6.2 の既知の限界 (2))。
-    expect(tracker.observe(failing(), projects, at(3))).toHaveLength(1);
-    // 別の文はこれが 2 回目 (数えは文ごと) なので、まだ報告されない。
-    expect(tracker.observe(other, projects, at(4))).toEqual([]);
+    expect(tracker.observe(failing(), projects, at(0))).toEqual([]);
+    expect(tracker.observe(other, projects, at(1))).toEqual([]);
+    // unknown の失敗が 3 回続いたこの回に、いま見えている文で 1 回だけ報告する。
+    expect(tracker.observe(failing(), projects, at(2))).toEqual([
+      { source: 'bd-refresh:unknown', errorText: refused(60995), project: { name: 'alpha-project', path: '/work/alpha' } },
+    ]);
+    // 続いている間は、新しい文が出ても報告しない (文が毎回ずれる失敗で、更新ごとに下書きが増えないように)。
+    expect(tracker.observe(other, projects, at(3))).toEqual([]);
+    expect(tracker.observe(failing(), projects, at(4))).toEqual([]);
+  });
+});
+
+// 文の一部が実行ごとに変わり、normalizeErrorText でも寄らない失敗 (bd が Go の panic で落ちたときの pc=0x… はアドレス空間の配置の
+// ランダム化で毎回変わる)。キーごとに数えると 3 回に届かず、続いていても報告されない (bdboard-f2ob のレビュー)。
+describe('a failure whose text changes on every refresh in a way normalizeErrorText cannot fold', () => {
+  const panic = (pc: string): Err =>
+    err('alpha', 'unknown', `panic: runtime error: invalid memory address or nil pointer dereference [signal sigsegv: segmentation violation code=0x2 addr=0x0 pc=${pc}]`);
+  const pcs = ['0x1029f4b2c', '0x104ab4b2c', '0x10c3e8b2c', '0x10de14b2c', '0x1077a0b2c', '0x101fe8b2c'];
+
+  it('really does not fold (so a count per text would never reach three)', () => {
+    const keys = new Set(pcs.map((pc) => panic(pc).detail).map((detail) => selfErrorKey('unknown', detail)));
+    expect(keys.size).toBe(pcs.length);
+  });
+
+  it('is reported once, on the third failed refresh in a row, and not again while it lasts', () => {
+    const tracker = createRefreshErrorTracker();
+    const counts = pcs.map((pc, round) => tracker.observe(result([panic(pc)]), projects, at(round * 5 * MINUTE)).length);
+    expect(counts).toEqual([0, 0, 1, 0, 0, 0]);
+  });
+
+  it('is not reported when it goes away after two refreshes, and starts a new run after a success', () => {
+    const tracker = createRefreshErrorTracker();
+    tracker.observe(result([panic(pcs[0] ?? '')]), projects, at(0));
+    tracker.observe(result([panic(pcs[1] ?? '')]), projects, at(1));
+    expect(tracker.observe(result([], ['alpha']), projects, at(2))).toEqual([]);
+    expect(tracker.observe(result([panic(pcs[2] ?? '')]), projects, at(3))).toEqual([]);
+    expect(tracker.observe(result([panic(pcs[3] ?? '')]), projects, at(4))).toEqual([]);
+    expect(tracker.observe(result([panic(pcs[4] ?? '')]), projects, at(5))).toHaveLength(1);
+  });
+
+  it('does not join different kinds into one run', () => {
+    const tracker = createRefreshErrorTracker();
+    const counts = ['timeout', 'lock-contention', 'unknown', 'timeout', 'lock-contention'].map(
+      (kind, round) => tracker.observe(result([err('alpha', kind, `failed ${String.fromCharCode(0x61 + round)}`)]), projects, at(round)).length,
+    );
+    expect(counts).toEqual([0, 0, 0, 0, 0]);
   });
 });
 
@@ -461,8 +515,10 @@ describe('options and limits', () => {
     expect(reports(Array.from({ length: 21 }, (_, index) => timeout(index)), 0)).toBe(0);
     // 2 回目: b は 2 回目、a は数え直しの 1 回目 (足したところで c が捨てられる)。
     expect(reports([timeout(1), timeout(0)], 1)).toBe(0);
-    // 3 回目: b は 3 回目で報告、a は 2 回目。捨てられていなければ a も 3 回目になって 2 件になる。
-    expect(reports([timeout(1), timeout(0)], 2)).toBe(1);
+    // 3 回目: timeout の失敗の連続がここで 3 回に届き、この回に見えた別の文 (v) だけが報告される (kind ごとの数え)。
+    expect(reports([timeout(21)], 2)).toBe(1);
+    // 4 回目: b は 3 回目で報告、a は 2 回目。捨てられていなければ a も 3 回目になって 2 件になる。
+    expect(reports([timeout(1), timeout(0)], 3)).toBe(1);
   });
 
   it('handles a very long detail without shortening the reported text', () => {

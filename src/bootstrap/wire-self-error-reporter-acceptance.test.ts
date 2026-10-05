@@ -86,7 +86,7 @@ describe('self error drafts from refresh failures (acceptance, real service and 
     expect(first[0]?.occurrenceCount).toBe(1);
     expect(outcomes).toEqual(['created']);
 
-    // 下書きになったのは 3 回目 (2 分後) なので、次の報告は 1 時間後の 62 分以降 (kind unknown は 3 回続けて見えてから。bdboard-f2ob)。
+    // 下書きになったのは 3 回目 (2 分後) なので、次の報告は 62 分以降 (kind unknown は 3 回続けて見えてから。bdboard-f2ob)。余裕を見て 63 分に流す。
     clock.at = START + HOUR + 3 * 60_000;
     await wired.reporter.observeRefresh(failure(), [PROJECT]);
     const second = (await real.listWithPendingCount()).drafts;
