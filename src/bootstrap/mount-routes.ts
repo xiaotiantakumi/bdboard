@@ -70,7 +70,7 @@ export interface MountRoutesDeps {
 export function mountRoutes(app: Hono, deps: MountRoutesDeps): void {
   mountSecurityMiddleware(app, deps.security);
   app.use('*', createCompressionMiddleware());
-  // 圧縮の内側 (後から登録したものが内側): 圧縮前の本文が見える位置で 5xx を拾う。認証・CSRF の後なので、拒否された要求は拾わない。
+  // 圧縮の内側 (後から登録したものが内側): 圧縮前の本文が見える位置で 5xx を拾う。認証の後なので、認証で拒否された要求は拾わない (CSRF・書き込みのガードはルーターの中 = 内側だが、4xx なので拾わない)。
   if (deps.selfErrorReporter !== undefined) {
     app.use('*', createServerErrorCapture({ reporter: deps.selfErrorReporter }));
   }

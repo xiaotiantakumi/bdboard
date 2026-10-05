@@ -30,8 +30,11 @@ const CAPTURE_TIMEOUT_MS = 2_000;
 const NOT_REPORTED_STATUSES: readonly number[] = [501, 507];
 /** 受け取り口そのものの失敗を、また受け取り口へ送らない (再帰の防止)。 */
 const ISSUE_REPORTS_PREFIX = '/api/issue-reports';
-/** 状態コードと `error` のラベルだけを取り込む領域 (接続の URL・認証・会話の本文が本文や例外に入りうる)。 */
-const LABEL_ONLY_PREFIXES: readonly string[] = ['/api/tunnel', '/api/chat'];
+/**
+ * 状態コードと `error` のラベルだけを取り込む領域。接続の URL・認証・会話の本文 (tunnel・chat)、
+ * エージェントへの指示・会話・作業のパス (runs・sessions) が本文や例外に入りうる。
+ */
+const LABEL_ONLY_PREFIXES: readonly string[] = ['/api/tunnel', '/api/chat', '/api/runs', '/api/sessions'];
 const LABEL_PATTERN = /^[A-Za-z0-9 _,'-]{1,80}$/;
 const ERROR_NAME_PATTERN = /^[A-Za-z0-9_$]{1,60}$/;
 
@@ -132,7 +135,9 @@ async function capture(c: Context, reporter: ServerErrorCaptureDeps['reporter'],
   if (NOT_REPORTED_STATUSES.includes(status) || pathHasPrefix(c.req.path, ISSUE_REPORTS_PREFIX)) return 'skipped';
   const labelOnly = LABEL_ONLY_PREFIXES.some((prefix) => pathHasPrefix(c.req.path, prefix));
   const errorText = await describeFailure(c, status, labelOnly, nonErrorThrown);
-  return reporter.report({ source: selfErrorApiSource(c.req.method, matchedRoute(c)), errorText });
+  // Hono は HEAD を GET の handler で答える。同じ失敗を `api:HEAD` の別の source (別の間引きのキー・別の下書き) に分けない。
+  const method = c.req.method === 'HEAD' ? 'GET' : c.req.method;
+  return reporter.report({ source: selfErrorApiSource(method, matchedRoute(c)), errorText });
 }
 
 /** capture を、時間の上限つきで・決して reject せずに待つ。 */
@@ -157,6 +162,8 @@ export function createServerErrorCapture(deps: ServerErrorCaptureDeps): Middlewa
     try {
       await next();
     } catch (error) {
+      // ここへ来た値は serverErrorHandler を通っていない (ログに出ていない)。
+      console.error(error);
       if (error instanceof Error) c.error = error;
       else nonErrorThrown = true;
       c.res = c.json({ error: 'internal error' }, 500);

@@ -169,7 +169,7 @@ describe('createServerErrorCapture', () => {
     expect(report).not.toHaveBeenCalled();
   });
 
-  it('takes only the status and the error label under /api/tunnel and /api/chat (never the body or the exception text)', async () => {
+  it('takes only the status and the error label under /api/tunnel, /api/chat, /api/runs and /api/sessions (never the body or the exception text)', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { reporter, report } = fakeReporter();
     const app = buildApp(reporter);
@@ -181,7 +181,18 @@ describe('createServerErrorCapture', () => {
       throw new RangeError('transcript: example-secret conversation');
     });
     app.post('/api/chat/messages', (c) => c.json({ error: 'chat failed', code: 'agent-error', detail: 'example-secret prompt' }, 502));
-    for (const path of ['/api/tunnel/start', '/api/tunnel/leaky', '/api/chat/threads', '/api/chat/messages']) {
+    app.post('/api/runs', (c) => c.json({ error: 'run failed', detail: 'example-secret instruction in /Users/example-user/repo' }, 500));
+    app.post('/api/sessions/s1/messages', () => {
+      throw new TypeError('session example-secret conversation');
+    });
+    for (const path of [
+      '/api/tunnel/start',
+      '/api/tunnel/leaky',
+      '/api/chat/threads',
+      '/api/chat/messages',
+      '/api/runs',
+      '/api/sessions/s1/messages',
+    ]) {
       await app.request(path, { method: 'POST' });
     }
     expect(report.mock.calls.map(([input]) => input)).toEqual([
@@ -189,6 +200,8 @@ describe('createServerErrorCapture', () => {
       { source: 'api:POST /api/tunnel/leaky', errorText: 'HTTP 500' },
       { source: 'api:POST /api/chat/threads', errorText: 'HTTP 500\nRangeError' },
       { source: 'api:POST /api/chat/messages', errorText: 'HTTP 502\nerror: chat failed' },
+      { source: 'api:POST /api/runs', errorText: 'HTTP 500\nerror: run failed' },
+      { source: 'api:POST /api/sessions/s1/messages', errorText: 'HTTP 500\nTypeError' },
     ]);
     expect(JSON.stringify(report.mock.calls)).not.toContain('example-secret');
   });
@@ -210,6 +223,7 @@ describe('createServerErrorCapture', () => {
   });
 
   it('answers a non-Error throw with the same 500 JSON and reports it', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { reporter, report } = fakeReporter();
     const app = buildApp(reporter);
     app.get('/api/string-throw', () => {
@@ -220,6 +234,17 @@ describe('createServerErrorCapture', () => {
     expect(await res.json()).toEqual({ error: 'internal error' });
     expect(res.headers.get(ERROR_DRAFT_HEADER)).toBe('recorded');
     expect(report.mock.calls[0]?.[0]).toEqual({ source: 'api:GET /api/string-throw', errorText: 'HTTP 500\nnon-Error value thrown' });
+    expect(consoleError).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a HEAD failure under the GET source (the GET handler answered it)', async () => {
+    const { reporter, report } = fakeReporter();
+    const app = buildApp(reporter);
+    app.get('/api/fail', (c) => c.json({ error: 'failed' }, 500));
+    const res = await app.request('/api/fail', { method: 'HEAD' });
+    expect(res.status).toBe(500);
+    expect(res.headers.get(ERROR_DRAFT_HEADER)).toBe('recorded');
+    expect(report.mock.calls[0]?.[0].source).toBe('api:GET /api/fail');
   });
 
   it.each<SelfErrorReportOutcome>(['recorded', 'throttled', 'skipped'])('passes the reporter outcome %s through as the header', async (outcome) => {
@@ -251,5 +276,6 @@ describe('createServerErrorCapture', () => {
     const res = await pending;
     expect(res.status).toBe(500);
     expect(res.headers.get(ERROR_DRAFT_HEADER)).toBe('skipped');
+    expect(await res.json()).toEqual({ error: 'failed' });
   });
 });

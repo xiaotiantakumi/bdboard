@@ -997,7 +997,7 @@ function normalizeErrorText(text: string): string {
 
 | 部品 | 役割 |
 |---|---|
-| `createSelfErrorReporter({service, throttle, listProjects, envInfo, log, now?})` | `report({source, errorText, agentNote?, project?})`(伏せる → 間引く → `receive` を待たずに呼ぶ)と `observeRefresh(result, projects)`(6.2 の tracker が選んだ報告をそのまま `receive` へ)。どちらも返す Promise は **reject しない**(呼び出し側は `void` で捨ててよい) |
+| `createSelfErrorReporter({service, throttle, listProjects, envInfo, log, now?})` | `report({source, errorText, agentNote?, project?})`(伏せる → 間引く → `receive` を待たずに呼ぶ。**4y8q.6.4 で変わった**: `receive` の完了を待ち、`'recorded' | 'throttled' | 'skipped'` を返す。下の「本体エラーの取り込み」の逸脱表 2)と `observeRefresh(result, projects)`(6.2 の tracker が選んだ報告をそのまま `receive` へ)。どちらも返す Promise は **reject しない**(呼び出し側は `void` で捨ててよい) |
 | `createRefreshResultObserver({discovery, cache, onResult, logError})`(`src/application/board/refresh-result-observer.ts`) | `discover()` の結果を覚える包みと、結果 1 回ごとの `onResult(result, projects)` の呼び出し(投げない) |
 | `wireSelfErrorReporter` | throttle・envInfo(`serverEnvInfo`)・停止の環境変数をつないで、`reporter` と `onRefreshResult` を返す(止めているときは両方 `undefined`) |
 
@@ -1067,14 +1067,14 @@ API が 500 番台を返したときと、handler が投げた例外を、種類
 | `createServerErrorCapture({reporter})`(`src/interface/http/server-error-capture.ts`) | middleware。`await next()` の後で status >= 500 を拾い、`report()` を呼び、応答に `X-Bdboard-Error-Draft` を足す。応答の中身は作り替えない |
 | `serverErrorHandler`(同じファイル) | `app.onError` に付ける。500 の JSON `{"error":"internal error"}` を返す(stack・message は応答に入れない。`console.error(error)` は今までどおり)。`HTTPException` は Hono の既定と同じく、その応答をそのまま返す |
 | `src/domain/self-error-source.ts` | `report()` が受け付ける source の閉じた語彙 (`selfErrorApiSource` で組み、`isReportableSelfErrorSource` で検査する) |
-| `mountRoutes` の `selfErrorReporter?`(`src/bootstrap/mount-routes.ts`) | 渡されたときだけ middleware を **compression の内側**(圧縮前の本文が見える位置。セキュリティの middleware の後なので、認証・CSRF で止めた要求は拾わない)に mount する。`app.onError` は渡されなくても付ける。`main.ts` は `wireSelfErrorReporter` の `reporter` を渡すだけ |
+| `mountRoutes` の `selfErrorReporter?`(`src/bootstrap/mount-routes.ts`) | 渡されたときだけ middleware を **compression の内側**(圧縮前の本文が見える位置。セキュリティの middleware の後なので、認証で止めた要求は拾わない。CSRF・書き込みのガードはルーターの中(内側)だが、4xx なので拾わない)に mount する。`app.onError` は渡されなくても付ける。`main.ts` は `wireSelfErrorReporter` の `reporter` を渡すだけ |
 
 **拾う条件**: 応答の status が 500 以上。次は拾わない(応答にはヘッダー `skipped` を付ける): 501(未対応の機能)・507(下書きの保存先がいっぱい)・パスが `/api/issue-reports` で始まるもの
 (受け取り口そのものの失敗を、また受け取り口へ送らない再帰の防止。大小を無視した前方一致で、広めに止める側)。`text/event-stream` の応答は status にかかわらず**触らない**(拾わない・ヘッダーも付けない。本文の流れを作り直さないため)。
 status が 500 未満の応答にもヘッダーは付けない。
 
 **source**: `api:<METHOD> <route>`(例 `api:GET /api/tickets/:id{.+}`)。`<route>` は Hono に登録したルートのパターンで、リクエストのパスではない(具体的なチケット ID は入らない)。
-メソッドは `GET POST PUT PATCH DELETE HEAD OPTIONS` のどれか(ほかは `OTHER`)、ルートは `[A-Za-z0-9_.:/*{}+?()[]\^$|,-]` だけの `/` 始まりか `*`(形が合わなければ `(unknown route)`)、全体で 200 文字まで。
+メソッドは `GET POST PUT PATCH DELETE HEAD OPTIONS` のどれか(ほかは `OTHER`。middleware は `HEAD` を `GET` として渡す。Hono は HEAD を GET の handler で答えるので、同じ失敗を別の source に分けない)、ルートは `[A-Za-z0-9_.:/*{}+?()[]\^$|,-]` だけの `/` 始まりか `*`(形が合わなければ `(unknown route)`)、全体で 200 文字まで。
 下書きの指紋は `C:<source>:<伏せたエラー文の寄せたハッシュ>`、題名は `[bdboard 本体] <source>`。
 
 **errorText(手元の `errorTextRaw` に入る文)**:
@@ -1083,14 +1083,14 @@ status が 500 未満の応答にもヘッダーは付けない。
 |---|---|
 | handler が投げた `Error`(`c.error`) | `HTTP <status>` と、`name: message` と stack(16KB まで) |
 | JSON の応答(例外ではない 5xx。`respondBdError` の 502 など) | `HTTP <status>`、`error: <error>`、`detail: <detail>`(本文が 16KB 以下のときだけ読む。`c.res.clone()` の複製を読み、元の応答は消費しない。超える・JSON でない・壊れているときは `HTTP <status>` だけ) |
-| `/api/tunnel*` と `/api/chat*`(前方一致) | `HTTP <status>` と、`error` のラベル(`[A-Za-z0-9 _,'-]` の 80 文字までのものだけ)または例外のクラス名だけ。`detail`・message・stack・本文のほかの欄は取り込まない(接続の URL・認証・会話の本文が入りうるため) |
+| `/api/tunnel*`・`/api/chat*`・`/api/runs*`・`/api/sessions*`(前方一致) | `HTTP <status>` と、`error` のラベル(`[A-Za-z0-9 _,'-]` の 80 文字までのものだけ)または例外のクラス名だけ。`detail`・message・stack・本文のほかの欄は取り込まない(接続の URL・認証・会話の本文、エージェントへの指示・作業のパスが入りうるため) |
 | `Error` でない値の throw | `HTTP 500` と `non-Error value thrown`(値は入れない) |
 
 errorText は reporter が伏せ(6.2 の `createSelfErrorMasker`)、`selfErrorKey(source, 伏せた文)` で throttle に聞く。同じルートの同じ失敗を 50 回起こしても `receive` は 1 回。
 
 **ヘッダー `X-Bdboard-Error-Draft`**(画面が同じ失敗を二重に報告しないための印): `recorded`(下書きに保存した)・`throttled`(1 時間以内に報告済みで送らなかった)・`skipped`(拾わない種類・形の合わない source・保存できなかった・内部の失敗・時間切れ)。
 `report()` の戻り値が `Promise<'recorded' | 'throttled' | 'skipped'>` になったため、ヘッダーはその値をそのまま使う。**middleware は `report()` の完了を待ってから応答を返す**(保存はディスクの IO を含む)。
-ただし待つのは**最大 2 秒**で、超えたら `skipped` を付けて返す(保存は裏で続くことがある。画面が二重に報告しても、サーバーは指紋で 1 件にまとめる)。`BDBOARD_SELF_ERROR_DRAFTS=off` のときは reporter が無く
+ただし待つのは**最大 2 秒**で、超えたら `skipped` を付けて返す(保存は裏で続くことがあり、この `skipped` は「保存しなかった」とは限らない。画面(4y8q.6.5)の報告は source が違うので指紋も違い、サーバーは 1 件にまとめない。画面は時間切れの `skipped` で二重に報告しうる前提で扱う)。`BDBOARD_SELF_ERROR_DRAFTS=off` のときは reporter が無く
 middleware を mount しないので**ヘッダーは付かない**(`skipped` も付けない)。
 
 **止め方**: 6.3 と同じ `BDBOARD_SELF_ERROR_DRAFTS`(`off` / `0` / `false`)。止めているときは 5xx を拾わず、ヘッダーも付かない。500 の JSON を返す `app.onError` は**止めていても付く**(応答の形は取り込みの設定ではないため)。
@@ -1110,10 +1110,10 @@ middleware を mount しないので**ヘッダーは付かない**(`skipped` �
 | 1 | source のルート | チケットは `routePath(c, -1)`(最後に**一致した**ルート)。実装は **`routePath(c)`**(`await next()` の後の `c.req.routeIndex` = 応答した handler)。末尾に SPA の `app.get('*')` と `serveStatic` が登録されているので、`-1` だと全部の GET が `api:GET /*` になる(実際に試して確かめた。`server-error-capture.test.ts`) |
 | 2 | `report()` の戻り値 | 6.3 の逸脱表 3 の `Promise<void>` は `Promise<'recorded' \| 'throttled' \| 'skipped'>` に変わった(ヘッダーに要る)。決して reject しない約束は同じ。呼び出し側(`observeRefresh` の内部)の扱いは変わらない |
 | 3 | 応答を待たせる | ヘッダーのために `report()` の完了を待つ(上限 2 秒)。チケットは待ち方を決めていない。待たないとヘッダーに `recorded` か `throttled` かを入れられない |
-| 4 | `Error` でない throw | チケットの `app.onError` は `Error` しか受けない(Hono は `Error` でない throw を `onError` に渡さず、@hono/node-server の text の 500 になる)。middleware が受けて同じ 500 の JSON にし、同じく拾う |
+| 4 | `Error` でない throw | チケットの `app.onError` は `Error` しか受けない(Hono は `Error` でない throw を `onError` に渡さず、@hono/node-server の本文の無い 500 になり、ログにも出ない)。middleware が受けて `console.error` に出し、同じ 500 の JSON にし、同じく拾う |
 | 5 | `app.onError` は常に付ける | 取り込みを止めていても付く(上の「止め方」)。以前は Hono の既定(`text/plain` の `Internal Server Error`)だったので、止めていても 500 の応答の形は変わる |
-| 6 | `/api/tunnel*`・`/api/chat*` の例外 | チケットは「状態コードと error のラベルだけ」。例外(`c.error`)の message と stack も、これらのパスでは取り込まず**クラス名だけ**にした(message に URL・認証・会話が入りうるため。本文と同じ扱い) |
-| 7 | 除外パスの一致 | `/api/issue-reports` と `/api/tunnel` と `/api/chat` は、大小を無視した前方一致(`/api/chatter` や `/api/tunnel-x` も該当する)。除外・ラベルだけにする側に倒した |
+| 6 | ラベルだけにするパスと例外 | チケットは `/api/tunnel*`・`/api/chat*` を「状態コードと error のラベルだけ」とした。レビューで、エージェントの実行(`/api/runs*`)とセッション(`/api/sessions*`)も指示・会話・作業のパスを `detail` や例外に含みうるため、同じ扱いに足した。例外(`c.error`)の message と stack も、これらのパスでは取り込まず**クラス名だけ**にした(本文と同じ扱い) |
+| 7 | 除外パスの一致 | `/api/issue-reports` と、ラベルだけにする 4 つ(`/api/tunnel`・`/api/chat`・`/api/runs`・`/api/sessions`)は、大小を無視した前方一致(`/api/chatter` や `/api/tunnel-x` も該当する)。除外・ラベルだけにする側に倒した |
 | 8 | 本文の読み方 | `content-length` が 16KB を超える宣言なら読まない。宣言が無い(`c.json` は付けない)ときは、複製を 16KB を超えるまで読み、超えたら読むのをやめる(`cancel` は待たない。複製(tee)の `cancel` は元の応答も読み終わるまで解決せず、待つと 2 秒の上限まで応答が止まる) |
 | 9 | 限界: 未キャッシュのプロジェクトの Dolt のデータベース名 | (**6.3 の逸脱表 7 の再掲**)discovery の Project は接頭辞が常に `[]` で、接頭辞から作られるデータベース名(`database "epic_haslett_00ae14" not found …`)は、一度もキャッシュに載らないプロジェクトでは伏せられず、`errorTextRaw` に残る。(2) で足したのは名前と根のパスだけ。`dolt_database` の読み取りは 4y8q.4 のまま |
 | 10 | 限界: 新規下書き 20 件/時の共有の枠 | 上の (3)。2 つの形で起きる: ① 伏せられないデータベース名が違う失敗(逸脱表 9)。② **1 つの原因が複数のルートを 5xx にする**(bd が壊れていると、読み取りの API がどれも 502 になる)と、source にルートが入るので**ルートごとに別の下書き**になる。どちらも枠(新規 20 件/時)を使い切ると、残りは 4節の「大量発生」の 1 件に丸め込まれる(本体エラーの下書き全体の枠なので、リフレッシュの失敗も同じ枠から出る)。ルートをまたいで束ねる・API の報告に予算を置く、は 6.4 の範囲外とした(後続の判断) |
