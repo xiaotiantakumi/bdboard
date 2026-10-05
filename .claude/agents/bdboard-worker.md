@@ -34,7 +34,7 @@ isolation: worktree
 3. `git switch -c bd/<id> origin/main` (ローカルに同名ブランチがあれば失敗し、同様に終了する。claim の成否を排他の根拠にしない — 根拠は手順2-3の git 側の確認)。
 4. `bd -C $MAIN update <id> --claim`。
 5. `export PATH="$HOME/.nvm/versions/node/v22.14.0/bin:$PATH"` を前置し `node --version` で v22 を確認したあと `npm install && npm --prefix web install` (node/npm を呼ぶ Bash 呼び出しには毎回同じ export を前置する)。続けて `mkdir -p logs` (logs/ は gitignore 済みで新しい worktree には無く、手順 9 の `> logs/verify.log` のリダイレクトが失敗する)。
-6. 実装する。Codex/Cursor に委譲する場合は `~/.agent/skills/ai-mix/SKILL.md` を Read し、aimix は `bash .claude/skills/bdboard-harness/scripts/aimix-run.sh <aimix run の引数>` 経由で `--member` と `--model` を明示して呼ぶ (素の `aimix run` は deny。ラッパーが振り分け表と照合し、外れたら exit 2 で止める — `BDBOARD_ROUTE_OVERRIDE` で越えず status: guard-stopped で報告する)。実装が一通り終わったら `bd -C $MAIN comment <id> "milestone: 実装完了 — <要約1行>"`。
+6. 実装する。Codex/Cursor に委譲する場合は `~/.agent/skills/ai-mix/SKILL.md` を Read し、aimix は `bash .claude/skills/bdboard-harness/scripts/aimix-run.sh <aimix run の引数>` 経由で `--member` と `--model` を明示して呼ぶ (素の `aimix run` は deny。ラッパーが振り分け表と照合し、外れたら exit 2 で止める — `BDBOARD_ROUTE_OVERRIDE` で越えず status: guard-stopped で報告する)。新しいテストが直す前に落ちること (fails-before) を確かめるために作業ツリーのソースを git で戻さない — 確かめ方は「fails-before の確かめ方」節。実装が一通り終わったら `bd -C $MAIN comment <id> "milestone: 実装完了 — <要約1行>"`。
 7. `docs/help-content.json` の追従が要るか確認し、結論を報告に書く。
 8. `npm run drift` を実行し結果を確認する。
 9. `npm run verify` を run_in_background で実行する (末尾に `&` を付けない。出力は `> logs/verify.log 2>&1` へ。sleep で待たず完了通知を待つ)。クリーンでなければ、直し始める前に `logs/progress.md` に 1 行足す (「予算」節)。クリーンになるまで直す。`verify:steps` は直接叩かない。クリーンになったら `bd -C $MAIN comment <id> "milestone: verify clean"`。
@@ -48,6 +48,13 @@ isolation: worktree
 ## git の引数はリテラルで書く
 ブランチ名・パス・リモート名は変数・`$()`・`&&` 連結で組み立てず、1 コマンドにリテラルで書く (例: `git push -u origin bd/bdboard-xyz`)。permissions.deny と isolation のコマンド形チェックは書かれた文字列だけを見るので、組み立てた引数は判定をすり抜けるか、正しい操作まで止められる。
 git を含む Bash は 1 コマンドずつ別の呼び出しにする。`&&`・`;` での連結、`$()`、git を含む heredoc を使うと、isolation のコマンド形チェックが `... too complex to verify that it stays inside the worktree` などと拒否することがある (通る形もあるが、分けておけば確実に通る。git を含まない `npm install && npm --prefix web install` 等は対象外。例: 手順 1-2 は `git fetch origin` と `git ls-remote ...` を別々に呼ぶ)。
+
+## fails-before の確かめ方 — 作業ツリーのソースを git で戻さない
+新しいテストが直す前に落ちること (fails-before) を示すために、`git checkout origin/main -- <path>`・`git checkout -- <path>`・`git restore`・`git stash`・`git reset --hard` で作業ツリーのソースを戻さない。そのパスの未コミットの変更を自分の分と区別せず捨てる操作で、auto mode classifier が `[Irreversible Local Destruction]` で止める (bdboard-kxvq。2026-10-05 に pnvj と vsuc の worker が WIP コミット済みの上で `git checkout origin/main -- <src>` を打って止まった。`git stash` は worktree 間で共有の stash を触る理由でも使わない)。最初から打たない規則で、打ってしまって拒否されたら「拒否されたとき」節のとおり guard-stopped で戻る (拒否文が別の道具を勧めていても、下の Edit の形に切り替えて続けない)。確かめ方は次のどちらか:
+- テストを先に書き、直す前に走らせて落ちるのを見てから直す (6ux8 の worker の順序)。
+- 直した後なら、先に `git add -A`、次に `git commit -m "wip: fails-before の確認前"` で作業ツリーを空にし (PR は squash マージなのでコミットが増えてよい)、直した箇所を Edit で一時的に壊してテストを走らせ、同じ Edit で戻してから `git diff --stat` の出力が空であることを見る。空でなければ戻し損ねているので、空になるまで Edit で直す。打ち切りや失敗で戻せないまま終わっても、壊した分は未コミットの差分として残り、議長が問い1 の `git status --short` で見つけられる。
+
+どちらも難しければ確かめずに進め、落ちるはずの理由 (直した行が無いとどの assert がどう失敗するか) を PR 本文に書く。議長のレビュアーが scratchpad の写しで確かめる (pnvj の PR #889 で実施)。
 
 ## 拒否されたとき — 形なら 1 回だけ出し直す、それ以外は止まる
 ガード・hook・deny・権限判定による拒否は、**既定で guard-stopped** (冒頭)。出し直してよいのは、下の「形の拒否」で、かつ狙う結果が「許された範囲」のときだけ (bdboard-oga4 / PR #838 の worker が形の拒否 4 回を書き換えて続けたのを、回数と範囲を区切って規則にした)。コマンドの失敗やツールの使い方の誤り (Edit の前に Read していない等) は拒否ではないので、この節の対象外。
