@@ -33,11 +33,13 @@ export async function loadTitleRules() {
 
 /**
  * 件名の問題。無ければ null、あれば理由の文字列の配列 (形とパーサ。両方当たれば両方)。
+ * 形の検査は末尾の ` (#N)` を外した側 (= タイトル) に掛ける: 説明の無いタイトル `feat(x):` は件名にすると
+ * `feat(x): (#N)` になり、(#N) が説明に見えて通ってしまう (置き換えた gate の警告は `: \S` で見ていた)。
  */
 export function subjectProblem(subject, rules) {
   const problems = [];
-  if (!rules.isConventionalSubject(subject)) {
-    problems.push('type(scope): 説明 の形ではありません (type と : の後ろに半角空白が必要です)');
+  if (!rules.isConventionalSubject(subject.replace(/ \(#\d+\)$/, ''))) {
+    problems.push('type(scope): 説明 の形ではありません (type、: の後ろの半角空白、空でない説明が必要です)');
   }
   const parsed = rules.checkCommitMessage(subject);
   if (!parsed.ok) {
@@ -80,7 +82,7 @@ export async function assertConventionalTitle(pull, pr, { phase, loadRules = loa
     fail(
       EXIT.USAGE,
       `PR タイトルの検査規則 (scripts/check-commit-parse.mjs) を読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`,
-      'npm install (worktree のルート) で依存を入れてから、同じコマンドをやり直してください。',
+      'npm install (worktree のルート) で依存を入れてから、同じコマンドをやり直してください (依存が入っているなら scripts/check-commit-parse/ のどこかが壊れています。上のエラーを見てください)。',
     );
   }
   const problems = subjectProblem(subject, rules);

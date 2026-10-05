@@ -67,6 +67,12 @@ describe('merge-pr PR title helpers (bdboard-07q8)', () => {
       expect(subjectProblem(subject, rules), subject).toBeNull();
     }
     const rejected = [`${BRANCH_TITLE} (#920)`, 'wip (#1)', 'Revert "feat: x" (#1)', 'feat(x: y (#1)', 'feat(x):x (#1)', 'feat(x) y: z (#1)'];
+    // 説明の無いタイトル (`feat(x):` / `feat:` / `feat(x)!:`): 件名の末尾の (#N) が説明に見えてはいけない。
+    for (const subject of ['feat(x): (#1)', 'feat: (#1)', 'feat(x)!: (#1)']) {
+      rejected.push(subject);
+      expect(subjectProblem(subject, rules)?.join('\n'), subject).toContain('形ではありません');
+    }
+    expect(subjectProblem('feat(x): (#12) (#1)', rules)).toBeNull(); // (#12) が本当の説明なら通る
     for (const subject of rejected) {
       expect(subjectProblem(subject, rules), subject).not.toBeNull();
     }
