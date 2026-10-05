@@ -1664,6 +1664,33 @@ reader、メンテナ環境の判定)。一覧の組み立て・写しの保存�
 | 16 | ページ間の重複を番号で除く | 1 ページ目を読んでから 2 ページ目を読むまでの間に新しい issue ができると、押し出された同じ番号が両方のページに現れる。番号で重複を除き、先に読んだほうを残す |
 | 17 | 小さな検査と整形 | `maxPages` は正の整数だけ(0 などは生成時に例外)。時間切れの `detail` は、stderr の途中の出力ではなく「時間切れ」と分かる固定の文言。`detail` は C0/C1 に加えて双方向制御文字(U+200E/200F/061C/202A–202E/2066–2069)も空白にし、300 **コードポイント**で切る(サロゲートの対を割らない)。`excludePullRequests` は PR の行を除くだけで、残りの行の項目は触らない |
 
+### 実装との差分(4y8q.9.3、届いた issue の一覧と判定時点の写し)
+
+4y8q.9.3 は、9.1 の純粋関数と 9.2 の読み取りを使って「一覧を作り、最初に見た時点の写しを保存し、GitHub 側の編集に印を付ける」
+層。HTTP・定期実行の配線は 4y8q.9.4、画面は 4y8q.9.5、判定は 4y8q.10。設計との食い違いと、実装中に決めたことの記録(4y8q.11 の規則)。
+ここに無い点は設計どおり。
+
+| ファイル | 中身 |
+|---|---|
+| `src/domain/external-issue-snapshot-record.ts` | 保存する記録の型 `StoredExternalIssueSnapshot`、`prepareExternalIssue`(切り詰め → 検査)、`createSnapshotRecord`、番号の形、保持期限と上限の選び方 `selectSnapshotsToRemove`(IO なし) |
+| `src/application/ports/external-issue-snapshot-storage.ts` | `ExternalIssueSnapshotStoragePort`(`list` / `get` / `save` / `remove`) |
+| `src/application/issue-report/external-issue-service.ts` | `createExternalIssueService`(`poll` / `getList` / `resnapshot`) |
+| `src/infrastructure/fs/fs-external-issue-snapshot-storage.ts` | ファイル版の保存先。読み込み時の形の確認は `external-issue-snapshot-schema.ts`、置き場は `resolve-external-issues-dir.ts` |
+
+| # | 項目 | 実装 |
+|---|---|---|
+| 1 | `poll` の流れ | gh で open issue を読む → bd の external_ref を読み、紐付いたものを除く → 500 件までに切る(下の 8)→ 排他の中で、保存済みの写しを読む → 1 件ずつ**切り詰め → 検査**(検査にも保存にも、切った先の文字列は渡らない)→ 写しが無ければ最初の写しとして保存 / 有れば `compareWithSnapshot` で比べて印を残す → 一覧から外れた写しに印を付ける → 古い写しを消す。チケットの手順 1 の「PR を除く」は 9.2 の reader が済ませている(`ExternalIssue` は PR を含まない)ので、ここでは bd に紐付いたものだけを除く |
+| 2 | 一覧の形 | `{ state: 'idle' \| 'ok' \| 'error', fetchedAt, issues[], error, truncated, skippedLines }`。チケットの `{state, fetchedAt, issues[]}` に、止まった理由 `error`、続きがありうる印 `truncated`、gh が読めず捨てた行数 `skippedLines` を足した(9.2 のポートが返すのに、ここで落とすと 9.4 以降が使えない)。`issues[]` の題名・本文・検査・updatedAt は GitHub の**現在**の内容(切り詰めた後)で、判定時点の写しは `snapshot: { snapshotAt, updatedAt, needsRejudge, updatedAtChanged }` の要約だけを添える(本文を二重に持たない。写しそのものは `ExternalIssueSnapshotStoragePort.get`)。順番は gh が返した順 |
+| 3 | 失敗は状態で、例外にしない | gh の 4 種類(`gh-missing` / `gh-unauthenticated` / `rate-limited` / `failed`)、bd の読み取りの失敗(`bd-failed`)、写しの読み書きの失敗(`storage-failed`)、それ以外(`unexpected`)。いずれも `poll` は reject せず `state: 'error'` を返し、`issues` と `fetchedAt` は**直近の成功のまま**(止まった回の途中の結果は混ぜない)。`error.detail` は固定の短い文言(gh の失敗は 9.2 が整えた `detail`)。保存の失敗は errno の code(`ENOSPC` など)だけを添え、パスもメッセージも第三者の文章も入れない |
+| 4 | bd が読めなければ一覧を作らない | 紐付いた issue を除けず、「紐付いた issue は並ばない」を守れないため。写しも書かない |
+| 5 | 写しの保存の失敗は「全部か、無し」 | 1 件でも写しを残せなかったら、一覧は前回のまま `storage-failed`。「一覧に載る issue には必ず写しがある」を崩さない(4y8q.10 は載っている issue の写しを読む)。書き込めた分は残り、次の `poll` はそれを土台に続ける。**写しを読めない**(権限・EIO)ときは、読めない写しを「無い」と見て最初の内容で書き換えてしまわないよう、書かずに `storage-failed`。使えないファイル(JSON でない・形が合わない・番号がファイル名と食い違う・ディレクトリ)だけは、警告して「無い」として飛ばし、次の保存で書き直す |
+| 6 | `needsRejudge` は下ろさない | 比べる相手は、最初の(または `resnapshot` で取り直した)写し。題名か本文(切り詰めた文字列と切る前の全長)が違えば立て、**記録に残す**。元の文章に戻されても、次の `poll` でも残る(取り直すまで)。`updatedAt` だけの変化では立たない(U9。`updatedAtChanged` を一覧の要約で返すだけ)。写しの題名・本文は書き換えない(判定した時点のまま)。ファイルを書くのは、印が変わったときと、一覧から外れた・戻ったときだけで、変化の無い `poll` では書かない |
+| 7 | 記録の欄を足した: `missingSince` | チケットの「保存するもの」(題名・切り詰めた本文・全長・updatedAt・写しの時刻・検査の結果・needsRejudge)に、`titleTruncated` / `bodyTruncated`(切ったかの印)と `missingSince`(一覧から外れたのを最初に見た時刻。載っているあいだは null)を足した。`missingSince` は保持期限の起点で、外れた最初の `poll` で 1 回だけ書き、載り直したら null に戻す。コメントは取り込まない・取りにも行かない。author・url も写しに入れない(保存の前にスキーマで余分な欄を落とす) |
+| 8 | 保持期限 30 日と上限 500 | 「open から消えて 30 日」は、**一覧(open で、bd に紐付いていない)から外れて 30 日**と読んだ。閉じられた issue に加え、取り込まれて bd に紐付いた issue の写しも、外れてから 30 日で消える(取り込んだ後は判定に使わず、第三者の文章を残し続けないため)。上限 500 は、一覧に載っている issue の写しは消さない、を優先する: 一覧そのものを 500 件までに切り(`truncated: true`。gh の既定は 3 ページ = 300 件なので普通は届かない)、500 を超える分は一覧から外れた写しを**外れた時刻の古い順**に消す。一覧が最後まで読めなかったとき(gh のページの上限で打ち切った・500 で切った)は、載っていない issue がまだ open かもしれないので、外れた印を付けず、日数での削除もしない(500 のための削除は行う)。gh が失敗した `poll` は何も書かず何も消さない。古い写しを消せなかったときは警告だけで、`poll` は成功とする(次の回にまた試す) |
+| 9 | 同時に 1 本 | `poll` の実行中に `poll` を呼ぶと、新しく始めずその実行の結果を返す。写しの読み → 書き → 一覧の差し替えと `resnapshot` は同じ排他で 1 本ずつ流す(読んだ写しを古いまま上書きし合い、取り直した写しを `poll` の印の書き込みが潰すのを防ぐ。テストで順序を固定している) |
+| 10 | `resnapshot(number)` | **直近の一覧にある現在の内容**で写しを取り直し(`needsRejudge` を下ろす、`snapshotAt` を更新)、一覧の要約も更新する。GitHub は読み直さない: 判定に渡した内容とカードに見せた内容を同じにするため。直前の内容を取りたいときは、呼び出し側(4y8q.10)が先に `poll` する。一覧に無い番号は `not-listed`、保存の失敗は `storage-failed`(どちらも投げない)。HTTP には出さない |
+| 11 | 保存層 | `<基点>/external-issues/<number>.json`(基点は `resolveDataDirBase`)。ディレクトリは作るとき 0700、ファイルは 0600(umask 任せにしない)。同じディレクトリの `<number>.json.<hex>.tmp` に書いて rename。`number` は `^[1-9][0-9]{0,9}$` だけで、外れた値は投げる(読み取りの失敗ではなくプログラムの誤り)。読むファイル名も同じ形に限り、一時ファイルや迷い込んだファイルは読まない。置き場を環境変数で差し替える口は作っていない(配線は 4y8q.9.4)。**権限の 0600/0700 は POSIX だけで意味がある**(Windows の Node はモードのビットを無視する。テストは Windows では飛ばす)。クラッシュで残った一時ファイルの掃除はしない(下書きの保存層と同じ) |
+
 ### 2体のエージェント(4y8q.10)
 
 道具ゼロで呼ぶ手段は、bdboard に既にある `ChatAgentPort`(`claude-chat-agent.ts`)の CLI 起動
