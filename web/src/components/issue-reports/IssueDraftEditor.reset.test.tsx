@@ -8,7 +8,7 @@ vi.mock('../../api/issue-reports', async (importOriginal) => ({ ...(await import
 import { patchIssueDraft } from '../../api/issue-reports';
 const draft: IssueDraftDetailDto = {
   id: '1758812345678-a1b2c3d4e5f6a7b8', kind: 'B', fingerprint: 'B:hook:abcd', title: 'title', body: 'body', status: 'pending',
-  occurrenceCount: 1, firstOccurredAt: '2026-10-01T00:00:00.000Z', lastOccurredAt: '2026-10-01T00:00:00.000Z', occurredProjectCount: 0,
+  occurrenceCount: 1, firstOccurredAt: '2026-10-01T00:00:00.000Z', lastOccurredAt: '2026-10-01T00:00:00.000Z',
   titleEditedByUser: true, bodyEditedByUser: true, localOnly: { errorTextTruncated: false, envInfo: {} }, occurredProjects: [], restricted: true,
 };
 describe('IssueDraftEditor reset hint', () => {
