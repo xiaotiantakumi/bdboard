@@ -51,7 +51,7 @@ export interface RefreshErrorTracker {
  * 同じエラーが別々に報告され、実行ごとに変わる値 (時刻・経過時間・pid) を含む文は更新のたびに「初めて」になって間引きも 3 回の閾値も効かない。
  * 報告の errorText は寄せる前の伏せた文のまま (読み手に見せる文を変えない)。
  */
-function keyOf(kind: string, errorText: string): string {
+export function selfErrorKey(kind: string, errorText: string): string {
   const normalized = normalizeErrorText(errorText);
   const text =
     normalized.length > MAX_KEY_TEXT_LENGTH
@@ -99,7 +99,7 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
         const project = projectById.get(error.projectId);
         if (project === undefined) continue;
         const errorText = mask(error.detail);
-        const key = keyOf(error.kind, errorText);
+        const key = selfErrorKey(error.kind, errorText);
         const seen = seenByProject.get(project.id) ?? new Set<string>();
         seenByProject.set(project.id, seen);
         // 1 回の結果の中の同じキーは 1 回と数える。
