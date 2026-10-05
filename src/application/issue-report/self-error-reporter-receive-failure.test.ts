@@ -77,7 +77,7 @@ describe('report(): a save that failed leaves no throttle record', () => {
     const failing = { source: 'api:GET /api/board', errorText: 'cannot open /private/example-project' } as const;
     await reporter.report(failing);
     await reporter.report(failing);
-    expect(receive.mock.calls.map(([call]) => call.errorText)).toEqual(['cannot open <project-root>', 'cannot open <project-root>']);
+    expect(receive.mock.calls.map(([call]) => (call as { readonly errorText: string }).errorText)).toEqual(['cannot open <project-root>', 'cannot open <project-root>']);
   });
 
   it('forgets only the key that failed: another key already recorded stays throttled', async () => {
@@ -215,7 +215,7 @@ describe('observeRefresh(): a save that failed leaves no throttle record either'
     await reporter.observeRefresh(failure, [project]);
     expect(receive).toHaveBeenCalledTimes(3);
     // 送る文は毎回同じ (伏せたもの)。
-    expect(receive.mock.calls.map(([call]) => call.errorText)).toEqual(Array.from({ length: 3 }, () => 'database "<project>" at <project-root>'));
+    expect(receive.mock.calls.map(([call]) => (call as { readonly errorText: string }).errorText)).toEqual(Array.from({ length: 3 }, () => 'database "<project>" at <project-root>'));
   });
 
   it('keeps the record of an earlier success: a later failed save of another key does not reopen it', async () => {

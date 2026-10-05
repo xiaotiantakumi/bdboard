@@ -114,6 +114,8 @@ export function createSelfErrorReporter(deps: SelfErrorReporterDeps): SelfErrorR
         if (inFlight !== undefined) return (await inFlight) === 'recorded' ? 'throttled' : 'skipped';
         // 記録は保存の前に取る (同じキーが同時に来ても、2 回目以降は上の待ちか、ここの false になる)。保存に失敗したら取り消す。
         if (!deps.throttle.shouldReport(key, now())) return 'throttled';
+        // この async 関数は、最初の await (receive) より前に終わらないこと: 先に終わると finally の delete が下の set より先に走り、
+        // 終わった試みの entry が残り続けて、このキーの report() がずっとそれに合流する (receive に二度と届かない)。
         const attempt = (async (): Promise<SelfErrorReportOutcome> => {
           try {
             const saved = await receive({ ...input, errorText, ...(agentNote !== undefined ? { agentNote } : {}) }, currentEnv);
