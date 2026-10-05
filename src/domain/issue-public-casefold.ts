@@ -8,6 +8,7 @@
  *
  * ここでは、正規表現エンジン自身に「どの文字どうしを同じとみなすか」を 1 文字ずつ尋ねて表を作り、本文と鍵の両方を表の代表の文字に
  * たたんでから、ふつうの indexOf で探す。表は 1 プロセスで 1 回だけ作る (0.1〜0.2 秒)。本文のたたみは BMP を型付き配列で引き、同じ本文は 1 回だけたたむ。
+ * 欄の端の断片検査 (issue-public-fragments.ts) も、同じ代表にたたむ。
  *
  * 以前の `/…/giu` と同じ一致になる理由 (u フラグの i: 2 つの文字は Canonicalize = 単純な大文字小文字のたたみが等しいとき一致する):
  *   - リテラルの各文字は、本文の 1 コードポイントにだけ一致する。鍵が位置 p で一致する ⇔ 各コードポイントが同じ同値類にある。
@@ -50,13 +51,49 @@ interface CaseTable {
 
 let table: CaseTable | null | undefined;
 
-function buildTable(): CaseTable | null {
-  const variable: number[] = [];
-  for (let codePoint = 0; codePoint <= 0x10ffff; codePoint += 1) {
-    if (codePoint === 0xd800) codePoint = 0xe000;
-    if (CASE_VARIABLE.test(String.fromCodePoint(codePoint))) variable.push(codePoint);
+let variableCodePoints: readonly number[] | undefined;
+let joinedVariableCharacters: string | undefined;
+
+function caseVariableCharacters(): { readonly codePoints: readonly number[]; readonly joined: string } {
+  if (variableCodePoints === undefined || joinedVariableCharacters === undefined) {
+    const points: number[] = [];
+    for (let codePoint = 0; codePoint <= 0x10ffff; codePoint += 1) {
+      if (codePoint === 0xd800) codePoint = 0xe000;
+      if (CASE_VARIABLE.test(String.fromCodePoint(codePoint))) points.push(codePoint);
+    }
+    variableCodePoints = points;
+    joinedVariableCharacters = points.map((codePoint) => String.fromCodePoint(codePoint)).join('');
   }
-  const joined = variable.map((codePoint) => String.fromCodePoint(codePoint)).join('');
+  return { codePoints: variableCodePoints, joined: joinedVariableCharacters };
+}
+
+const engineRepresentatives = new Map<number, number>();
+
+/** 表を使わず、正規表現エンジンの /…/giu と同じ同値類の最小コードポイントへたたむ。 */
+export function engineFoldCodePoint(point: string): string {
+  const codePoint = point.codePointAt(0);
+  if (codePoint === undefined) return point;
+  const cached = engineRepresentatives.get(codePoint);
+  if (cached !== undefined) return cached === codePoint ? point : String.fromCodePoint(cached);
+  const { joined } = caseVariableCharacters();
+  const members = Array.from(joined.matchAll(new RegExp(hexEscape(codePoint), 'giu')), (match) => match[0].codePointAt(0) ?? codePoint);
+  const representative = Math.min(codePoint, ...members);
+  engineRepresentatives.set(codePoint, representative);
+  return representative === codePoint ? point : String.fromCodePoint(representative);
+}
+
+/** 1 コードポイントを、本体検索と同じ同値類の代表へたたむ。 */
+export function foldCodePoint(point: string): string {
+  const codePoint = point.codePointAt(0);
+  if (codePoint === undefined) return point;
+  const caseTableValue = caseTable();
+  if (caseTableValue === null) return engineFoldCodePoint(point);
+  const target = codePoint <= 0xffff ? caseTableValue.bmp[codePoint] ?? codePoint : caseTableValue.canonical.get(codePoint) ?? codePoint;
+  return target === codePoint ? point : String.fromCodePoint(target);
+}
+
+function buildTable(): CaseTable | null {
+  const { codePoints: variable, joined } = caseVariableCharacters();
   const classes = new Map<number, readonly number[]>();
   for (const codePoint of variable) {
     const members = Array.from(joined.matchAll(new RegExp(hexEscape(codePoint), 'giu')), (match) => match[0].codePointAt(0) ?? -1);
