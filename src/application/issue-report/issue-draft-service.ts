@@ -71,7 +71,8 @@ export interface IssueDraftService {
   readImage(id: string, fileName: string): Promise<Buffer | undefined>;
   /**
    * 起動時の掃除: 見送り・投稿済みで保持期限を過ぎた下書きを画像ごと消す (bdboard-00qh)。受け取りのついでの
-   * 掃除 (1 時間に 1 回まで) と同じ処理で、こちらは間隔を待たない。失敗しても投げない (警告だけ)。
+   * 掃除 (1 時間に 1 回まで) と同じ処理で、こちらは間隔を待たない。棚卸しで読んだ中身から受け取りの索引も作る
+   * (最初の受け取りは全件を読み直さない)。失敗しても投げない (警告だけ)。
    */
   pruneOnStart(): Promise<void>;
 }
@@ -106,9 +107,16 @@ function compareNewestFirst(a: IssueDraft, b: IssueDraft): number {
 
 export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraftService {
   const exclusive = createMutex();
-  const retention = createDraftRetention({ ...deps.retention, storage: deps.storage, now: deps.now });
   const storageFull = { ok: false, reason: 'storage-full' } as const;
   const indexCache = createDraftIndexCache(deps.storage);
+  const retention = createDraftRetention({
+    ...deps.retention,
+    storage: deps.storage,
+    now: deps.now,
+    onPruned: (survey, removedIds) => {
+      if (survey.indexSeed !== undefined) indexCache.seed(survey.indexSeed, removedIds);
+    },
+  });
 
   /**
    * 合計容量の上限に収まるときだけ書く (収まらなければ false で、何も書かない)。previous は上書きされる前の
@@ -129,7 +137,7 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
     const fingerprint = computeDraftFingerprint(input);
     if (fingerprint === undefined) return { ok: false, reason: 'missing-identifier' };
 
-    // 期限切れの掃除 (1 時間に 1 回まで。失敗しても受け取りは続ける)。索引を読む前に済ませる。
+    // 期限切れの掃除 (1 時間に 1 回まで。失敗しても受け取りは続ける)。掃除の棚卸しが索引も作るので、その後に読む。
     await retention.pruneIfDue();
     const index = await indexCache.get();
     const now = deps.now();

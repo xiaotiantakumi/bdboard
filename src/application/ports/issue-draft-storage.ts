@@ -27,6 +27,15 @@ export interface DraftListing {
   readonly complete: boolean;
 }
 
+/** 受け取りの索引 (issue-draft-index.ts) が下書き 1 件から使う欄。 */
+export type DraftIndexEntry = Pick<IssueDraft, 'id' | 'fingerprint' | 'firstOccurredAt' | 'status'>;
+
+/** 棚卸しが読んだ中身から作る索引の材料。complete の意味は DraftListing.complete と同じ。 */
+export interface DraftIndexSeed {
+  readonly entries: readonly DraftIndexEntry[];
+  readonly complete: boolean;
+}
+
 /** 保持期限と合計容量のための棚卸し (bdboard-00qh)。 */
 export interface DraftSurvey {
   readonly drafts: readonly DraftFootprint[];
@@ -37,6 +46,8 @@ export interface DraftSurvey {
    * その場所は 0 バイトで数えているので、合計は少なめになりうる。code 以外 (パス・message) は載せない。
    */
   readonly unmeasured: readonly string[];
+  /** 棚卸しで読んだ中身から作った受け取りの索引の材料。付けない storage もある。 */
+  readonly indexSeed?: DraftIndexSeed;
 }
 
 export interface IssueDraftStoragePort {
@@ -46,6 +57,8 @@ export interface IssueDraftStoragePort {
    * 全下書きの大きさと、自動で消してよいかの材料 (状態と最終更新時刻) を集める。draft.json を読む
    * errno の扱いは get() と同じ (読めないものは `known` なしで返し、プロセス全体の失敗だけ投げる)。
    * 画像の大きさの測り損ねは投げずに `unmeasured` に積む。
+   * indexSeed がある場合、その entries は scan() が返す下書きと同じ集合で、complete も scan() と同じ判定
+   * (あとで読めるかもしれない理由で飛ばした下書きがあれば false)。draft.json の stat がそういう理由で失敗したときも false。
    */
   survey(): Promise<DraftSurvey>;
   /** 下書きを画像ごと消す。無ければ何もしない。 */

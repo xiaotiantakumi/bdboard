@@ -181,7 +181,7 @@ export function createFsIssueDraftStorage(
   }
 
   // 保持期限と容量のための棚卸しと削除 (bdboard-00qh)。draft.json を読むときの扱いは get と同じ。
-  const footprints = createFsDraftFootprints({ baseDir: resolvedBaseDir, draftDir, readDraft: getDraft });
+  const footprints = createFsDraftFootprints({ baseDir: resolvedBaseDir, draftDir, readDraft: readAndReport, platform: options.platform ?? process.platform });
 
   return {
     async list() {

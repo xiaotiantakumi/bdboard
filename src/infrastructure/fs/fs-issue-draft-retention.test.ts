@@ -198,6 +198,76 @@ describe('retention and the size cap on real files', () => {
   });
 
   describe('the size of the directory', () => {
+    it('seeds the same complete index entries as scan, excluding directories, corrupt JSON and a file that is not a directory', async () => {
+      const { storage } = setup();
+      await seed(storage, makeDraft(ID_OLD), 0);
+      await seed(storage, makeDraft(ID_OPEN, { status: 'pending', dismissReason: undefined, lastOccurredAt: '2026-08-02T00:00:00.000Z' }), 0);
+      await fs.mkdir(path.join(baseDir, ID_EXACT, 'images'), { recursive: true }); // draft.json の無いディレクトリ (stat が ENOENT: 欠けない)
+      await fs.writeFile(path.join(baseDir, ID_UNDER), 'not a directory'); // draft.json の stat が ENOTDIR (恒久: 一覧は欠けない)
+      await fs.mkdir(path.join(baseDir, ID_BAD), { recursive: true });
+      await fs.writeFile(path.join(baseDir, ID_BAD, 'draft.json'), '{ broken');
+      const scanned = await storage.scan();
+      const survey = await storage.survey();
+      expect(survey.indexSeed?.entries.map(({ id, fingerprint, firstOccurredAt, status }) => ({ id, fingerprint, firstOccurredAt, status })).sort((a, b) => a.id.localeCompare(b.id)))
+        .toEqual(scanned.drafts.map(({ id, fingerprint, firstOccurredAt, status }) => ({ id, fingerprint, firstOccurredAt, status })).sort((a, b) => a.id.localeCompare(b.id)));
+      expect(survey.indexSeed?.complete).toBe(scanned.complete);
+      expect(scanned.complete).toBe(true);
+    });
+
+    it('reads each draft.json once from start to the first receive (the startup survey builds the index; it used to be twice)', async () => {
+      const { storage, service } = setup();
+      const count = 20;
+      for (let index = 0; index < count; index += 1) {
+        const id = `${1758812346100 + index}-c1b2c3d4e5f6a7b8`;
+        await seed(storage, makeDraft(id, { status: 'pending', dismissReason: undefined }), 0);
+      }
+      const realReadFile = fs.readFile.bind(fs) as unknown as (...args: unknown[]) => Promise<unknown>;
+      let draftJsonReads = 0;
+      vi.spyOn(fs, 'readFile').mockImplementation(((...args: unknown[]) => {
+        if (String(args[0]).endsWith('draft.json')) draftJsonReads += 1;
+        return realReadFile(...args);
+      }) as unknown as typeof fs.readFile);
+
+      const [, first] = await Promise.all([service.pruneOnStart(), receiveOne(service, 'brand-new')]);
+
+      expect(first.ok && first.outcome).toBe('created');
+      expect(draftJsonReads).toBe(count); // 直す前は survey と scan で 2 * count
+      await receiveOne(service, 'another-new');
+      expect(draftJsonReads).toBe(count); // 以後の受け取りは (新規作成なので) 読み直さない
+    });
+
+    it('marks retryable read and stat failures incomplete', async () => {
+      const { storage } = setup({}, { readRetry: { delaysMs: [0, 0, 0], sleep: () => Promise.resolve() } });
+      await seed(storage, makeDraft(ID_BAD), 0);
+      const realReadFile = fs.readFile.bind(fs) as unknown as (...args: unknown[]) => Promise<unknown>;
+      vi.spyOn(fs, 'readFile').mockImplementation(((...args: unknown[]) => String(args[0]).includes(ID_BAD)
+        ? Promise.reject(Object.assign(new Error('busy'), { code: 'EBUSY' }))
+        : realReadFile(...args)) as unknown as typeof fs.readFile);
+      const busySurvey = await storage.survey();
+      expect(busySurvey.indexSeed).toMatchObject({ complete: false, entries: [] });
+      expect((await storage.scan()).complete).toBe(false);
+
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+      const realStat = fs.stat.bind(fs) as unknown as (...args: unknown[]) => Promise<unknown>;
+      vi.spyOn(fs, 'stat').mockImplementation(((...args: unknown[]) => String(args[0]).endsWith(path.join(ID_BAD, 'draft.json'))
+        ? Promise.reject(Object.assign(new Error('io'), { code: 'EIO' }))
+        : realStat(...args)) as unknown as typeof fs.stat);
+      const statSurvey = await storage.survey();
+      expect(statSurvey.indexSeed?.complete).toBe(false);
+      expect(statSurvey.unmeasured).toContain('EIO');
+    });
+
+    it.each([['win32', false], ['linux', true]] as const)('a draft.json stat EPERM on %s: complete is %s (per-file on win32, permanent elsewhere)', async (platform, complete) => {
+      const { storage } = setup({}, { platform });
+      await seed(storage, makeDraft(ID_BAD), 0);
+      const realStat = fs.stat.bind(fs) as unknown as (...args: unknown[]) => Promise<unknown>;
+      vi.spyOn(fs, 'stat').mockImplementation(((...args: unknown[]) => String(args[0]).endsWith(path.join(ID_BAD, 'draft.json'))
+        ? Promise.reject(Object.assign(new Error('perm'), { code: 'EPERM' }))
+        : realStat(...args)) as unknown as typeof fs.stat);
+      expect((await storage.survey()).indexSeed?.complete).toBe(complete);
+    });
+
     it('is draft.json plus every file under images/, and carries the status and mtime that retention needs', async () => {
       const { storage } = setup();
       const draft = makeDraft(ID_OLD);
@@ -235,7 +305,7 @@ describe('retention and the size cap on real files', () => {
     it('is empty, without an error, before anything was saved', async () => {
       const { storage, service, warn } = setup();
 
-      expect(await storage.survey()).toEqual({ drafts: [], totalBytes: 0, unmeasured: [] });
+      expect(await storage.survey()).toEqual({ drafts: [], totalBytes: 0, unmeasured: [], indexSeed: { entries: [], complete: true } });
       await service.pruneOnStart();
       expect(warn).not.toHaveBeenCalled();
     });

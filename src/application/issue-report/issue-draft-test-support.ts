@@ -58,7 +58,8 @@ export function createInMemoryIssueDraftStorage(
           ? { id: draft.id, bytes }
           : { id: draft.id, bytes, known: { status: draft.status, updatedAtMs: updated } };
       });
-      return { drafts: footprints, totalBytes: footprints.reduce((sum, item) => sum + item.bytes, 0), unmeasured: [] };
+      const entries = [...drafts.values()].map(({ id, fingerprint, firstOccurredAt, status }) => ({ id, fingerprint, firstOccurredAt, status }));
+      return { drafts: footprints, totalBytes: footprints.reduce((sum, item) => sum + item.bytes, 0), unmeasured: [], indexSeed: { entries, complete: true } };
     },
     async remove(id) {
       drafts.delete(id);
