@@ -1638,6 +1638,32 @@ bd label add <新id> harness   # A と B のみ
 数えると騒がしい。異体字選択子を使った埋め込み(1 文字に 1 バイト)は「異体字選択子が 2 つ以上続く」で拾える(正しい使い方は
 1 つだけ)。
 
+### 実装との差分(4y8q.9.2、GitHub の open issue と bd の external_ref を読む層)
+
+4y8q.9.2 は「届いた issue」の**読み取り層だけ**(domain の判定、ポート、gh と bd を読む 2 つの
+reader、メンテナ環境の判定)。一覧の組み立て・写しの保存・定期確認の配線は 4y8q.9.3 以降。設計との
+食い違いと、実装中に決めたことの記録(4y8q.11 の規則)。設計が優先で、ここに無い点は設計どおり。
+
+| # | 項目 | 実装 |
+|---|---|---|
+| 1 | `sanitizeTitle` を移さない | `scripts/check-gh-issues.mjs` の `sanitizeTitle` は題名を**端末へ出す**ための制御文字の置き換え。届いた issue の題名・本文を画面に出す無害化(Markdown の無害化、切り詰め)は 4y8q.9.1 / 4y8q.9.5 が持つので、端末向けの関数を移すと二重になり、「無害化済み」と取り違えやすい。`src/domain/github-issue-link.ts` に移したのは `parseRepoSlug` / `linkedIssueNumbers` / `findUnlinkedIssues` と、`excludePullRequests`(スクリプトでは `parseIssueLines` の中にあった PR の除外)だけ。スクリプト本体は変えない |
+| 2 | `formatReport` を移さない | 端末向けの報告文の整形で、画面や API の形とは関係が無い |
+| 3 | `--paginate` でなく手動の 3 ページ | `gh api --paginate` は全ページを読むので、issue が増えると API の枠を食い、U8「3 ページ(300 件)まで」を守れない。`page=N` を 1 から最大 3 まで順に読み、**100 行未満のページで止める**(PR の行・読めない行も行数に数える)。3 ページとも 100 行なら `truncatedByPageLimit: true`(300 件を超えて続きがありうる) |
+| 4 | `bodyLength` を足した | jq で本文を先頭 20,001 コードポイントに切る(第三者の文章の量と出力の大きさを抑える)と、元の長さが分からなくなり、「20,000 文字を超えたか」「省略の印を付けるか」(上の上限の節)を後段で決められない。切る前の長さを `bodyLength` として一緒に返す。20,001 で切るのは、ちょうど 20,000 文字と超過を区別するため。**単位はコードポイント**(jq の切り出しと `length` はコードポイント単位)で、JS の `String.length` は UTF-16 の単位なので絵文字などで数が食い違う。後段で比べるときは単位をそろえる(ポートの TSDoc に書いた) |
+| 5 | URL は slug と番号から組む | 返す `url` は `https://github.com/<slug>/issues/<N>`。gh の応答の `html_url` は読まない。読む項目を減らし、画面に出す URL が必ず自リポジトリの issue を指すようにする |
+| 6 | slug の検査を厳しくした | スクリプトの `[^/\s]+` は `../`・`?`・`#`・`%` を通す。slug は gh の URL パス(`repos/<slug>/issues`)に埋まるので、`parseRepoSlug` は各部分を `^[A-Za-z0-9_.-]+$` に限り、`.` と `..` だけの部分も拒否する |
+| 7 | 1 ページが読めなければ failed | 途中のページの失敗で、前のページまでの結果を返さない。返すと取りこぼした issue が「届いていない」ように見え、`truncatedByPageLimit` とも区別がつかない。あるページの空でない行がすべて読めない(出力形式が変わった)ときも failed にする(「0 件」と見分けがつかなくなるため)。一部の行だけ読めないときは、`skippedLines` に数えて続ける(スクリプトは 1 行でも読めないと全体を諦める) |
+| 8 | 失敗は stderr だけで 4 種類に分ける | `gh-missing`(spawn 失敗)・`gh-unauthenticated`(exit 4 または未ログインの文言)・`rate-limited`・`failed`(時間切れ・その他)。成功したページの stdout は第三者の文章なので、失敗の分類には混ぜない。**U7: gh が無い・未ログインでも、認証無しの REST・`fetch`・`curl` には落ちない**(状態を返すだけ。画面に出すのは 4y8q.9.5) |
+| 9 | レート制限の文言の判定を共有 | `gh-cli-pr-status-reader.ts` の `RATE_LIMIT_TEXT_PATTERNS` と `looksLikeRateLimit` を `src/infrastructure/gh/gh-cli-failure.ts` へ移し、PR バッジの reader と共有する(挙動は変えない)。未ログインの判定 `looksLikeGhUnauthenticated` と `GH_EXIT_CODE_AUTH_REQUIRED = 4` は同じファイルに足した |
+| 10 | gh は GET だけ、書き込みの引数を実行時にも拒否 | 引数は `['api', '--method', 'GET', '--hostname', 'github.com', 'repos/<slug>/issues?state=open&per_page=100&page=N', '--jq', <jq>]`(`--hostname` は下の 14)。`-f` / `-F` / `--field` / `--raw-field` / `--input` を付けると gh が POST に切り替わるので、`assertReadOnlyGhApiArgs`(`gh-api-readonly.ts`)が実行の直前に拒否する(`--method GET` がちょうど 1 回あることも要る)。テストでも全呼び出しの引数を固定している |
+| 11 | gh の環境 | 継いだ環境に `GH_PROMPT_DISABLED=1` と `GH_NO_UPDATE_NOTIFIER=1` を足す(対話の質問と更新通知で固まらない・stderr を汚さない)。`CommandRunner` の `env` は継承ではなく置き換えなので、継いだ環境を明示的に渡す。時間切れは 20 秒 |
+| 12 | bd の引数に `--readonly -C <root>` と `--no-pager` | スクリプトは cwd で `bd list` を流すが、サーバーは任意の cwd で動くので、`bd-cli-lease-reader.ts` の作法(`--readonly -C <root> … --no-pager`)に揃える。出力は配列と `{issues: []}` の両方を受け、`external_ref` が文字列でない要素は黙って飛ばす(紐付けなし側に倒れ、誤報はしても見逃しはしない) |
+| 13 | メンテナ環境の判定 | `isMaintainerEnvironment(repoRoot)`(`src/infrastructure/fs/is-maintainer-environment.ts`)は `<repoRoot>/.beads` の有無だけ。bdboard 自身の bd があるのはメンテナの main checkout だけで、clone や worktree には無い(親 4y8q.9 の R7) |
+| 14 | `--hostname github.com` を固定 | 継いだ `GH_HOST` が GitHub Enterprise を指していると、gh はそちらへ問い合わせるのに、返す `url`(5)は github.com で組むので食い違う。引数に `--hostname github.com` を固定する |
+| 15 | 引数の検査は許可リスト方式 | 禁止リスト(10)は、`-X POST` や `--method=POST` を正しい `--method GET` の横に置く形(gh は同じフラグの最後の値を採るので POST になる)や、ヘッダでのメソッド上書き(`-H X-HTTP-Method-Override`)のような、載せきれない形を取りこぼしうる。`assertReadOnlyGhApiArgs` は、既知の書き込み系を理由の分かるエラーで先に拒否したうえで、`['api', '--method', 'GET', '--hostname', 'github.com', <endpoint>, '--jq', <jq>]` の形ちょうどだけを通す(endpoint は `repos/<owner>/<repo>/issues?state=open&per_page=<n>&page=<n>` の正規表現)。禁止リストのテストは残してある |
+| 16 | ページ間の重複を番号で除く | 1 ページ目を読んでから 2 ページ目を読むまでの間に新しい issue ができると、押し出された同じ番号が両方のページに現れる。番号で重複を除き、先に読んだほうを残す |
+| 17 | 小さな検査と整形 | `maxPages` は正の整数だけ(0 などは生成時に例外)。時間切れの `detail` は、stderr の途中の出力ではなく「時間切れ」と分かる固定の文言。`detail` は C0/C1 に加えて双方向制御文字(U+200E/200F/061C/202A–202E/2066–2069)も空白にし、300 **コードポイント**で切る(サロゲートの対を割らない)。`excludePullRequests` は PR の行を除くだけで、残りの行の項目は触らない |
+
 ### 2体のエージェント(4y8q.10)
 
 道具ゼロで呼ぶ手段は、bdboard に既にある `ChatAgentPort`(`claude-chat-agent.ts`)の CLI 起動

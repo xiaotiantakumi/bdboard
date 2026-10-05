@@ -74,6 +74,7 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `HumanDecisionsPort` | `createBdCliHumanDecisions` | 人間の意思決定待ちキューの読み書き |
 | `SessionLinkWriterPort` | `createBdCliSessionLinkWriter` | チケット⇔セッションの手動紐付け |
 | `PrStatusReader` | `createGhCliPrStatusReader` | `gh` CLI でPRステータス取得 |
+| `ExternalIssueSourcePort` / `BdExternalRefReaderPort` | `createGhCliExternalIssueSource` / `createBdCliExternalRefReader` | 公開リポジトリの open issue を `gh api --method GET` で読む / bdboard 自身の bd の external_ref を読む。読み取りだけ |
 | `WorktreeScanner` | `createGitWorktreeScanner` | worktree一覧のスキャン |
 | `ProjectDiscovery` | `createFsProjectDiscovery` | スキャンルート配下の `.beads/` プロジェクト検出 |
 | `ProjectFingerprinter` | `createBeadsFingerprinter` | 変化検知用フィンガープリント計算 |
