@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   SAFE_PREVIEW_MAX_CHARS,
   SAFE_PREVIEW_MAX_NESTING,
@@ -16,10 +16,6 @@ vi.mock('react-markdown', () => ({
 }));
 
 describe('SafeMarkdownPreview fallbacks (bdboard-4y8q.3.2 review MINOR-2)', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it('measures line-start nesting from quotes, list markers and indentation', () => {
     expect(maxLineNesting('plain\n2026-10-04 error at line 3')).toBe(0);
     expect(maxLineNesting('> > quoted\n- item\n    - nested')).toBe(2);
@@ -41,11 +37,12 @@ describe('SafeMarkdownPreview fallbacks (bdboard-4y8q.3.2 review MINOR-2)', () =
   });
 
   it('catches a render failure, shows the raw text, and tries again when the text changes', () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const view = render(<SafeMarkdownPreview text="BOOM body" />);
     expect(screen.getByTestId('safe-preview-fallback')).toHaveTextContent('プレビューを描けませんでした。');
     expect(screen.getByText('BOOM body')).toBeInTheDocument();
     view.rerender(<SafeMarkdownPreview text="fine body" />);
     expect(screen.getByTestId('rendered-markdown')).toHaveTextContent('fine body');
+    consoleError.mockRestore();
   });
 });
