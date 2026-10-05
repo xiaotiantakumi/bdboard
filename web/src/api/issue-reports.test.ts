@@ -57,7 +57,9 @@ describe('issue report draft API client (bdboard-mqoa)', () => {
       const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(response, { status: 201 })));
       vi.stubGlobal('fetch', fetchMock);
       await createManualIssueDraft({ title: 't', description: 'd', project: { name: 'example-project', path: '/p' } });
-      expect(JSON.parse(String(initOf(fetchMock).body))).toEqual({
+      const sent = initOf(fetchMock).body;
+      expect(typeof sent).toBe('string');
+      expect(JSON.parse(typeof sent === 'string' ? sent : '')).toEqual({
         title: 't',
         description: 'd',
         project: { name: 'example-project', path: '/p' },
