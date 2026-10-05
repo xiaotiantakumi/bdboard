@@ -115,7 +115,9 @@ describe('uploadIssueDraftImages (bdboard-4y8q.6.9)', () => {
   });
 
   it('stops at a 409 limit-reached and returns the images it did not send with their own reason', async () => {
-    vi.mocked(uploadIssueDraftImage).mockResolvedValueOnce(stored).mockRejectedValueOnce(apiError(409));
+    vi.mocked(uploadIssueDraftImage)
+      .mockResolvedValueOnce(stored)
+      .mockRejectedValueOnce(apiError(409, { code: 'image-limit-reached' }));
     const failures = await uploadIssueDraftImages(DRAFT_ID, [
       picked('a.png'),
       picked('b.png'),

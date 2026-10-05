@@ -39,7 +39,7 @@ describe('issue report draft API client (bdboard-mqoa)', () => {
       await expect(uploadIssueDraftImage(ID, { mimeType: 'image/png', data: 'AAA' })).resolves.toEqual({ image });
     });
     it.each([
-      [409, { error: 'image limit reached' }, 409, undefined],
+      [409, { error: 'image limit reached', code: 'image-limit-reached' }, 409, 'image-limit-reached'],
       [409, { error: 'draft is not pending', code: 'draft-not-pending' }, 409, 'draft-not-pending'],
       [507, { error: 'full', code: 'storage-full' }, 507, 'storage-full'],
       [400, { error: 'invalid image' }, 400, undefined],

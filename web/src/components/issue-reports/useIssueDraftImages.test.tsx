@@ -8,12 +8,36 @@ function file(name: string, type = 'image/png'): File {
   return new File(['x'], name, { type });
 }
 
-/** onPaste が受ける形のイベント (clipboardData.files と preventDefault だけを使う)。 */
-function pasteEvent(files: File[]) {
+interface PasteOptions {
+  /** clipboardData.types。既定は、ファイルがあれば ['Files']、無ければ空 (画像だけをコピーしたとき)。 */
+  readonly types?: string[];
+  /** getData('text/plain') が返す文字。既定は空。 */
+  readonly text?: string;
+  /** 貼り付け先。既定は文字の欄ではない要素 (フォームの余白)。 */
+  readonly target?: EventTarget;
+}
+
+/** onPaste が受ける形のイベント (clipboardData の files・types・getData と、target、preventDefault だけを使う)。 */
+function pasteEvent(files: File[], options: PasteOptions = {}) {
   const preventDefault = vi.fn();
-  const event = { clipboardData: { files }, preventDefault } as unknown as ClipboardEvent<HTMLElement>;
+  const clipboardData = {
+    files,
+    types: options.types ?? (files.length > 0 ? ['Files'] : []),
+    getData: (type: string) => (type === 'text/plain' ? (options.text ?? '') : ''),
+  };
+  const target = options.target ?? document.createElement('div');
+  const event = { clipboardData, target, preventDefault } as unknown as ClipboardEvent<HTMLElement>;
   return { event, preventDefault };
 }
+
+function inputOfType(type: string): HTMLInputElement {
+  const input = document.createElement('input');
+  input.type = type;
+  return input;
+}
+
+/** Excel・Word が載せる形 (文字と HTML と画像が一度に入る)。実機の形式はブラウザで未確認 (docs/ISSUE-REPORTING.md の逸脱表)。 */
+const OFFICE_TYPES = ['text/plain', 'text/html', 'Files'];
 
 describe('useIssueDraftImages (bdboard-4y8q.6.9)', () => {
   it('starts with nothing attached and no problems', () => {
@@ -142,6 +166,78 @@ describe('useIssueDraftImages (bdboard-4y8q.6.9)', () => {
       expect(preventDefault).toHaveBeenCalledTimes(1);
       expect(result.current.images).toEqual([]);
       expect(result.current.problems[0]).toContain('「vector.svg」は付けられません');
+    });
+
+    // bdboard-8zwi: Excel・Word は、文字と画像を一度にクリップボードへ載せる。文字の欄に貼るときは、画像ではなく文字を入れる。
+    describe('when the clipboard carries both text and an image', () => {
+      it.each([
+        ['the description (textarea)', () => document.createElement('textarea')],
+        ['the title (input type=text)', () => inputOfType('text')],
+        ['a search input', () => inputOfType('search')],
+      ])('leaves the paste to the browser in %s, so the text goes in and no image is attached', (_label, makeTarget) => {
+        const { result } = renderHook(() => useIssueDraftImages());
+        const { event, preventDefault } = pasteEvent([file('cells.png')], {
+          types: OFFICE_TYPES,
+          text: 'a\tb\n1\t2',
+          target: makeTarget(),
+        });
+        act(() => result.current.handlePaste(event));
+        expect(preventDefault).not.toHaveBeenCalled();
+        expect(result.current.images).toEqual([]);
+        expect(result.current.problems).toEqual([]);
+      });
+
+      it.each([
+        ['the margin of the form', () => document.createElement('div')],
+        ['a button', () => document.createElement('button')],
+        ['a file input', () => inputOfType('file')],
+        ['a checkbox', () => inputOfType('checkbox')],
+      ])('attaches the image when pasted onto %s (there is no text field to take the text)', (_label, makeTarget) => {
+        const { result } = renderHook(() => useIssueDraftImages());
+        const { event, preventDefault } = pasteEvent([file('cells.png')], {
+          types: OFFICE_TYPES,
+          text: 'a\tb',
+          target: makeTarget(),
+        });
+        act(() => result.current.handlePaste(event));
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(result.current.images.map((image) => image.name)).toEqual(['cells.png']);
+      });
+
+      it('still attaches an image-only paste (a screenshot) into a text field', () => {
+        const { result } = renderHook(() => useIssueDraftImages());
+        const { event, preventDefault } = pasteEvent([file('shot.png')], {
+          types: ['Files'],
+          target: document.createElement('textarea'),
+        });
+        act(() => result.current.handlePaste(event));
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(result.current.images.map((image) => image.name)).toEqual(['shot.png']);
+      });
+
+      // Chrome の「画像をコピー」は <img> だけの HTML と画像を載せ、文字は無い。HTML があるだけで文字を優先すると、画像が付かず何も貼られない。
+      it('still attaches an image copied from a web page (HTML with only an <img>, no text) into a text field', () => {
+        const { result } = renderHook(() => useIssueDraftImages());
+        const { event, preventDefault } = pasteEvent([file('page.png')], {
+          types: ['text/html', 'Files'],
+          target: document.createElement('textarea'),
+        });
+        act(() => result.current.handlePaste(event));
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(result.current.images.map((image) => image.name)).toEqual(['page.png']);
+      });
+
+      it('does not count a text/plain that is only whitespace as text', () => {
+        const { result } = renderHook(() => useIssueDraftImages());
+        const { event, preventDefault } = pasteEvent([file('chart.png')], {
+          types: OFFICE_TYPES,
+          text: ' \n',
+          target: document.createElement('textarea'),
+        });
+        act(() => result.current.handlePaste(event));
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(result.current.images.map((image) => image.name)).toEqual(['chart.png']);
+      });
     });
 
     it('takes only the images when text files and images are pasted together', () => {
