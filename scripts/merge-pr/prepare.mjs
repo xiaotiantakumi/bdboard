@@ -15,7 +15,7 @@ import { PREDICTED_MODES } from './config.mjs';
 import { EXIT, fail, fetchedMain, ticketIdFor } from './context.mjs';
 import { assertExternalRefLinked } from './external-ref.mjs';
 import { getLandedStatus, getPull, requiredChecks } from './github.mjs';
-import { brokenMainSteps, keptLightFailureSteps, rebaseSteps } from './messages.mjs';
+import { brokenMainSteps, cancelledChecksSteps, keptLightFailureSteps, rebaseSteps } from './messages.mjs';
 import { verifyPredicted } from './predicted.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 import { holdForPrepare } from './worktree-hold.mjs';
@@ -177,6 +177,10 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
     `PR #${pr} (${id}) head=${head.slice(0, 12)} ${ctx.mainRef}=${predBase.slice(0, 12)} クラス=${cls} 必須チェック=${checks.verdict} merge.mode=${mode}`,
   );
   say(...describeClass(mode, cls, s2, s3, dryRun));
+  if (checks.source === 'exit-code') {
+    // bdboard-bsc3: --json を持たない gh は終了コードで判定するしかなく、cancel は pass に見える。
+    say('注意: この gh は pr checks --json を持たないため、必須チェックを終了コードだけで判定しました (cancelled を見分けられません。gh を更新してください)。');
+  }
   if (mode === 'S0') {
     removeState(ctx.cwd, pr);
     say(
@@ -196,7 +200,7 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
     fail(EXIT.RETRY, '必須チェックがまだ終わっていません。gh pr checks <n> --required --watch で待ってから prepare し直してください。');
   }
   if (checks.verdict !== 'pass') {
-    fail(EXIT.PRECONDITION, '必須チェックが green ではありません:', checks.output);
+    fail(EXIT.PRECONDITION, '必須チェックが green ではありません:', checks.output, ...cancelledChecksSteps(checks.cancelled ?? []));
   }
   if (dryRun) {
     const skipped = { F: ' (着地予定ツリーの verify もしません)', L: ' (着地予定ツリーの軽量チェックもしません)' }[cls] ?? '';

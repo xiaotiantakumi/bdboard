@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from './http';
-import { createManualIssueDraft, fetchIssueDraft, patchIssueDraft, ISSUE_MANUAL_DRAFTS_API_PATH } from './issue-reports';
+import { createManualIssueDraft, fetchIssueDraft, patchIssueDraft, uploadIssueDraftImage, ISSUE_MANUAL_DRAFTS_API_PATH } from './issue-reports';
 
 const ID = '1758812345678-a1b2c3d4e5f6a7b8';
 const PATH = `/api/issue-reports/drafts/${ID}`;
@@ -23,6 +23,33 @@ function initOf(fetchMock: ReturnType<typeof vi.fn>): RequestInit {
 
 describe('issue report draft API client (bdboard-mqoa)', () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  describe('uploadIssueDraftImage', () => {
+    const image = { fileName: 'image.png', url: '/image.png', byteLength: 3, createdAt: '2026-10-06T00:00:00Z' };
+    it('POSTs JSON to the encoded image path with the expected header and body', async () => {
+      const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ image }, { status: 201 })));
+      vi.stubGlobal('fetch', fetchMock);
+      await uploadIssueDraftImage('a/b', { mimeType: 'image/png', data: 'AAA' });
+      expect(fetchMock).toHaveBeenCalledWith('/api/issue-reports/drafts/a%2Fb/images', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mimeType: 'image/png', data: 'AAA' }),
+      });
+    });
+    it('returns the 201 response body unchanged', async () => {
+      vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ image }, { status: 201 }))));
+      await expect(uploadIssueDraftImage(ID, { mimeType: 'image/png', data: 'AAA' })).resolves.toEqual({ image });
+    });
+    it.each([
+      [409, { error: 'image limit reached' }, 409, undefined],
+      [409, { error: 'draft is not pending', code: 'draft-not-pending' }, 409, 'draft-not-pending'],
+      [507, { error: 'full', code: 'storage-full' }, 507, 'storage-full'],
+      [400, { error: 'invalid image' }, 400, undefined],
+    ])('preserves status and code for HTTP %s errors', async (status, body, expectedStatus, code) => {
+      vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse(body, { status }))));
+      const caught = await uploadIssueDraftImage(ID, { mimeType: 'image/png', data: 'AAA' }).catch((error: unknown) => error);
+      expect(caught).toBeInstanceOf(ApiError);
+      expect(caught).toMatchObject({ status: expectedStatus, ...(code !== undefined ? { code } : {}) });
+    });
+  });
 
   // bdboard-4y8q.6.8: 「新しく報告」の送信。POST の本文は { title, description } で、project は渡したときだけ入る。
   describe('createManualIssueDraft', () => {

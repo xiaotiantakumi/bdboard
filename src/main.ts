@@ -35,8 +35,8 @@ async function main(): Promise<void> {
   const bdServices = wireBdServices(infra.commandRunner, { ...config });
 
   // 下書きサービスは初回リフレッシュの結果を受けるため、lifecycle より先に作る。
-  const issueDrafts = wireIssueDraftService({ repoRoot, env: process.env, applicationVersion });
-  const selfErrors = wireSelfErrorReporter({ env: process.env, service: issueDrafts, cache: infra.cache, applicationVersion });
+  const issueDrafts = wireIssueDraftService({ repoRoot, env: process.env, applicationVersion, bdVersion: infra.bdVersion });
+  const selfErrors = wireSelfErrorReporter({ env: process.env, service: issueDrafts, cache: infra.cache, applicationVersion, bdVersion: infra.bdVersion });
 
   // Windows は「全機能対応」ではなく「機能制限 + 正直な案内」で出す方針
   // (bdboard-70z.9)。BDBOARD_IGNORE_PLATFORM_LIMITS は、独自に環境を整えた
