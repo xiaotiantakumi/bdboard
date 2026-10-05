@@ -3,7 +3,9 @@ import type { DraftIndexEntry, DraftIndexSeed, IssueDraftStoragePort } from '../
 
 /**
  * 受け取りの索引 (bdboard-4y8q.1) と未処理件数 (bdboard-4y8q.3.1)。保存済みの下書きを一度だけ読み、以後は書いた分を
- * メモリで足す。呼び出しはすべてサービスの mutex の内側で 1 本ずつ流れる前提。掃除の棚卸しからも作れる (seed)。
+ * メモリで足す。索引への書き込み (get・note・forget・seed) はサービスの mutex の内側で 1 本ずつ流れる前提。例外は一覧の
+ * 突き合わせ (syncStatuses) だけで、一覧を読むサービスの readListing が mutex の外から、version で書き込みとの重なりを
+ * 見て行う。掃除の棚卸しからも作れる (seed)。
  *
  * 未処理件数は statusById から数える: タブのバッジとデイリーダイジェストが開くたびに全件の draft.json を読み直さない
  * (docs/ISSUE-REPORTING.md 4節「索引ファイルは作らない」の全件読みを、起動後の最初の 1 回にとどめる)。
@@ -31,6 +33,11 @@ export interface DraftIndexCache {
   loaded(): Promise<DraftIndex | undefined>;
   /** 読み込み済み (または読み込み中) の索引から、削除済み id を落とす。失敗は握りつぶす。 */
   forget(ids: ReadonlySet<string>): Promise<void>;
+  /**
+   * 書いた下書きの状態を、読み込み済み (または読み込み中) の索引へ、無ければ getForCount が使い回す欠けた索引へ反映する
+   * (欠けた一覧のあいだも、見送りが件数へすぐ効く)。読み込みは起こさない。
+   */
+  noteStatus(draft: IssueDraft): Promise<void>;
   /** 完全な棚卸しから索引を作る。読み込み中・読み込み済みなら上書きしない。 */
   seed(seed: DraftIndexSeed, withoutIds?: ReadonlySet<string>): void;
 }
@@ -145,6 +152,10 @@ export function createDraftIndexCache(
     },
     async loaded() {
       return indexPromise === undefined ? undefined : indexPromise;
+    },
+    async noteStatus(draft) {
+      const index = indexPromise === undefined ? incomplete?.index : await indexPromise;
+      if (index !== undefined) noteDraftStatus(index, draft);
     },
     async forget(ids) {
       if (indexPromise === undefined) return;

@@ -174,8 +174,7 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
       return { ok: true, outcome: 'merged', draft: merged };
     }
     // 索引にあるのにディスクに無いのは、手で消されたとき。新しい下書きとして作り直す。
-    index.idByFingerprint.delete(fingerprint);
-    if (knownId !== undefined) forgetDrafts(index, [knownId]);
+    if (knownId !== undefined) forgetDrafts(index, [knownId]); // statusById と、その指紋の idByFingerprint を落とす
 
     const bucket = hourBucketOf(now);
     if ((index.newDraftsByHour.get(bucket) ?? 0) >= ISSUE_DRAFT_NEW_PER_HOUR) {
@@ -229,8 +228,7 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
         // 見送りは利用者の操作なので、容量の上限では断らない (見送ると、あとで容量を空けられる下書きが増える)。
         await deps.storage.save(dismissed);
         retention.recordWrite(draftJsonBytes(dismissed) - draftJsonBytes(draft));
-        const index = await indexCache.loaded();
-        if (index !== undefined) noteDraftStatus(index, dismissed);
+        await indexCache.noteStatus(dismissed); // 欠けた一覧のあいだは、getForCount が使い回す索引へ
         // 空けられる (終端の) 下書きが増えた: 上限に張り付いて伸びた測り直しの間隔を戻す (bdboard-krvf)。
         retention.noteFreeableDraft();
         return { ok: true, draft: dismissed };

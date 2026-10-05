@@ -224,6 +224,16 @@ describe('pendingCount() while the listing stays incomplete', () => {
     expect(await service.pendingCount()).toBe(2);
     expect(scan).toHaveBeenCalledTimes(3); // 受け取りが作った索引を件数の問い合わせが使い回す
   });
+
+  it('follows a dismiss at once: the dismiss writes into the incomplete index that the count reuses', async () => {
+    const { service, scan } = incompleteSetup();
+    const one = await receive(service, 'one');
+    await receive(service, 'two');
+    expect(await service.pendingCount()).toBe(2);
+    await service.dismiss(one.id, 'not a bug');
+    expect(await service.pendingCount()).toBe(1); // 反映しないと、使い回す 30 秒のあいだ 2 のまま (一覧は 1)
+    expect(scan).toHaveBeenCalledTimes(2); // 読み直さずに合う
+  });
 });
 
 describe('drafts removed by the retention are dropped from the index', () => {
