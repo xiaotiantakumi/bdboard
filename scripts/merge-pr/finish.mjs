@@ -12,13 +12,19 @@
 // (light-landed) に残し、failure は S3 のすり抜け (S2 に戻す合図) として知らせる (light-landed.mjs。error の
 // ときも L であることを残し、後の merge-pr verify が同じ扱いをする)。木の突き合わせは F が predicted-tree、
 // L が light-tree (S2 の指標・戻し規則が数える predicted-tree に L を混ぜない)。
+// bdboard-xw00: 着地した木が green 済みの木 (F の着地予定ツリー / PR head の木) と同一なら、着地後検証の 1 回目の failure は
+// 形を問わず 1 回だけ再実行する (green-tree.mjs)。修復 PR (state.repair) も同じ。
+import { loadavg } from 'node:os';
+
 import { git, run, shellQuote } from './exec.mjs';
 import { EXIT, REMOTE, fail, liveMain, refetchMain } from './context.mjs';
 import { holdOrReturnSlot, releaseFirst } from './finish-entry.mjs';
 import { getLandedStatus, getPull } from './github.mjs';
+import { greenIdenticalTree, treeOf } from './green-tree.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { forgetLightFailure, lightLandedState, reportLightLanded } from './light-landed.mjs';
-import { brokenMainSteps, keptLightFailureSteps, mainBrokenSlotHeldSteps, mainBrokenSlotUnknownSteps, mainMovedOnSteps, unverifiedTipSteps } from './messages.mjs';
+import { brokenMainSteps, greenRetryFailedSteps, keptLightFailureSteps, retryPassedSteps } from './messages.mjs';
+import { mainBrokenSlotHeldSteps, mainBrokenSlotUnknownSteps, mainMovedOnSteps, unverifiedTipSteps } from './messages.mjs';
 import { forgetLoadInduced } from './predicted-timeouts.mjs';
 import { mainBrokenSlot, releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
@@ -91,14 +97,12 @@ function predictedRecord(state) {
   return null;
 }
 
-/** クラス F / L: 着地した木と着地予定ツリーの一致を確かめる。一致なら true、確かめられなければ null。 */
-function comparePredicted(ctx, pr, state, landed) {
+/** クラス F / L: 着地した木 (landedTree、読めなければ '') と着地予定ツリーの一致を確かめる。一致なら true、確かめられなければ null。 */
+function comparePredicted(pr, state, landed, landedTree) {
   const predicted = predictedRecord(state);
   if (predicted === null) {
     return null;
   }
-  const tree = run('git', ['rev-parse', `${landed}^{tree}`], { cwd: ctx.cwd });
-  const landedTree = tree.status === 0 ? tree.stdout.trim() : '';
   if (landedTree === '') {
     // オフラインの finish 等で着地コミットを読めない。不一致と数えない (S2 の受け入れ指標を汚さない)。
     audit(predicted.event, { pr, id: state.id, match: 'unknown', predicted: predicted.tree, landed: 'unknown', class: state.class });
@@ -149,13 +153,18 @@ export async function finish(ctx, pr) {
   if (parent.status === 0 && parent.stdout.trim() !== state.predBase) {
     say(`注意: マージコミット ${landed.slice(0, 12)} の親が PRED_BASE (${state.predBase.slice(0, 12)}) ではありません。着地した木をそのまま検証します。`);
   }
-  const predictedMatch = comparePredicted(ctx, pr, state, landed);
+  const landedTree = treeOf(ctx, landed);
+  const predictedMatch = comparePredicted(pr, state, landed, landedTree);
   const verified = await runLandedVerify(ctx, landed, state.id, {
     retryHint: `BDBOARD_MERGER=chair npm run merge-pr -- finish ${pr}`,
+    green: greenIdenticalTree(ctx, state, landed, landedTree), // bdboard-xw00
   });
-  // bdboard-xdk8: 負荷由来の失敗で 1 回だけ再実行したときだけ retried=1 を足す (しなければ項目ごと出さない)。
+  // bdboard-xdk8 / xw00: 1 回だけ再実行したときだけ retried=1 を足す (しなければ項目ごと出さない)。
   // bdboard-7qhq: failure のログに子プロセスの時間切れ (spawnSync ETIMEDOUT) があれば etimedout=N も足す (0 件は出さない)。
-  audit('landed-verify', { pr, id: state.id, new: landed, result: verified.result, retried: verified.retried ? 1 : undefined, etimedout: verified.etimedout || undefined });
+  // bdboard-xw00 (2bif): failure の間に 30 秒超眠っていたら slept_s=N (監査専用)。
+  const retry = verified.retry ?? null; // 検証の前に 'error' で戻った経路には無い
+  const extra = { retried: verified.retried ? 1 : undefined, etimedout: verified.etimedout || undefined, slept_s: verified.sleptS };
+  audit('landed-verify', { pr, id: state.id, new: landed, result: verified.result, ...extra });
   reportLightLanded(state, landed, verified.result, 'finish', verified.retried); // error でも L であることを残す
   const leftover = run('git', ['ls-remote', REMOTE, `refs/heads/${pull.headRef}`], { cwd: ctx.cwd });
   if (leftover.status === 0 && leftover.stdout.trim() !== '') {
@@ -181,6 +190,9 @@ export async function finish(ctx, pr) {
     removeState(ctx.cwd, pr);
   }
   if (verified.result === 'failure') {
+    if (retry?.reason === 'identical-tree') {
+      say(...greenRetryFailedSteps(retry.green.how, loadavg()[0].toFixed(1), [retry.firstLog, verified.logPath])); // brokenMainSteps の前
+    }
     if (state.repair) {
       say(`修復後も failure です。${kept}`);
       fail(EXIT.LANDED_FAILED, ...brokenMainSteps(landed, ctx.repo, ctx.statusContext));
@@ -198,6 +210,9 @@ export async function finish(ctx, pr) {
       ? `着地した木と PR head ${state.head.slice(0, 12)} の木は${sameTree ? '同一' : '異なります (git diff --stat で確認)'}。`
       : `クラス ${state.class}: 着地した木は prepare で ${predictedRecord(state).how} した着地予定ツリーと${predictedMatch ? '同一' : '異なります (上の注意を参照)'}。`;
   say(`着地後検証 success: ${landed.slice(0, 12)} (${ctx.statusContext})。`, `${compared}次は close と掃除 (worktree-pr-flow.md §6)。`);
+  if (retry !== null) {
+    say(...retryPassedSteps(retry.firstLog)); // bdboard-xw00: 再実行で通った = 1 回目は非決定的。フレークを隠さない
+  }
   return EXIT.OK;
 }
 
@@ -206,7 +221,8 @@ export async function verifyLanded(ctx, sha) {
   const full = git(['rev-parse', `${sha}^{commit}`], { cwd: ctx.cwd });
   const by = `manual ${git(['config', '--default', 'unknown', 'user.name'], { cwd: ctx.cwd })}`;
   const verified = await runLandedVerify(ctx, full, by, { retryHint: `BDBOARD_MERGER=chair npm run merge-pr -- verify ${full}` });
-  audit('landed-verify', { new: full, result: verified.result, by: 'manual', retried: verified.retried ? 1 : undefined, etimedout: verified.etimedout || undefined });
+  const extra = { retried: verified.retried ? 1 : undefined, etimedout: verified.etimedout || undefined, slept_s: verified.sleptS };
+  audit('landed-verify', { new: full, result: verified.result, by: 'manual', ...extra });
   // finish が error / failure で終わったクラス L の着地、finish が走らなかった L の着地なら、その記録 (状態ファイル) から L を見分ける。
   const light = lightLandedState(ctx.cwd, full);
   const recorded = reportLightLanded(light, full, verified.result, 'manual', verified.retried) === true;

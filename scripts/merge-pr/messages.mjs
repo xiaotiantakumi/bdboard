@@ -112,6 +112,31 @@ export function unverifiedTipSteps(landed, tip, holder) {
   ];
 }
 
+// bdboard-xw00: 着地後検証の再実行の証拠 (green-tree.mjs の how) を人が読む言葉にする。
+const GREEN_HOW = { predicted: 'prepare の着地予定ツリーの verify', 'ci-head': 'PR head の必須チェック (CI)' };
+const greenHow = (how) => `${how} (${GREEN_HOW[how] ?? '不明'})`;
+
+/** bdboard-xw00: 着地した木が green 済みの木と同一なので、失敗の形を見ずに 1 回だけ再実行するときの案内。 */
+export function greenRetryNotice(code, green) {
+  return `verify が失敗しました (exit ${code}) が、着地した木 ${green.tree.slice(0, 12)} は ${greenHow(green.how)} で green だった木と同一なので、失敗の形を見ずに 1 回だけ再実行します。`;
+}
+
+/** bdboard-xw00: finish の着地後検証が再実行で success になったとき (どちらの理由の再実行でも) の案内。 */
+export function retryPassedSteps(firstLog) {
+  return [
+    `1 回目の failure は非決定的 (環境かフレーク)。1 回目のログ ${firstLog}。`,
+    'テストのフレークなら bd create --type bug で起票 (failure-catalog unrelated-flake-broke-landed-verify)。',
+  ];
+}
+
+/** bdboard-xw00: green 済みの同一ツリーで再実行も failure だったとき。brokenMainSteps の前に出す。 */
+export function greenRetryFailedSteps(how, load1, logs) {
+  return [
+    `同一ツリーは ${greenHow(how)} で green だったのに 2 回 failure: 環境要因の継続 (load1=${load1}) / 高頻度フレーク / 環境依存の決定的失敗。`,
+    `両ログ: ${logs.join(' ')}`,
+  ];
+}
+
 export function rebaseSteps(mainRef, reason = 'S1 では main が動いたら rebase') {
   return [
     `main が PR のベース以降に進んでいます (クラス R: ${reason})。枠の外で取り込んでから並び直してください:`,

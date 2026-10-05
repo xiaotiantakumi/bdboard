@@ -356,17 +356,38 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   `pr` verify in the machine-wide verify slots (it still shares them with `merge`, and a `merge`
   waiter may take a free slot while a `landed` waits for a `pr` to leave; docs/VERIFY.md
   "Priorities", bdboard-xdk8).
-- **One retry for a load-induced landed failure** (bdboard-xdk8; `finish`, manual `verify`, and the
-  gate self-heal — not S2's predicted-tree verify and not S3's class L light check, neither of which is ever re-run
-  automatically; see the exit codes of S2 and S3). On 2026-10-04 a docs-only PR's landed verify
-  failed twice under machine load and the main-broken slot stopped every merge. When the landed
-  verify fails, `scripts/merge-pr/load-retry.mjs` reads its log: only if the failing step is a
-  vitest run and *every* error headline is a timeout (`Test/Hook timed out in Nms`, vitest's pool
-  start/terminate timeouts, `spawnSync … ETIMEDOUT`; matched at the start of the message, so an
-  assertion that merely quotes one is not a timeout) does it rename the first
-  log to `landed-verify-<sha>.first-attempt-<UTC time>.log`, append `landed-verify-retry` (exit,
-  timeout count, 1-min load average, CPU count, kept log) to the audit log, post `pending`
-  ("retrying after load-induced failure"), and run the verify once more. The retry tries to keep
+- **One retry for a landed failure** (bdboard-xdk8, bdboard-xw00). A landed verify that fails (not
+  `error`, `abandoned` or a slot-wait timeout, exit 75 — those are handled as before) is run **once
+  more** before it is recorded, for one of two reasons. There is never a third run, whichever the
+  reason and whatever the second failure looks like (timeouts only included).
+  1. **`identical-tree`** (bdboard-xw00; `finish` only, repair PRs included). The landed tree
+     (`<landed>^{tree}`) is a tree that has already passed a verify: (a) `predicted` — class F's
+     `predictedTree`, when the record has `predictedVerifiedAt` (prepare's local full verify was
+     green); otherwise (b) `ci-head` — the tree of the PR head in the gated record (prepare saw its
+     required checks pass and gate re-checked that the head did not change; a class N landing is
+     exactly this tree). (a) wins when both match. The failure's shape is **not** read: one green run
+     of the same tree rules out a deterministic failure of that tree, so one failure can only mean
+     "non-deterministic (environment or flake)", which a single run cannot tell apart. The decision
+     is `scripts/merge-pr/green-tree.mjs`. Class L's `lightTree` is never evidence (the light check
+     runs no tests), and an L landing is the merge-tree, not the head's tree, so (b) does not match it.
+  2. **`timeouts`** (bdboard-xdk8; only when there is no identical-tree evidence). On 2026-10-04 a
+     docs-only PR's landed verify failed twice under machine load and the main-broken slot stopped
+     every merge. `scripts/merge-pr/load-retry.mjs` reads the log: only if the failing step is a
+     vitest run and *every* error headline is a timeout (`Test/Hook timed out in Nms`, vitest's pool
+     start/terminate timeouts, `spawnSync … ETIMEDOUT`; matched at the start of the message, so an
+     assertion that merely quotes one is not a timeout) does it retry. This classifier is **frozen
+     (bdboard-xw00)**: no shape is added to `TIMEOUT_SHAPES` any more (not `expected null to be <n>`
+     either). Environment failures come in an open set of shapes (load, sleep, network, disk), and
+     every shape taught to it was followed by the same incident in the next shape (xdk8 → e8jj →
+     7qhq → 2bif). It stays because it is tested and is the only retry decision on the paths that
+     cannot get identical-tree evidence (the known limits below).
+
+  Either way merge-pr renames the first
+  log to `landed-verify-<sha>.first-attempt-<UTC time>.log`, appends `landed-verify-retry` to the
+  audit log (`reason=identical-tree|timeouts`; for `identical-tree` also `green=predicted|ci-head` and
+  `tree=<12 hex>`; then exit, timeout count (omitted when 0), `etimedout`, `slept_s`, 1-min load
+  average, CPU count, kept log), posts `pending` ("retrying after failure on a tree already verified
+  green (<how>)" / "retrying after load-induced failure"), and runs the verify once more. The retry tries to keep
   its place in the verify slots. Right after it sees the first run exit, merge-pr writes a `landed`
   reservation holder (docs/VERIFY.md "Priorities"). Waiting `pr` verifies do not take the freed
   slot while the reservation is there. The retry queues with `since` = the first run's queue time
@@ -375,19 +396,41 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   holder shows (it looks every `BDBOARD_MERGE_POLL_MS`) or, at the latest, when the retry returns
   (docs/VERIFY.md "Retry reservation"). A `pr` that starts in the short gap before the reservation is
   written only makes the retry wait for it; they never run side by side. The
-  second result is recorded as usual, with `(retried after load-induced failure: N timeouts)` in the
+  second result is recorded as usual, with `(retried: first run failed on a green tree [<how>])` or
+  `(retried after load-induced failure: N timeouts)` in the
   status description. `finish` and the manual `verify` also put `retried=1` on their `landed-verify`
   audit line. The gate self-heal writes no `landed-verify` line (it audits `gate-self-heal`, and
   the retry is visible in `landed-verify-retry`, in the ledger description and, when the healed SHA
   was an S3 class L landing, as `retried=1` on the `light-landed … by=self-heal` line). A second failure is a
-  `failure` (main-broken) as before, and a slot-wait timeout on
-  the retry is "could not run" (exit 75, nothing but `pending` recorded). Any other failure — an
+  `failure` (main-broken) as before — a repair PR keeps holding its slot — and a slot-wait timeout on
+  the retry is "could not run" (exit 75, nothing but `pending` recorded). Without identical-tree
+  evidence, any failure that is not all timeouts — an
   assertion, a type error, a failing non-vitest step, an unrecognized headline, a test whose
   `spawnSync` child was killed and so compares `null` to an exit code — is recorded right away, as
-  before. The decision uses the failure's shape only, not the load average: under high load a
+  before. That classifier uses the failure's shape only, not the load average: under high load a
   real race can also fail with an assertion, and a load threshold would retry it too, while a
   deterministic regression (including a hang that always times out) fails the retry and is still
   recorded.
+  A retry must not hide a real race behind a `success` (bdboard-yv45 was a flake with one under it),
+  so it always makes noise. When the retry passes, `finish` says the first failure was
+  non-deterministic (environment or flake), names the first log, and asks for a flake bug if it was a
+  test (`bd create --type bug`; failure-catalog `unrelated-flake-broke-landed-verify`). The monthly
+  count of `reason=identical-tree` is the flake-rate signal (an indicator, not a rule). When an
+  `identical-tree` retry fails too, `finish` prints, before the main-broken steps, that the same tree
+  was green by `<how>` yet failed twice — continued environment trouble (with the current `load1`), a
+  high-frequency flake, or a deterministic failure that depends on the environment — and both logs.
+  A deterministic breakage that only this machine sees (CI does not) costs one extra run (5–10 min)
+  on F/N before it becomes main-broken; that is why the retry is limited to one.
+  `slept_s=N` (bdboard-xw00, from 2bif) goes on `landed-verify-retry` (the first run) and on the
+  `landed-verify` line of a failure (the whole verify) when the wall clock ran more than 30 s ahead
+  of the monotonic clock, i.e. the machine slept. It is audit-only and never decides a retry.
+  **Known limits** (no identical-tree evidence, so only the frozen classifier decides): the manual
+  `merge-pr verify <sha>` and the gate self-heal (they have no gated state file to take evidence
+  from), class L landings, and S2/S3's predicted-tree verify and light check (a first verify: there
+  is no green identical tree by definition, and e8jj's one exit 75 per PR head stays). Recover as
+  before: read the log, `BDBOARD_MERGER=chair npm run merge-pr -- verify <sha>`, then release the
+  slot. Run an overnight `finish` under `caffeinate -is` — a machine that sleeps again during the
+  retry fails the retry too.
   The failure message and the audit line also say how many headlines of the log are a child process
   killed by its timeout (`spawnSync … ETIMEDOUT`; bdboard-7qhq): "子プロセスの時間切れ (ETIMEDOUT) が N
   件" on the retry notice and on the `verify が失敗しました` line, and `etimedout=N` on
