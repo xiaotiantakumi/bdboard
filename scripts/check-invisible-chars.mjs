@@ -2,7 +2,8 @@
 // レビュー困難を招いた。Trojan Source に使われる文字や、見えない書式文字の生記述を検出する。
 // ESLint の対象外を含むソースを同じ規則で確認し、追加依存や disable コメントによる回避を防ぐ。
 // 対象は git の追跡ファイルと未追跡・非 ignore ファイルで、src / web/src / scripts の
-// 指定拡張子に限る。削除済みパスは読み飛ばし、git の一覧取得に失敗したら検査不能として失敗する。
+// 指定拡張子に限る。削除済みパス (ENOENT / ENOTDIR) だけ読み飛ばし、それ以外で読めないファイルと
+// git の一覧取得の失敗は、通ったことにせず検査不能 (exit 2) として失敗する。
 // 生の文字そのものは診断に含めず、コードポイント・名前・位置だけを表示する。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -72,7 +73,9 @@ function listGitFiles(repoRoot) {
     ['-c', 'core.quotePath=false', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', 'src', 'web/src', 'scripts'],
     { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  return output.split('\0').filter(Boolean);
+  // マージ競合中のパスは git ls-files が段 (stage) ごとに 1 行ずつ返すので、同じファイルを何度も報告しないよう重複を除く
+  // (git の --deduplicate は旧い git にあるか分からないので JS で除く)。
+  return [...new Set(output.split('\0').filter(Boolean))];
 }
 
 export function main(argv) {
@@ -91,13 +94,18 @@ export function main(argv) {
 
   let inspected = 0;
   let count = 0;
+  let unreadable = 0;
   const affected = new Set();
   for (const relPath of files) {
     if (!isTargetPath(relPath)) continue;
     let text;
     try {
       text = fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
-    } catch {
+    } catch (error) {
+      // 追跡中だが作業ツリーで消したファイル (git ls-files --cached は一覧に残す) は読み飛ばす。
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
+      unreadable += 1;
+      console.error(`invisible-chars: ${relPath} を読めませんでした (${error.code ?? error.message})`);
       continue;
     }
     inspected += 1;
@@ -105,8 +113,9 @@ export function main(argv) {
       count += 1;
       affected.add(relPath);
       const codePoint = Number.parseInt(finding.codePoint.slice(2), 16);
+      // 診断は ASCII だけで書く (生の文字を出力に混ぜない)。JSX のテキスト・属性では \u のエスケープが解釈されないので、その案内も添える。
       console.error(
-        `invisible-chars: ${relPath}:${finding.line}:${finding.column} ${finding.codePoint} ${CHAR_NAMES.get(codePoint)} — 生の文字ではなく \\uXXXX のエスケープで書いてください`,
+        `invisible-chars: ${relPath}:${finding.line}:${finding.column} ${finding.codePoint} ${CHAR_NAMES.get(codePoint)} - write it as a \\uXXXX escape, not the raw character (in JSX text or attributes the escape is not interpreted: use a JS expression such as {'\\u200B'})`,
       );
     }
   }
@@ -114,6 +123,10 @@ export function main(argv) {
   if (count > 0) {
     console.error(`invisible-chars: ${count} 件を ${affected.size} ファイルで検出しました。`);
     return EXIT_FOUND;
+  }
+  if (unreadable > 0) {
+    console.error(`invisible-chars: ${unreadable} ファイルを読めず、検査できませんでした。`);
+    return EXIT_UNAVAILABLE;
   }
   console.log(`invisible-chars: bidi 制御文字・見えない書式文字の生の記述はありません (${inspected} ファイルを検査)。`);
   return EXIT_OK;

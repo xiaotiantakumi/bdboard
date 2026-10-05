@@ -66,6 +66,14 @@ describe('findInvisibleChars', () => {
     expect(findInvisibleChars(`${cp(0xfeff)}export {};\n`)).toEqual([{ line: 1, column: 1, codePoint: 'U+FEFF' }]);
   });
 
+  it('counts an astral character (a surrogate pair) as two UTF-16 units before a later finding', () => {
+    // U+1F469 は UTF-16 で 2 コード単位。列は JS の文字列の位置 (index + 1) で数える。
+    expect(findInvisibleChars(`a${cp(0x1f469)}${cp(0x202e)}`)).toEqual([{ line: 1, column: 4, codePoint: 'U+202E' }]);
+    expect(findInvisibleChars(`${cp(0x1f469)}\n${cp(0x1f469)}${cp(0x200b)}`)).toEqual([
+      { line: 2, column: 3, codePoint: 'U+200B' },
+    ]);
+  });
+
   it('flags every occurrence, including several on one line', () => {
     expect(findInvisibleChars(`${cp(0x200b)}${cp(0x200b)}`)).toEqual([
       { line: 1, column: 1, codePoint: 'U+200B' },
@@ -155,6 +163,28 @@ describe('check-invisible-chars CLI', () => {
     expect(output).toContain('U+202E');
     expect(output).not.toContain('src/ok.ts');
     expect(output).not.toContain(rlo);
+    // 診断の 1 行は ASCII だけ (生の文字を混ぜない) で、JSX ではエスケープが解釈されない旨の案内を含む。
+    const findingLine = result.stderr.split('\n').find((line) => line.includes('src/bad.ts:2:19'));
+    expect(findingLine).toMatch(/^[\x20-\x7E]+$/);
+    expect(findingLine).toContain('JSX');
+  });
+
+  it('reports a file in a merge conflict once (git ls-files lists an unmerged path once per stage)', () => {
+    const author = ['-c', 'user.name=example-user', '-c', 'user.email=example@example.com'];
+    write('src/c.ts', 'export const a = 1;\n');
+    git('add', 'src/c.ts');
+    git(...author, 'commit', '-q', '-m', 'base');
+    git('switch', '-q', '-c', 'side');
+    write('src/c.ts', `export const a = 2; // ${cp(0x202e)}\n`);
+    git(...author, 'commit', '-q', '-am', 'side');
+    git('switch', '-q', 'main');
+    write('src/c.ts', 'export const a = 3;\n');
+    git(...author, 'commit', '-q', '-am', 'main');
+    // 競合して exit 1 になるのが正常 (execFileSync ではなく spawnSync で、失敗しても投げない)。
+    spawnSync('git', [...author, 'merge', '-q', 'side'], { cwd: work });
+    const result = run();
+    expect(result.status).toBe(EXIT_FOUND);
+    expect(result.stderr).toContain('1 件を 1 ファイル');
   });
 
   it('also catches a new file that is not yet added to git', () => {
@@ -187,6 +217,27 @@ describe('check-invisible-chars CLI', () => {
     write('.gitignore', 'src/ignored.ts\n');
     write('src/ignored.ts', `${cp(0x202e)}\n`);
     expect(run().status).toBe(EXIT_OK);
+  });
+
+  it('skips a tracked file that was deleted from the work tree (git ls-files --cached still lists it)', () => {
+    write('src/gone.ts', 'export const gone = 1;\n');
+    write('src/ok.ts', 'export const ok = 1;\n');
+    git('add', 'src/gone.ts', 'src/ok.ts');
+    fs.rmSync(path.join(work, 'src/gone.ts'));
+    const result = run();
+    expect(result.status).toBe(EXIT_OK);
+    expect(result.stdout).toContain('(1 ファイルを検査)');
+  });
+
+  it('exits 2 (not a pass) when a listed file exists but cannot be read', () => {
+    // 追跡中のパスをディレクトリに置き換える (EISDIR)。chmod と違い Windows でも同じに再現できる。
+    write('src/odd.ts', 'export const odd = 1;\n');
+    git('add', 'src/odd.ts');
+    fs.rmSync(path.join(work, 'src/odd.ts'));
+    fs.mkdirSync(path.join(work, 'src/odd.ts'));
+    const result = run();
+    expect(result.status).toBe(EXIT_UNAVAILABLE);
+    expect(result.stderr).toContain('src/odd.ts');
   });
 
   it('exits 2 (not a pass) when it cannot list files', () => {
