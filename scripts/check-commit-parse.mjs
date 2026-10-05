@@ -24,6 +24,7 @@ import { pathToFileURL } from 'node:url';
 export { KNOWN_UNPARSABLE } from './check-commit-parse/constants.mjs';
 export {
   checkCommitMessage,
+  isConventionalSubject,
   isChangelogRelevant,
   isValidAllowlistEntry,
   findUnparsableCommits,

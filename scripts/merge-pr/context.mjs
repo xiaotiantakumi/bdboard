@@ -135,3 +135,19 @@ export function liveMain(ctx) {
   const sha = result.stdout.split('\t')[0].trim();
   return sha === '' ? null : sha;
 }
+
+/** PR が OPEN・draft でない・base が main であることを確かめる (gate でも使う)。 */
+export function assertOpenPull(ctx, pull, pr) {
+  if (pull.merged) {
+    fail(EXIT.PRECONDITION, `PR #${pr} は既にマージ済みです。`);
+  }
+  if (pull.state !== 'open') {
+    fail(EXIT.PRECONDITION, `PR #${pr} は ${pull.state} です (open ではない)。`);
+  }
+  if (pull.draft) {
+    fail(EXIT.PRECONDITION, `PR #${pr} は draft です。`);
+  }
+  if (pull.baseRef !== ctx.config.mainBranch) {
+    fail(EXIT.PRECONDITION, `PR #${pr} の base は ${pull.baseRef} です (${ctx.config.mainBranch} ではない)。`);
+  }
+}

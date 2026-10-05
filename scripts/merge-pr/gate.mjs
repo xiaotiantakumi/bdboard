@@ -9,22 +9,20 @@
 // gate でも finish でも、修復の着地後検証が success になるまで返さない。
 import { readCommit, shellQuote } from './exec.mjs';
 import { SLOT_MODES } from './config.mjs';
-import { EXIT, fail, fetchedMain, liveMain, refetchMain } from './context.mjs';
+import { EXIT, assertOpenPull, fail, fetchedMain, liveMain, refetchMain } from './context.mjs';
 import { getPull } from './github.mjs';
 import { waitForLanded } from './landed.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { lightLandedState, reportLightLanded } from './light-landed.mjs';
 import { brokenMainSteps, keptLightFailureSteps, mergeInstructions } from './messages.mjs';
-import { assertOpenPull } from './prepare.mjs';
+import { assertConventionalTitle, squashSubject } from './pr-title.mjs';
 import { recordProblem } from './record.mjs';
 import { acquireSlot, readSlot, releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 
-const CONVENTIONAL = /^[a-z]+(\([^)]+\))?!?: \S/;
-
 export function mergeCommand(pr, head, title) {
   // 改行を含むタイトルでも印字は必ず 1 行にする。
-  const subject = `${title.replace(/\s+/g, ' ').trim()} (#${pr})`;
+  const subject = squashSubject(pr, title);
   return `gh pr merge ${pr} --squash --delete-branch --match-head-commit ${head} --subject ${shellQuote(subject)}`;
 }
 
@@ -99,6 +97,7 @@ export async function gate(ctx, pr, { repair = false } = {}) {
   }
   const pull = getPull(ctx, pr);
   assertOpenPull(ctx, pull, pr);
+  await assertConventionalTitle(pull, pr, { phase: 'gate' });
   if (pull.headSha !== state.head) {
     startOver(ctx, pr, `prepare の後に PR #${pr} の head が変わりました (${state.head.slice(0, 12)} → ${String(pull.headSha).slice(0, 12)})。`);
   }
@@ -149,9 +148,6 @@ export async function gate(ctx, pr, { repair = false } = {}) {
   }
   writeState(ctx.cwd, pr, { ...state, holder, repair, gateAt: new Date(acquiredAt).toISOString() });
   audit('gate-acquired', { pr, id: state.id, holder, base: state.predBase, live });
-  if (!CONVENTIONAL.test(pull.title)) {
-    say(`注意: PR タイトルが conventional commits の形ではありません: ${pull.title}`);
-  }
   process.stdout.write(`${mergeCommand(pr, state.head, pull.title)}\n`);
   say(...mergeInstructions(pr));
   // 枠を持ったまま終了する。返すのは finish。
