@@ -1,35 +1,25 @@
 import {
   ISSUE_DRAFT_MAX_IMAGES,
-  ISSUE_DRAFT_NEW_PER_HOUR,
-  computeDraftFingerprint,
-  hourBucketOf,
   isDraftId,
-  massOccurrenceFingerprint,
   type DraftStatus,
   type IssueDraft,
 } from '../../domain/issue-draft.js';
 import { applyDraftEdit, type DraftTextEdit } from '../../domain/issue-draft-edit.js';
 import { draftJsonBytes, fitDraftToByteLimit } from '../../domain/issue-draft-size.js';
-import {
-  addOccurrence,
-  canonicalizeReceiveInput,
-  createDraftFromReport,
-  foldIntoMassDraft,
-  type ReceiveDraftInput,
-} from '../../domain/issue-draft-build.js';
+import type { ReceiveDraftInput } from '../../domain/issue-draft-build.js';
 import type { DraftListing, IssueDraftStoragePort, StoredDraftImage } from '../ports/issue-draft-storage.js';
 import {
   countPending,
   countPendingStatuses,
   createDraftIndexCache,
-  forgetDrafts,
-  noteDraftStatus,
   syncStatuses,
 } from './issue-draft-index.js';
 import { createMutex } from './issue-draft-mutex.js';
 import { createDraftRetention, type DraftRetentionOptions } from './issue-draft-retention.js';
+import { receiveDraftLocked, type DraftReceiveContext, type ReceiveDraftResult } from './issue-draft-receive.js';
 
 export type { ReceiveDraftInput } from '../../domain/issue-draft-build.js';
+export type { ReceiveDraftResult } from './issue-draft-receive.js';
 
 /**
  * 不具合報告の下書きの受け取りと画面用の読み書き (bdboard-4y8q.1、設計 3・4節)。
@@ -37,12 +27,6 @@ export type { ReceiveDraftInput } from '../../domain/issue-draft-build.js';
  * このサービスは外へ何も送らない: 持っているのは IssueDraftStoragePort (手元のファイル)
  * だけで、gh も bd も呼ばない。投稿は bdboard-4y8q.4 の別の経路。
  */
-
-export type ReceiveDraftResult =
-  | { readonly ok: true; readonly outcome: 'created' | 'merged' | 'folded'; readonly draft: IssueDraft }
-  | { readonly ok: false; readonly reason: 'missing-identifier' }
-  /** issue-drafts の合計容量の上限に収まらない (終端の下書きを消しても足りない)。bdboard-00qh。 */
-  | { readonly ok: false; readonly reason: 'storage-full' };
 
 export type DismissDraftResult =
   | { readonly ok: true; readonly draft: IssueDraft }
@@ -160,57 +144,17 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
     return true;
   }
 
-  async function receiveLocked(rawInput: ReceiveDraftInput): Promise<ReceiveDraftResult> {
-    // 指紋より前に、source・catalogSlug のユーザーのホームのパスを畳む (トンネルの読み手へ名前を出さない)。
-    const input = canonicalizeReceiveInput(rawInput);
-    const fingerprint = computeDraftFingerprint(input);
-    if (fingerprint === undefined) return { ok: false, reason: 'missing-identifier' };
-
-    // 期限切れの掃除 (1 時間に 1 回まで。失敗しても受け取りは続ける)。掃除の棚卸しが索引も作るので、その後に読む。
-    await retention.pruneIfDue();
-    const index = await indexCache.get();
-    const now = deps.now();
-    const nowIso = now.toISOString();
-
-    const knownId = index.idByFingerprint.get(fingerprint);
-    const known = knownId === undefined ? undefined : await deps.storage.get(knownId);
-    if (known !== undefined) {
-      const merged = addOccurrence(known, input, nowIso);
-      if (!(await saveWithinCap(merged, known))) return storageFull;
-      noteDraftStatus(index, merged);
-      return { ok: true, outcome: 'merged', draft: merged };
-    }
-    // 索引にあるのにディスクに無いのは、手で消されたとき。新しい下書きとして作り直す。
-    if (knownId !== undefined) forgetDrafts(index, [knownId]); // statusById と、その指紋の idByFingerprint を落とす
-
-    const bucket = hourBucketOf(now);
-    if ((index.newDraftsByHour.get(bucket) ?? 0) >= ISSUE_DRAFT_NEW_PER_HOUR) {
-      const massFingerprint = massOccurrenceFingerprint(input.kind, now);
-      const massId = index.idByFingerprint.get(massFingerprint);
-      const existingMass = massId === undefined ? undefined : await deps.storage.get(massId);
-      const folded = foldIntoMassDraft(existingMass, input, {
-        id: deps.newId(),
-        massFingerprint,
-        foldedFingerprint: fingerprint,
-        nowIso,
-      });
-      if (!(await saveWithinCap(folded, existingMass))) return storageFull;
-      if (massId !== undefined && massId !== folded.id) forgetDrafts(index, [massId]);
-      index.idByFingerprint.set(massFingerprint, folded.id);
-      noteDraftStatus(index, folded);
-      return { ok: true, outcome: 'folded', draft: folded };
-    }
-
-    const draft = createDraftFromReport(input, { id: deps.newId(), fingerprint, nowIso });
-    if (!(await saveWithinCap(draft, undefined))) return storageFull;
-    index.idByFingerprint.set(fingerprint, draft.id);
-    noteDraftStatus(index, draft);
-    index.newDraftsByHour.set(bucket, (index.newDraftsByHour.get(bucket) ?? 0) + 1);
-    return { ok: true, outcome: 'created', draft };
-  }
+  const receiveContext: DraftReceiveContext = {
+    storage: deps.storage,
+    indexCache,
+    pruneIfDue: () => retention.pruneIfDue(),
+    saveWithinCap,
+    now: deps.now,
+    newId: deps.newId,
+  };
 
   return {
-    receive: (input) => exclusive(() => receiveLocked(input)),
+    receive: (input) => exclusive(() => receiveDraftLocked(receiveContext, input)),
 
     async listWithPendingCount() {
       const drafts = [...(await readListing()).drafts].sort(compareNewestFirst);
