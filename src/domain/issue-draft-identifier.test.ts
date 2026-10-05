@@ -11,6 +11,7 @@ import {
   stripNonLineText,
   stripPasteArtifacts,
 } from './issue-draft-identifier.js';
+import { LINEAR_TIME_TEST_TIMEOUT_MS, expectLinearTime } from './linear-time-test-support.js';
 
 describe('isSingleLineText', () => {
   it('accepts ordinary one-line text, including API paths and non-ASCII', () => {
@@ -350,24 +351,27 @@ describe('foldHomePaths', () => {
     expect(foldHomePaths(input)).toBe(expected);
   });
 
+  // bdboard-0101: 壁時計の絶対値 (2000ms) ではなく、同じ形を 1/10 の長さと元の長さで測った比で線形を見る。
   it('is linear on long hostile input', () => {
-    const hostile = [
-      `/Users/${'a'.repeat(100_000)}`,
-      `${'/Users/'.repeat(20_000)}x`,
-      `C:\\Users\\${' '.repeat(100_000)}`,
-      `${'/Volumes/x '.repeat(10_000)}`,
-      `${'\\\\wsl$\\'.repeat(10_000)}`,
-      `${'C:\\Users\\a D:\\Users\\b '.repeat(10_000)}`,
-      `C:\\Users\\${'a '.repeat(50_000)}`,
-      `C:\\Users\\${'a ('.repeat(30_000)}`,
-      `C:\\Users\\${'(('.repeat(50_000)}`,
-      `${'/home/a('.repeat(20_000)}`,
-      `/home/${'('.repeat(100_000)}`,
-    ];
-    const started = Date.now();
-    for (const input of hostile) foldHomePaths(input);
-    expect(Date.now() - started).toBeLessThan(2000);
-  });
+    expectLinearTime('issue-draft-identifier: foldHomePaths hostile input', (n) => {
+      const hostile = [
+        `/Users/${'a'.repeat(n(100_000))}`,
+        `${'/Users/'.repeat(n(20_000))}x`,
+        `C:\\Users\\${' '.repeat(n(100_000))}`,
+        `${'/Volumes/x '.repeat(n(10_000))}`,
+        `${'\\\\wsl$\\'.repeat(n(10_000))}`,
+        `${'C:\\Users\\a D:\\Users\\b '.repeat(n(10_000))}`,
+        `C:\\Users\\${'a '.repeat(n(50_000))}`,
+        `C:\\Users\\${'a ('.repeat(n(30_000))}`,
+        `C:\\Users\\${'(('.repeat(n(50_000))}`,
+        `${'/home/a('.repeat(n(20_000))}`,
+        `/home/${'('.repeat(n(100_000))}`,
+      ];
+      return () => {
+        for (const input of hostile) foldHomePaths(input);
+      };
+    });
+  }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });
 
 describe('canonicalizeIdentifier', () => {

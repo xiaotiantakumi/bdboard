@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { findKeyBlockSpans } from './issue-public-pem.js';
+import { LINEAR_TIME_TEST_TIMEOUT_MS, expectLinearTime } from './linear-time-test-support.js';
 
 // 鍵の印は実行時に組み立てる (リポジトリにシークレットスキャナが反応する文字列を置かない)。
 const BEGIN = '-----' + 'BEGIN PRIVATE KEY' + '-----';
@@ -126,24 +127,27 @@ describe('other private key formats', () => {
 });
 
 describe('linear time on hostile 100k inputs', () => {
-  it('scans repeated and swapped markers in well under three seconds', () => {
-    const hostile = [
-      BEGIN.repeat(3_000),
-      END.repeat(3_000),
-      `${END}${BEGIN}`.repeat(1_500),
-      '-----BEGIN' + ' '.repeat(100_000),
-      '-----BEGIN '.repeat(9_000),
-      '-'.repeat(100_000),
-      '---- BEGIN '.repeat(8_000),
-      'PuTTY-User-Key-File-'.repeat(5_000),
-      '-----BEGIN ' + 'A '.repeat(50_000),
-      '---BEGIN '.repeat(11_000),
-      '---BEGIN ' + 'A-'.repeat(50_000),
-      '---BEGIN ' + 'A-A'.repeat(33_000) + ' PRIVATE KEY',
-      '-'.repeat(50_000) + 'BEGIN ' + '-'.repeat(50_000),
-    ];
-    const started = performance.now();
-    for (const value of hostile) findKeyBlockSpans(value);
-    expect(performance.now() - started).toBeLessThan(3000);
-  });
+  // bdboard-0101: 壁時計の絶対値 (3000ms) ではなく、同じ形を 1/10 の長さと元の長さで測った比で線形を見る。
+  it('scans repeated and swapped markers in time linear in their length', () => {
+    expectLinearTime('issue-public-pem: hostile 100k inputs', (n) => {
+      const hostile = [
+        BEGIN.repeat(n(3_000)),
+        END.repeat(n(3_000)),
+        `${END}${BEGIN}`.repeat(n(1_500)),
+        '-----BEGIN' + ' '.repeat(n(100_000)),
+        '-----BEGIN '.repeat(n(9_000)),
+        '-'.repeat(n(100_000)),
+        '---- BEGIN '.repeat(n(8_000)),
+        'PuTTY-User-Key-File-'.repeat(n(5_000)),
+        '-----BEGIN ' + 'A '.repeat(n(50_000)),
+        '---BEGIN '.repeat(n(11_000)),
+        '---BEGIN ' + 'A-'.repeat(n(50_000)),
+        '---BEGIN ' + 'A-A'.repeat(n(33_000)) + ' PRIVATE KEY',
+        '-'.repeat(n(50_000)) + 'BEGIN ' + '-'.repeat(n(50_000)),
+      ];
+      return () => {
+        for (const value of hostile) findKeyBlockSpans(value);
+      };
+    });
+  }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });
