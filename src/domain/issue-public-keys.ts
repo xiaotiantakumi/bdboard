@@ -150,8 +150,7 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
         });
         continue;
       }
-      // 端の検査はたたみ方が違う (toLowerCase。issue-public-fragments.ts) ので、検索の鍵を表のたたみで 1 つにまとめても、
-      // 変種はすべて端の鍵に渡す (根と同じ)。µ/μ・ς/σ・ſ/s・U+1FBE/ι は表では同じ、toLowerCase では別 (bdboard-uudb のレビュー MAJOR-1)。
+      // 端の検査も本体と同じ表でたたむので、たたんだ後で同じ変種は fragmentKeyCollector が 1 つにする。ここでは全部の変種を渡してよい。
       addFragmentKey(variant);
       const literal = caseInsensitiveLiteral(variant, false);
       const key = `${category}\0${literal.folded}`;

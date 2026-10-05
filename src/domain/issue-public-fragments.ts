@@ -9,14 +9,17 @@
  *     途中までのトークン。ローカル部と "@" から始まる途中までのメール。
  *   - 先頭 (呼び出し側が start を立てた欄だけ。末尾だけを取る送り手がいるのはエラー文): 根・LONG の固有名詞の、4 コードポイント以上で
  *     全体より短い後置部分。先頭が欠けたトークンは本体だけが残り、形が無いので拾えない (5節「カバーしないもの」)。
- * 全体に一致するもの (全体より短くない) はここでは返さない: 通常の置き換えが拾い、根の直後の文字の条件 (example-project2) もそちらが持つ。
+ * 全体に一致するもの (全体より短くない) は、先頭の端ではここで返さない: 通常の置き換えが拾い、根の直後の文字の条件 (example-project2) も
+ * そちらが持つ。末尾の端では返す (直後の文字が無く、通常の置き換えの一致と重なれば統合で強い種別の印 1 つになる。本体は重ならずに探すので、
+ * 自分と重なる名前が末尾で重なって 2 回現れると、2 つ目を拾えない)。
  *
- * 大文字小文字: 各コードポイントを toLowerCase でたたんで比べる (正規表現の i フラグの単純な大小文字の対応とほぼ同じ。
- * 特殊な対応は 5節「カバーしないもの」)。本体の検索 (issue-public-casefold.ts) はエンジンの単純なたたみの表でたたむので、
- * たたみ方が違う (µ/μ・ς/σ・ſ/s・U+1FBE/ι)。prepareKeys は検索の鍵をまとめても、変種はすべてここの鍵に渡す。鍵ごとに KMP の失敗関数を前もって作り、欄の端から鍵の長さぶんだけを読むので、
+ * 大文字小文字: 各コードポイントを、本体の探索と同じ表 (issue-public-casefold.ts) の代表にたたんで比べる。表が使えないエンジンでは、
+ * エンジンに直接尋ねて同じ同値類にたたむ。以前は toLowerCase で、µ/μ・ς/σ・ϑ/θ・ſ/s・U+1FBE/ι が本体と端で別だった。
+ * prepareKeys は検索の鍵をまとめても、変種はすべてここの鍵に渡す。鍵ごとに KMP の失敗関数を前もって作り、欄の端から鍵の長さぶんだけを読むので、
  * 鍵 1 つあたり O(鍵の長さ) で、欄の長さによらない。
  */
 import { findEmailPrefixAtEnd, findTokenPrefixesAtEnd } from './issue-public-secrets.js';
+import { foldCodePoint } from './issue-public-casefold.js';
 import { codeUnitIndexAfterCodePoints, codeUnitIndexBeforeTailCodePoints } from './issue-public-text.js';
 
 /** これより短い断片は置き換えない (固有名詞の LONG の下限と同じ。2〜3 文字では元の名前を特定できず、一般語を壊す)。 */
@@ -53,10 +56,6 @@ export interface FragmentSpan {
   readonly end: number;
 }
 
-function fold(codePoint: string): string {
-  return codePoint.toLowerCase();
-}
-
 /** KMP の失敗関数: failure[i] は pattern[0..i] の、全体より短い前置部分で後置部分でもあるものの最長の長さ。 */
 function failureOf(pattern: readonly string[]): number[] {
   const failure: number[] = new Array<number>(pattern.length).fill(0);
@@ -75,7 +74,7 @@ function keyOf(forward: readonly string[]): FragmentKey {
 }
 
 export function toFragmentKey(value: string): FragmentKey {
-  return keyOf(Array.from(value, fold));
+  return keyOf(Array.from(value, foldCodePoint));
 }
 
 /** 端の検査の鍵を集める (prepareKeys)。たたんだ後で同じになる鍵は 1 つにし、合計のコードポイント数を上限までに抑える。 */
@@ -92,7 +91,7 @@ export function fragmentKeyCollector(maxCodePoints: number = MAX_FRAGMENT_KEY_CO
   return {
     keys,
     add(value) {
-      const forward = Array.from(value, fold);
+      const forward = Array.from(value, foldCodePoint);
       const id = forward.join('\u0000');
       // 重複を先に見る: 上限の直前でも、すでにある鍵と同じ変種 (大小文字だけ違う根など) では truncated を立てない。
       if (seen.has(id)) return true;
@@ -130,7 +129,7 @@ interface EdgeWindow {
 }
 
 function windowOf(points: readonly string[]): EdgeWindow {
-  return { folded: points.map(fold), units: points.map((point) => point.length) };
+  return { folded: points.map(foldCodePoint), units: points.map((point) => point.length) };
 }
 
 function sumUnits(units: readonly number[], from: number, to: number): number {
@@ -153,7 +152,10 @@ function keyPrefixesAtEnd(text: string, keys: readonly FragmentKey[]): Range[] {
     const read = Math.min(tail.folded.length, key.forward.length);
     const offset = tail.folded.length - read;
     const overlap = overlapAtEnd(read, (index) => tail.folded[offset + index] ?? '', key.forward, key.forwardFailure);
-    if (overlap < MIN_FRAGMENT_CODE_POINTS || overlap >= key.forward.length) continue;
+    // 末尾では、鍵の全体の一致も返す (overlap === 鍵の長さ)。末尾には直後の文字が無いので、根の条件 (example-project2) と矛盾しない。
+    // 本体の探索は左から重ならずに探すので、自分と重なる名前 (-ba1-ba1-ba) が末尾で重なって 2 回現れると 2 つ目を拾わず、後ろが残る。
+    // 本体の一致と重なれば、統合 (mergeSpans) で強い種別の印 1 つになるので、ふつうの入力の出力は変わらない。
+    if (overlap < MIN_FRAGMENT_CODE_POINTS) continue;
     const length = sumUnits(tail.units, tail.units.length - overlap, tail.units.length);
     spans.push({ start: text.length - length, end: text.length });
   }

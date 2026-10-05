@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { caseFoldingTableUsable, caseInsensitiveLiteral, escapeRegExp, literalSearcher } from './issue-public-casefold.js';
+import {
+  caseFoldingTableUsable,
+  caseInsensitiveLiteral,
+  engineFoldCodePoint,
+  escapeRegExp,
+  foldCodePoint,
+  foldCodePointWith,
+  literalSearcher,
+} from './issue-public-casefold.js';
 
 /** 以前の探し方 (鍵ごとの /…/giu。根は直後の文字の先読みつき)。新しい探し方はこれと同じ一致を返す。 */
 function regexSpans(text: string, key: string, root: boolean): { start: number; end: number }[] {
@@ -17,6 +25,55 @@ const ALPHABET = [
 ];
 
 describe('case-insensitive literal search (bdboard-uudb)', () => {
+  it('folds a code point to the representative of its regex class, which the edge check needs (bdboard-2ydj)', () => {
+    // toLowerCase では別になる対: µ/μ・ς/σ・ϑ/θ・ſ/s・U+1FBE/ι と、サロゲートの対 (Deseret)。
+    const pairs = [
+      ['µ', 'μ'],
+      ['ς', 'σ'],
+      ['ϑ', 'θ'],
+      ['ſ', 's'],
+      ['ι', 'ι'],
+      ['\u{10400}', '\u{10428}'],
+    ] as const;
+    for (const [left, right] of pairs) expect(foldCodePoint(left)).toBe(foldCodePoint(right));
+    // 1 コードポイントの文字どうしは、`u` フラグの `i` と同じ関係になる (たたんだ結果が等しい ⇔ 正規表現が一致する)。
+    const singles = ALPHABET.filter((candidate) => Array.from(candidate).length === 1);
+    for (const left of singles) {
+      for (const right of singles) {
+        expect(foldCodePoint(left) === foldCodePoint(right), `${left} ${right}`).toBe(new RegExp(escapeRegExp(left), 'iu').test(right));
+      }
+    }
+    // 大文字小文字で変わらない文字と孤立サロゲートは、そのまま。
+    for (const value of ['7', '漢', '\uD800']) expect(foldCodePoint(value)).toBe(value);
+  });
+
+  it('goes through the engine when the table is unusable (the wiring of the fallback, not only engineFoldCodePoint)', () => {
+    // toLowerCase では別になる対。表が null のときに toLowerCase などへ退避する配線にすると、ここが落ちる。
+    const pairs = [
+      ['µ', 'μ'],
+      ['ς', 'σ'],
+      ['ϑ', 'θ'],
+      ['ſ', 's'],
+      ['ι', 'ι'],
+    ] as const;
+    for (const [left, right] of pairs) {
+      expect(foldCodePointWith(left, null)).toBe(foldCodePointWith(right, null));
+      expect(foldCodePointWith(left, null)).toBe(foldCodePoint(left));
+    }
+  });
+
+  it('gives the same representative from the engine alone as from the table (the path for an engine without a usable table)', () => {
+    const cased = /[\p{Changes_When_Casefolded}\p{Changes_When_Casemapped}]/u;
+    for (let codePoint = 0; codePoint <= 0x1ffff; codePoint += 1) {
+      if (codePoint === 0xd800) codePoint = 0xe000;
+      const character = String.fromCodePoint(codePoint);
+      if (cased.test(character)) expect(engineFoldCodePoint(character), `U+${codePoint.toString(16)}`).toBe(foldCodePoint(character));
+    }
+    for (const character of [...'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz', '漢', '字', '\uD800', '\uDC00']) {
+      expect(engineFoldCodePoint(character)).toBe(foldCodePoint(character));
+    }
+  }, 30_000);
+
   it('builds the equivalence table from the regex engine on this runtime', () => {
     expect(caseFoldingTableUsable()).toBe(true);
   });

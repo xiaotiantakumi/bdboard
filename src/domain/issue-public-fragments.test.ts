@@ -129,9 +129,11 @@ describe('what the edge check leaves alone', () => {
     expect(build('errorText', 'user clicked save').body).toContain(`${FRAGMENT} clicked save`);
   });
 
-  it('returns no fragment for a whole key at either edge (the normal replacement owns whole matches)', () => {
+  it('returns a whole key at the end edge (nothing follows it there) but not at the start edge (the normal replacement owns the follower rule)', () => {
     const keys = [toFragmentKey(ROOT)];
-    expect(findEdgeFragmentSpans(ROOT, keys, { start: true, end: true })).toEqual([]);
+    // 末尾の全体の一致も返す: 本文の一致と重なれば、統合で強い種別の印 1 つになる (普通の入力の出力は変わらない)。
+    expect(findEdgeFragmentSpans(ROOT, keys, { start: false, end: true })).toEqual([{ kind: 'fragment', start: 0, end: ROOT.length }]);
+    expect(findEdgeFragmentSpans(ROOT, keys, { start: true, end: false })).toEqual([]);
     expect(findEdgeFragmentSpans('/work/example-projec', keys, { start: false, end: true })).toEqual([
       { kind: 'fragment', start: 0, end: 20 },
     ]);
