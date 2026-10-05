@@ -233,6 +233,18 @@ describe('PATCH /api/issue-reports/drafts/:id — If-Match', () => {
     expect(next.headers.get('ETag')).not.toBe(after);
   });
 
+  it('answers an ETag that covers the images too, so it equals the next GET for a draft with an image (and the tunnel form)', async () => {
+    const { app } = setup({ writeAccess: TUNNEL_WRITE_ALLOWED });
+    const id = await receive(app, 'slug-a');
+    expect((await app.request(`${DRAFTS}/${id}/images`, json('POST', { mimeType: 'image/png', data: PNG_BASE64 }), LOCAL_ENV)).status).toBe(201);
+    for (const headers of [{}, CF_HEADERS]) {
+      const before = await etagOf(app, `${DRAFTS}/${id}`, LOCAL_ENV, headers);
+      const res = await app.request(`${DRAFTS}/${id}`, patch({ body: `edited ${Object.keys(headers).length}` }, { ...headers, 'if-match': before }), LOCAL_ENV);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('ETag')).toBe(await etagOf(app, `${DRAFTS}/${id}`, LOCAL_ENV, headers));
+    }
+  });
+
   it('answers 412 in the usual error shape and writes nothing when the draft changed since it was read', async () => {
     const { app, storage } = setup();
     const id = await receive(app, 'slug-a');
@@ -311,6 +323,26 @@ describe('PATCH /api/issue-reports/drafts/:id — If-Match', () => {
     const res = await app.request(`${DRAFTS}/${id}`, patch({ title: 'x' }, headers), LOCAL_ENV);
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: 'draft is not pending', status: 'dismissed' });
+  });
+
+  it('answers 200 without an ETag, not 500, when the image list for the ETag cannot be read after the edit was saved', async () => {
+    const { app, service, storage } = setup();
+    const id = await receive(app, 'slug-a');
+    const broken = createIssueReportRoutes({
+      service: {
+        ...service,
+        listImages: () => {
+          throw new Error('image directory unreadable');
+        },
+      },
+    });
+    const res = await broken.request(`${DRAFTS}/${id}`, patch({ title: 'Saved anyway' }), LOCAL_ENV);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('ETag')).toBeNull();
+    const body = (await res.json()) as { draft: { title: string }; errorTextTrimmed: boolean };
+    expect(body.draft.title).toBe('Saved anyway');
+    expect(body.errorTextTrimmed).toBe(false);
+    expect(storage.drafts.get(id)?.title).toBe('Saved anyway');
   });
 
   it('lets exactly one of two edits made from the same ETag through, never both (the check runs inside the write lock)', async () => {

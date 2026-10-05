@@ -7,7 +7,7 @@ import { isDraftId } from '../../domain/issue-draft.js';
 import { ISSUE_DRAFT_BODY_MAX_CHARS, ISSUE_DRAFT_TITLE_MAX_CHARS } from '../../domain/issue-draft-edit.js';
 import { hasVisibleText, isSingleLineDisplayText, stripPasteArtifacts } from '../../domain/issue-draft-identifier.js';
 import { ifMatchMatches } from './etag.js';
-import { ISSUE_DRAFTS_PATH } from './issue-report-dto.js';
+import { ISSUE_DRAFTS_PATH, toDetailDto } from './issue-report-dto.js';
 import { buildDetailBody, detailEtagOf } from './issue-report-etag.js';
 import { isLocalBasicAuthRequest } from './local-request.js';
 import { parseJsonBody } from './request-body.js';
@@ -107,7 +107,12 @@ export function registerIssueDraftEditRoutes(app: Hono, deps: IssueDraftEditRout
         // 応答は GET drafts/:id の draft と同じ形 (images・latestHarnessVersion は載せない)。errorTextTrimmed は、200KB に収めるため
         // 手元の生ログの末尾を削ったか (削ったら draft.localOnly.errorTextTruncated も true)。ETag は GET drafts/:id の今の ETag と同じ値
         // (画像の一覧と pack の版は応答に載せないが、版には入っている)。次の PATCH の If-Match にそのまま使える。
-        const detail = await buildDetailBody(deps, result.draft, access);
+        // 画像の一覧 (ETag の入力) が読めなくても、保存は済んでいるので 500 にしない: ETag を付けずに 200 を返す (web は ETag が無ければ
+        // 古い ETag を捨てて読み直す)。
+        const detail = await buildDetailBody(deps, result.draft, access).catch(() => undefined);
+        if (detail === undefined) {
+          return c.json({ draft: toDetailDto(result.draft, { local: access.local, leakCache: deps.leakCache }), errorTextTrimmed: result.errorTextTrimmed });
+        }
         c.header('ETag', detailEtagOf(detail));
         return c.json({ draft: detail.draft, errorTextTrimmed: result.errorTextTrimmed });
       }

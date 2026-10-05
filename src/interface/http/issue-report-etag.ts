@@ -39,14 +39,17 @@ export interface IssueDraftListBody {
  * キーを並べ替えた JSON。同じ内容なら同じ文字列になる: 保存層は draft.json を読むとき zod でキーの順を直すので、
  * 編集した直後のメモリ上の下書き (編集前のキーの順を引き継ぐ) と、次に読み直した下書きで、JSON.stringify の結果が違いうる。
  * 順が違うだけで ETag が変わると、保存の応答の ETag で次の PATCH を送ったときに 412 になる。undefined の欄は無いものとして扱う。
+ * 先に JSON を通す: toJSON を持つ値 (Date・Buffer) は応答の本文では文字列などになるので、通さないと {} に見えて値の変化を拾えない。
  */
 export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item === undefined ? null : item)).join(',')}]`;
+  return canonicalOf(JSON.parse(JSON.stringify(value) ?? 'null'));
+}
+
+function canonicalOf(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalOf).join(',')}]`;
   if (typeof value === 'object' && value !== null) {
-    const entries = Object.entries(value)
-      .filter(([, item]) => item !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`;
+    const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalOf(item)}`).join(',')}}`;
   }
   return JSON.stringify(value);
 }

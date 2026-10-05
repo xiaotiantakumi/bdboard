@@ -19,6 +19,15 @@ describe('canonicalJson', () => {
     expect(canonicalJson([undefined])).toBe('[null]');
   });
 
+  // toJSON を持つ値 (Date・Buffer) は、応答の本文 (JSON) では文字列などになる。素の再帰だと {} に見えて、値が変わっても ETag が変わらない。
+  it('follows the value of a field that has toJSON (a Date or a Buffer), as the response body does', () => {
+    const at = (iso: string) => canonicalJson({ createdAt: new Date(iso) });
+    expect(at('2026-10-04T12:00:00.000Z')).toBe('{"createdAt":"2026-10-04T12:00:00.000Z"}');
+    expect(at('2026-10-04T12:00:00.000Z')).not.toBe(at('2026-10-04T12:00:01.000Z'));
+    expect(canonicalJson({ data: Buffer.from('a') })).not.toBe(canonicalJson({ data: Buffer.from('b') }));
+    expect(canonicalJson({ nested: [{ at: new Date(0) }] })).toBe('{"nested":[{"at":"1970-01-01T00:00:00.000Z"}]}');
+  });
+
   it('escapes strings, so a value cannot pass for a key', () => {
     expect(canonicalJson({ a: '","b":"1' })).not.toBe(canonicalJson({ a: '', b: '1' }));
   });
