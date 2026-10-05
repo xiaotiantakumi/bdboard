@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../../api';
 import type { IssueDraftDetailDto, IssueDraftSummaryDto } from '../../api/issue-reports';
+import { stubObjectUrls } from '../../test/objectUrls';
 import { IssueReportsPanel, type IssueReportsPanelProps } from './IssueReportsPanel';
 
 vi.mock('../../api/issue-reports', async (importOriginal) => {
@@ -14,10 +15,11 @@ vi.mock('../../api/issue-reports', async (importOriginal) => {
     fetchIssueDraft: vi.fn(),
     fetchIssueReportPendingCount: vi.fn(),
     createManualIssueDraft: vi.fn(),
+    uploadIssueDraftImage: vi.fn(),
   };
 });
 
-import { createManualIssueDraft, fetchIssueDraft, fetchIssueDrafts } from '../../api/issue-reports';
+import { createManualIssueDraft, fetchIssueDraft, fetchIssueDrafts, uploadIssueDraftImage } from '../../api/issue-reports';
 
 const NEW_ID = '1758812345678-a1b2c3d4e5f6a7b8';
 
@@ -159,5 +161,90 @@ describe('IssueReportsPanel: 新しく報告 (bdboard-4y8q.6.8)', () => {
     await user.click(screen.getByRole('button', { name: /Old dismissed report/ }));
     expect(screen.queryByRole('form', { name: '新しく報告' })).toBeNull();
     expect(fetchIssueDraft).toHaveBeenCalledWith(dismissed.id);
+  });
+});
+
+const PRIVACY_NOTE = '画像は手元にだけ保存され、公開 issue には自動では載りません。';
+
+describe('IssueReportsPanel: 新しく報告の画像 (bdboard-4y8q.6.9)', () => {
+  let restoreObjectUrls: () => void;
+
+  beforeEach(() => {
+    vi.mocked(fetchIssueDrafts).mockReset();
+    vi.mocked(fetchIssueDraft).mockReset();
+    vi.mocked(createManualIssueDraft).mockReset();
+    vi.mocked(uploadIssueDraftImage).mockReset();
+    vi.mocked(fetchIssueDrafts).mockResolvedValue({ drafts: [created, dismissed], pendingCount: 1 });
+    vi.mocked(fetchIssueDraft).mockResolvedValue({ draft: createdDetail, images: [] });
+    vi.mocked(createManualIssueDraft).mockResolvedValue({ outcome: 'created', draft: created });
+    restoreObjectUrls = stubObjectUrls().restore;
+  });
+
+  afterEach(() => {
+    restoreObjectUrls();
+  });
+
+  async function openWritingScreen(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole('button', { name: '新しく報告' }));
+  }
+
+  function chooseImage(name: string, contents: string) {
+    fireEvent.change(screen.getByLabelText('画像のファイルを選ぶ'), {
+      target: { files: [new File([contents], name, { type: 'image/png' })] },
+    });
+  }
+
+  it.each(['localhost', '127.0.0.1', '[::1]'])('shows the image field and the note in the writing screen on %s', async (hostname) => {
+    const user = renderPanel({ hostname });
+    await openWritingScreen(user);
+    expect(screen.getByRole('group', { name: /画像 \(任意\)/ })).toBeInTheDocument();
+    expect(screen.getByText(PRIVACY_NOTE)).toBeInTheDocument();
+  });
+
+  it.each(['board.example.com', 'abc.trycloudflare.com'])('has no image field or note anywhere when the page is opened on %s (the button is disabled)', async (hostname) => {
+    const user = renderPanel({ hostname });
+    const button = await screen.findByRole('button', { name: '新しく報告' });
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(screen.queryByRole('group', { name: /画像/ })).toBeNull();
+    expect(screen.queryByLabelText('画像のファイルを選ぶ')).toBeNull();
+    expect(screen.queryByText(PRIVACY_NOTE)).toBeNull();
+  });
+
+  it('sends the images to the new draft and then selects it', async () => {
+    vi.mocked(uploadIssueDraftImage).mockResolvedValue({
+      image: { fileName: '1-0123456789abcdef.png', url: '/x', byteLength: 1, createdAt: '2026-10-06T00:00:00.000Z' },
+    });
+    const user = renderPanel({ hostname: 'localhost' });
+    await openWritingScreen(user);
+    chooseImage('shot.png', 'a');
+    await user.type(screen.getByRole('textbox', { name: /題名/ }), 'Board freezes');
+    await user.type(screen.getByRole('textbox', { name: /説明/ }), 'It freezes when I open the tab');
+    await user.click(screen.getByRole('button', { name: '送る' }));
+    expect(await screen.findByRole('article', { name: '下書きの中身' })).toBeInTheDocument();
+    expect(uploadIssueDraftImage).toHaveBeenCalledTimes(1);
+    expect(uploadIssueDraftImage).toHaveBeenCalledWith(NEW_ID, { mimeType: 'image/png', data: 'YQ==' });
+    expect(fetchIssueDraft).toHaveBeenCalledWith(NEW_ID);
+    expect(screen.queryByRole('form', { name: '新しく報告' })).toBeNull();
+  });
+
+  it('keeps the writing area on the result when an image does not attach, and selects the draft only when the user opens it', async () => {
+    vi.mocked(uploadIssueDraftImage).mockRejectedValue(
+      new ApiError(400, 'invalid or unsupported image data', { errorMessage: 'invalid or unsupported image data' }),
+    );
+    const user = renderPanel({ hostname: 'localhost' });
+    await openWritingScreen(user);
+    chooseImage('shot.png', 'a');
+    await user.type(screen.getByRole('textbox', { name: /題名/ }), 'Board freezes');
+    await user.type(screen.getByRole('textbox', { name: /説明/ }), 'It freezes when I open the tab');
+    await user.click(screen.getByRole('button', { name: '送る' }));
+    expect(await screen.findByRole('heading', { name: '下書きを作りました' })).toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: '下書きの中身' })).toBeNull();
+    expect(fetchIssueDraft).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: '下書きを開く' }));
+    expect(await screen.findByRole('article', { name: '下書きの中身' })).toBeInTheDocument();
+    expect(fetchIssueDraft).toHaveBeenCalledWith(NEW_ID);
+    expect(createManualIssueDraft).toHaveBeenCalledTimes(1);
   });
 });

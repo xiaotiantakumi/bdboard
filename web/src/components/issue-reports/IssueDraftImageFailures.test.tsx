@@ -51,7 +51,7 @@ describe('IssueDraftImageFailures (bdboard-4y8q.6.9)', () => {
     screen.getByRole('button', { name: '下書きを開く' }).focus();
     expect(screen.getByRole('button', { name: '下書きを開く' })).toHaveFocus();
     view.rerender(
-      <IssueDraftImageFailures failures={[FAILURES[1] as IssueDraftImageFailureItem]} sending={false} onRetry={onRetry} onOpen={onOpen} />,
+      <IssueDraftImageFailures failures={[FAILURES[1]]} sending={false} onRetry={onRetry} onOpen={onOpen} />,
     );
     expect(screen.getByRole('heading', { name: '下書きを作りました' })).toHaveFocus();
   });

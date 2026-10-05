@@ -355,7 +355,7 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
       await waitFor(() => expect(uploadIssueDraftImage).toHaveBeenCalledTimes(3));
       expect(createManualIssueDraft).toHaveBeenCalledTimes(1);
       expect(vi.mocked(createManualIssueDraft).mock.invocationCallOrder[0]).toBeLessThan(
-        vi.mocked(uploadIssueDraftImage).mock.invocationCallOrder[0] as number,
+        vi.mocked(uploadIssueDraftImage).mock.invocationCallOrder[0],
       );
       // "1" "2" "3" の base64。
       expect(uploadedData()).toEqual(['MQ==', 'Mg==', 'Mw==']);
@@ -374,8 +374,8 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
       await user.click(sendButton());
       await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created));
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['issue-reports'] });
-      expect(vi.mocked(uploadIssueDraftImage).mock.invocationCallOrder[1] as number).toBeLessThan(
-        invalidate.mock.invocationCallOrder[0] as number,
+      expect(vi.mocked(uploadIssueDraftImage).mock.invocationCallOrder[1]).toBeLessThan(
+        invalidate.mock.invocationCallOrder[0],
       );
       expect(onCreated).toHaveBeenCalledTimes(1);
     });

@@ -25,11 +25,11 @@ function replaceObjectUrls(create: unknown, revoke: unknown): () => void {
 /** 数えられる object URL の差し替え。作る URL は blob:preview-1, blob:preview-2, ... の順。afterEach で restore を呼ぶ。 */
 export function stubObjectUrls() {
   let counter = 0;
-  const create = vi.fn((_file: unknown) => {
+  const create = vi.fn<(file: unknown) => string>(() => {
     counter += 1;
     return `blob:preview-${counter}`;
   });
-  const revoke = vi.fn((_url: string) => undefined);
+  const revoke = vi.fn<(url: string) => void>();
   return { create, revoke, restore: replaceObjectUrls(create, revoke) };
 }
 

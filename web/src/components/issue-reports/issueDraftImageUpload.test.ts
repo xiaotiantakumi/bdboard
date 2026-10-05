@@ -163,6 +163,8 @@ describe('uploadIssueDraftImages (bdboard-4y8q.6.9)', () => {
   });
 
   describe('when the file cannot be read', () => {
+    // 差し替えて、afterEach で同じ関数を戻す (this を使わずに保持して戻すだけなので、unbound-method の指摘は当たらない)。
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     const original = FileReader.prototype.readAsDataURL;
 
     afterEach(() => {
