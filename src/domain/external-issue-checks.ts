@@ -39,6 +39,12 @@ export const EXTERNAL_ISSUE_BODY_TRUNCATION_MARK = '(本文が長いため以降
 export interface ExternalIssueText {
   readonly title: string;
   readonly body: string;
+  /**
+   * 上流で本文を先に切ったときの、切る前の本文の長さ (コードポイント)。4y8q.9.2 の gh は jq で本文を 20,001 文字に切って
+   * 全長をこの名前で返すので、`truncateExternalIssue(raw)` にそのまま渡せば写しの全長 (`compareWithSnapshot`) が保たれる。
+   * 無い・整数でない・`body` の長さより小さいときは `body` から数える。
+   */
+  readonly bodyLength?: number;
 }
 
 export interface TruncatedExternalIssue {
@@ -53,8 +59,13 @@ export interface TruncatedExternalIssue {
   readonly bodyLength: number;
 }
 
-function cutField(value: string, max: number): { readonly text: string; readonly length: number; readonly truncated: boolean } {
-  const length = codePointLength(value);
+function cutField(
+  value: string,
+  max: number,
+  knownLength?: number,
+): { readonly text: string; readonly length: number; readonly truncated: boolean } {
+  const measured = codePointLength(value);
+  const length = knownLength !== undefined && Number.isSafeInteger(knownLength) && knownLength > measured ? knownLength : measured;
   if (length <= max) return { text: value, length, truncated: false };
   // コードポイントで数えて切るので、サロゲートの対の途中では切れない (issue-public-text.ts。4y8q.13 の教訓)。
   return { text: cutCodePointsHead(value, max), length, truncated: true };
@@ -66,7 +77,7 @@ function cutField(value: string, max: number): { readonly text: string; readonly
  */
 export function truncateExternalIssue(issue: ExternalIssueText): TruncatedExternalIssue {
   const title = cutField(issue.title, EXTERNAL_ISSUE_TITLE_MAX);
-  const body = cutField(issue.body, EXTERNAL_ISSUE_BODY_MAX);
+  const body = cutField(issue.body, EXTERNAL_ISSUE_BODY_MAX, issue.bodyLength);
   return {
     title: title.text,
     body: body.truncated ? `${body.text}\n${EXTERNAL_ISSUE_BODY_TRUNCATION_MARK}` : body.text,
@@ -99,7 +110,10 @@ function checkText(text: string): TextChecks {
   };
 }
 
-/** 題名と本文の両方に同じ検査をかける。位置は、それぞれ渡した文字列への UTF-16 のオフセット。 */
-export function runMachineChecks(title: string, body: string): MachineCheckResult {
-  return { title: checkText(title), body: checkText(body) };
+/**
+ * 題名と本文の両方に同じ検査をかける。`runMachineChecks(truncateExternalIssue(raw))` と書ける (題名と本文以外の欄は見ない)。
+ * 位置は、それぞれ渡した文字列への UTF-16 のオフセット。
+ */
+export function runMachineChecks(issue: Pick<ExternalIssueText, 'title' | 'body'>): MachineCheckResult {
+  return { title: checkText(issue.title), body: checkText(issue.body) };
 }

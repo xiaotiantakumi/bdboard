@@ -17,15 +17,23 @@ export const MACHINE_CHECK_POSITION_LIMIT = 50;
 /** 長い符号化文字列とみなす連なりの最小の長さ。 */
 export const LONG_ENCODED_MIN_LENGTH = 200;
 
-export type InvisibleCharGroup = 'zero-width' | 'bidi-control';
+export type InvisibleCharGroup = 'zero-width' | 'bidi-control' | 'tag';
 
 interface InvisibleCharSpec {
+  /** 1 文字の項目はそのコードポイント。範囲の項目は先頭。 */
   readonly code: number;
+  /** 範囲の項目の末尾 (含む)。範囲は 1 つの種類として数える (128 個のタグ文字を 128 種類に分けない)。 */
+  readonly last?: number;
   readonly name: string;
   readonly group: InvisibleCharGroup;
 }
 
-/** 検査する文字の表 (設計 8節)。幅ゼロの文字 5 つと、向きを変える制御文字 9 つ (Trojan Source 系)。 */
+/**
+ * 検査する文字の表 (設計 8節 + 4y8q.9.1 のレビュー)。幅ゼロの文字 5 つ、向きを変える制御文字 (Unicode の Bidi_Control
+ * 12 文字。設計の表の 9 つ = Trojan Source 系に、同じ性質の ALM・LRM・RLM の 3 つを足した)、タグ文字 (U+E0000–E007F)。
+ * タグ文字は画面に何も出ないのに ASCII を 1 文字ずつ写せる (ASCII smuggling)。人には見えず、判定のエージェント
+ * (4y8q.10) のモデルには読めることがあるので数える。旗の絵文字 (イングランドなど 3 つ) もタグ文字を使うが、まれ。
+ */
 const INVISIBLE_CHARS: readonly InvisibleCharSpec[] = [
   { code: 0x200b, name: 'ZERO WIDTH SPACE', group: 'zero-width' },
   { code: 0x200c, name: 'ZERO WIDTH NON-JOINER', group: 'zero-width' },
@@ -41,13 +49,30 @@ const INVISIBLE_CHARS: readonly InvisibleCharSpec[] = [
   { code: 0x2067, name: 'RIGHT-TO-LEFT ISOLATE', group: 'bidi-control' },
   { code: 0x2068, name: 'FIRST STRONG ISOLATE', group: 'bidi-control' },
   { code: 0x2069, name: 'POP DIRECTIONAL ISOLATE', group: 'bidi-control' },
+  { code: 0x061c, name: 'ARABIC LETTER MARK', group: 'bidi-control' },
+  { code: 0x200e, name: 'LEFT-TO-RIGHT MARK', group: 'bidi-control' },
+  { code: 0x200f, name: 'RIGHT-TO-LEFT MARK', group: 'bidi-control' },
+  { code: 0xe0000, last: 0xe007f, name: 'TAG CHARACTER', group: 'tag' },
 ];
 
-const INVISIBLE_BY_CODE: ReadonlyMap<number, InvisibleCharSpec> = new Map(INVISIBLE_CHARS.map((spec) => [spec.code, spec]));
+/** 表の文字のうち最小のコードポイント。これ未満のコード単位 (ASCII の全部など) は表を引かずに抜ける。 */
+const SMALLEST_LISTED = Math.min(...INVISIBLE_CHARS.map((spec) => spec.code));
+const SINGLE_BY_CODE: ReadonlyMap<number, InvisibleCharSpec> = new Map(
+  INVISIBLE_CHARS.filter((spec) => spec.last === undefined).map((spec) => [spec.code, spec]),
+);
+const RANGES: readonly InvisibleCharSpec[] = INVISIBLE_CHARS.filter((spec) => spec.last !== undefined);
+
+function specOf(code: number): InvisibleCharSpec | undefined {
+  return SINGLE_BY_CODE.get(code) ?? RANGES.find((spec) => code >= spec.code && code <= (spec.last ?? spec.code));
+}
+
+function formatCodePoint(code: number): string {
+  return `U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
+}
 
 /** 見えない文字 1 種類ぶんの結果。`positions` は先頭から `MACHINE_CHECK_POSITION_LIMIT` 件まで (`count` が多ければ打ち切っている)。 */
 export interface InvisibleCharKind {
-  /** `U+200B` の形。 */
+  /** `U+200B` の形。範囲の種類 (タグ文字) は `U+E0000..U+E007F`。 */
   readonly codePoint: string;
   readonly name: string;
   readonly group: InvisibleCharGroup;
@@ -66,21 +91,25 @@ export function findInvisibleChars(text: string): InvisibleCharCheck {
   const found = new Map<number, { count: number; positions: number[] }>();
   let total = 0;
   for (let index = 0; index < text.length; index += 1) {
-    const code = text.charCodeAt(index);
-    // 表の文字はどれも 0x200b 以上。ほとんどの文字はここで抜ける。
-    if (code < 0x200b || !INVISIBLE_BY_CODE.has(code)) continue;
+    if (text.charCodeAt(index) < SMALLEST_LISTED) continue;
+    // コードポイントで読む (タグ文字はサロゲートの対)。位置は対の上位のコード単位のオフセット。孤立サロゲートは表に無い。
+    const start = index;
+    const code = text.codePointAt(index) ?? 0;
+    if (code > 0xffff) index += 1;
+    const spec = specOf(code);
+    if (spec === undefined) continue;
     total += 1;
-    const entry = found.get(code) ?? { count: 0, positions: [] };
+    const entry = found.get(spec.code) ?? { count: 0, positions: [] };
     entry.count += 1;
-    if (entry.positions.length < MACHINE_CHECK_POSITION_LIMIT) entry.positions.push(index);
-    found.set(code, entry);
+    if (entry.positions.length < MACHINE_CHECK_POSITION_LIMIT) entry.positions.push(start);
+    found.set(spec.code, entry);
   }
   const kinds = INVISIBLE_CHARS.filter((spec) => found.has(spec.code))
     .sort((a, b) => a.code - b.code)
     .map((spec): InvisibleCharKind => {
       const entry = found.get(spec.code);
       return {
-        codePoint: `U+${spec.code.toString(16).toUpperCase().padStart(4, '0')}`,
+        codePoint: spec.last === undefined ? formatCodePoint(spec.code) : `${formatCodePoint(spec.code)}..${formatCodePoint(spec.last)}`,
         name: spec.name,
         group: spec.group,
         count: entry?.count ?? 0,

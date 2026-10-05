@@ -2,15 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { MACHINE_CHECK_POSITION_LIMIT, runMachineChecks, truncateExternalIssue, type TextChecks } from './external-issue-checks.js';
 import { LINEAR_TIME_TEST_TIMEOUT_MS, expectLinearTime, type ScaleCount } from './linear-time-test-support.js';
 
-// bdboard-4y8q.9.1: 届いた issue は他人が書いた任意長の文字列で、機械の検査は切り詰めの前にも後にもかかりうる。
-// どの検査も入力の長さに線形でなければならない (閉じない <!--、開きだけが並ぶ [ ](、宛先の閉じないリンクなどで
-// 2 乗に膨らまないこと)。形ごとに別のテストにして、1 つの形の 2 次を他の形の線形の時間に埋もれさせない。
+// bdboard-4y8q.9.1: 届いた issue は他人が書いた任意長の文字列。機械の検査は切り詰めた後の文字列にかける (docs/ISSUE-REPORTING.md
+// 8節。題名 300・本文 20,000 コードポイントまで) ので、実運用の入力は上限で止まるが、検査自体も入力の長さに線形でなければならない
+// (上限を変えても、呼び出しの順が変わっても 2 乗に膨らまないこと)。ここでは上限を超える長さまで測る。
+// 閉じない <!--、開きだけが並ぶ [ ](、宛先の閉じないリンクなどで膨らまないことを形ごとに見る。
+// 形ごとに別のテストにして、1 つの形の 2 次を他の形の線形の時間に埋もれさせない。
 // 期待値は実装を呼ばずに、形の作り方から出す (小・大のどちらの実行でも run の中で検査する)。
 //
 // 見えない文字は実行時に組む (ソースに直接書かない)。
 const ZWSP = String.fromCodePoint(0x200b);
 const RLO = String.fromCodePoint(0x202e);
 const EMOJI = String.fromCodePoint(0x1f600);
+const TAG_A = String.fromCodePoint(0xe0041);
 
 interface Shape {
   readonly name: string;
@@ -39,6 +42,20 @@ const SHAPES: readonly Shape[] = [
         expect(checks.invisibleChars.kinds.map((kind) => kind.count)).toEqual([n(150_000), n(150_000)]);
       },
     }),
+  },
+  {
+    name: 'a huge run of tag characters (surrogate pairs)',
+    build: (n) => ({
+      text: TAG_A.repeat(n(300_000)),
+      verify: (checks) => {
+        expect(checks.invisibleChars.total).toBe(n(300_000));
+        expect(checks.invisibleChars.kinds[0]?.positions).toHaveLength(MACHINE_CHECK_POSITION_LIMIT);
+      },
+    }),
+  },
+  {
+    name: 'astral characters that are not listed (emoji only)',
+    build: (n) => ({ text: EMOJI.repeat(n(300_000)), verify: (checks) => expect(checks.invisibleChars.total).toBe(0) }),
   },
   // --- HTML コメント ---
   {
@@ -187,6 +204,13 @@ const SHAPES: readonly Shape[] = [
     build: (n) => ({ text: '[x]:\n'.repeat(n(200_000)), verify: (checks) => expect(checks.links.total).toBe(0) }),
   },
   {
+    name: 'one [ then many lines of raw URLs, closed by one ](x) at the end',
+    build: (n) => ({
+      text: `[\n${'https://a.example\n'.repeat(n(100_000))}](x)`,
+      verify: (checks) => expect(checks.links).toMatchObject({ markdownLinks: 1, rawUrls: n(100_000) }),
+    }),
+  },
+  {
     name: 'astral characters between link pieces',
     build: (n) => ({
       text: `[${EMOJI}](${EMOJI}) `.repeat(n(100_000)),
@@ -202,7 +226,7 @@ describe('runMachineChecks: linear time on hostile content', () => {
       expectLinearTime(`external-issue-checks: ${name}`, (n) => {
         const { text, verify } = build(n);
         return () => {
-          verify(runMachineChecks('', text).body);
+          verify(runMachineChecks({ title: '', body: text }).body);
         };
       });
     },

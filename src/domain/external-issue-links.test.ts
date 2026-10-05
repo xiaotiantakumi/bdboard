@@ -48,8 +48,19 @@ describe('countLinks: one kind at a time', () => {
   it('counts a raw URL of http and https, in any case, and not other schemes or a scheme-less host', () => {
     expect(countLinks('see https://a.example and http://b.example/x?y=1.')).toEqual(links(0, 0, 0, 2));
     expect(countLinks('HTTPS://A.EXAMPLE and Http://B.example')).toEqual(links(0, 0, 0, 2));
-    expect(countLinks('ftp://x.example www.example.com example.com/path https:// http:/x')).toEqual(links(0, 0, 0, 0));
+    expect(countLinks('ftp://x.example example.com/path https:// http:/x www. awww.example')).toEqual(links(0, 0, 0, 0));
+  });
+
+  it('counts a www. host as a raw URL (GitHub links it), once even inside an http URL', () => {
+    expect(countLinks('see www.example.com and WWW.Example.org/path')).toEqual(links(0, 0, 0, 2));
+    expect(countLinks('https://www.example.com')).toEqual(links(0, 0, 0, 1));
+    expect(countLinks('[a](www.example.com)')).toEqual(links(1, 0, 0, 0));
     expect(countLinks('(https://a.example)')).toEqual(links(0, 0, 0, 1));
+  });
+
+  it('counts a raw URL after the emphasis delimiters _ * ~ (GFM starts an autolink there), and not right after a letter or digit', () => {
+    expect(countLinks('_https://a.example_ __https://b.example__ *https://c.example* ~https://d.example~')).toEqual(links(0, 0, 0, 4));
+    expect(countLinks('xhttps://a.example 9https://b.example')).toEqual(links(0, 0, 0, 0));
   });
 
   it('returns zero for text without links and for empty text', () => {
@@ -94,6 +105,34 @@ describe('countLinks: the same URL is not counted twice', () => {
 
   it('counts the inner image and the outer link of a linked image as two', () => {
     expect(countLinks('[![logo](https://i.example/logo.png)](https://home.example)')).toEqual(links(2, 0, 0, 0));
+  });
+});
+
+describe('countLinks: a far-away [ does not hide the links between it and ](', () => {
+  // `[` は Markdown の文脈を読まずに積む。段落・見出し・コードスパンの向こうの `[` と組んだリンクが、間のリンクを
+  // 「同じ URL」として消さないこと (GitHub ではそれぞれ別のリンクとして描画される)。偽のリンク 1 件の数えすぎは許す。
+  const urls = Array.from({ length: 30 }, (_, index) => `https://u${String(index)}.example`);
+
+  it('counts raw URLs in other paragraphs between [ and ](', () => {
+    expect(countLinks(`[\n\n${urls.join('\n')}\n\n](x)`)).toEqual(links(1, 0, 0, 30));
+  });
+
+  it('counts raw URLs between a [ and a ]( that sit in code spans on one line', () => {
+    expect(countLinks(`\`[\` ${urls.join(' ')} \`](x)\``)).toEqual(links(1, 0, 0, 30));
+  });
+
+  it('counts raw URLs in heading lines, and reference definitions and autolinks in other paragraphs', () => {
+    expect(countLinks('[ note\n# https://a.example\n# https://b.example\n](x)')).toEqual(links(1, 0, 0, 2));
+    expect(countLinks('[ start\n\n[a]: /one\n[b]: /two\n<https://c.example>\n\n](x)')).toEqual(links(1, 1, 2, 0));
+  });
+
+  it('counts a raw URL across a hard line break written as a backslash and a newline', () => {
+    expect(countLinks('[a\\\nhttps://a.example](x)')).toEqual(links(1, 0, 0, 1));
+  });
+
+  it('still counts a URL repeated in a one-line link, and a destination of a multi-line link, once', () => {
+    expect(countLinks('[see https://x.example here](https://x.example)')).toEqual(links(1, 0, 0, 0));
+    expect(countLinks('[two\nlines](https://x.example)')).toEqual(links(1, 0, 0, 0));
   });
 });
 

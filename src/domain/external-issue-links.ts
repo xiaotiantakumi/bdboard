@@ -7,7 +7,7 @@
  *   2. 参照定義 `[label]: dest` (行頭から 3 字下げまで。`[^1]:` の脚注は除く)。`[text][label]` の使う側は数えない。
  *      宛先が `<https://…>` の形でも、定義の 1 件に数える (autolink にはしない)
  *   3. autolink `<scheme:…>` (メールの `<a@b>` は URL ではないので数えない)
- *   4. 生の URL `http://…` / `https://…` (`www.…` のようにスキームが無いものは数えない)
+ *   4. 生の URL `http://…` / `https://…` と `www.…` (GitHub は `www.` で始まるものもリンクにする。GFM の拡張 www autolink)
  * 同じ種類の中では、入れ子 (`[![img](a)](b)`) も別々に数える。
  *
  * コードブロックの中は読まない (コードの中の `[x](y)` も数える。数えすぎは安全な側のずれ)。
@@ -35,17 +35,27 @@ const CLOSE_BRACKET = 0x5d;
 const OPEN_PAREN = 0x28;
 const CLOSE_PAREN = 0x29;
 const NEWLINE = 0x0a;
+const BACKTICK = 0x60;
 
 /** スキームは 2〜32 文字 (CommonMark の autolink)。`[^\s<>]*` は次の空白・`<`・`>` で必ず止まる。 */
 const AUTOLINK = /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>/g;
 /** ラベルは 1〜999 文字 (CommonMark)。宛先が行の中に無い (`[x]:` だけ) ものは定義ではない。 */
 const REFERENCE_DEFINITION = /^ {0,3}\[(?!\^)[^\]\n]{1,999}\]:[ \t]*\S+/gm;
-const RAW_URL = /\bhttps?:\/\/[^\s<>]+/gi;
+/**
+ * 前が英数字でない `http(s)://` か `www.`。`\b` だと `_https://…_` (GitHub では斜体のリンク。GFM の拡張 autolink は `_` `*` `~` `(` の後でも
+ * 始まる) を `_` が単語の文字なので取りこぼす。
+ */
+const RAW_URL = /(?<![A-Za-z0-9])(?:https?:\/\/|www\.)[^\s<>]+/gi;
 
 /**
  * `[text](dest)` を 1 回の前向きの走査で見つける。`[` の位置を積み、`]` で 1 つ取り出し、直後が `(` なら
  * 同じ行の最初の `)` までを宛先とする。宛先は読み飛ばす (その中の `[` `]` では何も始めない)。
  * 宛先の終わりは「最初の `)`」: `Foo_(bar)` のように括弧を含む宛先は途中で終わるが、リンクの数は変わらない。
+ *
+ * 返す範囲は、ほかの種類と重ねて見る範囲 (数はリンク 1 件)。文 (`[` から `]` まで) が改行かバッククォートをまたぐときは
+ * `](宛先)` だけにする。`[` は Markdown の文脈を読まずに積むので、段落・見出し・コードスパンの向こうの `[` と組んだ
+ * 偽のリンク 1 件が、間にある生の URL・参照定義・autolink を何件でも覆って消してしまう (GitHub ではどれも別のリンクとして
+ * 描画される。4y8q.9.1 のレビュー)。縮めた結果のずれは偽のリンクの 1 件ぶんの数えすぎで、安全な側。
  */
 function findInlineLinks(text: string): Range[] {
   const found: Range[] = [];
@@ -63,10 +73,15 @@ function findInlineLinks(text: string): Range[] {
     stop = index;
     return index;
   };
+  // 最後に見た改行かバッククォートの位置 (宛先の中は読み飛ばすが、宛先は改行を含まない)。
+  let lastBreak = -1;
   for (let index = 0; index < text.length; index += 1) {
     const code = text.charCodeAt(index);
     if (code === BACKSLASH) {
       index += 1;
+      if (text.charCodeAt(index) === NEWLINE) lastBreak = index; // `\` + 改行は強制改行で、行はまたぐ
+    } else if (code === NEWLINE || code === BACKTICK) {
+      lastBreak = index;
     } else if (code === OPEN_BRACKET) {
       open.push(index);
     } else if (code === CLOSE_BRACKET) {
@@ -74,7 +89,7 @@ function findInlineLinks(text: string): Range[] {
       if (start === undefined || text.charCodeAt(index + 1) !== OPEN_PAREN) continue;
       const end = stopAtOrAfter(index + 2);
       if (end >= text.length || text.charCodeAt(end) !== CLOSE_PAREN) continue;
-      found.push({ start, end: end + 1 });
+      found.push({ start: lastBreak > start ? index : start, end: end + 1 });
       index = end;
     }
   }

@@ -84,6 +84,15 @@ describe('compareWithSnapshot', () => {
     });
   });
 
+  it('catches a tail edit of a body that was cut upstream, by the full length that came with it', () => {
+    const cutUpstream = (fullLength: number): ExternalIssueSnapshot => ({
+      ...truncateExternalIssue({ title: 't', body: 'a'.repeat(20_001), bodyLength: fullLength }),
+      updatedAt: UPDATED_AT,
+    });
+    expect(compareWithSnapshot(cutUpstream(25_000), cutUpstream(25_001))).toMatchObject({ bodyChanged: true, needsRejudge: true });
+    expect(compareWithSnapshot(cutUpstream(25_000), cutUpstream(25_000)).bodyChanged).toBe(false);
+  });
+
   it('catches a title edit after the title limit by the full length, as it does for the body', () => {
     const base = snapshotOf('t'.repeat(300), 'b');
     const longer = snapshotOf(`${'t'.repeat(300)}u`, 'b');
