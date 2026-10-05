@@ -28,9 +28,13 @@ function loadBrowserImageLimits(): BrowserImageLimits {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   });
   const exported: Record<string, unknown> = {};
-  // CommonJS の出力は exports へ書くだけ (import が無いので、他に何も要らない)。
+  // CommonJS の出力は exports へ書くだけ (import が無いので、他に何も要らない)。import を足すと出力が require を呼ぶので、
+  // 「require is not defined」ではなく、何を直せばよいかを言って落とす。
+  const requireStub = (specifier: string): never => {
+    throw new Error(`issueDraftImageLimits.ts must stay import-free so this test can evaluate it (it imports "${specifier}")`);
+  };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, @typescript-eslint/no-unsafe-call
-  new Function('exports', outputText)(exported);
+  new Function('exports', 'require', outputText)(exported, requireStub);
   return exported as unknown as BrowserImageLimits;
 }
 

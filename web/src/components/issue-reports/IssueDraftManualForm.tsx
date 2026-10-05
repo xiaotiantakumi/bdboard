@@ -9,6 +9,7 @@ import {
   describeIssueDraftManualError,
 } from './issueDraftErrors';
 import { uploadIssueDraftImages, type ImageUploadFailure, type PickedImage } from './issueDraftImageUpload';
+import { useMountedRef } from '../../hooks/useMountedRef';
 import { type ReportProject } from './manualDraftAccess';
 import { useIssueDraftImages } from './useIssueDraftImages';
 
@@ -16,7 +17,7 @@ export interface IssueDraftManualFormProps {
   /** ボードでちょうど 1 つ選んでいるプロジェクト (reportProjectOf)。あれば、題名の漏れ検出の鍵として一緒に送る。選ぶ欄は無い。 */
   readonly project?: ReportProject | undefined;
   /**
-   * ローカルで開いているか (パネルが isLoopbackHostname で決めた値)。false (トンネル経由など) のときは、画像の欄・注記・貼り付けの処理を出さない。
+   * ローカルで開いているか (パネルが isLoopbackHostname で決めた値)。false (トンネル経由など) のときは、画像の欄・注記・貼り付けとドロップの処理を出さない。
    * 画像の受け口はトンネルでは常に 403 なので、入力を見せない (正はサーバーの 403)。
    */
   readonly localAccess: boolean;
@@ -54,6 +55,7 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
   const imageDraft = useIssueDraftImages();
   const [progress, setProgress] = useState<{ sent: number; total: number } | null>(null);
   const [partial, setPartial] = useState<PartialOutcome | null>(null);
+  const mounted = useMountedRef();
 
   // 失敗の一覧に出す名前。同じ名前の画像を見分けるため、送る前の一覧での位置を付ける。
   const failureItems = useMemo(
@@ -76,6 +78,9 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
       setProgress(null);
     }
     await queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
+    // 送っている間に一覧から別の下書きを選ぶと、この画面は閉じる。画像は送り終えて一覧も読み直すが、作った下書きを選び直して
+    // 利用者が選んだ下書きを奪わない (付いた画像は、その下書きを開けば見られる)。
+    if (!mounted.current) return;
     if (failures.length === 0) {
       onCreated(draft);
     } else {
@@ -131,10 +136,7 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
     const failedIds = new Set(outcome.failures.map((failure) => failure.id));
     setSending(true);
     try {
-      await finishCreated(
-        outcome.draft,
-        imageDraft.images.filter((image) => failedIds.has(image.id)),
-      );
+      await finishCreated(outcome.draft, imageDraft.images.filter((image) => failedIds.has(image.id)));
     } finally {
       setSending(false);
     }
@@ -155,7 +157,7 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
     <form
       className="issue-draft-editor"
       aria-label="新しく報告"
-      onPaste={localAccess && !sending ? imageDraft.handlePaste : undefined}
+      {...(localAccess ? imageDraft.formHandlers(sending) : {})}
       onSubmit={(event) => void handleSubmit(event)}
     >
       <h3 className="issue-draft-section-title">新しく報告</h3>
@@ -171,6 +173,8 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
         className="issue-draft-editor-title"
         type="text"
         value={title}
+        // 送信中 (画像を送っている数秒も含む) に直しても、作った下書きには入らない。黙って捨てないよう、読むだけにする。
+        readOnly={sending}
         autoFocus
         aria-describedby={project !== undefined ? projectHintId : undefined}
         onChange={(event) => setTitle(event.target.value)}
@@ -186,6 +190,7 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
         className="issue-draft-editor-body"
         rows={10}
         value={description}
+        readOnly={sending}
         aria-describedby={descriptionHintId}
         onChange={(event) => setDescription(event.target.value)}
       />

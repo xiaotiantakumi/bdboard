@@ -1,6 +1,13 @@
-import { useRef, useState, type ClipboardEvent } from 'react';
-import { screenIssueDraftImages } from './issueDraftImages';
+import { useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { dragCarriesFiles, screenIssueDraftImages } from './issueDraftImages';
 import type { PickedImage } from './issueDraftImageUpload';
+
+/** 書く画面の form へ広げる処理 (formHandlers)。 */
+export interface IssueDraftFormHandlers {
+  readonly onPaste: ((event: ClipboardEvent<HTMLElement>) => void) | undefined;
+  readonly onDragOver: (event: DragEvent<HTMLElement>) => void;
+  readonly onDrop: (event: DragEvent<HTMLElement>) => void;
+}
 
 export interface UseIssueDraftImages {
   readonly images: readonly PickedImage[];
@@ -10,6 +17,8 @@ export interface UseIssueDraftImages {
   readonly remove: (id: string) => void;
   /** 書く画面の onPaste へ渡す。画像を含む貼り付けだけを引き受ける。 */
   readonly handlePaste: (event: ClipboardEvent<HTMLElement>) => void;
+  /** 書く画面の form へ広げる処理 (ローカルで開いているときだけ渡す)。`sending` は送信中か。 */
+  readonly formHandlers: (sending: boolean) => IssueDraftFormHandlers;
 }
 
 /**
@@ -56,5 +65,22 @@ export function useIssueDraftImages(): UseIssueDraftImages {
     addFiles(imageFiles);
   };
 
-  return { images, problems, addFiles, remove, handlePaste };
+  /**
+   * 貼り付けは送信中は受けない。ファイルのドラッグは、画像の欄の外 (説明の欄など) に落としても受ける: 受けないと、
+   * ブラウザが落としたファイルを開いてページを移り、書きかけの題名・説明が消える。欄のドロップ領域が先に受けたもの
+   * (preventDefault 済み) は重ねて足さない。送信中に落としたものは、ページを移らせずに捨てる。文字のドラッグには触らない。
+   */
+  const formHandlers = (sending: boolean): IssueDraftFormHandlers => ({
+    onPaste: sending ? undefined : handlePaste,
+    onDragOver: (event) => {
+      if (dragCarriesFiles(event.dataTransfer)) event.preventDefault();
+    },
+    onDrop: (event) => {
+      if (event.defaultPrevented || !dragCarriesFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      if (!sending) addFiles(Array.from(event.dataTransfer.files));
+    },
+  });
+
+  return { images, problems, addFiles, remove, handlePaste, formHandlers };
 }

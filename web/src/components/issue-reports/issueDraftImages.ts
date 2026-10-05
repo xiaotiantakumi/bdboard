@@ -30,6 +30,11 @@ export function isIssueDraftImageMimeType(value: string): value is IssueDraftIma
   return ISSUE_DRAFT_IMAGE_MIME_TYPES.some((mimeType) => mimeType === value);
 }
 
+/** ドラッグがファイルを運んでいるか (文字のドラッグは欄へふつうに入れるので、画像の処理では受けない)。 */
+export function dragCarriesFiles(dataTransfer: Pick<DataTransfer, 'types'>): boolean {
+  return Array.from(dataTransfer.types).includes('Files');
+}
+
 function displayName(name: string): string {
   return name === '' ? UNNAMED_IMAGE_LABEL : name;
 }

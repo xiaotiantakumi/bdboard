@@ -148,6 +148,7 @@ describe('IssueDraftManualForm (bdboard-4y8q.6.8)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(expected);
     expect(screen.getByRole('textbox', { name: /題名/ })).toHaveValue('Board freezes');
     expect(screen.getByRole('textbox', { name: /説明/ })).toHaveValue('It freezes when I open the tab');
+    expect(screen.getByRole('textbox', { name: /説明/ })).not.toHaveAttribute('readonly');
     expect(onCreated).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: '送る' })).toBeEnabled();
   });
@@ -298,6 +299,40 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
       expect(screen.queryByText('paste.png')).toBeNull();
     });
 
+    it('takes a file dropped outside the image field (on the description), so the browser does not open it and lose the input', () => {
+      setup();
+      const prevented = !fireEvent.drop(screen.getByRole('textbox', { name: /説明/ }), {
+        dataTransfer: { files: [png('dropped.png')], types: ['Files'] },
+      });
+      expect(prevented).toBe(true);
+      expect(screen.getByText('dropped.png')).toBeInTheDocument();
+      const draggedOver = !fireEvent.dragOver(screen.getByRole('textbox', { name: /題名/ }), { dataTransfer: { types: ['Files'] } });
+      expect(draggedOver).toBe(true);
+    });
+
+    it('adds an image dropped on the image field once (the form does not add it again)', () => {
+      setup();
+      fireEvent.drop(screen.getByTestId('issue-draft-image-drop'), {
+        dataTransfer: { files: [png('once.png')], types: ['Files'] },
+      });
+      expect(screen.getByRole('group', { name: '画像 (任意) 1 / 20' })).toBeInTheDocument();
+    });
+
+    it('leaves a text drag to the browser', () => {
+      setup();
+      const textbox = screen.getByRole('textbox', { name: /説明/ });
+      expect(fireEvent.dragOver(textbox, { dataTransfer: { types: ['text/plain'] } })).toBe(true);
+      expect(fireEvent.drop(textbox, { dataTransfer: { files: [], types: ['text/plain'] } })).toBe(true);
+    });
+
+    it('does not take a dropped file through the tunnel', () => {
+      setup(undefined, { localAccess: false });
+      fireEvent.drop(screen.getByRole('textbox', { name: /説明/ }), {
+        dataTransfer: { files: [png('dropped.png')], types: ['Files'] },
+      });
+      expect(screen.queryByText('dropped.png')).toBeNull();
+    });
+
     it('lists the images with the count and takes one off again before sending', async () => {
       const { user } = setup();
       chooseImages([png('a.png'), png('b.png')]);
@@ -433,6 +468,15 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
         clipboardData: { files: [png('late.png')], types: ['Files'] },
       });
       expect(screen.queryByText('late.png')).toBeNull();
+      // 落としたファイルは足さないが、ブラウザに開かせもしない (ページを移ると送信中の画面ごと消える)。
+      const dropPrevented = !fireEvent.drop(screen.getByRole('textbox', { name: /説明/ }), {
+        dataTransfer: { files: [png('late-drop.png')], types: ['Files'] },
+      });
+      expect(dropPrevented).toBe(true);
+      expect(screen.queryByText('late-drop.png')).toBeNull();
+      // 送ったあとの直しは下書きに入らないので、題名と説明は読むだけにする。
+      expect(screen.getByRole('textbox', { name: /題名/ })).toHaveAttribute('readonly');
+      expect(screen.getByRole('textbox', { name: /説明/ })).toHaveAttribute('readonly');
 
       await waitFor(() => expect(releases).toHaveLength(1));
       releases[0]?.();

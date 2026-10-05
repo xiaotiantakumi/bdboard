@@ -228,6 +228,39 @@ describe('IssueReportsPanel: 新しく報告の画像 (bdboard-4y8q.6.9)', () =>
     expect(screen.queryByRole('form', { name: '新しく報告' })).toBeNull();
   });
 
+  it('does not take the selection back when the user picks another draft while the images are still being sent', async () => {
+    const other: IssueDraftSummaryDto = { ...created, id: '2-0000000000000000', title: 'Other pending report' };
+    vi.mocked(fetchIssueDrafts).mockResolvedValue({ drafts: [other], pendingCount: 1 });
+    vi.mocked(fetchIssueDraft).mockImplementation((id) =>
+      Promise.resolve({ draft: { ...createdDetail, id, title: id === other.id ? other.title : created.title }, images: [] }),
+    );
+    let release: () => void = () => {};
+    vi.mocked(uploadIssueDraftImage).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({ image: { fileName: '1-0123456789abcdef.png', url: '/x', byteLength: 1, createdAt: '2026-10-06T00:00:00.000Z' } });
+        }),
+    );
+    const user = renderPanel({ hostname: 'localhost' });
+    await openWritingScreen(user);
+    chooseImage('shot.png', 'a');
+    await user.type(screen.getByRole('textbox', { name: /題名/ }), 'Board freezes');
+    await user.type(screen.getByRole('textbox', { name: /説明/ }), 'It freezes when I open the tab');
+    await user.click(screen.getByRole('button', { name: '送る' }));
+    await vi.waitFor(() => expect(uploadIssueDraftImage).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole('button', { name: /Other pending report/ }));
+    await vi.waitFor(() => expect(fetchIssueDraft).toHaveBeenCalledWith(other.id));
+    const listReloads = vi.mocked(fetchIssueDrafts).mock.calls.length;
+    release();
+
+    // 送り終えたことは一覧の読み直しで分かる。そのあとも、利用者が選んだ下書きのまま。
+    await vi.waitFor(() => expect(vi.mocked(fetchIssueDrafts).mock.calls.length).toBeGreaterThan(listReloads));
+    expect(fetchIssueDraft).not.toHaveBeenCalledWith(NEW_ID);
+    expect(screen.getByRole('button', { name: /Other pending report/ })).toHaveAttribute('aria-current', 'true');
+  });
+
   it('keeps the writing area on the result when an image does not attach, and selects the draft only when the user opens it', async () => {
     vi.mocked(uploadIssueDraftImage).mockRejectedValue(
       new ApiError(400, 'invalid or unsupported image data', { errorMessage: 'invalid or unsupported image data' }),

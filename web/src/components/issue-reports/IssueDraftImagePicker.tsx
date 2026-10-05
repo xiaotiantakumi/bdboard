@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
 import { formatImageSize } from '../chat/attachments';
 import { ISSUE_DRAFT_IMAGE_MAX_COUNT, ISSUE_DRAFT_IMAGE_MIME_TYPES } from './issueDraftImageLimits';
-import { ISSUE_DRAFT_IMAGE_FORMAT_LABEL, ISSUE_DRAFT_IMAGE_MAX_SIZE_LABEL } from './issueDraftImages';
+import { ISSUE_DRAFT_IMAGE_FORMAT_LABEL, ISSUE_DRAFT_IMAGE_MAX_SIZE_LABEL, dragCarriesFiles } from './issueDraftImages';
 import type { PickedImage } from './issueDraftImageUpload';
 
 export interface IssueDraftImagePickerProps {
@@ -16,10 +16,6 @@ export interface IssueDraftImagePickerProps {
 
 /** ファイル選択の accept。付けられる形式の一覧から作る (ファイル選択の絞り込みだけで、検査の正は screenIssueDraftImages)。 */
 const FILE_INPUT_ACCEPT = ISSUE_DRAFT_IMAGE_MIME_TYPES.join(',');
-
-function carriesFiles(event: DragEvent<HTMLElement>): boolean {
-  return Array.from(event.dataTransfer.types).includes('Files');
-}
 
 /**
  * 縮小表示。File から object URL を作り、外したとき・閉じたときに手放す (data URL を 20 枚ぶん持たない)。
@@ -42,7 +38,8 @@ function ImageThumb({ file, name }: { readonly file: File; readonly name: string
 
 /**
  * 「新しく報告」の書く画面の、画像を付ける欄 (bdboard-4y8q.6.9)。入れ方はこの欄のドロップと「画像を選ぶ」
- * (貼り付けは書く画面全体で受けるので、親の form が処理する)。状態は持たず、検査と一覧は親 (useIssueDraftImages) が持つ。
+ * (貼り付けと、この欄の外に落としたファイルは書く画面全体で受けるので、親の form が処理する。useIssueDraftImages の formHandlers)。
+ * この欄で受けたドロップは preventDefault するので、親の form は重ねて足さない。状態は持たず、検査と一覧は親 (useIssueDraftImages) が持つ。
  * キーボードだけで、追加は「画像を選ぶ」ボタン、取り消しは各画像の「外す」ボタンでできる。
  */
 export function IssueDraftImagePicker({ images, problems, disabled, onAddFiles, onRemove }: IssueDraftImagePickerProps) {
@@ -61,7 +58,7 @@ export function IssueDraftImagePicker({ images, problems, disabled, onAddFiles, 
   const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
     // preventDefault しないと drop が起きず、ブラウザがその画像を開いてしまう。
     event.preventDefault();
-    setDragging(!disabled && carriesFiles(event));
+    setDragging(!disabled && dragCarriesFiles(event.dataTransfer));
   };
 
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
