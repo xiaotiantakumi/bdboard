@@ -82,7 +82,7 @@ const singleLine = (max: number) => z.string().max(max).refine(isSingleLineText,
 const versionString = singleLine(100);
 
 /**
- * プロジェクト名 (表示用): 絵文字の連結 (👩‍💻-tools) などで 400 にしないよう、弾く文字は取り除いて受け、
+ * プロジェクト名 (表示用): 絵文字の連結 (👩\u200D💻-tools) などで 400 にしないよう、弾く文字は取り除いて受け、
  * ホーム配下のパスは "~/" に畳む (sanitizeProjectName)。改行・タブなどパスの区切りにもなる文字と、画面では
  * 空白に見えるハングルの埋め字・U+180E は、取り除かず空白に替えてから畳む (つなげるとパスが前の語に貼り付いて
  * 畳めないため)。結果が空なら 400。

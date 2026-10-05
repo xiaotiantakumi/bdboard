@@ -18,7 +18,7 @@ AGENTS.md 側に残っている 1 行要約と食い違ったら、**この文�
 コミット前 (server / web どちらの変更でも) に、フル検証チェーンをクリーンに通すこと:
 
 ```bash
-npm run verify   # check:file-size + lint:verify + build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
+npm run verify   # check:file-size + check:invisible-chars + lint:verify + build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
 ```
 
 Node が `package.json` の `engines.node` を満たさないと、verify は子プロセス (tsc / vite / vitest) を
@@ -107,6 +107,7 @@ by import is not enough, and neither is sitting next to files that are checked.
 
 ```bash
 npm run check:file-size  # git ls-files 対象のファイル行数ガード (baseline との突き合わせ)
+npm run check:invisible-chars  # src/ web/src/ scripts/ の .ts/.tsx/.mts/.mjs/.js/.cjs に、生の bidi 制御文字・ゼロ幅文字 (U+061C U+200B–U+200F U+202A–U+202E U+2060 U+2066–U+2069 U+FEFF) があれば落ちる。ファイル:行:列と U+XXXX を出す (文字そのものは出さない)。\uXXXX のエスケープで書く (bdboard-ekvi)
 npm run lint             # ESLint + typescript-eslint (src/ web/src/ scripts/、max-lines はラチェット許可リスト。warning を含め全件出力)
 npm run lint:verify      # verify から呼ぶ版。error は全文出力し exit code も同じだが、warning は件数のみ1行で出す
 npm run lint:warnings    # warning を含む全件を見たいときの単独実行 (中身は npm run lint と同じ)
@@ -247,7 +248,7 @@ What this means operationally:
   iterating is still fine; the slot only guards the full chain.
 - **`npm run verify -- --light` is for `merge-pr` only** (bdboard-ulxa.3). It takes
   the same slot and process group but runs `verify:light` (= `verify:steps` without
-  `test:server` / `test:web`: check:file-size, lint:verify, build, build:web,
+  `test:server` / `test:web`: check:file-size, check:invisible-chars, lint:verify, build, build:web,
   check:boundaries). `merge-pr prepare` runs it on the predicted landed tree of a
   class-L PR under `merge.mode: "S3"` (the contract's `merge.lightCheck`; see
   GIT-WORKFLOW.md "S3"). It runs no tests, so it never replaces the full
