@@ -10,8 +10,9 @@
  *   - 先頭 (呼び出し側が start を立てた欄だけ。末尾だけを取る送り手がいるのはエラー文): 根・LONG の固有名詞の、4 コードポイント以上で
  *     全体より短い後置部分。先頭が欠けたトークンは本体だけが残り、形が無いので拾えない (5節「カバーしないもの」)。
  * 全体に一致するもの (全体より短くない) は、先頭の端ではここで返さない: 通常の置き換えが拾い、根の直後の文字の条件 (example-project2) も
- * そちらが持つ。末尾の端では返す (直後の文字が無く、通常の置き換えの一致と重なれば統合で強い種別の印 1 つになる。本体は重ならずに探すので、
- * 自分と重なる名前が末尾で重なって 2 回現れると、2 つ目を拾えない)。
+ * そちらが持つ。末尾の端では返す (直後の文字が無く、通常の置き換えの一致と重なれば統合で強い種別の印 1 つになる。bdboard-2ydj の時点では、
+ * 本体が重ならずに探していたので、自分と重なる名前が末尾で重なって 2 回現れると 2 つ目を拾えず、この返し方がその穴を塞いでいた。今は本体が
+ * 重なる出現も探す (bdboard-0hj9) ので、ここは二重の網になる)。
  *
  * 大文字小文字: 各コードポイントを、本体の探索と同じ表 (issue-public-casefold.ts) の代表にたたんで比べる。表が使えないエンジンでは、
  * エンジンに直接尋ねて同じ同値類にたたむ。以前は toLowerCase で、µ/μ・ς/σ・ϑ/θ・ſ/s・U+1FBE/ι が本体と端で別だった。
@@ -153,8 +154,9 @@ function keyPrefixesAtEnd(text: string, keys: readonly FragmentKey[]): Range[] {
     const offset = tail.folded.length - read;
     const overlap = overlapAtEnd(read, (index) => tail.folded[offset + index] ?? '', key.forward, key.forwardFailure);
     // 末尾では、鍵の全体の一致も返す (overlap === 鍵の長さ)。末尾には直後の文字が無いので、根の条件 (example-project2) と矛盾しない。
-    // 本体の探索は左から重ならずに探すので、自分と重なる名前 (-ba1-ba1-ba) が末尾で重なって 2 回現れると 2 つ目を拾わず、後ろが残る。
-    // 本体の一致と重なれば、統合 (mergeSpans) で強い種別の印 1 つになるので、ふつうの入力の出力は変わらない。
+    // 本体の探索は、自分と重なる名前 (-ba1-ba1-ba) が重なって 2 回現れても両方を探す (bdboard-0hj9。それまでは重ならずに探して、末尾で
+    // 2 つ目を拾わず後ろが残っていた)。ここで全体の一致も返すのは二重の網: 本体の一致と重なれば、統合 (mergeSpans) で強い種別の印 1 つになるので、
+    // ふつうの入力の出力は変わらない。
     if (overlap < MIN_FRAGMENT_CODE_POINTS) continue;
     const length = sumUnits(tail.units, tail.units.length - overlap, tail.units.length);
     spans.push({ start: text.length - length, end: text.length });

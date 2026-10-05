@@ -19,16 +19,14 @@
  *     表を作るときに、(1) 類が対称で推移的 (どの要素から引いても同じ類) (2) 類の中で UTF-16 の長さが混ざらない (たたんでも位置が
  *     ずれない) (3) 表の文字を集めた `/[…]/giu` が表の外の文字に一致しない、を確かめる。どれかが成り立たないエンジンでは表を使わず、
  *     以前と同じ `/…/giu` で探す (遅いが同じ結果)。
- *   - 探し方は正規表現の g と同じ: 左から探し、一致したら一致の終わりから次を探す (重ならない)。根は、直後の 1 文字が
- *     `[\p{L}\p{N}_-]` (i つき。以前の先読みと同じもの) でないときだけ一致にする。そうでなければ 1 つ右から探し直す。
+ *   - 鍵のすべての出現を探し、自分と重なる出現は 1 つの範囲に併合する (接するだけなら別範囲。周期的でない鍵では以前の `/…/giu` と同じ一致。
+ *     bdboard-0hj9 まで: 一致の終わりから次を探していたので、重なる 2 つ目を見落とした)。探し方 (indexOf と KMP) は issue-public-literal-search.ts。
+ *     根は、直後の 1 文字が `[\p{L}\p{N}_-]` (i つき。以前の先読みと同じもの) でない出現だけを一致にする。
  *   - 鍵が n コードポイントなら一致は n コード単位以上なので、それより短い本文では探さない (正規表現でも同じく一致しない)。
  */
 
 /** 大文字小文字で変わりうる文字。これ以外の文字は、i フラグでも自分にしか一致しない (上の (3) で確かめる)。 */
 const CASE_VARIABLE = /[\p{Changes_When_Casefolded}\p{Changes_When_Casemapped}]/u;
-
-/** 根の直後に来てはいけない文字 (以前の根の正規表現の先読み `(?![\p{L}\p{N}_-])` と同じ。i つきなので閉包も同じ)。 */
-const ROOT_FOLLOWER = /[\p{L}\p{N}_-]/iuy;
 
 /** 標準の escapeRegExp。`-` は escape しない (`u` フラグでは範囲外の `\-` は構文エラー)。 */
 export function escapeRegExp(value: string): string {
@@ -211,57 +209,28 @@ function foldText(text: string, caseTableValue: CaseTable): string {
 export interface CaseInsensitiveLiteral {
   /** たたんだ鍵 (表が使えるとき)。 */
   readonly folded: string;
-  /** 表が使えないときの、以前と同じ正規表現。 */
+  /** 表が使えないときの正規表現 (先読みの中で鍵を捕獲し、重なる出現も拾う)。 */
   readonly fallback: RegExp | undefined;
   readonly codePoints: number;
   readonly root: boolean;
-}
-
-export interface LiteralSpan {
-  readonly start: number;
-  readonly end: number;
 }
 
 export function caseInsensitiveLiteral(value: string, root: boolean): CaseInsensitiveLiteral {
   const caseTableValue = caseTable();
   const codePoints = Array.from(value).length;
   if (caseTableValue === null) {
+    // 表が使えないエンジンの退避。重なる出現も拾えるよう、鍵は先読みの中で捕獲する (根の直後の文字の条件も先読みの中、捕獲の外)。
     const suffix = root ? '(?![\\p{L}\\p{N}_-])' : '';
-    return { folded: value, fallback: new RegExp(`${escapeRegExp(value)}${suffix}`, 'giu'), codePoints, root };
+    return { folded: value, fallback: new RegExp(`(?=(${escapeRegExp(value)})${suffix})`, 'giu'), codePoints, root };
   }
   return { folded: foldCase(value, caseTableValue), fallback: undefined, codePoints, root };
 }
 
-function rootFollowerAt(text: string, index: number): boolean {
-  ROOT_FOLLOWER.lastIndex = index;
-  return ROOT_FOLLOWER.test(text);
-}
-
 /**
- * 本文 1 つに対して鍵を探す関数を返す (本文のたたみは最初の 1 回だけ)。返す範囲は本文の UTF-16 の半開区間で、左から重ならない。
+ * 本文を鍵と同じ代表にたたんだもの (UTF-16 の長さと位置は変わらない)。同じ本文は 1 回だけたたむ。表が使えないエンジンでは本文そのまま
+ * (そのとき鍵は fallback の正規表現で探す)。探し方は issue-public-literal-search.ts。
  */
-export function literalSearcher(text: string): (key: CaseInsensitiveLiteral) => LiteralSpan[] {
-  let folded: string | undefined;
-  return (key) => {
-    if (text.length < key.codePoints) return [];
-    if (key.fallback !== undefined) {
-      key.fallback.lastIndex = 0;
-      return Array.from(text.matchAll(key.fallback), (match) => ({ start: match.index, end: match.index + match[0].length }));
-    }
-    const caseTableValue = caseTable();
-    folded ??= caseTableValue === null ? text : foldText(text, caseTableValue);
-    const spans: LiteralSpan[] = [];
-    let from = 0;
-    for (;;) {
-      const start = folded.indexOf(key.folded, from);
-      if (start === -1) return spans;
-      const end = start + key.folded.length;
-      if (key.root && rootFollowerAt(text, end)) {
-        from = start + 1;
-        continue;
-      }
-      spans.push({ start, end });
-      from = end;
-    }
-  };
+export function foldedTextOf(text: string): string {
+  const caseTableValue = caseTable();
+  return caseTableValue === null ? text : foldText(text, caseTableValue);
 }

@@ -18,12 +18,13 @@
  * (呼び出し側は結果の keysTruncated と、suspectedLeaks の 'key-overflow' で知らせる)。
  * 上限そのものは性能のため: 敵対的な 512 コードポイントの名前 200 件で 64k 文字の全欄を処理しても数秒で終わる。
  *
- * 根と LONG の名前は、正規表現ではなく、大文字小文字をたたんだ文字列の indexOf で探す (issue-public-casefold.ts。以前の `/…/giu` と
+ * 根と LONG の名前は、正規表現ではなく、大文字小文字をたたんだ文字列の indexOf で探す (自分と重なる出現も探す。issue-public-casefold.ts。以前の `/…/giu` と
  * 同じ一致。長い鍵の正規表現のコンパイルが 1 回の組み立てを 117〜233 秒にしていた、bdboard-uudb)。SHORT の名前は前後の条件つきの
  * 正規表現のまま (短いのでコンパイルは軽い)。RegExp オブジェクトは `g` フラグで lastIndex を持つので、使うたびに lastIndex = 0 に戻す
  * (別の呼び出しの状態を引きずらない)。
  */
-import { caseInsensitiveLiteral, escapeRegExp, literalSearcher, type CaseInsensitiveLiteral } from './issue-public-casefold.js';
+import { caseInsensitiveLiteral, escapeRegExp, type CaseInsensitiveLiteral } from './issue-public-casefold.js';
+import { literalSearcher } from './issue-public-literal-search.js';
 import { fragmentKeyCollector, type FragmentKey } from './issue-public-fragments.js';
 import { codePointLength, normalizeInline } from './issue-public-text.js';
 import { nounVariants, prepareRoot } from './issue-public-key-variants.js';

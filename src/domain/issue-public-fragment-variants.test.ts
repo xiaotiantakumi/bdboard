@@ -73,8 +73,9 @@ describe('the edge check folds case the way the body search does (bdboard-2ydj)'
 });
 
 describe('a self-overlapping name whose second occurrence ends the field (review of bdboard-2ydj)', () => {
-  // 本体は左から重ならずに探すので、1 つ目と重なる 2 つ目の出現は拾わない。端の検査が末尾の全体の一致も返さないと、
-  // 2 つ目の出現の後ろ (鍵の末尾 4 コードポイント) が残る。以前 (toLowerCase) は ς と σ を別にしていたので、ς 版は偶然伏せていた。
+  // bdboard-2ydj の時点では、本体は左から重ならずに探していたので、1 つ目と重なる 2 つ目の出現は拾わず、端の検査が末尾の全体の一致も
+  // 返さないと、2 つ目の出現の後ろ (鍵の末尾 4 コードポイント) が残った。以前 (toLowerCase) は ς と σ を別にしていたので、ς 版は偶然伏せていた。
+  // 今は本体が重なる出現も探す (bdboard-0hj9。欄の途中の同じ形は issue-public-overlap.test.ts) ので、ここは端の検査の二重の網の確認になる。
   it.each([
     ['final sigma in the text', '-baς-baσ-ba', 'log: -baς-baς-baς-ba'],
     ['plain ASCII', '-ba1-ba1-ba', 'log: -ba1-ba1-ba1-ba'],

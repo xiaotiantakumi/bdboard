@@ -6,13 +6,23 @@ import {
   escapeRegExp,
   foldCodePoint,
   foldCodePointWith,
-  literalSearcher,
 } from './issue-public-casefold.js';
+import { literalSearcher } from './issue-public-literal-search.js';
 
-/** 以前の探し方 (鍵ごとの /…/giu。根は直後の文字の先読みつき)。新しい探し方はこれと同じ一致を返す。 */
+/**
+ * 正規表現エンジンで出す独立の正解 (bdboard-0hj9)。鍵の出現を、先読みの捕獲 `(?=(鍵)(?!直後の文字))` で重なるものも含めてすべて集め、
+ * 厳密に重なる出現を 1 つの範囲に併合する (接しているだけは別)。周期的でない鍵では、以前の `/…/giu` の matchAll と同じ結果になる。
+ */
 function regexSpans(text: string, key: string, root: boolean): { start: number; end: number }[] {
-  const pattern = new RegExp(`${escapeRegExp(key)}${root ? '(?![\\p{L}\\p{N}_-])' : ''}`, 'giu');
-  return Array.from(text.matchAll(pattern), (match) => ({ start: match.index, end: match.index + match[0].length }));
+  const pattern = new RegExp(`(?=(${escapeRegExp(key)})${root ? '(?![\\p{L}\\p{N}_-])' : ''})`, 'giu');
+  const spans: { start: number; end: number }[] = [];
+  for (const match of text.matchAll(pattern)) {
+    const occurrence = { start: match.index, end: match.index + (match[1]?.length ?? 0) };
+    const previous = spans[spans.length - 1];
+    if (previous && occurrence.start < previous.end) previous.end = Math.max(previous.end, occurrence.end);
+    else spans.push(occurrence);
+  }
+  return spans;
 }
 
 // 大文字小文字の同値類が特殊なもの: Kelvin (U+212A) と k、long s (U+017F) と s、ß と ẞ (U+1E9E)、トルコ語の İ ı、ギリシャ語の σ ς Σ・
