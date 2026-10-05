@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useId, useState, type FormEvent } from 'react';
+import { ApiError } from '../../api';
 import {
   patchIssueDraft,
   type IssueDraftDetailDto,
@@ -19,11 +20,19 @@ export interface IssueDraftEditorProps {
   readonly onSaved: (response: IssueDraftEditResponseDto) => void;
 }
 
-/** 変えた欄だけを送る (サーバーは渡された欄にだけ「直した」印を立てる)。 */
-function changedFields(draft: IssueDraftDetailDto, title: string, body: string): IssueDraftTextEdit {
+interface TextBase {
+  readonly title: string;
+  readonly body: string;
+}
+
+/**
+ * 変えた欄だけを送る (サーバーは渡された欄にだけ「直した」印を立てる)。比べる相手は編集を始めたときの値: 編集中に
+ * 裏で作り直された欄を、触っていないのに古い値で上書きしないため。
+ */
+function changedFields(base: TextBase, title: string, body: string): IssueDraftTextEdit {
   return {
-    ...(title !== draft.title ? { title } : {}),
-    ...(body !== draft.body ? { body } : {}),
+    ...(title !== base.title ? { title } : {}),
+    ...(body !== base.body ? { body } : {}),
   };
 }
 
@@ -33,6 +42,10 @@ function changedFields(draft: IssueDraftDetailDto, title: string, body: string):
  */
 export function IssueDraftEditor({ draft, onCancel, onSaved }: IssueDraftEditorProps) {
   const queryClient = useQueryClient();
+  // 編集を始めたときの値。中身の問い合わせが裏で読み直されても (同じ指紋の新しい発生で自動の題名・本文が作り直される)、
+  // 入力は消さずに残し、変わったことだけ知らせる (bdboard-4y8q.3.2 レビュー MINOR-1)。
+  const [base] = useState<TextBase>(() => ({ title: draft.title, body: draft.body }));
+  const changedUnderneath = draft.title !== base.title || draft.body !== base.body;
   const [title, setTitle] = useState(draft.title);
   const [body, setBody] = useState(draft.body);
   const [saving, setSaving] = useState(false);
@@ -44,7 +57,7 @@ export function IssueDraftEditor({ draft, onCancel, onSaved }: IssueDraftEditorP
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const edit = changedFields(draft, title, body);
+    const edit = changedFields(base, title, body);
     if (edit.title === undefined && edit.body === undefined) {
       onCancel();
       return;
@@ -64,6 +77,8 @@ export function IssueDraftEditor({ draft, onCancel, onSaved }: IssueDraftEditorP
       void queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
       onSaved(response);
     } catch (caught) {
+      // 409 (別の画面で見送り・投稿済みになった) は中身を読み直して、状態の表示と「直す」の有無を今の状態に合わせる。
+      if (caught instanceof ApiError && caught.status === 409) void queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
       setError(describeIssueDraftEditError(caught));
     } finally {
       setSaving(false);
@@ -72,6 +87,11 @@ export function IssueDraftEditor({ draft, onCancel, onSaved }: IssueDraftEditorP
 
   return (
     <form className="issue-draft-editor" onSubmit={(event) => void handleSubmit(event)}>
+      {changedUnderneath && (
+        <p className="issue-draft-notice" role="status">
+          編集中に、この下書きが裏で更新されました (いま {draft.occurrenceCount} 回)。入力はそのまま残しています。保存すると、直した欄は今の入力で上書きします。
+        </p>
+      )}
       <label htmlFor={titleId} className="issue-draft-editor-label">
         題名
         <span className="issue-draft-editor-count">

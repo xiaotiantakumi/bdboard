@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { fetchIssueDrafts, type IssueDraftStatus } from '../../api/issue-reports';
+import { ISSUE_REPORTS_REFETCH_MS } from '../../hooks/useIssueReportPendingCount';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { togglePressedProps } from '../toggleGroupA11y';
 import { IssueDraftDetail } from './IssueDraftDetail';
@@ -21,7 +22,12 @@ const EMPTY_TEXT: Readonly<Record<IssueDraftStatus, string>> = {
 export function IssueReportsPanel() {
   const [status, setStatus] = useState<IssueDraftStatus>('pending');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const listQuery = useQuery({ queryKey: ['issue-reports', 'list'], queryFn: fetchIssueDrafts });
+  // 件数のバッジと同じ間隔で読み直す (下書きは bd の外にあり SSE では届かない。バッジと一覧の数を食い違わせない)。
+  const listQuery = useQuery({
+    queryKey: ['issue-reports', 'list'],
+    queryFn: fetchIssueDrafts,
+    refetchInterval: ISSUE_REPORTS_REFETCH_MS,
+  });
 
   const allDrafts = listQuery.data?.drafts ?? [];
   const drafts = allDrafts.filter((draft) => draft.status === status);
@@ -42,7 +48,11 @@ export function IssueReportsPanel() {
                 type="button"
                 className={`toggle-btn${status === option ? ' active' : ''}`}
                 {...togglePressedProps(status === option)}
-                onClick={() => setStatus(option)}
+                onClick={() => {
+                  // 切り替えた先の一覧に無い下書きの中身を右に出し続けない。
+                  if (option !== status) setSelectedId(null);
+                  setStatus(option);
+                }}
               >
                 {draftStatusLabel(option)} ({countOf(option)})
               </button>

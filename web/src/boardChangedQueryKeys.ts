@@ -62,5 +62,5 @@ export const BOARD_CHANGED_QUERY_KEY_EXCLUSIONS = {
   'harness-kpi':
     'ハーネスKPI (reclaim・確認待ち滞留などの集計) も throughput-stats と同じ理由 (bdboard-ws2w/bdboard-himp) で重く、board.changed では追従させず staleTime 延長 + 統計タブの再読み込みボタンに任せる。',
   'issue-reports':
-    '不具合報告の下書き (bdboard-4y8q.3.2) は .beads の外 (data/issue-drafts) にあり、bd の書き込みからは変化しない。件数は 60 秒ごとのポーリング (useIssueReportPendingCount)、一覧・中身は編集・見送りの操作の側が invalidate する。',
+    '不具合報告の下書き (bdboard-4y8q.3.2) は .beads の外 (下書きのディレクトリ。開発時は data/issue-drafts、npm/npx では ~/.bdboard/issue-drafts) にあり、bd の書き込みからは変化しない。件数と一覧は 60 秒ごとのポーリング (useIssueReportPendingCount・IssueReportsPanel)、編集・見送りの操作の側も invalidate する。',
 } as const satisfies Readonly<Record<string, string>>;

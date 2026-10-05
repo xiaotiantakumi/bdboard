@@ -29,10 +29,15 @@ function MarkedText({ text, ranges }: { readonly text: string; readonly ranges: 
   );
 }
 
+const TUNNEL_LEAK_NOTE = 'トンネル経由では、隠しているパスに当たるかどうかは調べません (PC のローカル画面ではパスも調べます)。';
+
 function LeakWarnings({ draft }: { readonly draft: IssueDraftDetailDto }) {
   const items = describeLeaks(draft, draft.suspectedLeaks);
   const omitted = omittedLeakCount(draft.suspectedLeaksOmitted);
-  if (items.length === 0 && omitted === 0) return null;
+  if (items.length === 0 && omitted === 0) {
+    // 疑いが 0 件でも、トンネル経由ではパスを調べていない。「警告なし = パスも無い」と読ませない。
+    return draft.restricted ? <p className="issue-draft-leaks-note">{TUNNEL_LEAK_NOTE}</p> : null;
+  }
   return (
     <div className="issue-draft-leaks" role="alert">
       <p className="issue-draft-leaks-title">置き換え漏れの疑いがあります。投稿の前に確かめてください。</p>
@@ -50,11 +55,7 @@ function LeakWarnings({ draft }: { readonly draft: IssueDraftDetailDto }) {
           {omitted === 'some' ? 'ほかにも疑いがありますが、上限で省きました。' : `ほかに ${omitted} 件の疑いがありますが、上限で省きました。`}
         </p>
       )}
-      {draft.restricted && (
-        <p className="issue-draft-leaks-note">
-          トンネル経由では、隠しているパスに当たるかどうかは調べません (PC のローカル画面ではパスも調べます)。
-        </p>
-      )}
+      {draft.restricted && <p className="issue-draft-leaks-note">{TUNNEL_LEAK_NOTE}</p>}
     </div>
   );
 }
@@ -64,8 +65,10 @@ function LeakWarnings({ draft }: { readonly draft: IssueDraftDetailDto }) {
  * その場の編集。見送り・投稿済みの下書きは直せない (サーバーも 409 にする)。
  */
 export function IssueDraftPublicSection({ draft, onSaved }: IssueDraftPublicSectionProps) {
-  const [mode, setMode] = useState<PublicMode>('preview');
+  const [selectedMode, setMode] = useState<PublicMode>('preview');
   const editable = draft.status === 'pending';
+  // 編集中に別の画面で見送り・投稿済みになったら (409 のあとの読み直しなど)、編集欄を閉じてプレビューに戻す。
+  const mode: PublicMode = selectedMode === 'edit' && !editable ? 'preview' : selectedMode;
   const leaks = draft.suspectedLeaks ?? [];
   const rangesOf = (field: 'title' | 'body') => leaks.filter((leak) => leak.field === field);
   const modes: { mode: PublicMode; label: string }[] = [
@@ -102,7 +105,7 @@ export function IssueDraftPublicSection({ draft, onSaved }: IssueDraftPublicSect
       {mode === 'raw' && (
         <div className="issue-draft-raw">
           <p className="issue-draft-raw-legend">
-            <mark className="issue-draft-mark issue-draft-mark-redaction">置き換えた印</mark>
+            <mark className="issue-draft-mark issue-draft-mark-redaction">置き換えの印に見える文字</mark>
             <mark className="issue-draft-mark issue-draft-mark-leak">置き換え漏れの疑い</mark>
           </p>
           <pre className="issue-draft-raw-title">
@@ -115,7 +118,7 @@ export function IssueDraftPublicSection({ draft, onSaved }: IssueDraftPublicSect
       )}
       {mode === 'edit' && editable && (
         <IssueDraftEditor
-          key={`${draft.id}-${draft.title.length}-${draft.body.length}`}
+          key={draft.id}
           draft={draft}
           onCancel={() => setMode('preview')}
           onSaved={(response) => {

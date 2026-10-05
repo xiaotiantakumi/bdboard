@@ -37,6 +37,7 @@ const LEAK_KIND_LABELS: Readonly<Record<string, string>> = {
   token: 'トークンらしい文字列',
   'key-block': '秘密鍵',
   email: 'メールアドレス',
+  fragment: '途中で切れた名前の断片',
 };
 
 /** 位置の無い疑い: 手元の鍵 (名前) が上限を超えて、一部を探していない。 */
@@ -99,9 +100,14 @@ export function omittedLeakCount(value: unknown): number | 'some' {
   return 0;
 }
 
-/** 公開本文の置き換えが書く印 (docs/ISSUE-REPORTING.md 5節)。表示で目印を付けるだけで、意味は変えない。 */
+/**
+ * 公開本文の置き換えが書く印 (docs/ISSUE-REPORTING.md 5節)。表示で目印を付けるだけで、意味は変えない。
+ * DTO に置き換えの位置が載らないので文字列で探す。利用者が本文に自分で書いた `~/` や `<user>` にも印が付く (割り切り。
+ * 凡例も「置き換えの印に見える文字」と書く)。
+ */
 const REDACTION_PLACEHOLDERS = [
   '<redacted-key-block>',
+  '<redacted-fragment>',
   '<redacted-token>',
   '<project>',
   '<user>',

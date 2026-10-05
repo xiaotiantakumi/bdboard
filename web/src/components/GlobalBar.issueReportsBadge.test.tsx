@@ -50,9 +50,8 @@ describe('GlobalBar issue report tab (bdboard-4y8q.3.2)', () => {
 
   it('shows the pending count on the tab when there is at least one', () => {
     renderBar(2);
-    const tab = screen.getByRole('button', { name: /^不具合報告/ });
-    expect(tab).toHaveTextContent('不具合報告 2');
-    expect(screen.getByLabelText('未処理 2 件')).toBeInTheDocument();
+    // 書式は隣のイベントのタブ (「イベント (3)」) にそろえる。ボタン名に件数が入る。
+    expect(screen.getByRole('button', { name: '不具合報告 (2)' })).toBeInTheDocument();
   });
 
   it.each([0, null, undefined])('shows no count when the count is %s', (count) => {

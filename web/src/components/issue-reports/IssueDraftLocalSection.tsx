@@ -32,6 +32,14 @@ function ErrorText({ localOnly }: { readonly localOnly: IssueDraftLocalOnlyDto }
   return <p className="issue-draft-muted">エラー本文はありません。</p>;
 }
 
+/**
+ * 画像を開けるリンクにするか。トンネル経由 (restricted) では開かせない — サーバーも画像の取得をローカル直アクセスに限る
+ * (docs/ISSUE-REPORTING.md 3節)。ローカルでも、この bdboard 自身が配る画像の URL だけをリンクにする (外へは飛ばない)。
+ */
+function canOpenImage(draft: IssueDraftDetailDto, url: string): boolean {
+  return !draft.restricted && url.startsWith(`${ISSUE_DRAFTS_API_PATH}/`);
+}
+
 const FREE_TEXT_FIELDS: readonly { key: 'symptomRaw' | 'causeRaw' | 'preventionRaw' | 'agentNoteRaw'; label: string }[] = [
   { key: 'symptomRaw', label: '症状' },
   { key: 'causeRaw', label: '原因' },
@@ -51,7 +59,7 @@ export function IssueDraftLocalSection({ draft, images }: IssueDraftLocalSection
       <summary className="issue-draft-section-title">投稿されない手元の情報</summary>
       {draft.restricted && (
         <p className="issue-draft-notice">
-          トンネル経由のため、元のエラー本文・症状などの生の文・プロジェクトのフルパスは表示しません。PC のローカル画面で開いてください。
+          トンネル経由のため、元のエラー本文・症状などの生の文・プロジェクトのフルパスは表示せず、添付画像は開けません。PC のローカル画面で開いてください。
         </p>
       )}
       <dl className="issue-draft-local-list">
@@ -112,8 +120,8 @@ export function IssueDraftLocalSection({ draft, images }: IssueDraftLocalSection
           <ul className="issue-draft-images">
             {images.map((image) => (
               <li key={image.fileName}>
-                {image.url.startsWith(`${ISSUE_DRAFTS_API_PATH}/`) ? (
-                  // この bdboard 自身が配る画像だけを開けるようにする (外へは飛ばない)。開くまでは読み込まない。
+                {canOpenImage(draft, image.url) ? (
+                  // 開くまでは読み込まない (別のタブで開く)。
                   <a href={image.url} target="_blank" rel="noreferrer noopener">
                     {image.fileName}
                   </a>

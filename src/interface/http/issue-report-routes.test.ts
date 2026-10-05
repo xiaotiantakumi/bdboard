@@ -1024,4 +1024,22 @@ describe('draft images', () => {
     expect((await app.request(`${DRAFTS}/${id}/images/1-aaaaaaaaaaaaaaaa.png`, localGet(), LOCAL_ENV)).status).toBe(404);
     expect((await app.request(`${DRAFTS}/not-an-id/images/${image.fileName}`, localGet(), LOCAL_ENV)).status).toBe(400);
   });
+
+  // bdboard-4y8q.3.2: スクリーンショットには生ログと同じ種類の秘密が写りうるので、トンネル経由では
+  // (書き込み許可つきのセッションがあっても) 画像を返さない。ローカル直アクセスの同じリンクの読み込みは通す。
+  it('serves draft images to local requests only (tunnel 403 even with a write-allowed session)', async () => {
+    const { app } = setup(TUNNEL_WRITE_ALLOWED);
+    const { id } = await createDraft(app);
+    const upload = await app.request(`${DRAFTS}/${id}/images`, json({ mimeType: 'image/png', data: PNG_BASE64 }), LOCAL_ENV);
+    const { image } = (await upload.json()) as { image: { fileName: string } };
+    const url = `${DRAFTS}/${id}/images/${image.fileName}`;
+
+    const tunnel = await app.request(url, { headers: { ...CF_HEADERS } }, TUNNEL_ENV);
+    expect(tunnel.status).toBe(403);
+    expect(tunnel.headers.get('content-type')).not.toBe('image/png');
+    const remote = await app.request(url, { headers: { host: LOCAL_HOST } }, REMOTE_ENV);
+    expect(remote.status).toBe(403);
+    const sameOriginClick = await app.request(url, localGet({ 'sec-fetch-site': 'same-origin' }), LOCAL_ENV);
+    expect(sameOriginClick.status).toBe(200);
+  });
 });

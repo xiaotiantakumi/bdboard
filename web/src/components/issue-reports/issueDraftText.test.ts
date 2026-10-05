@@ -54,6 +54,17 @@ describe('issueDraftText (bdboard-4y8q.3.2)', () => {
     expect(segmentMarkedText('abc', [{ start: 2, end: 9 }])).toEqual([{ text: 'abc', mark: 'none' }]);
   });
 
+  it('labels the fragment kind and marks every redaction placeholder, including <redacted-fragment> and <redacted-token>', () => {
+    expect(leakKindLabel('fragment')).toBe('途中で切れた名前の断片');
+    for (const placeholder of ['<redacted-fragment>', '<redacted-token>', '<redacted-key-block>', '<user>', '<host>', '<branch>', '<email>']) {
+      expect(segmentMarkedText(`x ${placeholder} y`, [])).toEqual([
+        { text: 'x ', mark: 'none' },
+        { text: placeholder, mark: 'redaction' },
+        { text: ' y', mark: 'none' },
+      ]);
+    }
+  });
+
   it('compares harness versions and copes with missing values', () => {
     expect(compareHarnessVersions('1.2.0', '1.3.0')).toEqual({ kind: 'different', occurred: '1.2.0', latest: '1.3.0' });
     expect(compareHarnessVersions('1.3.0', '1.3.0').kind).toBe('same');

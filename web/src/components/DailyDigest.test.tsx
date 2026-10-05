@@ -439,7 +439,8 @@ describe('DailyDigest', () => {
   it('keeps the digest when the issue report count cannot be read (bdboard-4y8q.3.2)', async () => {
     mockAllQueries({ issueReportPendingReject: new Error('pending count failed') });
     renderDailyDigest();
-    const preview = await screen.findByText(/## 決定待ち \(1件\)/);
+    // 件数の問い合わせは 1 回だけ再試行する (useIssueReportPendingCount の retry: 1。既定の待ちは 1 秒)。
+    const preview = await screen.findByText(/## 決定待ち \(1件\)/, undefined, { timeout: 5000 });
     expect(preview.closest('pre')?.textContent).toContain('## 不具合報告\n- 未処理の件数を読み込めませんでした');
   });
 });

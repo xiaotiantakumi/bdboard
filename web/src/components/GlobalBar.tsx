@@ -151,13 +151,9 @@ export function GlobalBar({
                 {item.view === 'events' && notificationUnreadCount > 0
                   ? ` (${notificationUnreadCount})`
                   : ''}
-                {item.view === 'issue-reports' &&
-                issueReportPendingCount !== null &&
-                issueReportPendingCount > 0 ? (
-                  <span className="view-tab-count" aria-label={`未処理 ${issueReportPendingCount} 件`}>
-                    {` ${issueReportPendingCount}`}
-                  </span>
-                ) : null}
+                {item.view === 'issue-reports' && issueReportPendingCount !== null && issueReportPendingCount > 0
+                  ? ` (${issueReportPendingCount})`
+                  : ''}
               </button>
             ))}
           </div>
