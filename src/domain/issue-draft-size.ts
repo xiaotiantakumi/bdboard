@@ -1,3 +1,4 @@
+import { cutKeepingHead } from './issue-draft-cut.js';
 import { ISSUE_DRAFT_MAX_JSON_BYTES, type IssueDraft } from './issue-draft.js';
 
 /**
@@ -24,7 +25,10 @@ type ShrinkableField = 'errorTextRaw' | 'agentNoteRaw' | 'symptomRaw' | 'causeRa
 /** 超過バイト数を受け、削ったあとの下書きを返す。もう削るものが無ければ undefined。 */
 type ShrinkStep = (draft: IssueDraft, excessBytes: number) => IssueDraft | undefined;
 
-/** 自由記述の欄を末尾から削る。 */
+/**
+ * 自由記述の欄を末尾から削る。切れ目は行の終わりへ戻し、サロゲートの対を割らない (issue-draft-cut.ts。戻した分だけ多めに
+ * 削れる)。1 回で必ず 1 コード単位以上短くなるので、繰り返しは空になって止まる。
+ */
 function cutTextFrom(field: ShrinkableField): ShrinkStep {
   return (draft, excess) => {
     const value = draft.localOnly[field];
@@ -33,7 +37,7 @@ function cutTextFrom(field: ShrinkableField): ShrinkStep {
     const cut = Math.max(1, Math.ceil(excess / 3));
     return {
       ...draft,
-      localOnly: { ...draft.localOnly, [field]: value.slice(0, Math.max(0, value.length - cut)) },
+      localOnly: { ...draft.localOnly, [field]: cutKeepingHead(value, value.length - cut) },
     };
   };
 }

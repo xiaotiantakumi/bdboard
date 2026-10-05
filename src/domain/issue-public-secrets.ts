@@ -102,6 +102,36 @@ export const TOKEN_SHAPES: readonly TokenShape[] = Object.freeze(
   ].map((shape) => Object.freeze(shape)),
 );
 
+/**
+ * 欄の末尾で途中まで切れたトークンの形 (bdboard-4y8q.13。issue-public-fragments.ts が欄の末尾にだけかける)。TOKEN_SHAPES の形ごとに 1 つ:
+ * 接頭辞の後に本体が 1 文字以上あり、置き換えの長さの下限に届かないうちに文字列が終わるもの (届いたものは TOKEN_SHAPES が置き換える。
+ * JWT は 3 つの部分が揃わないもの)。sk-・Stripe・JWT の開始の条件は置き換えの形より 1 段厳しく、直前の `_` `.` `-` も除く
+ * (FRAGMENT_START): 英数字に貼り付いて置き換えられず最後の網が報告するトークン ("id1eyJ….eyJ….sig") の途中の "eyJ" や "-sk-" から
+ * 断片を始めると、報告されるはずの一致を短く削って報告の下限を割らせるため。Bearer は置き換えの形と同じ条件。本体の長さに
+ * 上限がある (JWT は "." で区切られた 3 つの部分まで) ので、どの開始位置も決まった長さしか読まない。TOKEN_SHAPES に形を足すときは
+ * ここにも足す (単体テストが名前がそろっていることを確かめる)。
+ */
+const FRAGMENT_START = String.raw`(?:(?<![A-Za-z0-9_.-])|(?<=\\[nrt]|%[0-9A-Fa-f]{2}))`;
+
+export const TOKEN_PREFIX_AT_END: Readonly<Record<string, { readonly source: string; readonly flags: string }>> = Object.freeze({
+  github: { source: String.raw`gh[pousr]_[A-Za-z0-9]{1,19}$`, flags: '' },
+  'github-fine-grained': { source: String.raw`github_pat_[A-Za-z0-9_]{1,19}$`, flags: '' },
+  'sk-family': { source: `${FRAGMENT_START}sk-[A-Za-z0-9_-]{1,19}$`, flags: '' },
+  stripe: { source: `${FRAGMENT_START}[sr]k_live_[A-Za-z0-9]{1,15}$`, flags: '' },
+  'aws-access-key-id': { source: String.raw`(?:AKIA|ASIA)[0-9A-Z]{1,15}$`, flags: '' },
+  slack: { source: String.raw`(?:xox[abeprs]|xapp)-[A-Za-z0-9-]{1,9}$`, flags: '' },
+  'google-api-key': { source: String.raw`AIza[0-9A-Za-z_-]{1,34}$`, flags: '' },
+  'google-oauth': { source: String.raw`ya29\.[A-Za-z0-9_-]{1,19}$`, flags: '' },
+  npm: { source: String.raw`npm_[A-Za-z0-9]{1,35}$`, flags: '' },
+  jwt: { source: `${FRAGMENT_START}eyJ[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]*){0,2}$`, flags: '' },
+  bearer: { source: String.raw`${RUN_START}Bearer(?:[ \t]|%20){1,16}[A-Za-z0-9._~+/-]{1,15}$`, flags: 'i' },
+});
+
+/** 文字列の末尾で途中まで切れたトークンの範囲 (TOKEN_PREFIX_AT_END。形どうしで重なりうる。統合は呼び出し側)。 */
+export function findTokenPrefixesAtEnd(text: string): SecretSpan[] {
+  return Object.values(TOKEN_PREFIX_AT_END).flatMap(({ source, flags }) => spansFor(text, source, `${flags}g`));
+}
+
 function spansFor(text: string, source: string, flags: string): SecretSpan[] {
   return [...text.matchAll(new RegExp(source, flags))].map((match) => ({
     start: match.index,
@@ -141,4 +171,16 @@ const EMAIL_SOURCE = `${EMAIL_LOCAL}(?:${EMAIL_DOMAIN}|${EMAIL_IPV4})`;
 /** メールアドレスの出現位置 (非 ASCII の文字も許す)。 */
 export function findEmailSpans(text: string): SecretSpan[] {
   return spansFor(text, EMAIL_SOURCE, 'gu');
+}
+
+/**
+ * 欄の末尾で途中まで切れたメール (bdboard-4y8q.13): ローカル部と区切り ("@"・"%40"・"＠") の後が、空か英字で始まる途中までの
+ * ドメインで文字列が終わるもの ("jdoe@exam"・"jdoe@")。数字で始まるもの ("react@18") はパッケージの版と区別できないので含めない。
+ * 完全なメールにも一致するが、統合でメールの印が勝つ (issue-public-spans.ts の PRIORITY で 'fragment' がいちばん低い)。
+ */
+const EMAIL_PREFIX_AT_END = `${EMAIL_LOCAL}(?:\\p{L}[\\p{L}\\p{N}.-]*)?$`;
+
+/** 文字列の末尾で途中まで切れたメールの範囲。 */
+export function findEmailPrefixAtEnd(text: string): SecretSpan[] {
+  return spansFor(text, EMAIL_PREFIX_AT_END, 'gu');
 }

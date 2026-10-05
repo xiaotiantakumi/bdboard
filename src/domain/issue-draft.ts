@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 
+import { cutKeepingHead, cutKeepingTail } from './issue-draft-cut.js';
+
 /**
  * 不具合報告の下書き (bdboard-4y8q.1)。docs/ISSUE-REPORTING.md 1・4節のデータモデル・
  * 指紋・上限を、外部 I/O を持たない純粋関数と型として切り出したもの。
@@ -29,11 +31,11 @@ export interface LocalOnlyContext {
   readonly symptomRaw: string;
   readonly causeRaw: string;
   readonly preventionRaw: string;
-  /** 切り詰め前の生ログ。ただし ISSUE_DRAFT_ERROR_TEXT_RAW_MAX_CHARS で末尾を切る。 */
+  /** 切り詰め前の生ログ。ただし ISSUE_DRAFT_ERROR_TEXT_RAW_MAX_CHARS で末尾を (行の終わりで) 切る。 */
   readonly errorTextRaw?: string;
-  /** 表示用に先頭 ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS 文字へ切り詰めたもの。 */
+  /** 表示用に先頭 ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS 文字以下へ (行の終わりで) 切り詰めたもの。 */
   readonly errorTextHead?: string;
-  /** 表示用に末尾 ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS 文字へ切り詰めたもの。 */
+  /** 表示用に末尾 ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS 文字以下へ (行の始まりで) 切り詰めたもの。 */
   readonly errorTextTail?: string;
   readonly errorTextTruncated: boolean;
   readonly agentNoteRaw?: string;
@@ -76,7 +78,7 @@ export interface IssueDraft {
   readonly draftSchemaVersion: 1;
 }
 
-/** 手元保存の errorTextRaw の上限 (文字数。超過分は末尾から切る)。設計 4節の「64KB」。 */
+/** 手元保存の errorTextRaw の上限 (UTF-16 コード単位。超過分は末尾から、行の終わりで切る)。設計 4節の「64KB」。 */
 export const ISSUE_DRAFT_ERROR_TEXT_RAW_MAX_CHARS = 64 * 1024;
 /** 表示用の先頭・末尾それぞれの文字数。 */
 export const ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS = 1000;
@@ -194,30 +196,27 @@ export interface ErrorTextSummary {
   readonly omittedChars: number;
 }
 
-/** 長いエラー文は先頭と末尾だけ残す。短ければそのまま head に入れ、tail は空。 */
+/**
+ * 長いエラー文は先頭と末尾だけ残す。短ければそのまま head に入れ、tail は空。先頭は行の終わりで、末尾は行の始まりで切り
+ * (issue-draft-cut.ts。改行が近くに無ければコードポイントの境目)、サロゲートの対を割らない。そのため head・tail は
+ * それぞれ ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS 以下で、omittedChars はその残り。
+ */
 export function summarizeErrorText(text: string): ErrorTextSummary {
   const edge = ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS;
   if (text.length <= edge * 2) {
     return { head: text, tail: '', truncated: false, omittedChars: 0 };
   }
-  return {
-    head: text.slice(0, edge),
-    tail: text.slice(text.length - edge),
-    truncated: true,
-    omittedChars: text.length - edge * 2,
-  };
+  const head = cutKeepingHead(text, edge);
+  const tail = cutKeepingTail(text, edge);
+  return { head, tail, truncated: true, omittedChars: text.length - head.length - tail.length };
 }
 
-/** 手元保存する生ログの上限。超過分は末尾から切る。 */
+/** 手元保存する生ログの上限。超過分は末尾から、行の終わりで切る (issue-draft-cut.ts)。 */
 export function capErrorTextRaw(text: string): string {
-  return text.length > ISSUE_DRAFT_ERROR_TEXT_RAW_MAX_CHARS
-    ? text.slice(0, ISSUE_DRAFT_ERROR_TEXT_RAW_MAX_CHARS)
-    : text;
+  return cutKeepingHead(text, ISSUE_DRAFT_ERROR_TEXT_RAW_MAX_CHARS);
 }
 
-/** 自由記述 1 欄の上限。超過分は末尾から切る。 */
+/** 自由記述 1 欄の上限。超過分は末尾から、行の終わりで切る (issue-draft-cut.ts)。 */
 export function capFreeText(text: string): string {
-  return text.length > ISSUE_DRAFT_FREE_TEXT_MAX_CHARS
-    ? text.slice(0, ISSUE_DRAFT_FREE_TEXT_MAX_CHARS)
-    : text;
+  return cutKeepingHead(text, ISSUE_DRAFT_FREE_TEXT_MAX_CHARS);
 }

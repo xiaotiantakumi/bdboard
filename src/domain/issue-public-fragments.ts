@@ -1,0 +1,149 @@
+/**
+ * 欄の端の断片 (bdboard-4y8q.13、docs/ISSUE-REPORTING.md 5節「欄の端の断片」)。
+ *
+ * 保存の上限 (4節) と、末尾だけを取る送り手 (tail-capture) は、欄を途中で切りうる。保存側は切れ目を行の境目へ戻すが
+ * (issue-draft-cut.ts)、近くに改行の無い長い行では行の途中で切る。その切れ目が公開本文の欄の端になり、名前・根・トークンの
+ * 途中で切れた断片 ("/work/example-proj"・"ghp_" + 15 文字・頭の欠けた "ample-project/src") は、完全な形を探す置き換えに
+ * 一致しない。ここは欄の端だけを見て、断片を置き換えの一致 (種別 'fragment'、印は <redacted-fragment>) として返す:
+ *   - 末尾: プロジェクトの根・LONG の固有名詞 (変種を含む) の、4 コードポイント以上で全体より短い前置部分。TOKEN_PREFIX_AT_END の
+ *     途中までのトークン。ローカル部と "@" から始まる途中までのメール。
+ *   - 先頭 (呼び出し側が start を立てた欄だけ。末尾だけを取る送り手がいるのはエラー文): 根・LONG の固有名詞の、4 コードポイント以上で
+ *     全体より短い後置部分。先頭が欠けたトークンは本体だけが残り、形が無いので拾えない (5節「カバーしないもの」)。
+ * 全体に一致するもの (全体より短くない) はここでは返さない: 通常の置き換えが拾い、根の直後の文字の条件 (example-project2) もそちらが持つ。
+ *
+ * 大文字小文字: 各コードポイントを toLowerCase でたたんで比べる (正規表現の i フラグの単純な大小文字の対応とほぼ同じ。
+ * 特殊な対応は 5節「カバーしないもの」)。鍵ごとに KMP の失敗関数を前もって作り、欄の端から鍵の長さぶんだけを読むので、
+ * 鍵 1 つあたり O(鍵の長さ) で、欄の長さによらない。
+ */
+import { findEmailPrefixAtEnd, findTokenPrefixesAtEnd } from './issue-public-secrets.js';
+import { codeUnitIndexAfterCodePoints, codeUnitIndexBeforeTailCodePoints } from './issue-public-text.js';
+
+/** これより短い断片は置き換えない (固有名詞の LONG の下限と同じ。2〜3 文字では元の名前を特定できず、一般語を壊す)。 */
+export const MIN_FRAGMENT_CODE_POINTS = 4;
+
+/** どちらの端を見るか。保存の上限で切れるのは末尾、末尾だけを取る送り手で切れるのは先頭。 */
+export interface FieldEdges {
+  readonly start: boolean;
+  readonly end: boolean;
+}
+
+export const NO_EDGES: FieldEdges = Object.freeze({ start: false, end: false });
+
+/** 端の検査に使う鍵 1 つ (根か LONG の固有名詞の変種 1 つ)。たたんだコードポイントの並びと、その KMP の失敗関数。 */
+export interface FragmentKey {
+  readonly forward: readonly string[];
+  readonly forwardFailure: readonly number[];
+  /** forward を逆順にしたもの (先頭の後置部分を、逆順の前置部分として探す)。 */
+  readonly backward: readonly string[];
+  readonly backwardFailure: readonly number[];
+}
+
+export interface FragmentSpan {
+  readonly kind: 'fragment';
+  readonly start: number;
+  readonly end: number;
+}
+
+function fold(codePoint: string): string {
+  return codePoint.toLowerCase();
+}
+
+/** KMP の失敗関数: failure[i] は pattern[0..i] の、全体より短い前置部分で後置部分でもあるものの最長の長さ。 */
+function failureOf(pattern: readonly string[]): number[] {
+  const failure: number[] = new Array<number>(pattern.length).fill(0);
+  let matched = 0;
+  for (let index = 1; index < pattern.length; index += 1) {
+    while (matched > 0 && pattern[index] !== pattern[matched]) matched = failure[matched - 1] ?? 0;
+    if (pattern[index] === pattern[matched]) matched += 1;
+    failure[index] = matched;
+  }
+  return failure;
+}
+
+export function toFragmentKey(value: string): FragmentKey {
+  const forward = Array.from(value, fold);
+  const backward = [...forward].reverse();
+  return { forward, forwardFailure: failureOf(forward), backward, backwardFailure: failureOf(backward) };
+}
+
+/**
+ * 並び (length 個、at(i) で i 番目) を読み終えたとき、その末尾と pattern の先頭が重なる最長の長さ (pattern の長さ以下)。
+ */
+function overlapAtEnd(
+  length: number,
+  at: (index: number) => string,
+  pattern: readonly string[],
+  failure: readonly number[],
+): number {
+  let matched = 0;
+  for (let index = 0; index < length; index += 1) {
+    const unit = at(index);
+    while (matched > 0 && (matched === pattern.length || pattern[matched] !== unit)) matched = failure[matched - 1] ?? 0;
+    if (matched < pattern.length && pattern[matched] === unit) matched += 1;
+  }
+  return matched;
+}
+
+/** 端の窓: 文字列の端の最大 maxCodePoints コードポイント (たたんだもの) と、各コードポイントの UTF-16 の長さ。 */
+interface EdgeWindow {
+  readonly folded: readonly string[];
+  readonly units: readonly number[];
+}
+
+function windowOf(points: readonly string[]): EdgeWindow {
+  return { folded: points.map(fold), units: points.map((point) => point.length) };
+}
+
+function sumUnits(units: readonly number[], from: number, to: number): number {
+  let total = 0;
+  for (let index = from; index < to; index += 1) total += units[index] ?? 0;
+  return total;
+}
+
+function longestKey(keys: readonly FragmentKey[]): number {
+  return keys.reduce((longest, key) => Math.max(longest, key.forward.length), 0);
+}
+
+type Range = { readonly start: number; readonly end: number };
+
+/** 末尾: 鍵の、全体より短い前置部分で終わるもの。 */
+function keyPrefixesAtEnd(text: string, keys: readonly FragmentKey[]): Range[] {
+  const tail = windowOf(Array.from(text.slice(codeUnitIndexBeforeTailCodePoints(text, longestKey(keys)))));
+  const spans: Range[] = [];
+  for (const key of keys) {
+    const read = Math.min(tail.folded.length, key.forward.length);
+    const offset = tail.folded.length - read;
+    const overlap = overlapAtEnd(read, (index) => tail.folded[offset + index] ?? '', key.forward, key.forwardFailure);
+    if (overlap < MIN_FRAGMENT_CODE_POINTS || overlap >= key.forward.length) continue;
+    const length = sumUnits(tail.units, tail.units.length - overlap, tail.units.length);
+    spans.push({ start: text.length - length, end: text.length });
+  }
+  return spans;
+}
+
+/** 先頭: 鍵の、全体より短い後置部分で始まるもの (逆順にして、前置部分として探す)。 */
+function keySuffixesAtStart(text: string, keys: readonly FragmentKey[]): Range[] {
+  const head = windowOf(Array.from(text.slice(0, codeUnitIndexAfterCodePoints(text, longestKey(keys)))));
+  const spans: Range[] = [];
+  for (const key of keys) {
+    const read = Math.min(head.folded.length, key.backward.length);
+    const overlap = overlapAtEnd(read, (index) => head.folded[read - 1 - index] ?? '', key.backward, key.backwardFailure);
+    if (overlap < MIN_FRAGMENT_CODE_POINTS || overlap >= key.backward.length) continue;
+    spans.push({ start: 0, end: sumUnits(head.units, 0, overlap) });
+  }
+  return spans;
+}
+
+/**
+ * 欄の端の断片の範囲 (UTF-16 の半開区間、種別は 'fragment')。text は置き換えに渡すのと同じ整形後の文字列。
+ * 範囲どうしや、通常の置き換えの一致とは重なりうる (統合は issue-public-spans.ts の mergeSpans。'fragment' はいちばん弱い)。
+ */
+export function findEdgeFragmentSpans(text: string, keys: readonly FragmentKey[], edges: FieldEdges): FragmentSpan[] {
+  if (text === '') return [];
+  const spans: Range[] = [];
+  if (edges.end) {
+    spans.push(...keyPrefixesAtEnd(text, keys), ...findTokenPrefixesAtEnd(text), ...findEmailPrefixAtEnd(text));
+  }
+  if (edges.start) spans.push(...keySuffixesAtStart(text, keys));
+  return spans.map((span) => ({ kind: 'fragment', start: span.start, end: span.end }));
+}
