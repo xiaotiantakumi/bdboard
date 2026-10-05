@@ -66,12 +66,14 @@ describe('createSelfErrorReporter', () => {
   });
 
   it('keeps later refreshes moving while a receive is pending', async () => {
-    let release: ((value: { ok: true }) => void) | undefined;
-    const receive = vi.fn().mockImplementation(() => new Promise<{ ok: true }>((resolve) => { release = resolve; }));
+    const releases: Array<(value: { ok: true }) => void> = [];
+    const receive = vi.fn().mockImplementation(() => new Promise<{ ok: true }>((resolve) => { releases.push(resolve); }));
     const { reporter } = setup(receive);
-    void reporter.observeRefresh(result('unknown', 'first'), [project]);
-    void reporter.observeRefresh(result('schema-mismatch', 'second'), [project]);
+    const first = reporter.observeRefresh(result('unknown', 'first'), [project]);
+    const second = reporter.observeRefresh(result('schema-mismatch', 'second'), [project]);
+    // 1 本目の receive が終わっていなくても、2 本目は待たずに呼ばれる。
     expect(receive).toHaveBeenCalledTimes(2);
-    release?.({ ok: true });
+    for (const release of releases) release({ ok: true });
+    await Promise.all([first, second]);
   });
 });

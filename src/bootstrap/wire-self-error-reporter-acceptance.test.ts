@@ -48,8 +48,9 @@ async function realService(): Promise<IssueDraftService> {
   });
 }
 
+/** 有効 (env が空) で配線し、reporter と onRefreshResult を取り出す。止めている形は wire-self-error-reporter.test.ts が見る。 */
 function wire(service: Pick<IssueDraftService, 'receive'>, clock: { at: number }, log: (message: string) => void) {
-  return wireSelfErrorReporter({
+  const wired = wireSelfErrorReporter({
     env: {},
     service,
     cache: { listProjects: () => [], listProjectRefs: () => [PROJECT] },
@@ -57,6 +58,8 @@ function wire(service: Pick<IssueDraftService, 'receive'>, clock: { at: number }
     now: () => new Date(clock.at),
     log,
   });
+  if (wired.reporter === undefined || wired.onRefreshResult === undefined) throw new Error('self error reporter is disabled');
+  return { reporter: wired.reporter, onRefreshResult: wired.onRefreshResult };
 }
 
 describe('self error drafts from refresh failures (acceptance, real service and temp directory)', () => {

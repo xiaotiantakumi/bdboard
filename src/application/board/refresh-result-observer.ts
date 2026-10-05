@@ -30,7 +30,11 @@ export function createRefreshResultObserver(deps: RefreshResultObserverDeps): Re
     discovery,
     observe(result) {
       try {
-        const prefixes = new Map(readProjectRefs(deps.cache).map((project) => [project.id, project.prefixes]));
+        // 接頭辞は伏せるときにだけ要る。エラーの無い更新 (大半) ではキャッシュの一覧を読まない (tracker は一覧の id だけで状態を保つ)。
+        const prefixes =
+          result.errors.length === 0
+            ? new Map<string, readonly string[]>()
+            : new Map(readProjectRefs(deps.cache).map((project) => [project.id, project.prefixes]));
         deps.onResult?.(result, projects.map((project) => ({ ...project, prefixes: prefixes.get(project.id) ?? project.prefixes })));
       } catch {
         deps.logError('Refresh result observer failed');

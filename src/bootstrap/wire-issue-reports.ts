@@ -10,6 +10,7 @@ import { memoizeAsyncWithTtl } from '../application/issue-report/memoize-with-tt
 import type { ApplicationVersionProvider } from '../application/ports/application-version.js';
 import type { PackRegistryPort } from '../application/ports/pack-registry.js';
 import { caseFoldingTableUsable } from '../domain/issue-public-casefold.js';
+import { createPackageJsonVersionProvider } from '../infrastructure/version/package-json-version-provider.js';
 import { createIssueReportManualRoutes } from '../interface/http/issue-report-manual-routes.js';
 import { createIssueReportRoutes } from '../interface/http/issue-report-routes.js';
 import type { WriteGuardDeps } from '../interface/http/write-guard.js';
@@ -24,7 +25,7 @@ export interface WireIssueReportsDeps {
   /** 最新の harness pack の版を読む (1 件の取得の「版の比較」、bdboard-4y8q.3.1)。 */
   readonly packRegistry: Pick<PackRegistryPort, 'listPacks'>;
   readonly log?: (message: string) => void;
-  /** 手書きの下書き (bdboard-4y8q.6.7) の envInfo に入れる bdboard の版 (既定は package.json の version)。 */
+  /** service を渡さないときだけ使う: 自分で作るサービスの envInfo に入れる bdboard の版 (既定は package.json の version)。 */
   readonly applicationVersion?: ApplicationVersionProvider;
   /** 公開本文の大文字小文字の表が使えるか (既定は caseFoldingTableUsable。テストが差し替える)。 */
   readonly caseTableUsable?: () => boolean;
@@ -46,7 +47,16 @@ const COMPARED_PACK_NAME = 'bdboard-harness';
 export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRouter: Hono } {
   const log = deps.log ?? console.log;
   const now = deps.now ?? (() => new Date());
-  const service = deps.service ?? wireIssueDraftService({ repoRoot: deps.repoRoot, env: deps.env, now, log });
+  // main.ts は作ったサービスを渡す (版はそちらで埋める)。渡さないとき (テスト) だけここで作る。
+  const service =
+    deps.service ??
+    wireIssueDraftService({
+      repoRoot: deps.repoRoot,
+      env: deps.env,
+      applicationVersion: deps.applicationVersion ?? createPackageJsonVersionProvider(),
+      now,
+      log,
+    });
 
   const latestHarnessVersion = memoizeAsyncWithTtl(
     async () => (await deps.packRegistry.listPacks()).find((pack) => pack.name === COMPARED_PACK_NAME)?.version,

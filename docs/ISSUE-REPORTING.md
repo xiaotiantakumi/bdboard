@@ -967,13 +967,13 @@ function normalizeErrorText(text: string): string {
 外から呼べる口は増えない(write-guard・トンネルの判定の対象外)。`wireBoardRefresh` が 1 回のリフレッシュ(起動時の初回と、定期・watcher・手動の再実行の
 どれも)の結果を `onRefreshResult` で渡し、`src/bootstrap/wire-self-error-reporter.ts` がそれを reporter の `observeRefresh` につなぐ。
 下書きサービスは、初回リフレッシュの結果を受けるため `wireBoardLifecycle` より前に作る(`src/bootstrap/wire-issue-draft-service.ts`。
-`wireIssueReports` は作ったサービスを受け取る。渡さなければ今までどおり自分で作る)。
+`wireIssueReports` は作ったサービスを受け取る。渡さなければ自分で作る。envInfo の扱いは下の逸脱表の 10)。
 
 | 部品 | 役割 |
 |---|---|
 | `createSelfErrorReporter({service, throttle, listProjects, envInfo, log, now?})` | `report({source, errorText, agentNote?, project?})`(伏せる → 間引く → `receive` を待たずに呼ぶ)と `observeRefresh(result, projects)`(6.2 の tracker が選んだ報告をそのまま `receive` へ)。どちらも返す Promise は **reject しない**(呼び出し側は `void` で捨ててよい) |
 | `createRefreshResultObserver({discovery, cache, onResult, logError})`(`src/application/board/refresh-result-observer.ts`) | `discover()` の結果を覚える包みと、結果 1 回ごとの `onResult(result, projects)` の呼び出し(投げない) |
-| `wireSelfErrorReporter` | throttle・envInfo・停止の環境変数をつないで、`onRefreshResult` を返す |
+| `wireSelfErrorReporter` | throttle・envInfo(`serverEnvInfo`)・停止の環境変数をつないで、`reporter` と `onRefreshResult` を返す(止めているときは両方 `undefined`) |
 
 **source の語彙**: 下書きの指紋は `C:<source>:<伏せたエラー文の寄せたハッシュ>`、題名は `[bdboard 本体] <source>` なので、source にはパス・プロジェクト名・ID を入れない。
 
@@ -1003,11 +1003,17 @@ reporter の中で握って**ログに code だけ**出す: `self error draft fa
 コールバックが throw したら固定文 `Refresh result observer failed` だけ出して続ける。
 なお、起動時の初回リフレッシュが以前から出している `Refresh error [kind] project=…: detail`(`console.error`)はこの取り込みとは別で、今回は変えていない。
 
-**envInfo はサーバーが埋める**: `bdboardVersion`(既存の `ApplicationVersionProvider`)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。`bdVersion` は入れない
+**envInfo はサーバーが埋める**: `bdboardVersion`(既存の `ApplicationVersionProvider`)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。元は共有の `serverEnvInfo`(`wire-issue-draft-service.ts`)で、
+手書きの下書き(4y8q.6.7)も本体エラーも同じもの。`bdVersion` は入れない
 (bd の版は起動時に 1 回読んで捨てるだけで、リフレッシュの失敗のたびに `bd version` を起動するのは安価でなく、bd が壊れているときこそ読めない)。
 
 **止め方(U6)**: 環境変数 `BDBOARD_SELF_ERROR_DRAFTS` が `off` / `0` / `false`(前後の空白・大小は無視)のとき、取り込み全体が何もしない(`receive` を呼ばない)。起動時にログを 1 回出す。
+止めているときは `wireSelfErrorReporter` が `reporter` も `onRefreshResult` も **`undefined`** で返し、`wireBoardRefresh` は結果の observer を作らない(止めた分の空の関数や、結果ごとの
+キャッシュの読み出しは走らない)。**起動時に 1 回だけ読む**ので、値を変えたら**サーバーの再起動が要る**(実行中に切り替える口は無い)。
 README の環境変数の表にも載せた。
+なお、observer はエラーの無いリフレッシュ(大半)ではキャッシュの一覧(`readProjectRefs`)を読まない。接頭辞は伏せるときにだけ要るので、エラーがあるときだけ読む。
+`createSelfErrorMasker` の組み立ても、tracker が最初の伏せる文を見るまで遅らせる(エラーの無いリフレッシュでは作らない)。
+`BDBOARD_SELF_ERROR_DRAFTS` を既存の `envBoolDefaultTrue` で読まないのは、受け付ける値が違うため(`envBoolDefaultTrue` は `0` / `false` だけで、`off` と前後の空白を見ない)。
 
 **設計からずれた点・決めたこと**
 
@@ -1022,7 +1028,7 @@ README の環境変数の表にも載せた。
 | 7 | 一度もキャッシュされないプロジェクトの接頭辞 | 接頭辞が分からないので、接頭辞から作られる Dolt のデータベース名(#432 の文 `database "epic_haslett_00ae14" not found …`)は伏せられず、手元の `errorTextRaw` に残る。名前とパスは discovery の一覧で伏せる。下書きの指紋はこの文から作るので、別のプロジェクトの同じ種類のエラーは別の下書きになる(漏らさない側に倒した)。6 の読み取りを足せば解消する |
 | 8 | 環境変数による停止(U6) | 6.2 が「後続は 4y8q.6.3」としたものを、この PR で入れた(6.3 の本文には無かったが、ほかに担当のチケットが無い) |
 | 9 | 6.2 の domain への変更 | `selfErrorKey(kind, errorText)` を公開した(tracker の内部のキー関数。`report()` が同じ畳み方でキーを作る)。ほかは触っていない |
-| 10 | `wireIssueReports` | `service` を省略可能な引数にした。渡さなければ今までどおり自分で作る(既存のテストは変えていない) |
+| 10 | `wireIssueDraftService` / `wireIssueReports` と envInfo(#911=4y8q.6.7 との意味の衝突) | `wireIssueReports` の `service` を省略可能な引数にした(渡さなければ自分で作る)。#911 は手書きの下書きの `envInfo` を `wireIssueReports` が作るサービスに入れていたが、この PR で `main.ts` が**サービスを先に作って渡す**ので、そのままだと手書きの下書きの版が黙って `unknown` になる(文面の衝突ではなく意味の衝突。git は検出しない)。そこで envInfo の元を **`wireIssueDraftService` の必須の引数 `applicationVersion`** に移し、共有の `serverEnvInfo(applicationVersion)`(`bdboardVersion`・`os`・`nodeVersion`)を手書きの下書きと本体エラーの両方に使う。`wireIssueReports` の `applicationVersion` は、サービスを渡さないとき(テスト)に自分で作るサービスにだけ使う。受け入れは `wire-issue-draft-service.test.ts`(main.ts と同じ組み立てで、手書きの下書きの envInfo に渡した版が入る) |
 | 11 | 既知の限界: `occurredProjects` | (**4y8q.6.2 の逸脱表 12 の再掲**)下書きの `occurredProjects` には、**1 時間に 1 プロジェクトしか載らない**。間引きのキーをプロジェクトで共有するので、同じ文の 2 つ目以降のプロジェクトは 1 時間のあいだ報告されない。ふつう `occurredProjects` は「どのプロジェクトで起きたか」の一覧だが、本体エラーでは当てにしない(回数も「プロジェクトの数」ではない) |
 
 ## 5. 公開本文の組み立てと置き換え(項目 e、bdboard-4y8q.2)
