@@ -1,6 +1,8 @@
 import { ApiError } from '../../api';
 import { NETWORK_FETCH_HELP, isNetworkFetchError, writeAccessErrorMessage } from '../../writeAccessMessage';
 import { draftStatusLabel } from './issueDraftText';
+import { ISSUE_DRAFT_IMAGE_MAX_COUNT } from './issueDraftImageLimits';
+import { ISSUE_DRAFT_IMAGE_MAX_SIZE_LABEL } from './issueDraftImages';
 
 /**
  * 不具合報告の編集・見送りの失敗を、利用者に分かる言葉にする (bdboard-4y8q.3.2)。
@@ -18,6 +20,7 @@ export const ISSUE_DRAFT_DISMISS_REASON_MAX_CHARS = 200;
 
 const CODE_TOO_LONG = 'too-long';
 const CODE_DRAFT_TOO_LARGE = 'draft-too-large';
+const CODE_DRAFT_NOT_PENDING = 'draft-not-pending';
 export const CODE_MANUAL_RATE_LIMITED = 'manual-rate-limited';
 
 export const DRAFT_NOT_FOUND_HELP = 'この下書きは見つかりませんでした。一覧を読み直してください。';
@@ -30,6 +33,12 @@ export const MANUAL_RATE_LIMITED_HELP = '手で書く報告は、1 時間あた�
 export const MANUAL_LOCAL_ONLY_HELP = 'ローカルで開いたときだけ書けます。PC のブラウザで localhost のボードを開いてから、もう一度お試しください (スマホやトンネル経由では、書き込みを許可していても書けません)。';
 export const MANUAL_REQUEST_TOO_LARGE_HELP = '送った内容が大きすぎます。説明を短くしてから、もう一度送ってください。';
 export const MANUAL_BAD_REQUEST_HELP = '題名は 1 行で、改行・タブなどの制御文字や見えない書式文字を含めないでください。題名と説明には、それぞれ見える文字が必要です。';
+// 画像を付ける (bdboard-4y8q.6.9、POST drafts/:id/images) の失敗。画面で先に検査するので、ここに来るのは、検査をすり抜けたか、サーバーの状態による失敗。
+export const IMAGE_LIMIT_REACHED_HELP = `この下書きに付けられる画像は ${ISSUE_DRAFT_IMAGE_MAX_COUNT} 枚までです。`;
+/** 403: 画像の追加はトンネルでは書き込み許可つきのセッションでも常に 403 なので、MANUAL_LOCAL_ONLY_HELP と同じく QR コードの案内 (TUNNEL_WRITE_HELP) は使わない。 */
+export const IMAGE_LOCAL_ONLY_HELP = 'ローカルで開いたときだけ画像を付けられます。';
+export const IMAGE_REJECTED_HELP = '画像として受け付けられませんでした (形式と中身が合わないか、壊れている可能性があります)。';
+export const IMAGE_TOO_LARGE_HELP = `画像が大きすぎます (1 枚 ${ISSUE_DRAFT_IMAGE_MAX_SIZE_LABEL} まで)。`;
 /**
  * 404: 受け口 (POST manual-drafts) が無い。web/dist はディスクから配るので、画面だけ新しく、動いているサーバーが受け口を足す前 (#911 より前) のままのときに出る。
  * 既存の下書きを指す DRAFT_NOT_FOUND_HELP (「この下書きは見つかりませんでした」) は、作る操作には当てはまらない。
@@ -131,4 +140,26 @@ export function describeIssueDraftManualError(error: unknown): string {
     return `作れませんでした (HTTP ${error.status})。`;
   }
   return '作れませんでした。';
+}
+
+/**
+ * POST drafts/:id/images (画像を 1 枚足す) の失敗。
+ * 409 は 2 種類ある: 未処理でない下書き (`code: draft-not-pending`。既存の「未処理ではない」の説明) と、20 枚の上限。
+ * サーバーは上限の 409 に `code` を付けない (issue-report-routes.ts) ので、前者でない 409 を上限として扱う。
+ */
+export function describeIssueDraftImageError(error: unknown): string {
+  if (error instanceof ApiError && error.status === 403 && error.errorMessage === 'local access only') {
+    return IMAGE_LOCAL_ONLY_HELP;
+  }
+  if (error instanceof ApiError && error.status === 409) {
+    return error.code === CODE_DRAFT_NOT_PENDING ? notPendingMessage(error) : IMAGE_LIMIT_REACHED_HELP;
+  }
+  const common = commonMessage(error);
+  if (common !== null) return common;
+  if (error instanceof ApiError) {
+    if (error.status === 400) return IMAGE_REJECTED_HELP;
+    if (error.status === 413) return IMAGE_TOO_LARGE_HELP;
+    return `付けられませんでした (HTTP ${error.status})。`;
+  }
+  return '付けられませんでした。';
 }
