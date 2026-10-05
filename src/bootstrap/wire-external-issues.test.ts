@@ -142,8 +142,11 @@ describe('wireExternalIssues', () => {
       expect(fake.ghCalls().length).toBeGreaterThan(0);
       for (const [command, args] of fake.ghCalls()) {
         expect(command).toBe('gh');
-        expect(args.slice(0, 3)).toEqual(['api', '--method', 'GET']);
-        expect(args).not.toEqual(expect.arrayContaining(['-X', '-f', '-F', '--field', '--raw-field', '--input']));
+        expect(args.slice(0, 5)).toEqual(['api', '--method', 'GET', '--hostname', 'github.com']);
+        // arrayContaining は全部が揃ったときだけ一致するので、not と組むと 1 つ混ざっても通ってしまう。1 つずつ確かめる。
+        for (const forbidden of ['-X', '-f', '-F', '--field', '--raw-field', '--input', '--paginate']) {
+          expect(args).not.toContain(forbidden);
+        }
       }
     });
 

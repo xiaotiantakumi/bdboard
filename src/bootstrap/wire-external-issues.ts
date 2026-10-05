@@ -130,7 +130,8 @@ export function wireExternalIssues(deps: WireExternalIssuesDeps): WiredExternalI
     poll: () => service.poll(),
     baseIntervalMs,
     ...deps.timers,
-    // 止まった種類だけをログに残す (detail には gh の stderr の一部が入りうるので、ここには出さない)。
+    // ログには止まった種類だけを残す (detail には gh の stderr の一部が入りうる)。detail は整えて 300 文字までにした上で
+    // GET の応答には載る (トンネル越しの Basic 認証の読み手にも見える。refresh はローカルだけ)。
     onResult: (outcome) => {
       if (outcome.state === 'error') log(`external issues: poll failed (${outcome.error?.kind ?? 'failed'})`);
     },
