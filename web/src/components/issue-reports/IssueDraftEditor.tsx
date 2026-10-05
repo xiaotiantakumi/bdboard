@@ -7,7 +7,6 @@ import {
   type IssueDraftEditResponseDto,
   type IssueDraftTextEdit,
 } from '../../api/issue-reports';
-import { ISSUE_REPORTS_QUERY_KEY, issueReportDetailQueryKey } from '../../hooks/useIssueReportPendingCount';
 import {
   ISSUE_DRAFT_BODY_MAX_CHARS,
   ISSUE_DRAFT_TITLE_MAX_CHARS,
@@ -59,10 +58,10 @@ export function IssueDraftEditor({ draft, onCancel, onSaved }: IssueDraftEditorP
     try {
       const response = await patchIssueDraft(draft.id, edit);
       // 応答の draft は GET の draft と同じ形 (images・latestHarnessVersion は載らないので前の値を残す)。
-      queryClient.setQueryData<IssueDraftDetailResponseDto>(issueReportDetailQueryKey(draft.id), (previous) =>
+      queryClient.setQueryData<IssueDraftDetailResponseDto>(['issue-reports', 'detail', draft.id], (previous) =>
         previous === undefined ? previous : { ...previous, draft: response.draft },
       );
-      void queryClient.invalidateQueries({ queryKey: ISSUE_REPORTS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
       onSaved(response);
     } catch (caught) {
       setError(describeIssueDraftEditError(caught));

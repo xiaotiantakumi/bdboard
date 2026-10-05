@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { fetchIssueDraft, type IssueDraftEditResponseDto } from '../../api/issue-reports';
 import { formatAbsoluteTime } from '../../formatAbsoluteTime';
-import { issueReportDetailQueryKey } from '../../hooks/useIssueReportPendingCount';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { IssueDraftDismiss } from './IssueDraftDismiss';
 import { IssueDraftLocalSection } from './IssueDraftLocalSection';
@@ -25,7 +24,8 @@ function savedNotice(response: IssueDraftEditResponseDto): string {
 /** 右側の中身: 1) 投稿される内容 2) 投稿されない手元の情報 3) 版の比較、と見送り。 */
 export function IssueDraftDetail({ draftId, onBack }: IssueDraftDetailProps) {
   const query = useQuery({
-    queryKey: issueReportDetailQueryKey(draftId),
+    // root はリテラルで書く (boardChangedQueryKeys.test.ts が静的に読む)。形は hooks/useIssueReportPendingCount.ts の説明のとおり。
+    queryKey: ['issue-reports', 'detail', draftId],
     queryFn: () => fetchIssueDraft(draftId),
   });
   const [notice, setNotice] = useState<{ readonly id: string; readonly text: string } | null>(null);

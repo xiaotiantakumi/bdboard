@@ -1,7 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useId, useState, type FormEvent } from 'react';
 import { dismissIssueDraft } from '../../api/issue-reports';
-import { ISSUE_REPORTS_QUERY_KEY } from '../../hooks/useIssueReportPendingCount';
 import { ISSUE_DRAFT_DISMISS_REASON_MAX_CHARS, describeIssueDraftDismissError } from './issueDraftErrors';
 
 export interface IssueDraftDismissProps {
@@ -38,7 +37,7 @@ export function IssueDraftDismiss({ draftId, onDismissed }: IssueDraftDismissPro
     setError(null);
     try {
       await dismissIssueDraft(draftId, reason);
-      await queryClient.invalidateQueries({ queryKey: ISSUE_REPORTS_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
       setOpen(false);
       setReason('');
       onDismissed();

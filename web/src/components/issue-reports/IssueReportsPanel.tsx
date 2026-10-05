@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { fetchIssueDrafts, type IssueDraftStatus } from '../../api/issue-reports';
-import { ISSUE_REPORTS_LIST_QUERY_KEY } from '../../hooks/useIssueReportPendingCount';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { togglePressedProps } from '../toggleGroupA11y';
 import { IssueDraftDetail } from './IssueDraftDetail';
@@ -22,7 +21,7 @@ const EMPTY_TEXT: Readonly<Record<IssueDraftStatus, string>> = {
 export function IssueReportsPanel() {
   const [status, setStatus] = useState<IssueDraftStatus>('pending');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const listQuery = useQuery({ queryKey: ISSUE_REPORTS_LIST_QUERY_KEY, queryFn: fetchIssueDrafts });
+  const listQuery = useQuery({ queryKey: ['issue-reports', 'list'], queryFn: fetchIssueDrafts });
 
   const allDrafts = listQuery.data?.drafts ?? [];
   const drafts = allDrafts.filter((draft) => draft.status === status);

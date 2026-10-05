@@ -2,16 +2,12 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchIssueReportPendingCount } from '../api/issue-reports';
 
 /**
- * 不具合報告の react-query のキー (bdboard-4y8q.3.2)。編集・見送りのあとは ISSUE_REPORTS_QUERY_KEY ごと
- * 無効にして、一覧・中身・件数をまとめて読み直す。
+ * 不具合報告の react-query のキーは root を 'issue-reports' に揃える (bdboard-4y8q.3.2): 一覧 ['issue-reports', 'list']、
+ * 中身 ['issue-reports', 'detail', id]、件数 ['issue-reports', 'pending-count']。編集・見送りのあとは
+ * ['issue-reports'] ごと無効にして、まとめて読み直す。root は boardChangedQueryKeys.test.ts が静的に読むので
+ * 各ファイルでリテラルで書く。
  */
-export const ISSUE_REPORTS_QUERY_KEY = ['issue-reports'] as const;
-export const ISSUE_REPORTS_LIST_QUERY_KEY = ['issue-reports', 'list'] as const;
-export const ISSUE_REPORTS_PENDING_COUNT_QUERY_KEY = ['issue-reports', 'pending-count'] as const;
-
-export function issueReportDetailQueryKey(id: string) {
-  return ['issue-reports', 'detail', id] as const;
-}
+const ISSUE_REPORTS_PENDING_COUNT_QUERY_KEY = ['issue-reports', 'pending-count'] as const;
 
 /**
  * 下書きは bd の外 (data/issue-drafts) にあり、ボードの SSE では変化が届かない。受け取りは別のプロジェクトの
