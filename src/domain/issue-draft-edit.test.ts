@@ -181,7 +181,8 @@ describe('applyDraftEdit: fitting 200KB trims only the raw error text (review M-
   it('does not trim when the edit fits, and leaves an edit that cannot fit over the limit without touching the projects or written fields', () => {
     expect(applyDraftEdit(big(), { body: 'short' })).toMatchObject({ errorTextTrimmed: false });
     const before = big();
-    const outcome = applyDraftEdit(before, { body: '\u0001'.repeat(65_536) });
+    // 見える文字が無い本文は自動の文へ戻る (bdboard-ov0t) ので、末尾に見える 1 文字を付けて「大きい本文の編集」にする。
+    const outcome = applyDraftEdit(before, { body: `${'\u0001'.repeat(65_535)}x` });
     expect(draftJsonBytes(outcome.draft)).toBeGreaterThan(ISSUE_DRAFT_MAX_JSON_BYTES);
     expect(outcome.draft.occurredProjects).toEqual(before.occurredProjects);
     expect(outcome.draft.localOnly.symptomRaw).toBe(before.localOnly.symptomRaw);

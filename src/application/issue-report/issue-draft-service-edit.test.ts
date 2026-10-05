@@ -94,8 +94,8 @@ describe('IssueDraftService.edit', () => {
   it('refuses (too-large) an edit that cannot fit 200KB even after shrinking the local fields, before the save throws', async () => {
     const { service, storage } = setup();
     const id = await receive(service, 'a');
-    // 制御文字は JSON で \u0001 (6 バイト) になる。65536 文字で 384KiB。
-    const result = await service.edit(id, { body: '\u0001'.repeat(65_536) });
+    // 制御文字は JSON で \u0001 (6 バイト) になる。65536 文字で 384KiB。見える文字が無い本文は自動へ戻る (bdboard-ov0t) ので末尾に 1 文字足す。
+    const result = await service.edit(id, { body: `${'\u0001'.repeat(65_535)}x` });
     expect(result).toEqual({ ok: false, reason: 'too-large' });
     expect(storage.drafts.get(id)?.bodyEditedByUser).toBe(false);
     const fits = await service.edit(id, { body: 'b'.repeat(65_536) });
@@ -125,7 +125,7 @@ describe('IssueDraftService.edit', () => {
       const created = await service.receive(bigReport({ name: 'proj-one', path: '/opt/proj-one' }));
       if (!created.ok) throw new Error('receive failed');
       const id = created.draft.id;
-      const edited = await service.edit(id, { body: '\u0001'.repeat(25_000) });
+      const edited = await service.edit(id, { body: `${'\u0001'.repeat(24_999)}x` });
       expect(edited).toMatchObject({ ok: true, errorTextTrimmed: true });
       const bytes = draftJsonBytes(storage.drafts.get(id)!);
       expect(bytes).toBeLessThanOrEqual(EDIT_LIMIT);

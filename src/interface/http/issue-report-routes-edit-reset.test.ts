@@ -22,7 +22,7 @@ async function receiveAgain(app: ReturnType<typeof createIssueReportRoutes>) {
 }
 
 describe('PATCH draft reset', () => {
-  it('accepts empty title and body, while still rejecting invisible non-whitespace title', async () => {
+  it('accepts an empty title and body, and a title that shows nothing, as a reset (bdboard-ov0t)', async () => {
     const { app, storage, id } = await setup();
     const body = await patch(app, id, { body: '' });
     expect(body.status).toBe(200);
@@ -31,7 +31,8 @@ describe('PATCH draft reset', () => {
     expect((await patch(app, id, { title: '' })).status).toBe(200);
     expect(storage.drafts.get(id)?.titleEditedByUser).toBe(false);
     expect((await patch(app, id, { title: '   ' })).status).toBe(200);
-    expect((await patch(app, id, { title: '⠀' })).status).toBe(400);
+    // 見える文字が無い題名 (点字の空白だけ) は、以前は 400 だった。本文と同じく自動へ戻す。
+    expect((await patch(app, id, { title: '⠀' })).status).toBe(200);
   });
 
   it('resets a whitespace-only body and a whitespace-only title, including a lone newline', async () => {

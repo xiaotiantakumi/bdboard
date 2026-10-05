@@ -188,11 +188,18 @@ export function sanitizeProjectName(value: string): string {
 }
 
 /**
- * 空白・ZWJ・ZWNJ・結合文字 (\p{M}。異体字選択子・結合用の書記素連結子 U+034F・クメール語の固有母音 U+17B4・
- * IVS の U+E0100 などを含む)・点字の空白 U+2800 を除いて、目に見える文字が 1 つでも残るか。見送りの理由が空に見える
- * 値でないことの確認に使う。結合文字は手前の文字に付いて初めて見えるので、結合文字だけの値は見えない。
+ * 画面では何も見えない文字: 空白 (\s)・結合文字 (\p{M}。異体字選択子・結合用の書記素連結子 U+034F・クメール語の固有母音 U+17B4・
+ * IVS の U+E0100 などを含む)・点字の空白 U+2800 と、1 行の検査で弾く文字 (DISALLOWED_IN_SINGLE_LINE: 制御文字・書式文字
+ * (ZWSP・ZWJ・ZWNJ・WORD JOINER・BOM・双方向制御など)・行と段落の区切り・ハングルの埋め字・タグ文字)。
+ */
+const INVISIBLE_CHARS = new RegExp(`[\\s\\u{2800}\\p{M}]|${DISALLOWED_IN_SINGLE_LINE.source}`, 'gu');
+
+/**
+ * 目に見える文字が 1 つでも残るか (INVISIBLE_CHARS を除いて)。「空に見える値か」の唯一の判定で、見送りの理由の入口と、
+ * 題名・本文の編集で「自動の文へ戻す」ときの判定 (issue-draft-edit.ts の applyDraftEdit。bdboard-ov0t) が使う。
+ * 結合文字は手前の文字に付いて初めて見えるので、結合文字だけの値は見えない。
  * "e" + U+0301 (é の分解形) は "e" が残るので見える。
  */
 export function hasVisibleText(value: string): boolean {
-  return value.replace(/[\s\u{2800}\p{M}\u200C\u200D]/gu, '').length > 0;
+  return value.replace(INVISIBLE_CHARS, '').length > 0;
 }

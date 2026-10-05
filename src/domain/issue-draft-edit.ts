@@ -1,6 +1,6 @@
 import { ISSUE_DRAFT_MAX_JSON_BYTES, type DraftSuspectedLeak, type IssueDraft, type OccurredProject } from './issue-draft.js';
 import { cutKeepingHead } from './issue-draft-cut.js';
-import { foldHomePaths } from './issue-draft-identifier.js';
+import { foldHomePaths, hasVisibleText } from './issue-draft-identifier.js';
 import { draftJsonBytes } from './issue-draft-size.js';
 import { prepareKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
@@ -85,6 +85,16 @@ export function localKeysOf(projects: readonly OccurredProject[]): LocalOnlyKeys
 }
 
 /**
+ * 検出がかかる欄の文字列 (直していない欄は無い。自動で組んだ欄は調べない)。検出 (scanEditedText) の入力は、ここで返す文字列と鍵だけ。
+ * トンネル側の結果の再利用 (interface/http/issue-report-leak-cache.ts) の指紋も同じものから作る: 検出する欄が変われば指紋が変わって
+ * 検出をかけ直し、検出しない欄 (直していない欄の自動の文は受け取りのたびに変わる) が変わっても当たる。検出する欄を足すときはここに足す
+ * (検出と指紋が同時に変わる。指紋だけが古いまま、検出する欄を見落とすことが無い)。
+ */
+export function scannedFieldsOf(text: DraftTextToScan): { readonly title?: string; readonly body?: string } {
+  return { ...(text.titleEdited ? { title: text.title } : {}), ...(text.bodyEdited ? { body: text.body } : {}) };
+}
+
+/**
  * 直した欄に置き換え漏れの検出をかける。印 (RedactionMark) は渡さない: 利用者が書いた文には、どこを置き換えたかの記録が
  * 無いので、印の文字列 (`<project>` など) の中の一致も疑いとして出る (過検出の側)。鍵を上限で落としたときは、
  * 4y8q.2 の組み立てと同じく位置の無い 'key-overflow' を先頭に足す (「疑いが空か」だけを見る側が漏れなしと読まない)。
@@ -94,9 +104,10 @@ export function scanEditedText(text: DraftTextToScan, keys: LocalOnlyKeys): Draf
   const overflow: DraftSuspectedLeak[] = prepared.truncated
     ? [{ field: 'body', kind: 'key-overflow', start: 0, end: 0 }]
     : [];
+  const fields = scannedFieldsOf(text);
   const found = [
-    ...(text.titleEdited ? detectSuspectedLeaks('title', text.title, [], prepared) : []),
-    ...(text.bodyEdited ? detectSuspectedLeaks('body', text.body, [], prepared) : []),
+    ...(fields.title !== undefined ? detectSuspectedLeaks('title', fields.title, [], prepared) : []),
+    ...(fields.body !== undefined ? detectSuspectedLeaks('body', fields.body, [], prepared) : []),
   ].map(({ field, kind, start, end }): DraftSuspectedLeak => ({ field, kind, start, end }));
   const all = [...overflow, ...found];
   return {
@@ -164,8 +175,10 @@ export interface DraftEditOutcome {
  */
 export function applyDraftEdit(draft: IssueDraft, edit: DraftTextEdit): DraftEditOutcome {
   const automatic = autoTextOf(draft);
-  const titleReset = edit.title !== undefined && edit.title.trim() === '';
-  const bodyReset = edit.body !== undefined && edit.body.trim() === '';
+  // 戻すかの判定は題名も本文も同じ hasVisibleText: 見える文字が無い (空・空白だけ・ZWSP や U+2800 などの見えない文字だけ) 欄は、
+  // 「直した」見えない文を保存せず、自動で組んだ文へ戻す (bdboard-ov0t。以前は本文だけ trim() で見ていた)。
+  const titleReset = edit.title !== undefined && !hasVisibleText(edit.title);
+  const bodyReset = edit.body !== undefined && !hasVisibleText(edit.body);
   const edited = withRescannedLeaks({
     ...draft,
     title: titleReset ? automatic.title : edit.title ?? draft.title,
