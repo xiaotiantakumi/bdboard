@@ -115,8 +115,9 @@ const RAW_URL = /(?<![A-Za-z0-9])(?:https?:\/\/|www\.)[^\s<>]+/gi;
  * 偽のリンク 1 件が、間にある生の URL・参照定義・autolink を何件でも覆って消してしまう (GitHub ではどれも別のリンクとして
  * 描画される。4y8q.9.1 のレビュー)。縮めた結果のずれは偽のリンクの 1 件ぶんの数えすぎで、安全な側。
  *
- * まとめ方: 見つかる順は終了 (`)` の次) が昇順なので、並べ替えずに済む。新しい範囲の開始より後ろまで届いている末尾の範囲を
- * 取り除いて 1 つにし (償却で 1 回ずつ)、末尾に足す。
+ * まとめ方: 見つかる順は終了 (`)` の次) が昇順なので、並べ替えずに済む。1 件見つけると走査は宛先の `)` まで飛ぶので、
+ * 次の `]` も、その宛先の `)` も必ずそれより後ろにある (宛先の中で走査を止める・戻す変更はこの前提を崩す)。
+ * 新しい範囲の開始より後ろまで届いている末尾の範囲を取り除いて 1 つにし (償却で 1 回ずつ)、末尾に足す。
  */
 function findInlineLinks(text: string): { readonly count: number; readonly covered: RangeList } {
   const covered = new RangeList();
@@ -154,6 +155,7 @@ function findInlineLinks(text: string): { readonly count: number; readonly cover
       let rangeStart = lastBreak > start ? index : start;
       // 末尾の範囲が新しい範囲の開始より後ろまで届いているなら (重なるなら) 取り除いて、新しい範囲に含める。
       // 接するだけ (末尾の終了 === 新しい開始) ではまとめない。
+      // 取り除く範囲の開始は常に新しい開始より後ろなので、`Math.min` は常に `rangeStart` を返す。前提が崩れたとき (終了が昇順でなくなったとき) のための防御。
       while (covered.lastEnd() > rangeStart) rangeStart = Math.min(rangeStart, covered.popStart());
       covered.push(rangeStart, end + 1);
       count += 1;

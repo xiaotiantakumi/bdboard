@@ -136,6 +136,23 @@ describe('countLinks: a far-away [ does not hide the links between it and ](', (
   });
 });
 
+describe('countLinks: the covered ranges (bdboard-clym)', () => {
+  // 範囲の並び (RangeList) の端・入れ子のまとめ・伸長を固定する。どれも件数の合計ではなく「覆われるか」で結果が変わる形。
+  it('does not cover the position right after a link (the range ends before it)', () => {
+    expect(countLinks('[a](b)https://x.example')).toEqual(links(1, 0, 0, 1));
+    expect(countLinks('[a](b)<ab:x>')).toEqual(links(1, 1, 0, 0));
+  });
+
+  it('covers a URL in an outer link that comes before the inner links nested in it', () => {
+    expect(countLinks('[https://x.example [a](b)](c)')).toEqual(links(2, 0, 0, 0));
+    expect(countLinks('[https://x.example [a](b) [c](d)](e)')).toEqual(links(3, 0, 0, 0));
+  });
+
+  it('keeps covering the first links after many more links are found', () => {
+    expect(countLinks('[https://x.example](y) '.repeat(20))).toEqual(links(20, 0, 0, 0));
+  });
+});
+
 describe('countLinks: what is not a link', () => {
   it('does not count a link whose brackets are escaped, but still counts the URL as a raw URL', () => {
     expect(countLinks(String.raw`\[a\](https://x.example)`)).toEqual(links(0, 0, 0, 1));
