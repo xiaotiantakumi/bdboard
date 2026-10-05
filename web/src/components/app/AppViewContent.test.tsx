@@ -176,12 +176,50 @@ describe('AppViewContent', () => {
     }
   });
 
-  it('passes selected project metadata to the issue reports panel only for one selection', () => {
-    const { unmount } = render(<AppViewContent {...makeProps({ view: 'issue-reports', boardMeta: { ...makeProps().boardMeta, selectedProjectIds: ['p'], projectNames: new Map([['p', 'Project']]), projectRootPaths: new Map([['p', '/project']]) } })} />);
-    expect(vi.mocked(IssueReportsPanel).mock.calls.at(-1)?.[0].reportProject).toEqual({ name: 'Project', path: '/project' });
-    unmount();
-    render(<AppViewContent {...makeProps({ view: 'issue-reports' })} />);
-    expect(vi.mocked(IssueReportsPanel).mock.calls.at(-1)?.[0].reportProject).toBeUndefined();
+  // bdboard-4y8q.6.8: 「新しく報告」は、ボードでちょうど 1 つ選んでいるプロジェクトだけを { name, path } で渡す (選ぶ欄は無い)。
+  it('gives the issue reports panel the project name and path when exactly one project is selected', () => {
+    const base = makeProps();
+    render(
+      <AppViewContent
+        {...makeProps({
+          view: 'issue-reports',
+          boardMeta: {
+            ...base.boardMeta,
+            selectedProjectIds: ['p'],
+            projectNames: new Map([['p', 'Project']]),
+            projectRootPaths: new Map([['p', '/project']]),
+          },
+        })}
+      />,
+    );
+    expect(vi.mocked(IssueReportsPanel).mock.calls.at(-1)?.[0]?.reportProject).toEqual({
+      name: 'Project',
+      path: '/project',
+    });
+  });
+
+  it('gives the issue reports panel no project when none or several are selected', () => {
+    const base = makeProps();
+    const names = new Map([
+      ['p', 'Project'],
+      ['q', 'Other'],
+    ]);
+    const paths = new Map([
+      ['p', '/project'],
+      ['q', '/other'],
+    ]);
+    for (const selectedProjectIds of [[], ['p', 'q']]) {
+      const { unmount } = render(
+        <AppViewContent
+          {...makeProps({
+            view: 'issue-reports',
+            boardMeta: { ...base.boardMeta, selectedProjectIds, projectNames: names, projectRootPaths: paths },
+          })}
+        />,
+      );
+      expect(vi.mocked(IssueReportsPanel).mock.calls.at(-1)?.[0]?.reportProject).toBeUndefined();
+      unmount();
+    }
   });
 
   it('forwards the actual view (not a hard-coded value) to AppBoardViewSwitch', () => {

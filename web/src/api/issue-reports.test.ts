@@ -24,19 +24,55 @@ function initOf(fetchMock: ReturnType<typeof vi.fn>): RequestInit {
 describe('issue report draft API client (bdboard-mqoa)', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('creates a manual draft with an optional project and returns the server response', async () => {
-    const response = { outcome: 'created' as const, draft: { id: ID, kind: 'A' as const, fingerprint: 'f', title: 't', status: 'pending' as const, occurrenceCount: 1, firstOccurredAt: 'now', lastOccurredAt: 'now', occurredProjectCount: 0 } };
-    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(response, { status: 201 })));
-    vi.stubGlobal('fetch', fetchMock);
-    await expect(createManualIssueDraft({ title: ' title ', description: 'detail' })).resolves.toEqual(response);
-    expect(fetchMock).toHaveBeenCalledWith(ISSUE_MANUAL_DRAFTS_API_PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: ' title ', description: 'detail' }) });
-    await createManualIssueDraft({ title: 't', description: 'd', project: { name: 'P', path: '/p' } });
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ title: 't', description: 'd', project: { name: 'P', path: '/p' } });
-  });
+  // bdboard-4y8q.6.8: 「新しく報告」の送信。POST の本文は { title, description } で、project は渡したときだけ入る。
+  describe('createManualIssueDraft', () => {
+    const response = {
+      outcome: 'created' as const,
+      draft: {
+        id: ID,
+        kind: 'C' as const,
+        fingerprint: 'C:manual:0123456789abcdef',
+        title: 't',
+        status: 'pending' as const,
+        occurrenceCount: 1,
+        firstOccurredAt: '2026-10-06T00:00:00.000Z',
+        lastOccurredAt: '2026-10-06T00:00:00.000Z',
+        occurredProjectCount: 0,
+      },
+    };
 
-  it('preserves the manual rate limit code in ApiError', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ error: 'limited', code: 'manual-rate-limited' }, { status: 429 }))));
-    await expect(createManualIssueDraft({ title: 't', description: 'd' })).rejects.toMatchObject({ status: 429, code: 'manual-rate-limited' });
+    it('POSTs { title, description } as JSON, with no project key, and returns the 201 body as it is', async () => {
+      const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(response, { status: 201 })));
+      vi.stubGlobal('fetch', fetchMock);
+      await expect(createManualIssueDraft({ title: ' title ', description: 'line1\nline2' })).resolves.toEqual(response);
+      expect(fetchMock).toHaveBeenCalledWith('/api/issue-reports/manual-drafts', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: ' title ', description: 'line1\nline2' }),
+      });
+      expect(ISSUE_MANUAL_DRAFTS_API_PATH).toBe('/api/issue-reports/manual-drafts');
+    });
+
+    it('puts the project in the body as { name, path } when given', async () => {
+      const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(response, { status: 201 })));
+      vi.stubGlobal('fetch', fetchMock);
+      await createManualIssueDraft({ title: 't', description: 'd', project: { name: 'example-project', path: '/p' } });
+      expect(JSON.parse(String(initOf(fetchMock).body))).toEqual({
+        title: 't',
+        description: 'd',
+        project: { name: 'example-project', path: '/p' },
+      });
+    });
+
+    it('rejects a 429 with an ApiError that keeps the status and the manual-rate-limited code', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => Promise.resolve(jsonResponse({ error: 'too many manual reports in the last hour', code: 'manual-rate-limited' }, { status: 429 }))),
+      );
+      const caught = await createManualIssueDraft({ title: 't', description: 'd' }).catch((error: unknown) => error);
+      expect(caught).toBeInstanceOf(ApiError);
+      expect(caught).toMatchObject({ status: 429, code: 'manual-rate-limited' });
+    });
   });
 
   describe('fetchIssueDraft', () => {
