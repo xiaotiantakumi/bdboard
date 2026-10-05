@@ -56,8 +56,12 @@ vi.mock('../EventCenterPanel', () => ({
     <div data-testid="event-center-panel">{props.unreadCount}</div>
   )),
 }));
+vi.mock('../issue-reports/IssueReportsPanel', () => ({
+  IssueReportsPanel: vi.fn((props: { reportProject?: { name: string; path: string } }) => <div data-testid="issue-reports-panel">{props.reportProject?.name ?? 'none'}</div>),
+}));
 
 import { AppBoardViewSwitch } from './AppBoardViewSwitch';
+import { IssueReportsPanel } from '../issue-reports/IssueReportsPanel';
 
 const appBoardViewSwitchMock = vi.mocked(AppBoardViewSwitch);
 
@@ -74,6 +78,7 @@ const LEAF_TESTIDS = [
   'dependency-graph-view',
   'settings-panel',
   'event-center-panel',
+  'issue-reports-panel',
 ];
 
 function makeFilterState(): BoardFilterState {
@@ -171,6 +176,14 @@ describe('AppViewContent', () => {
     }
   });
 
+  it('passes selected project metadata to the issue reports panel only for one selection', () => {
+    const { unmount } = render(<AppViewContent {...makeProps({ view: 'issue-reports', boardMeta: { ...makeProps().boardMeta, selectedProjectIds: ['p'], projectNames: new Map([['p', 'Project']]), projectRootPaths: new Map([['p', '/project']]) } })} />);
+    expect(vi.mocked(IssueReportsPanel).mock.calls.at(-1)?.[0].reportProject).toEqual({ name: 'Project', path: '/project' });
+    unmount();
+    render(<AppViewContent {...makeProps({ view: 'issue-reports' })} />);
+    expect(vi.mocked(IssueReportsPanel).mock.calls.at(-1)?.[0].reportProject).toBeUndefined();
+  });
+
   it('forwards the actual view (not a hard-coded value) to AppBoardViewSwitch', () => {
     // "view をそのまま渡すこと" を直接検証する: AppBoardViewSwitch はモック
     // されているため描画結果からは view の値を確認できない。呼び出し引数を
@@ -258,6 +271,7 @@ describe('AppViewContent', () => {
     { view: 'graph', testid: 'dependency-graph-view' },
     { view: 'settings', testid: 'settings-panel' },
     { view: 'events', testid: 'event-center-panel' },
+    { view: 'issue-reports', testid: 'issue-reports-panel' },
   ];
 
   for (const { view, testid } of leafCases) {
