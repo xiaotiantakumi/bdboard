@@ -158,6 +158,9 @@ U+202A–U+202E U+2060–U+2064 U+2066–U+2069 U+206A–U+206F U+3164 U+FEFF U+
 - 既知の限界: 絵文字 1 つにつき U+FE0E / U+FE0F を 1 つ付ける形 (見える絵文字が要る) は通る。`\p{Extended_Pictographic}` は
   実行する Node の ICU のバージョンに従うので、新しい Unicode の絵文字は古い Node では止まる (安全側の失敗)。
   異体字列 (IVS。漢字 + U+E0100–U+E01EF) や数学記号の標準異体字列が本当に要るときは、エスケープで書く。
+- 表にまだ無い Default_Ignorable_Code_Point (2026-10-06 時点、Node 22 の ICU): U+2065、U+FFF0–U+FFF8、U+1BCA0–U+1BCA3、
+  U+1D173–U+1D17A、U+E0080–U+E00FF、U+E01F0–U+E0FFF。使用ゼロで割り当ても無いか、特殊用途の書式文字。必要になったら
+  `chars.mjs` の表に足す。
 
 **診断の直し方**: UTF-8 のファイルには `\uXXXX` のエスケープで書くよう案内する (JS / TS は JSX のテキストと属性ではエスケープが
 解釈されないので `{'\u200B'}` のような式を、`.sh` は bash の `$'\uXXXX'`、`.yml` は二重引用符の文字列の `\uXXXX`)。UTF-16
