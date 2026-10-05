@@ -46,3 +46,18 @@ describe('createDraftIndexCache seed', () => {
     expect(storage.scan).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('buildIndex: the automatic per-hour count', () => {
+  it('counts automatic drafts only: neither mass-occurrence nor manual drafts (bdboard-4y8q.6.7) use the automatic slot', () => {
+    const at = '2026-10-01T00:30:00.000Z';
+    const index = buildIndex([
+      { id: '1758812345001-aaaaaaaaaaaaaaaa', fingerprint: 'A:slug-a', firstOccurredAt: at, status: 'pending' },
+      { id: '1758812345002-bbbbbbbbbbbbbbbb', fingerprint: 'mass-occurrence:A:2026-10-01T00', firstOccurredAt: at, status: 'pending' },
+      { id: '1758812345003-cccccccccccccccc', fingerprint: 'C:manual:a1b2c3d4e5f6a7b8', firstOccurredAt: at, status: 'pending' },
+      { id: '1758812345004-dddddddddddddddd', fingerprint: 'C:manual:0011223344556677', firstOccurredAt: at, status: 'dismissed' },
+    ]);
+    expect([...index.newDraftsByHour.entries()]).toEqual([['2026-10-01T00', 1]]);
+    // 状態の索引には全部入る (未処理の件数は手書きも数える)。
+    expect(index.statusById.size).toBe(4);
+  });
+});

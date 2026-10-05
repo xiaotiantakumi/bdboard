@@ -60,7 +60,7 @@ const DISMISS_BODY_MAX_BYTES = 16 * 1024;
  * 受け取りと画像の追加が、issue-drafts の合計容量の上限 (終端の下書きを消しても空かない) に当たったときの
  * 本文 (507)。`code` は機械が読む固定の値 (bdboard-00qh、docs/ISSUE-REPORTING.md 4節)。
  */
-const STORAGE_FULL_BODY = { error: 'issue draft storage is full', code: 'storage-full' } as const;
+export const STORAGE_FULL_BODY = { error: 'issue draft storage is full', code: 'storage-full' } as const;
 
 /** 見送り・投稿済みの下書きへの画像の追加 (409)。`code` は機械が読む固定の値、`status` は下書きの今の状態。 */
 const draftNotPendingBody = (status: string) =>
@@ -87,7 +87,7 @@ const versionString = singleLine(100);
  * 空白に見えるハングルの埋め字・U+180E は、取り除かず空白に替えてから畳む (つなげるとパスが前の語に貼り付いて
  * 畳めないため)。結果が空なら 400。
  */
-const projectNameSchema = z
+export const projectNameSchema = z
   .string()
   .max(200)
   .transform(sanitizeProjectName)

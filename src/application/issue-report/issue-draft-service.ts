@@ -1,6 +1,7 @@
 import {
   ISSUE_DRAFT_MAX_IMAGES,
   isDraftId,
+  type DraftEnvInfo,
   type DraftStatus,
   type IssueDraft,
 } from '../../domain/issue-draft.js';
@@ -16,9 +17,16 @@ import {
 } from './issue-draft-index.js';
 import { createMutex } from './issue-draft-mutex.js';
 import { createDraftRetention, type DraftRetentionOptions } from './issue-draft-retention.js';
-import { receiveDraftLocked, type DraftReceiveContext, type ReceiveDraftResult } from './issue-draft-receive.js';
+import {
+  createManualLocked,
+  type CreateManualDraftInput,
+  type CreateManualDraftResult,
+  type DraftManualContext,
+} from './issue-draft-manual.js';
+import { receiveDraftLocked, type ReceiveDraftResult } from './issue-draft-receive.js';
 
 export type { ReceiveDraftInput } from '../../domain/issue-draft-build.js';
+export type { CreateManualDraftInput, CreateManualDraftResult } from './issue-draft-manual.js';
 export type { ReceiveDraftResult } from './issue-draft-receive.js';
 
 /**
@@ -61,6 +69,11 @@ export type AddDraftImageResult =
 export interface IssueDraftService {
   receive(input: ReceiveDraftInput): Promise<ReceiveDraftResult>;
   /**
+   * 人が画面から手で書く下書き (bdboard-4y8q.6.7)。まとめず・「大量発生」へ丸めず、自動の 20 件/時とは別の枠 (既定 20 件/時) で
+   * 数える。受け取りと同じ mutex の中で動く。処理は issue-draft-manual.ts。
+   */
+  createManual(input: CreateManualDraftInput): Promise<CreateManualDraftResult>;
+  /**
    * 最後に起きた時刻の新しい順の全件 (storage.scan) に、その一覧そのものから (pendingCount() と同じ countPendingStatuses で)
    * 数えた未処理件数を添える。GET drafts の応答の元。画面の一覧と件数が食い違わない。索引を読み込み済みなら、完全な一覧に
    * 索引の状態を突き合わせる (サーバーの外で消された・足された下書きを件数に反映する。bdboard-vsuc)。
@@ -95,6 +108,8 @@ export interface IssueDraftServiceDeps {
   readonly newId: () => string;
   /** 保持期限・掃除の間隔・合計容量の上限・警告の出力。省略時は domain の既定値 (30 日・1 時間・1 GiB)。 */
   readonly retention?: DraftRetentionOptions;
+  /** 手書きの下書きの envInfo (bdboard・OS・Node の版) をサーバーが埋める元。省略時は 'unknown' (bdboard-4y8q.6.7)。 */
+  readonly envInfo?: () => DraftEnvInfo;
 }
 
 function compareNewestFirst(a: IssueDraft, b: IssueDraft): number {
@@ -144,17 +159,21 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
     return true;
   }
 
-  const receiveContext: DraftReceiveContext = {
+  // 受け取り (receiveDraftLocked) と手書き (createManualLocked) が mutex の内側で共有する文脈。
+  const receiveContext = {
     storage: deps.storage,
     indexCache,
     pruneIfDue: () => retention.pruneIfDue(),
     saveWithinCap,
     now: deps.now,
     newId: deps.newId,
-  };
+    envInfo: deps.envInfo,
+  } satisfies DraftManualContext;
 
   return {
     receive: (input) => exclusive(() => receiveDraftLocked(receiveContext, input)),
+
+    createManual: (input) => exclusive(() => createManualLocked(receiveContext, input)),
 
     async listWithPendingCount() {
       const drafts = [...(await readListing()).drafts].sort(compareNewestFirst);

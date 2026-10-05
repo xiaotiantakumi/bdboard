@@ -8,10 +8,13 @@ import { randomBytes } from 'node:crypto';
 import type { Hono } from 'hono';
 import { createIssueDraftService } from '../application/issue-report/issue-draft-service.js';
 import { memoizeAsyncWithTtl } from '../application/issue-report/memoize-with-ttl.js';
+import type { ApplicationVersionProvider } from '../application/ports/application-version.js';
 import type { PackRegistryPort } from '../application/ports/pack-registry.js';
 import { caseFoldingTableUsable } from '../domain/issue-public-casefold.js';
 import { createFsIssueDraftStorage } from '../infrastructure/fs/fs-issue-draft-storage.js';
 import { resolveIssueDraftsDir } from '../infrastructure/fs/resolve-issue-drafts-dir.js';
+import { createPackageJsonVersionProvider } from '../infrastructure/version/package-json-version-provider.js';
+import { createIssueReportManualRoutes } from '../interface/http/issue-report-manual-routes.js';
 import { createIssueReportRoutes } from '../interface/http/issue-report-routes.js';
 import type { WriteGuardDeps } from '../interface/http/write-guard.js';
 
@@ -24,6 +27,8 @@ export interface WireIssueReportsDeps {
   /** 最新の harness pack の版を読む (1 件の取得の「版の比較」、bdboard-4y8q.3.1)。 */
   readonly packRegistry: Pick<PackRegistryPort, 'listPacks'>;
   readonly log?: (message: string) => void;
+  /** 手書きの下書き (bdboard-4y8q.6.7) の envInfo に入れる bdboard の版 (既定は package.json の version)。 */
+  readonly applicationVersion?: ApplicationVersionProvider;
   /** 公開本文の大文字小文字の表が使えるか (既定は caseFoldingTableUsable。テストが差し替える)。 */
   readonly caseTableUsable?: () => boolean;
 }
@@ -44,12 +49,15 @@ export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRout
   const log = deps.log ?? console.log;
   const draftsDir = resolveIssueDraftsDir(deps.repoRoot, deps.env);
   const now = deps.now ?? (() => new Date());
+  const applicationVersion = deps.applicationVersion ?? createPackageJsonVersionProvider();
 
   const service = createIssueDraftService({
     storage: createFsIssueDraftStorage(draftsDir),
     now,
     // 添付画像と同じ採番規約: <epochMs>-<16桁hex> (ソート可能・衝突耐性・パスとして安全)。
     newId: () => `${Date.now()}-${randomBytes(8).toString('hex')}`,
+    // 手書きの下書きの envInfo はサーバーが埋める (画面からは受けない)。
+    envInfo: () => ({ bdboardVersion: applicationVersion.getVersion(), os: process.platform, nodeVersion: process.version }),
   });
 
   const latestHarnessVersion = memoizeAsyncWithTtl(
@@ -62,6 +70,8 @@ export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRout
     writeAccess: deps.writeAccess,
     latestHarnessVersion,
   });
+  // 人が手で書く下書きの受け取り口 (ローカル直アクセスのみ。bdboard-4y8q.6.7)。
+  issueReportsRouter.route('/', createIssueReportManualRoutes({ service }));
 
   // 起動時の掃除 (bdboard-00qh): 見送り・投稿済みで 30 日を過ぎた下書きを画像ごと消す。待たない・失敗しても
   // 起動は止めない (service が警告だけ出して投げない)。開いている (pending) 下書きは消さない。

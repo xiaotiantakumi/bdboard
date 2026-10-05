@@ -129,11 +129,12 @@ bdboard-727y(添付画像の保存先バグ)は PR #782 で 2026-09-25 にマー
 
 ## 3. 受け口の API とローカル直アクセス限定(項目 c)
 
-3つの経路があり、要求される認可の強さが異なる。
+4つの経路があり、要求される認可の強さが異なる。
 
 | 経路 | メソッド/パス | 呼び出し元 | 必要な認可 |
 |---|---|---|---|
 | 受け取り | `POST /api/issue-reports/drafts` | 各プロジェクトに注入される報告スクリプト(注入先では `.claude/skills/bdboard-harness/scripts/report-issue.sh`、パック正本は `harness/packs/bdboard-harness/scripts/report-issue.sh`。4y8q.12)、bdboard 自身のエラー捕捉(4y8q.6) | **ローカル直アクセスのみ**(トンネル不可) |
+| 手書きの受け取り | `POST /api/issue-reports/manual-drafts` | 不具合報告タブの「新しく報告」(4y8q.6.8) | **ローカル直アクセスのみ**(トンネル不可。書き込み許可つきのセッションがあっても 403)。詳しくは下の「手書きの下書き」 |
 | 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss`、`GET /api/issue-reports/pending-count` | 不具合報告タブの UI | PATCH は通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル)。GET は `createWriteGuardMiddleware` の対象外(メソッドで素通しする)なので、ほかの読み取り API と同じく、トンネルではトンネルの認証(Basic 認証)を通れば読める(パスワードの強度は問わない)。**ただし `GET .../:id` だけは、全部を返すのはローカル直アクセスのみ**(下の「1 件の取得はトンネルでは絞る」) |
 | 投稿 | `POST /api/issue-reports/drafts/:id/publish` | 不具合報告タブの投稿ボタン | **ローカル直アクセスのみ** |
 
@@ -293,6 +294,49 @@ head/tail が置き換え後の文章から作られるようになったら、�
 「添付画像は開けません」と書く。ローカル直アクセスでは名前を押すと別のタブで開く(プレビューでは読み込まない)。
 添付画像の URL の直開き(アドレスバーに貼る・ブックマーク)は、ローカルでも 403(ガードの Fetch Metadata の検査で
 `Sec-Fetch-Site` が `same-origin` でないため。応答の文言はガード共通の `cross-site write blocked` のまま)。画面のリンクから開く。
+
+### 手書きの下書き(`POST /api/issue-reports/manual-drafts`、bdboard-4y8q.6.7)
+
+不具合報告タブの「新しく報告」(画面は 4y8q.6.8)から、人が手で書く下書きの受け取り口。自動の受け取り(`POST drafts`)とは別の経路で、
+ルートは `src/interface/http/issue-report-manual-routes.ts`(`wire-issue-reports.ts` が既存のルーターへ載せる)、処理は
+`src/application/issue-report/issue-draft-manual.ts`(`issue-draft-receive.ts` の隣。サービスの `createManual`、受け取りと同じ mutex の中)、
+下書きの組み立ては `src/domain/issue-draft-manual.ts`(`createManualDraft`)。
+
+| 項目 | 内容 |
+|---|---|
+| 認可 | ローカル直アクセスのみ。受け取り・画像の追加と同じ `createPrivilegedApiGuardMiddleware({})`(トンネル用の依存を渡さない)なので、トンネルは書き込み許可つきのセッションがあっても 403。CSRF の検査も残る |
+| 本文の上限 | 64KB(超えたら 413)。説明 8000 文字が JSON のエスケープ(`\uXXXX` で 6 バイト)で膨らんでも入る大きさ |
+| 本文の型 | `{ title, description, project? }`。`title`: 1 行(改行・制御文字・不可視の書式文字は 400。貼り付けで混ざる ZWSP・BOM は落とし、前後の空白も落とす。見送りの理由と同じ整え方)・256 文字まで・必須(見える文字が無ければ 400)。`description`: 8000 文字まで・必須(見える文字が無ければ 400。複数行でよい)。`project`: 任意。受け取りの `project` と同じ形(`{ name, path }`、名前は同じ整え方) |
+| 応答 | 201 `{ outcome: 'created', draft }`(受け取りの応答と同じ形。`draft` は一覧と同じ要約)。400 は固定の文言だけで入力の値は返さない |
+| 指紋 | `C:manual:<16 桁の乱数 hex>`(`randomBytes(8)`)。毎回別の指紋なので、**同じ文を 2 回送ると下書きは 2 件**。既存の下書きへまとめない |
+| 種別・出どころ | 種別 C、`source: 'manual'`。「大量発生」の下書きへ丸めない(自動の 1 時間 20 件の枠が使い切られていても、手書きは自分の下書きを作る) |
+| 説明 | `localOnly.agentNoteRaw` に入れる(手元だけ。トンネルには見せない)。**暫定の公開本文には入らない**。公開本文の組み立て(5 節)に入れるかは、投稿(4y8q.4)が置き換えを通してから決める |
+| 題名 | 「直した題名」として保存する(`titleEditedByUser: true`)ので、直した欄にかかる置き換え漏れの検出(`withRescannedLeaks`)を作成時に通り、`suspectedLeaks` が付く(置き換えはしない。人が直す)。本文は自動の暫定の本文(`bodyEditedByUser: false`) |
+| `envInfo` | サーバーが埋める(画面からは受けない): `bdboardVersion`(package.json の version)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。`bdVersion`・`ghVersion`・`harnessVersion` は埋めない |
+| 件数の上限 | 自動の 1 時間 20 件とは**別の枠**で、既定 1 時間 20 件。一覧(`storage.scan()`)から「指紋が `C:manual:` で始まり、`firstOccurredAt` が今から 60 分以内」の下書きを数える(UTC の暦時間ではなく走っている 60 分。見送り済みも数える)。索引の形式は変えない。超えたら 429 `{ error, code: 'manual-rate-limited' }`、容量切れは 507 `{ code: 'storage-full' }`(自動と同じ) |
+| 画像 | 既存の画像の追加(`POST drafts/:id/images`)でそのまま付けられる(pending の下書きなので) |
+
+**自動の枠との分け方**: 受け取りの索引(`issue-draft-index.ts`)の `newDraftsByHour`(自動の 20 件/時)は、起動後や一覧が欠けたあとの
+読み直しでも手書きを数えない(`buildIndex` が `C:manual:` の指紋を除く)。手書きの作成は `newDraftsByHour` を増やさず、
+索引へは状態(未処理の件数)だけ反映する。
+
+**設計(1 節・5 節)からのずれ**(4y8q.11 の規則):
+- **題名を「直した題名」として保存する**: 1 節は `title`/`body` の初期値を 5 節の組み立て関数の出力とし、`titleEditedByUser` は人が直したときだけ
+  true になる。手書きでは、人が書いた題名をそのまま公開題名の初期値にするため、作成時から `titleEditedByUser: true` で保存する
+  (自動の題名 `[bdboard 本体] manual` は使わない)。理由は、直した欄にだけかかる漏れ検出を通すため。PATCH で題名を空にすると、ほかの下書きと同じく
+  `titleEditedByUser` が false に戻り、自動の題名(`[bdboard 本体] manual`)になる。
+- **説明は 5 節の入力(`agentNote`)に今は入れない**: 5 節は「新しく報告」の説明文も `agentNote` として公開本文の組み立てを通すとしている。
+  4y8q.6.7 は説明を `agentNoteRaw` に保存するだけで、暫定の本文には入れない(暫定の本文は固定の項目だけ)。投稿の前に置き換えを通して本文へ
+  入れる経路は、4y8q.4 の範囲。それまでは「直す」で本文を書く(画面は 4y8q.6.8 でそう案内する)。
+- **本文の型に `project?` を足した**: チケットの型は `{ title, description }` だが、漏れ検出の鍵(発生プロジェクトの名前・根のパス)は
+  `occurredProjects` から作る(`localKeysOf`)ので、手書きの下書きにプロジェクトが無いと、題名に書いたプロジェクト名を疑いにできない
+  (受け入れ基準「題名にプロジェクト名を書くと、漏れの疑いが付く」)。送れば `occurredProjects` に 1 件入り、題名・あとから直した題名の
+  検出の鍵になる。送らなければ空で、ホームのパス・トークン・メールなど鍵なしで探せるものだけが疑いになる。全プロジェクトの名前を鍵にする
+  広げ方は、4y8q.4 の申し送り(U13)の範囲。
+
+**既知の限界**: 件数は一覧(`scan()`)から数えるので、一覧が欠けているとき(`complete: false`。読めなかった下書きがあるとき)は、読めた分だけを数える。
+指紋の頭が同じ `C:manual:` になる自動の報告(`kind: 'C'`、`source: 'manual'` の `POST drafts`)は、手書きの枠に数えられ、自動の枠からは外れる
+(`source` に `manual` を使う報告スクリプトは想定していない)。
 
 ### 閲覧・編集(PATCH)側のフィールド範囲
 
@@ -536,6 +580,8 @@ function normalizeErrorText(text: string): string {
   という一般的な文面に留め、個別の詳細は出さない)。暦時間区切りは実装が簡単な分、境界をまたぐ
   瞬間だけ実質的な上限が緩む(60分の壁時計窓ではなく1時間区切り)。厳密なスライディングウィンドウ
   が要るなら実装時に変更してよい(小さな決め事なので本ドキュメントではブロックしない)。
+- 手書きの下書き(3節「手書きの下書き」、bdboard-4y8q.6.7)の件数: **上の自動の枠とは別に、1 時間 20 件まで**。自動の 20 件には数えず、
+  21 件目以降を「大量発生」へ丸めもしない(超えたら 429 `manual-rate-limited`)。指紋 `C:manual:<乱数>` で見分け、一覧から走っている 60 分で数える。
 
 ### 保持期限と合計容量(bdboard-00qh)
 
