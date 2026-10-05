@@ -27,7 +27,7 @@ function createDeps(overrides: Partial<WireShutdownDeps> = {}): WireShutdownDeps
 }
 
 describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal を切り出したもの)', () => {
-  it('clears every interval timer, stops the reclaim scheduler, then drains runStore/tunnel/watch/cache/chat before exiting', async () => {
+  it('clears every interval timer, stops the reclaim scheduler and the external issue polling, then drains runStore/tunnel/watch/cache/chat before exiting', async () => {
     vi.useFakeTimers();
     try {
       const order: string[] = [];
@@ -63,6 +63,12 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
         reclaimScheduler: {
           stop: vi.fn(() => {
             order.push('reclaimScheduler.stop');
+          }),
+        },
+        // 届いた issue の定期確認 (bdboard-4y8q.9.4): reclaimScheduler の次、drain の前に止める。
+        externalIssues: {
+          stop: vi.fn(() => {
+            order.push('externalIssues.stop');
           }),
         },
         server: {
@@ -102,6 +108,7 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
         'clearInterval(cfdSnapshot)',
         'clearInterval(aiQuotaAlert)',
         'reclaimScheduler.stop',
+        'externalIssues.stop',
         'runStore.cancelAllAndWait',
         'tunnelService.shutdown',
         'watchHandle.stop',
@@ -128,6 +135,7 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
       });
       const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
 
+      // createDeps は externalIssues を渡さない (省略可。届いた issue の定期確認が無いときも投げない)。
       const { shutdownForSignal } = wireShutdown(deps);
       expect(() => shutdownForSignal()).not.toThrow();
       await vi.advanceTimersByTimeAsync(0);

@@ -11,6 +11,7 @@ import type { RefreshResult } from '../application/board/refresh-projects.js';
 import { createIssueDraftService } from '../application/issue-report/issue-draft-service.js';
 import type { IssueDraftService } from '../application/issue-report/issue-draft-service.js';
 import { BdError } from '../application/ports/issue-repository.js';
+import type { BdErrorKind } from '../application/ports/issue-repository.js';
 import type { Project } from '../domain/project.js';
 import { createFsIssueDraftStorage } from '../infrastructure/fs/fs-issue-draft-storage.js';
 import { wireSelfErrorReporter } from './wire-self-error-reporter.js';
@@ -25,7 +26,7 @@ const PROJECT: Project = {
   prefixes: ['epic-haslett-00ae14'],
 };
 const SENTENCE = 'database "epic_haslett_00ae14" not found on dolt server at 127.0.0.1:3307';
-const failure = (detail = SENTENCE, kind: 'unknown' | 'schema-mismatch' = 'unknown'): RefreshResult => ({
+const failure = (detail = SENTENCE, kind: BdErrorKind = 'unknown'): RefreshResult => ({
   refreshed: [],
   reused: [],
   removed: [],
@@ -63,7 +64,7 @@ function wire(service: Pick<IssueDraftService, 'receive'>, clock: { at: number }
 }
 
 describe('self error drafts from refresh failures (acceptance, real service and temp directory)', () => {
-  it('keeps one draft for 30 identical failures, then merges one more report an hour later', async () => {
+  it('keeps one draft for 30 identical failures (made on the third), then merges one more report an hour after that', async () => {
     const real = await realService();
     const outcomes: string[] = [];
     const service = {
@@ -85,7 +86,8 @@ describe('self error drafts from refresh failures (acceptance, real service and 
     expect(first[0]?.occurrenceCount).toBe(1);
     expect(outcomes).toEqual(['created']);
 
-    clock.at = START + HOUR + 60_000;
+    // 下書きになったのは 3 回目 (2 分後) なので、次の報告は 62 分以降 (kind unknown は 3 回続けて見えてから。bdboard-f2ob)。余裕を見て 63 分に流す。
+    clock.at = START + HOUR + 3 * 60_000;
     await wired.reporter.observeRefresh(failure(), [PROJECT]);
     const second = (await real.listWithPendingCount()).drafts;
     expect(outcomes).toEqual(['created', 'merged']);
@@ -102,6 +104,42 @@ describe('self error drafts from refresh failures (acceptance, real service and 
     expect(draft?.localOnly.errorTextRaw).toBe('database "<project>" not found on dolt server at 127.0.0.1:3307');
   });
 
+  // bdboard-f2ob: #915 の deploy 直後、別プロジェクトの Dolt サーバーに 1 回だけ繋がらず (kind unknown)、1 回で下書きになった実例。
+  it('makes no draft for a one-off connection refused, and one draft when it lasts three refreshes in a row', async () => {
+    const real = await realService();
+    const clock = { at: START };
+    const wired = wire(real, clock, vi.fn());
+    const refused = (port: number): string =>
+      `error: failed to open database: dolt server unreachable at 127.0.0.1:${port}: dial tcp 127.0.0.1:${port}: connect: connection refused / the dolt server may not be running. try: bd dolt start`;
+    const refresh = async (result: RefreshResult, minutes: number): Promise<void> => {
+      clock.at = START + minutes * 60_000;
+      await wired.reporter.observeRefresh(result, [PROJECT]);
+    };
+    const succeeded: RefreshResult = { refreshed: [PROJECT.id], reused: [], removed: [], errors: [] };
+    const drafts = async () => (await real.listWithPendingCount()).drafts;
+
+    // 1 回だけ繋がらず、次の更新 (5 分後の定期更新) は成功。そのあとも静か。
+    await refresh(failure(refused(60995)), 0);
+    await refresh(succeeded, 5);
+    await refresh(succeeded, 10);
+    expect(await drafts()).toEqual([]);
+
+    // 2 回続いて成功を挟むと、数え直し: 成功のあとの 2 回では下書きにならない。
+    await refresh(failure(refused(60995)), 15);
+    await refresh(failure(refused(61292)), 20);
+    await refresh(succeeded, 25);
+    await refresh(failure(refused(61300)), 30);
+    await refresh(failure(refused(61301)), 35);
+    expect(await drafts()).toEqual([]);
+
+    // 3 回続けて (ポートは更新ごとに違ってもよい) 初めて下書きになる。
+    await refresh(failure(refused(61302)), 40);
+    const created = await drafts();
+    expect(created).toHaveLength(1);
+    expect(created[0]?.title).toBe('[bdboard 本体] bd-refresh:unknown');
+    expect(created[0]?.occurrenceCount).toBe(1);
+  });
+
   it('survives a receive that rejects: no unhandled rejection, a fixed log line, and later failures still go through', async () => {
     const unhandled = vi.fn();
     process.on('unhandledRejection', unhandled);
@@ -113,7 +151,8 @@ describe('self error drafts from refresh failures (acceptance, real service and 
       const clock = { at: START };
       const wired = wire({ receive }, clock, (message) => logs.push(message));
 
-      expect(wired.onRefreshResult(failure(), [PROJECT])).toBeUndefined();
+      // schema-mismatch は 1 回目で報告する種類 (unknown は 3 回続けて見えてから)。
+      expect(wired.onRefreshResult(failure(SENTENCE, 'schema-mismatch'), [PROJECT])).toBeUndefined();
       wired.onRefreshResult(failure('other failure text', 'schema-mismatch'), [PROJECT]);
       for (let tick = 0; tick < 5; tick += 1) await new Promise((resolve) => setImmediate(resolve));
 

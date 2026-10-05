@@ -24,17 +24,17 @@ describe('createSelfErrorReporter', () => {
     const shouldReport = vi.spyOn(base, 'shouldReport');
     const receive = vi.fn().mockResolvedValue({ ok: true });
     const reporter = createSelfErrorReporter({ service: { receive }, throttle: base, listProjects: () => [project], envInfo: () => envInfo, log: vi.fn() });
-    await reporter.observeRefresh(result('unknown', 'database "example-project" at /private/example-project'), [project]);
+    await reporter.observeRefresh(result('schema-mismatch', 'database "example-project" at /private/example-project'), [project]);
     expect(receive).toHaveBeenCalledTimes(1);
     expect(shouldReport).toHaveBeenCalledTimes(1);
-    expect(receive.mock.calls[0]?.[0]).toMatchObject({ kind: 'C', source: 'bd-refresh:unknown', errorText: 'database "<project>" at <project-root>', project: { name: project.name, path: project.rootPath }, envInfo });
+    expect(receive.mock.calls[0]?.[0]).toMatchObject({ kind: 'C', source: 'bd-refresh:schema-mismatch', errorText: 'database "<project>" at <project-root>', project: { name: project.name, path: project.rootPath }, envInfo });
   });
 
   it('throttles repeats, waits for three transient sightings and ignores unknown projects', async () => {
     const { reporter, receive, setTime } = setup();
-    for (let minute = 0; minute < 30; minute += 1) { setTime(minute * 60_000); await reporter.observeRefresh(result('unknown', 'failure'), [project]); }
+    for (let minute = 0; minute < 30; minute += 1) { setTime(minute * 60_000); await reporter.observeRefresh(result('schema-mismatch', 'failure'), [project]); }
     expect(receive).toHaveBeenCalledTimes(1);
-    setTime(60 * 60_000); await reporter.observeRefresh(result('unknown', 'failure'), [project]);
+    setTime(60 * 60_000); await reporter.observeRefresh(result('schema-mismatch', 'failure'), [project]);
     expect(receive).toHaveBeenCalledTimes(2);
     const lock = setup();
     await lock.reporter.observeRefresh(result('lock-contention', 'locked'), [project]);
@@ -42,7 +42,7 @@ describe('createSelfErrorReporter', () => {
     expect(lock.receive).not.toHaveBeenCalled();
     await lock.reporter.observeRefresh(result('lock-contention', 'locked'), [project]);
     expect(lock.receive).toHaveBeenCalledTimes(1);
-    await lock.reporter.observeRefresh(result('unknown', 'failure', 'missing'), [project]);
+    await lock.reporter.observeRefresh(result('schema-mismatch', 'failure', 'missing'), [project]);
     expect(lock.receive).toHaveBeenCalledTimes(1);
   });
 
@@ -69,7 +69,7 @@ describe('createSelfErrorReporter', () => {
     const releases: Array<(value: { ok: true }) => void> = [];
     const receive = vi.fn().mockImplementation(() => new Promise<{ ok: true }>((resolve) => { releases.push(resolve); }));
     const { reporter } = setup(receive);
-    const first = reporter.observeRefresh(result('unknown', 'first'), [project]);
+    const first = reporter.observeRefresh(result('schema-mismatch', 'first'), [project]);
     const second = reporter.observeRefresh(result('schema-mismatch', 'second'), [project]);
     // 1 本目の receive が終わっていなくても、2 本目は待たずに呼ばれる。
     expect(receive).toHaveBeenCalledTimes(2);

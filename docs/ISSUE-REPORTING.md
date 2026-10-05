@@ -129,7 +129,7 @@ bdboard-727y(添付画像の保存先バグ)は PR #782 で 2026-09-25 にマー
 
 ## 3. 受け口の API とローカル直アクセス限定(項目 c)
 
-4つの経路があり、要求される認可の強さが異なる。
+次の経路があり(届いた issue の 2 本は 8 節の 4y8q.9.4)、要求される認可の強さが異なる。
 
 | 経路 | メソッド/パス | 呼び出し元 | 必要な認可 |
 |---|---|---|---|
@@ -137,6 +137,8 @@ bdboard-727y(添付画像の保存先バグ)は PR #782 で 2026-09-25 にマー
 | 手書きの受け取り | `POST /api/issue-reports/manual-drafts` | 不具合報告タブの「新しく報告」(4y8q.6.8) | **ローカル直アクセスのみ**(トンネル不可。書き込み許可つきのセッションがあっても 403)。詳しくは下の「手書きの下書き」 |
 | 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss`、`GET /api/issue-reports/pending-count` | 不具合報告タブの UI | PATCH は通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル)。GET は `createWriteGuardMiddleware` の対象外(メソッドで素通しする)なので、ほかの読み取り API と同じく、トンネルではトンネルの認証(Basic 認証)を通れば読める(パスワードの強度は問わない)。**ただし `GET .../:id` だけは、全部を返すのはローカル直アクセスのみ**(下の「1 件の取得はトンネルでは絞る」) |
 | 投稿 | `POST /api/issue-reports/drafts/:id/publish` | 不具合報告タブの投稿ボタン | **ローカル直アクセスのみ** |
+| 届いた issue の読み取り | `GET /api/issue-reports/external` | 不具合報告タブ(4y8q.9.5 が使う) | 読み取りなのでトンネルからも読める(U10。トンネルの認証の内側)。サーバーが持っている一覧を返すだけで、gh は起動しない |
+| 届いた issue の今すぐ確認 | `POST /api/issue-reports/external/refresh` | 不具合報告タブ(4y8q.9.5 が使う) | **ローカル直アクセスのみ**。1 分に 1 回まで(超えると 429) |
 
 エピック決定 4「投稿はローカル直アクセスからだけ。トンネル経由では、見る・直す・見送るまで」
 と決定 5「受け口はローカル直アクセスからだけ」をそのまま2段の認可に落とした形。
@@ -953,8 +955,10 @@ function normalizeErrorText(text: string): string {
 
 **追跡の規則**: キーは `(kind, 伏せた detail を normalizeErrorText で寄せたもの)` で、プロジェクトをまたいで共有する(別のプロジェクトの同じエラーは
 伏せて寄せたあと同じ文字列になり、1 時間に 1 回に数える)。寄せ方は下書きの指紋(4節)と同じなので、間引きの粒度と下書きのまとまり方が揃う。
-報告の `errorText` は寄せる前の伏せた文のまま。初めて現れたら報告し、続いている間は throttle に従う。`lock-contention` と `timeout` は同じプロジェクトで
+報告の `errorText` は寄せる前の伏せた文のまま。初めて現れたら報告し、続いている間は throttle に従う。決定的な種類(`schema-mismatch` だけ)以外は同じプロジェクトで
 3 回続けて(`errors` に出て)から初めて報告し、閾値に届く前は throttle に聞かない(聞くと 3 回目が間引かれる)。
+(この PR の時点で 3 回続けて見るのは `lock-contention` と `timeout` だけで、数えるのはキーごとだった。`unknown` と `bd-not-found` にも広げ、数えを kind ごとの連続にも
+広げたのは bdboard-f2ob。下の「見直し(bdboard-f2ob)」。)
 `refreshed` に入っているプロジェクトに、前に続いていたキーが今回の `errors` に無ければ解消として「3 回続けて」の数だけを戻す(throttle の
 1 時間の記録は残す。次の逸脱表の 11)。`refreshed` に入っていないプロジェクトの状態は、`errors` に出たキーの更新以外では変えない
 (一部だけのリフレッシュで消えない)。`removed` のプロジェクトと、一覧に無くなったプロジェクト(一度もキャッシュされないまま探索から消えたものは
@@ -978,7 +982,65 @@ function normalizeErrorText(text: string): string {
 | 12 | 既知の限界 | (1) 下書きの `occurredProjects` には、1 時間に 1 プロジェクトしか載らない(キーをプロジェクトで共有するため、同じ文の 2 つ目以降のプロジェクトは報告されない)。(2) 「3 回続けて」は、間に別の種類の失敗や `reused` の結果を挟んでも続けて数える(数えるのは同じプロジェクトの同じキーが `errors` に出た回数と、`refreshed` に入っていて `errors` に無かったときの解消だけ) |
 | 13 | パスの探し方 | 名前と同じ変種(NFC・NFD とそれぞれの URL のパーセント表記。`file:///work/my%20proj`)を探し、**直前の文字は見ない**(公開本文の置き換えと同じ)。`-C/work/app` のような区切りの無いフラグや、実体パスの前置き(`/System/Volumes/Data/work/app` → `/System/Volumes/Data<project-root>`)の中でも伏せる。`/srv/work/app` も `/srv<project-root>` になる(伏せすぎる側) |
 
-**この PR ではやらないこと**: `refreshProjects` との配線、下書きサービスの呼び出し、環境変数 `BDBOARD_SELF_ERROR_DRAFTS` による停止(U6)、
+**見直し(bdboard-f2ob): 3 回続けて見る種類を `unknown` にも広げた(6.2 の設計からのずれ)**
+
+6.2 は 3 回続けて見る種類を `lock-contention` と `timeout` だけにし、ほかの種類は 1 回目で報告した。2026-10-06、#915 のデプロイ直後に、別プロジェクトの
+Dolt サーバーにつながらない失敗(`dolt server unreachable at 127.0.0.1:<port>: … connect: connection refused`)が 1 回だけ起き、1 回で下書きになった
+(その後の更新では再発せず、発生は 1 回のまま。bdboard の不具合ではなく、サーバー起動直後の一時的な失敗)。`classifyBdError` はこの文をどの種類にも当てず
+`unknown` を返し、`unknown` は閾値 1 だったためである。
+
+**直し方は分類器を増やすことではない**。出力の形を見る分類器にパターンを足すと、環境の失敗の形は開いた集合なので、次の形で同じ誤報が出る(bdboard-xw00 の教訓)。
+そこで「続いたかどうか」という構造で判定する: 閾値 1 のまま残すのは決定的な種類だけにし、それ以外(`unknown` を含む)は 6.2 の `lock-contention` と同じく連続 3 回にした。
+実装は `REFRESH_ERROR_IMMEDIATE_KINDS`(即時の一覧)に無い kind を 3 回とする向き(以前は 3 回の一覧に無い kind が 1 回)。そのため、型に無い文字列や今後足す種類も、
+一覧に入れるまでは続いたことを見る。
+
+| kind | 閾値 | 理由(`BdErrorKind` と `classify-bd-error.ts` を読んで決めた) |
+|---|---|---|
+| `schema-mismatch` | 1 | bd の出力(JSON・日付・各欄・読み飛ばした行)が期待の形でない。同じ出力は何度読んでも同じ形でない |
+| `not-a-beads-project` | 3(**新**。最初は 1 にしていたが、レビューで 3 に直した) | `classifyBdError` は、出力に `beads directory` の部分文字列があるだけでこの種類にする。bd 1.2.1 の `failed to stat .beads directory: %w`、警告の `beads directory not set; credential encryption unavailable`、`workspace gate: empty beads directory` が当たる。`bd init` の最中なども一時的になりうるので、決定的とは言い切れない |
+| `lock-contention` | 3 | 排他の待ちで、負荷が引けば直る(6.2 のまま) |
+| `timeout` | 3 | 負荷で時間切れ。次の更新で通ることが多い(6.2 のまま) |
+| `bd-not-found` | 3(**新**) | 本当に bd が無いときは決定的だが、`classifyBdError` は exitCode -1(シグナルでの終了や spawn の E2BIG など、起動したあとに起きたことも -1 に潰れる)もこの種類にする。`brew upgrade` で `/opt/homebrew/bin/bd` の symlink が張り替わる間は、一瞬 ENOENT にもなる。決定的とは言い切れないので、続いたことを見る |
+| `unknown` | 3(**新**) | どの種類にも当たらなかった残り。形の開いた集合で、起動直後の Dolt サーバーに繋がらない失敗のような一時的なものが混ざる |
+| 上に無い kind(型に無い文字列) | 3(**新**) | 即時の一覧に入れるまでは続いたことを見る |
+
+即時に残るのは `schema-mismatch` だけ。**未確認の懸念**: bd が stdout にお知らせを出したときの `empty stdout` / `invalid JSON in stdout` もこの種類になる。それが一時的なものなら、この種類も 3 回の側に回す。
+
+迷うなら待つ側に倒した: 決定的な失敗を 3 回待つ費用は下書きが遅れることだけ(文が更新ごとにずれる失敗も、下の kind ごとの連続で 3 回目に報告される)。
+一時的な失敗を 1 回で報告する費用は、利用者が見送る下書きが残ること(見送りは 1 件ずつの手作業)。
+
+**連続の数え方**:
+- 数えは 2 つある。(1) (プロジェクト, キー) ごと: キーは `(kind, 伏せた文を normalizeErrorText で寄せたもの)` なので、ポートや時刻の数字だけが違う同じ失敗は同じキーになる
+  (`127.0.0.1:60995` と `127.0.0.1:61292` は同じ)。(2) (プロジェクト, kind) ごと(bdboard-f2ob のレビューで足した): 文が違っても、同じ kind の失敗が出た結果を続けて数える。
+  どちらも `observe` に渡された結果 1 回につき 1 回だけ進める(同じ結果に同じ kind の別の文が 2 つあっても 1 回)。
+- 即時でない種類を報告するのは、(1) が 3 回に届いたとき(以後 1 時間に 1 回)と、(2) が 3 回にちょうど届いたその結果(いま見えている文で 1 回)。
+  (2) が無いと、文の一部が実行ごとに変わり `normalizeErrorText` でも寄らない失敗(bd が Go の panic で落ちたときの `pc=0x…` はアドレス空間の配置のランダム化で毎回変わる。
+  Dolt の base32 のハッシュ `u2a5cfe0…` も寄らない)は、キーが毎回別になって 3 回に届かず、続いていても報告されない。(2) が 3 回に届いたあと、同じ連続の中で新しく出た文は
+  報告しない(文が毎回ずれる失敗で、更新ごとに下書きが増えないように)。その文が同じ形で 3 回続けば (1) で報告される。
+- 0 に戻るのは、そのプロジェクトが `refreshed` に入っていて、そのキー(または kind)が `errors` に無い結果(成功)のとき。`reused` だけの結果(そのプロジェクトを見なかった)は、
+  数えも戻しもしない。別の kind の失敗が挟まっても途切れない(6.2 の逸脱表 12 の(2)。失敗したプロジェクトは `refreshed` に入らないため)。別の kind どうしは 1 つの連続にしない。
+- 届くまでは throttle に聞かない(聞くと報告済みになり、3 回目が間引かれる)。成功で戻るのは数えだけで、throttle の記録は残る(6.2 の逸脱表 11)。
+- 受け入れのテスト: `refresh-error-tracker.test.ts`(1 回きり・2 回続き・3 回続き・成功を挟んだ数え直し・ポートが違っても同じ数え・文が毎回ずれる panic の 3 回目に 1 件)と、
+  本物の下書きサービスを使う `wire-self-error-reporter-acceptance.test.ts`(1 回だけの connection refused は下書きにならず、成功を挟むと数え直し、3 回続くと 1 件になる)。
+
+**3 回続くのは実時間でどれくらいか**: 数えるのは更新の結果の数で、時間ではない。更新が走るのは、起動時の初回、定期(`BDBOARD_REFRESH_INTERVAL_MS`、既定 300000 = 5 分。全プロジェクトを強制)、
+監視しているどれかのプロジェクトのファイルの変化(300ms のまとめ待ち。全プロジェクトを強制なしで見て、bd を叩き直すのはフィンガープリントがキャッシュと違うもの —
+内容が変わったもの、一度もキャッシュされていないもの、前の成功のあとに変わって失敗し続けているもの)、画面の手動更新(全プロジェクトを強制)、bdboard からの書き込みのあとの
+そのプロジェクトだけの強制更新。失敗し続けているプロジェクトは、ほかのプロジェクトのファイルが変わるたびに叩き直されることがある。
+
+| 状況 | 最初の失敗から 3 回目まで |
+|---|---|
+| 定期の更新だけ(既定の 5 分) | 約 10 分(5 分おきの 3 回目 = 2 つ先の更新)。起動直後なら、初回 + 5 分後 + 10 分後 |
+| ファイルの変化や手動の更新が間に入る | もっと早い。変化のたびに数が進むので、数分で 3 回に届くこともある |
+
+3 回は**時間の下限ではない**(6.2 の設計は連続の回数だけで見て、時刻は throttle の 1 時間にだけ使う)。数秒の短い停止でも、更新が立て続けに走れば 3 回に届きうる。
+時間の下限(最初の失敗から N 分たつまで報告しない)を足すと、tracker が最初の時刻を持つ変更になり、`lock-contention` と `timeout` の扱いも変わるので、この変更ではやらなかった(申し送り)。
+文の一部が更新のたびに変わり、`normalizeErrorText` でも寄らない失敗は、kind ごとの連続で 3 回目に 1 回報告し、その連続が続く間は新しい文を報告しない
+(以前は更新のたびに別のキーとして報告され、下書きが更新ごとに増えた)。
+
+**やらなかったこと**: 既存の下書き(常時稼働サーバーのデータにある、今回の connection refused の 1 件)は消さない・書き換えない(利用者が見送る)。
+
+**6.2 の PR ではやらないこと**: `refreshProjects` との配線、下書きサービスの呼び出し、環境変数 `BDBOARD_SELF_ERROR_DRAFTS` による停止(U6)、
 `LocalOnlyKeys` を全プロジェクトの名前・根・接頭辞に広げること(U13、4y8q.4)。後続は 4y8q.6.3。
 (配線・下書きサービスの呼び出し・U6 は次の「本体エラーの取り込み」(4y8q.6.3)で行った。U13 は 4y8q.4 のまま。)
 
@@ -1010,7 +1072,7 @@ function normalizeErrorText(text: string): string {
 | 画面のエラー | 予約(語彙は 4y8q.6.5 が決め、この表に足す) | 4y8q.6.5 |
 
 **間引きと「二重に間引かない」**: 間引くのは 1 つの出どころごとに 1 回だけ。`observeRefresh` は 6.2 の tracker(キーは `(kind, 伏せた detail を寄せたもの)`、1 時間に 1 回、
-`lock-contention` と `timeout` は 3 回続けて)が選んだ報告を、reporter が**もう一度伏せも間引きもせず**そのまま送る(tracker が通した報告を reporter の間引きが落とすと、
+決定的な種類(`schema-mismatch` だけ)以外は 3 回続けて。bdboard-f2ob で広げた)が選んだ報告を、reporter が**もう一度伏せも間引きもせず**そのまま送る(tracker が通した報告を reporter の間引きが落とすと、
 その 1 時間は報告が消える)。`report()`(リフレッシュ以外の呼び出し。4y8q.6.4 以降)は自分で伏せ、`selfErrorKey(source, 伏せた文)` を同じ throttle に聞く(tracker のキーとは
 `kind` と `source` で名前の空間が分かれるので衝突しない)。throttle は 1 つのサーバーで 1 個を共有する(500 キーの LRU)。
 
@@ -1909,6 +1971,74 @@ reader、メンテナ環境の判定)。一覧の組み立て・写しの保存�
 | 9 | 同時に 1 本 | `poll` の実行中に `poll` を呼ぶと、新しく始めずその実行の結果を返す。写しの読み → 書き → 一覧の差し替えと `resnapshot` は同じ排他で 1 本ずつ流す(読んだ写しを古いまま上書きし合い、取り直した写しを `poll` の印の書き込みが潰すのを防ぐ。テストで順序を固定している) |
 | 10 | `resnapshot(number)` | **直近の一覧にある現在の内容**で写しを取り直し(`needsRejudge` を下ろす、`snapshotAt` を更新)、一覧の要約も更新する。GitHub は読み直さない: 判定に渡した内容とカードに見せた内容を同じにするため。直前の内容を取りたいときは、呼び出し側(4y8q.10)が先に `poll` する。一覧に無い番号は `not-listed`、保存の失敗は `storage-failed`(どちらも投げない)。HTTP には出さない |
 | 11 | 保存層 | `<基点>/external-issues/<number>.json`(基点は `resolveDataDirBase`)。ディレクトリは作るとき 0700、ファイルは 0600(umask 任せにしない)。同じディレクトリの `<number>.json.<hex>.tmp` に書いて rename。`number` は `^[1-9][0-9]{0,9}$` だけで、外れた値は投げる(読み取りの失敗ではなくプログラムの誤り)。読むファイル名も同じ形に限り、一時ファイルや迷い込んだファイルは読まない。置き場を環境変数で差し替える口は作っていない(配線は 4y8q.9.4)。**権限の 0600/0700 は POSIX だけで意味がある**(Windows の Node はモードのビットを無視する。テストは Windows では飛ばす)。クラッシュで残った一時ファイルの掃除はしない(下書きの保存層と同じ) |
+
+### 実装との差分(4y8q.9.4、定期の確認・読み取り API・gh の呼び出し回数の上限)
+
+4y8q.9.4 は、9.3 のサービスをメンテナ環境だけで定期的に動かし、結果を読む API を出す配線。画面は 4y8q.9.5、判定は 4y8q.10。
+ここに無い点は設計どおり。
+
+| ファイル | 中身 |
+|---|---|
+| `src/domain/external-issue-poll-policy.ts` | 頻度の定数と、間隔の丸め `resolveExternalIssuePollIntervalMs`・延ばし方 `nextExternalIssuePollDelayMs`(IO なし) |
+| `src/application/issue-report/external-issue-scheduler.ts` | 1 本ずつ置くタイマー(`start` / `stop`) |
+| `src/application/issue-report/call-budget.ts` | gh の呼び出しの枠 `createSlidingWindowBudget`(1 時間の窓に 12 回) |
+| `src/application/issue-report/min-gap-gate.ts` | 手動 refresh の間隔 `createMinGapGate`(60 秒) |
+| `src/infrastructure/gh/budgeted-command-runner.ts` | 枠を通らないと gh を起動しない `createBudgetedCommandRunner` |
+| `src/bootstrap/wire-external-issues.ts` | メンテナ環境の判定・ポートの組み立て・タイマーの開始。`wire-issue-reports.ts` がルートに載せ、`wire-shutdown.ts` が止める |
+| `src/interface/http/external-issue-routes.ts` / `external-issue-dto.ts` | 上の 2 本の API と、応答の形(欄を 1 つずつ写す) |
+
+#### 確認の頻度
+
+| 項目 | 内容 |
+|---|---|
+| 動くのはメンテナ環境だけ | `<repoRoot>/.beads` がある(`isMaintainerEnvironment`)ときだけ。そうでなければ、タイマー・写しの置き場・gh・bd のどれも作らない。`GET` は `enabled: false` の固定の形、`POST refresh` は 404(`external-issues-disabled`)。`commandRunner` が渡されない(テスト)ときも無効 |
+| 最初の確認 | 起動の 60 秒後 |
+| 通常の間隔 | `BDBOARD_EXTERNAL_ISSUES_INTERVAL_MS`(既定 900000 = 15 分)。5 分(300000)未満は 5 分に**切り上げる**。数値でない値・空は既定。**上限 24 時間は設計に無かったが足した**(Node のタイマーは約 24.8 日を超える値だと直ちに発火してしまうため) |
+| 失敗したとき | `rate-limited` と `failed` のときだけ、前の間隔の 2 倍に延ばす(通常の間隔の 2 倍、4 倍、…)。上限は 1 時間(通常の間隔がそれより長ければ、通常のまま)。成功するか、それ以外の種類の失敗(`gh-missing`・`gh-unauthenticated`・`bd-failed`・`storage-failed`・`unexpected`)では通常の間隔に戻る |
+| タイマーの扱い | 確認が終わってから次を 1 本だけ置く(遅い確認が重ならない)。`unref` する(これだけでプロセスを生かさない)。終了時は `wire-shutdown` が止める。確認が失敗してもログには種類(`kind`)だけを出す(`detail` には gh の stderr の一部が入りうる) |
+
+#### gh は `gh api --method GET` だけ(U7)
+
+読み取りは 9.2 の `createGhCliExternalIssueSource` が `gh api --method GET --hostname github.com repos/xiaotiantakumi/bdboard/issues?...` で行う。gh が無い・未ログイン・rate limit
+でも、認証無しの REST・fetch・curl には**落ちない**(失敗の種類として一覧の `error` に出るだけ)。GitHub への書き込みは無い。bd は `--readonly` の読み取りだけ。対象のリポジトリ(`xiaotiantakumi/bdboard`)は環境変数で差し替えられない。gh と bd のパスは既存の `BDBOARD_GH_PATH` / `BDBOARD_BD_PATH` を使う。
+
+#### 「gh の呼び出しは 1 時間に 12 回まで」の数え方と保証
+
+**数え方**: gh を起動する(`CommandRunner.run` を呼ぶ)たびに 1 回。1 ページ = 1 回で、1 回の確認は最大 3 ページ(`EXTERNAL_ISSUE_GH_MAX_PAGES`、100 件 x 3 = 300 件)なので 1 回の確認が最大 3 回。bd の呼び出しは数えない(gh ではない)。数えるのはこの機能(届いた issue の確認)の gh だけで、PR の状態の読み取りや worktree の片付けなど他の機能の gh は別に動く。また数えるのは gh の起動で、HTTP の要求ではない(gh がリダイレクトを追えば 1 回の起動で要求が 2 回になりうる)。
+
+| 経路 | 1 時間の最大 |
+|---|---|
+| 定期の確認だけ(既定 15 分)| 4 確認 x 3 ページ = 12 回。ちょうど上限 |
+| 定期の確認だけ(最短の 5 分)| 12 確認 x 3 ページ = 36 回。**上限を超える** |
+| 手動 refresh(1 分に 1 回まで)| 60 確認 x 3 ページ = 180 回。**上限を超える** |
+
+つまり確認の頻度を決めるだけでは守れない(最短の間隔・手動 refresh・ページ送りの組み合わせで超える)。そこで**回数の枠そのものを関所にした**:
+
+- gh を起動する道は、`createBudgetedCommandRunner` を通る 1 つだけ(`wire-external-issues.ts` が枠を 1 つ作り、gh のソースにだけ渡す)。定期の確認・手動 refresh・ページ送りのどれも同じ枠を使う。
+- 枠は「直近 1 時間(3,600,000 ms)に受け付けた起動が 12 回まで」のスライディングウィンドウ。時計は単調時計(`performance.now()`。壁時計が戻されても早く空かない)。
+- 枠が尽きていると、gh を**起動せず**、失敗の結果を返す。サービスはそれを `failed`(`error.detail` は `gh call limit reached: at most 12 gh calls per hour (local limit); try again later`)として扱い、一覧は直近の成功のまま。確認の途中(2 ページ目など)で尽きたら、途中までの結果は返さず失敗にする(9.2 の「1 ページでも読めなければ failed」と同じ)。定期の確認は `failed` なので間隔が延びる。
+- **保証**: 枠が受け付けた起動の時刻を並べたとき、連続する 13 回の間は必ず 1 時間以上開いている。したがって、どの 1 時間の窓にも 12 回を超えて入らない。
+- テストで固定している: `call-budget.test.ts`(乱数 5 万手で、どの 1 時間の窓も 12 回以内)、`wire-external-issues.test.ts`(12 回目まで起動し、13 回目は起動せず `failed`、1 時間後に再開。1 回の確認の 3 ページを 3 回と数える)、`external-issues-gh-calls-per-hour.test.ts`(仮想の時計で 3 時間: 最短間隔 + 毎分の refresh + 3 ページ、既定の間隔 + 3 ページ、毎分の refresh + 1 ページ、GET を 1000 回。枠を外すと 216 回・64 回起動して落ちる)。
+
+**限界**(設計との差):
+
+- 枠はメモリ上にあり、保証はプロセスごと。サーバーを再起動すると空に戻るので、再起動をまたぐ 1 時間には「12 回 x その間に動いたプロセスの数」まで入りうる(定期の確認だけなら再起動 1 回につき最初の確認の最大 3 回が増えるだけだが、手動 refresh を続ければ再起動のたびに 12 回まで使える)。常時稼働のサーバーはマージのたびに作り直すので、マージが続く時間帯はこの差が出る。同じ checkout で別のプロセス(e2e のサーバーなど)が動けば、そちらも別の枠を持つ。認証済みの gh の rate limit(1 時間 5000 回)には遠いので、永続化はしなかった。
+- 枠が尽きたことは `rate-limited` ではなく `failed` として出る(`rate-limited` は GitHub 側の制限を指す種類として残す)。`detail` で手元の上限と分かる。
+
+#### 読み取り API の形
+
+`GET /api/issue-reports/external` は `{ enabled, state, fetchedAt, error, truncated, skippedLines, issues[] }`。`issues[]` の各要素は
+`number, title, body, author, authorAssociation, url, updatedAt, titleTruncated, bodyTruncated, titleLength, bodyLength, checks, snapshotAt, needsRejudge, updatedAtChanged`
+(欄を 1 つずつ写す。9.3 の一覧の内部の欄や写しの入れ子は出さない)。9.3 の `snapshot` の入れ子は**平らにした**(`snapshotAt` / `needsRejudge` / `updatedAtChanged` が直下。写しの `updatedAt` は出さない)。題名・本文は第三者の文章で、JSON のデータとしてだけ返す(画面側は文字列として出す)。
+
+- `GET` は一覧を返すだけで確認を始めない(読むたびに gh を呼ばない。1000 回読んでも gh は 0 回)。
+- `POST refresh` は、ローカル直アクセスの確認(トンネルのヘッダー・ローカルでない送り元・Host・CSRF)→ 無効なら 404 → 間隔(`createMinGapGate`、60 秒)の順。断られた要求は間隔を使わない。間隔の中の 2 回目は **429**(`refresh-rate-limited`、`Retry-After` と `retryAfterSeconds`)。確認が失敗しても HTTP は **200** で、本文の `state: 'error'` と `error` に出る(HTTP の失敗は「受け付けなかった」だけにする)。定期の確認が走っている最中の refresh は新しい確認を始めず、その確認の結果を返す(それでも 60 秒の間隔は使う)。
+- **`needsRejudge` の意味は 9.3 のまま**(題名か本文が写しと違うとき。`updatedAt` だけの変化では立たない)。API はそれを変えず、そのまま返す。**既知の穴(bdboard-g2ti、この PR の範囲外)**: 使えない写しを作り直したとき、`needsRejudge` が黙って false に戻る。API の側から区別する手段は無い。
+- 応答の大きさ: 件数は gh の 3 ページ(300 件)で先に頭打ちになる(写しの上限 500 件より小さい)。本文は切った後で 20,000 文字なので、300 件 x 20,000 文字で、UTF-8 と JSON のエスケープ次第では数十 MB になりうる。`GET` は読むたびに一覧を JSON に組み直す。今の規模では遠いが、画面(9.5)が使うときに、本文を一覧から外す・ページ分け・一覧が変わらない間は組んだ JSON を使い回す(ETag)のどれかを検討する。
+
+#### main.ts の変更
+
+`src/main.ts` は 2 行だけ(`wireIssueReports` に `commandRunner` を渡す、`wireShutdown` に `externalIssues` を渡す)。配線の本体は `wire-external-issues.ts`(max-lines の 200 行に収めるため。並行の 4y8q.6.4 も `main.ts` / `mount-routes.ts` を触るので、差を小さくした)。
 
 ### 2体のエージェント(4y8q.10)
 
