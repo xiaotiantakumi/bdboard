@@ -18,7 +18,7 @@
  * 生きたままのオブジェクトが数 MB になって GC が生き残りをコピーし、種類ごとに「配列の複製・並べ替え・まとめ直し」で
  * 大きな配列を何本も作る。小さい入力ではこの GC や大きな確保が入らないので、大きい入力の時間だけが線形より速く伸びる
  * (「大 / 小」が 10 を超え、Windows の CI で 25 を超えた)。そこで範囲は `RangeList` (開始と終了を並べた `Int32Array`) に
- * 入れ、並べ替えもまとめ直しもしない。
+ * 入れ、並べ替えもまとめ直しもしない。最後の種類である生の URL は範囲を積まず、件数だけを数える (bdboard-4367)。
  */
 
 export interface LinkCheck {
@@ -186,17 +186,35 @@ function matchesOutside(text: string, pattern: RegExp, covered: readonly RangeLi
   return kept;
 }
 
+/**
+ * すでに数えた範囲の外に始まる一致を、範囲を作らず件数だけ数える。`pattern` には `g` フラグが要る (無いと `exec` は
+ * lastIndex を見ずに最初の一致を返し続け、ループが止まらない。`matchAll` はこの誤りを TypeError で止めていた)。
+ */
+function countMatchesOutside(text: string, pattern: RegExp, covered: readonly RangeList[]): number {
+  if (!pattern.global) throw new TypeError('countMatchesOutside needs a RegExp with the g flag');
+  // RAW_URL は共有の正規表現。前の呼び出しが途中で投げた場合に備えて 0 から始め、null で終わると lastIndex が 0 に戻るので
+  // 次の呼び出しに位置を残さない。
+  pattern.lastIndex = 0;
+  let count = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    if (!isCoveredByAny(covered, match.index)) count += 1;
+    if (match[0].length === 0) pattern.lastIndex += 1;
+  }
+  return count;
+}
+
 export function countLinks(text: string): LinkCheck {
   const inline = findInlineLinks(text);
   // 後ろの種類は、前の種類の範囲の中で始まるものを数えない。種類ごとの並びを別々に見る (1 本にまとめ直さない)。
   const definitions = matchesOutside(text, REFERENCE_DEFINITION, [inline.covered]);
   const autolinks = matchesOutside(text, AUTOLINK, [inline.covered, definitions]);
-  const rawUrls = matchesOutside(text, RAW_URL, [inline.covered, definitions, autolinks]);
+  const rawUrls = countMatchesOutside(text, RAW_URL, [inline.covered, definitions, autolinks]);
   return {
-    total: inline.count + autolinks.count + definitions.count + rawUrls.count,
+    total: inline.count + autolinks.count + definitions.count + rawUrls,
     markdownLinks: inline.count,
     autolinks: autolinks.count,
     referenceDefinitions: definitions.count,
-    rawUrls: rawUrls.count,
+    rawUrls,
   };
 }

@@ -225,6 +225,9 @@ describe('runMachineChecks: linear time on hostile content', () => {
     ({ name, build }) => {
       expectLinearTime(`external-issue-checks: ${name}`, (n) => {
         const { text, verify } = build(n);
+        // `repeat` や連結で組んだ入力は連結文字列 (rope) で、最初の走査が平坦化 (1〜2MB のコピー) を負担する。実運用の本文は
+        // 平坦な文字列で届くので、平坦化は計測に入る前に済ませる (bdboard-4367。計測するのは検査の増え方で、入力の組み立てではない)。
+        text.charCodeAt(0);
         return () => {
           verify(runMachineChecks({ title: '', body: text }).body);
         };
