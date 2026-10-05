@@ -193,8 +193,8 @@ const slotDir = () => path.join(tmp, 'verify-slots');
 const probeLog = () => path.join(tmp, 'probe.jsonl');
 const probes = () => (existsSync(probeLog()) ? readFileSync(probeLog(), 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : []);
 
-// 偽の verify (VERIFY_JS) の前に足す観測用の前置き。何回目の実行か・祖先の pid・状態ファイルの verifyPgid
-// (finish の onSpawn が書く。書かれるまで最大 5 秒待つ)・verify スロットの置き場にある holder・再実行に渡る env を
+// 偽の verify (VERIFY_JS) の前に足す観測用の前置き。何回目の実行か・祖先の pid・worktree lock の持ち主の行と
+// BDBOARD_WORKTREE_HELD_BY (bdboard-wea0.2)・verify スロットの置き場にある holder・再実行に渡る env を
 // PROBE_LOG に 1 行ずつ残し、ログには `probe attempt N` を出す。VERIFY_JS と名前がぶつからないようブロックで囲む。
 const PROBE = `{
   const fs = require('node:fs');
@@ -209,20 +209,18 @@ const PROBE = `{
     if (!pid) break;
     ancestors.push(pid);
   }
-  let pgid;
-  for (const deadline = Date.now() + 5000; ; ) {
-    try { pgid = JSON.parse(fs.readFileSync(process.env.PROBE_STATE_FILE, 'utf8')).verifyPgid; } catch { pgid = undefined; }
-    if (pgid === process.pid || pgid === ancestors[0] || Date.now() > deadline) break;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-  }
+  const gitDir = execFileSync('git', ['rev-parse', '--absolute-git-dir']).toString().trim();
+  let owner;
+  try { owner = JSON.parse(fs.readFileSync(path.join(gitDir, 'bdboard-worktree.lock'), 'utf8')); } catch { owner = null; }
+  const heldBy = process.env.BDBOARD_WORKTREE_HELD_BY || null;
   const dir = process.env.BDBOARD_VERIFY_SLOT_DIR;
   const holders = fs.existsSync(dir) ? fs.readdirSync(dir).map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'))) : [];
-  const record = { attempt, at: Date.now(), pid: process.pid, ancestors, pgid, holders, handoff: process.env.BDBOARD_VERIFY_SLOT_HANDOFF || null, queueSince: process.env.BDBOARD_VERIFY_QUEUE_SINCE || null };
+  const record = { attempt, at: Date.now(), pid: process.pid, ancestors, owner, heldBy, holders, handoff: process.env.BDBOARD_VERIFY_SLOT_HANDOFF || null, queueSince: process.env.BDBOARD_VERIFY_QUEUE_SINCE || null };
   fs.appendFileSync(process.env.PROBE_LOG, JSON.stringify(record) + '\\n');
   process.stdout.write('probe attempt ' + attempt + '\\n');
 }
 `;
-const probeEnv = () => ({ PROBE_LOG: probeLog(), PROBE_STATE_FILE: stateFile() });
+const probeEnv = () => ({ PROBE_LOG: probeLog() });
 
 function loadRetryEnv(exits, text = vitestLog(TIMEOUTS, '2 failed | 100 passed (102)')) {
   const output = path.join(tmp, 'fake-verify-output.txt');
@@ -281,6 +279,9 @@ describe.skipIf(process.platform === 'win32')('retryLoadInduced: a reservation t
       logPath,
       activeChild: { current: undefined, interrupted: false },
       ledger: false,
+      // このテストは予約の後始末だけを見る。worktree lock (契約の verify を走らせてよいか) は対象外なので、lock の無い
+      // 環境 (win32) と同じ「使えない lock」を渡す。lock の下で走ることは merge-pr finish の統合テストで見る。
+      hold: { lock: { supported: false } },
     };
     const exitHooks = process.listenerCount('exit');
     const result = await retryLoadInduced({ attempt, queue: { priority: 'landed' }, code: 1, by: 'test', firstQueuedAt: Date.now() - 60_000 });
@@ -365,7 +366,9 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(readdirSync(slotDir())).toEqual([]);
   });
 
-  it('records the new verify process group on the retry too (bdboard-ky9l onSpawn)', () => {
+  // bdboard-wea0.2: 再実行の verify も、1 回目と同じく merge-pr が worktree lock を SH で持ち、持ち主の行 (phase verify) と
+  // BDBOARD_WORKTREE_HELD_BY が merge-pr 自身を指している間に走る (契約の verify はそのときだけ走らせる)。
+  it('runs the retry under the same worktree lock: the owner line and BDBOARD_WORKTREE_HELD_BY name the finish on both runs', () => {
     setup({ branchFiles: { 'verify.cjs': PROBE + VERIFY_JS } });
     expect(run(['prepare', String(PR)]).status).toBe(0);
     expect(run(['gate', String(PR)]).status).toBe(0);
@@ -373,9 +376,10 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(run(['finish', String(PR)], { ...loadRetryEnv('1,0'), ...probeEnv() }).status).toBe(0);
     const [first, second] = probes();
     for (const probe of [first, second]) {
-      expect([probe.pid, probe.ancestors[0]]).toContain(probe.pgid); // そのときの verify のグループ (シェルか verify 自身)
+      expect(probe.owner).toMatchObject({ by: `merge-pr finish ${PR}`, phase: 'verify', pid: Number(probe.heldBy) });
+      expect(probe.ancestors).toContain(Number(probe.heldBy)); // 祖先の merge-pr
     }
-    expect(second.pgid).not.toBe(first.pgid);
+    expect(second.heldBy).toBe(first.heldBy);
   });
 
   it('records failure (main-broken) when the retry fails too', () => {

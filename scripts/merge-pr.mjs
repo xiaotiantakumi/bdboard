@@ -29,7 +29,6 @@ export { DEFAULT_LIGHT_CHECK, parseGitHubSlug, parseMergeConfig } from './merge-
 export { recordProblem } from './merge-pr/record.mjs';
 export { mergeCommand } from './merge-pr/gate.mjs';
 export { hasApprovedReview, isReleasePleasePull } from './merge-pr/prepare.mjs';
-export { VERIFYING_PID_MAX_AGE_MS } from './merge-pr/finish.mjs';
 
 const isMain =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;

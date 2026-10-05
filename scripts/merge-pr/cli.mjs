@@ -43,6 +43,9 @@ function assertMerger(phase) {
   }
 }
 
+// bdboard-wea0.2: worktree lock の持ち主の行の by ('merge-pr' で始まる。verify.mjs はそれで merge-pr の行と見分ける)。
+const owned = (ctx, what) => ({ ...ctx, lockBy: `merge-pr ${what}` });
+
 function parsePr(value) {
   if (!/^[1-9][0-9]*$/.test(value ?? '')) {
     throw new MergePrError(EXIT.USAGE, [`PR 番号が必要です (受領: ${value ?? '(なし)'})。npm run merge-pr -- --help`]);
@@ -67,25 +70,25 @@ export async function main(argv) {
     switch (phase) {
       case 'prepare': {
         const pr = parsePr(target);
-        return await prepare(openContext(), pr, { dryRun: flags.has('--dry-run') });
+        return await prepare(owned(openContext(), `prepare ${pr}`), pr, { dryRun: flags.has('--dry-run') });
       }
       case 'gate': {
         const pr = parsePr(target);
         assertMerger('gate');
-        return await gate(openContext(), pr, { repair: flags.has('--repair') });
+        return await gate(owned(openContext(), `gate ${pr}`), pr, { repair: flags.has('--repair') });
       }
       case 'finish': {
         const pr = parsePr(target);
         assertMerger('finish');
         // 枠を返すのが最優先。fetch に失敗しても手元の origin/main で続ける。
-        return await finish(openContext({ allowOffline: true }), pr);
+        return await finish(owned(openContext({ allowOffline: true }), `finish ${pr}`), pr);
       }
       case 'verify':
         if (!/^[0-9a-f]{7,40}$/.test(target ?? '')) {
           throw new MergePrError(EXIT.USAGE, [`SHA が必要です (受領: ${target ?? '(なし)'})`]);
         }
         assertMerger('verify');
-        return await verifyLanded(openContext(), target);
+        return await verifyLanded(owned(openContext(), `verify ${target}`), target);
       default:
         throw new MergePrError(EXIT.USAGE, [`unknown phase: ${phase}。npm run merge-pr -- --help`]);
     }

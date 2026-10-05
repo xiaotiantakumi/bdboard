@@ -95,7 +95,9 @@ function unsupportedLock(lockPath, reason) {
 // held: 今持っているモード, converted: 'EX->SH' などの変換 (変換でなければ null) } を返す。
 export function openWorktreeLock(options) {
   const lockPath = options.path;
-  if ((options.platform || process.platform) === 'win32') {
+  const platform = options.platform || process.platform;
+  const keepsSharedOnRefusedUpgrade = platform === 'darwin';
+  if (platform === 'win32') {
     return unsupportedLock(lockPath, 'win32 has no flock (worktree lock is POSIX only)');
   }
   const spawnSync = options.spawnSync || nodeSpawnSync;
@@ -132,6 +134,12 @@ export function openWorktreeLock(options) {
       for (let attempt = 0; attempt < MAX_REOPEN; attempt += 1) {
         const outcome = run(OP[target] | OP.NB);
         if (outcome !== 'ok') {
+          // bdboard-wea0.2 (#876 レビュー 4): XNU は拒否された SH→EX|NB の後も SH を残す (実測)。UN すると自分で隙間を
+          // 作るので、SH|NB で持っていることを確かめ直して SH のままにする (残っていなければ取り直し、取れなければ下へ)。
+          // Linux は変換の前に元の lock を外すので、何も持っていない状態に揃える (E4)。
+          if (keepsSharedOnRefusedUpgrade && mode === 'SH' && target === 'EX' && outcome === 'busy' && run(OP.SH | OP.NB) === 'ok') {
+            return { ok: false, outcome, held: 'SH', converted };
+          }
           if (mode !== null) {
             run(OP.UN); // 変換の拒否: 元のモードが残るかは OS 次第なので、何も持っていない状態に揃える。
             mode = null;

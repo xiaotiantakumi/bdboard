@@ -8,6 +8,10 @@ import { postLandedStatus } from './github.mjs';
 import { say } from './state.mjs';
 import { SLOT_WAIT_TIMEOUT_EXIT_CODE } from '../verify-slot.mjs';
 import { verifyEnv, watchForAbandon } from './verify-queue.mjs';
+import { contractVerifyBlocker, lockFds } from './worktree-hold.mjs';
+
+// bdboard-wea0.2: 契約の verify を走らせなかった (worktree lock を SH で持っていない) ときの印。終了コードではない。
+export const CONTRACT_NOT_RUN = 'not-run';
 
 export function tail(file, lines) {
   try {
@@ -33,7 +37,14 @@ export function postQuietly(ctx, sha, state, description) {
 }
 
 /** 契約の verify を 1 回走らせて終了コードを返す (実行中は pending を定期更新、abandonWhen を監視)。 */
-export async function runContractVerify({ ctx, root, sha, command = ctx.config.verify, logPath, activeChild, ledger, queue, running, onSpawn }) {
+export async function runContractVerify({ ctx, root, sha, command = ctx.config.verify, logPath, activeChild, ledger, queue, running, hold }) {
+  // bdboard-wea0.1 #872 再レビュー (b): verify.mjs の拒否 (exit 1) は赤い verify と見分けられない。lock を SH で持ち、
+  // 持ち主の行が自分の verify で、BDBOARD_WORKTREE_HELD_BY に自分の pid を渡せるときだけ走らせる (verify.mjs は共有する)。
+  const blocker = contractVerifyBlocker(hold);
+  if (blocker !== null) {
+    say(`${command} を走らせません: ${blocker}。結果は記録しません。`);
+    return CONTRACT_NOT_RUN;
+  }
   say(`${command} を ${sha.slice(0, 8)} で実行します (ログ: ${logPath})`);
   const fd = openSync(logPath, 'w');
   const stopWatch = watchForAbandon({ activeChild, abandonWhen: queue.abandonWhen });
@@ -41,15 +52,13 @@ export async function runContractVerify({ ctx, root, sha, command = ctx.config.v
     return await runShellToLog(command, {
       cwd: root,
       logFd: fd,
-      env: verifyEnv(queue),
+      env: verifyEnv({ ...queue, heldBy: process.pid }),
+      // lock の記述を fd 3 で渡す: merge-pr が SIGKILL されても、契約の verify のシェル (と npm) が生きている間は残る。
+      extraFds: lockFds(hold),
       heartbeatMs: ledger ? heartbeatMs(ctx) : 0,
       onHeartbeat: () => postQuietly(ctx, sha, 'pending', running),
       onSpawn: (child) => {
         activeChild.current = child;
-        // bdboard-ky9l: finish が verify のプロセスグループ (= child.pid) を状態ファイルへ残すための口。
-        if (onSpawn) {
-          onSpawn(child);
-        }
       },
     });
   } finally {
@@ -84,6 +93,9 @@ export async function stoppedEarly(activeChild, code, logPath) {
     // から戻る (中断シグナルと同じ理由: 先に作業ツリーを戻さない)。
     await activeChild.abandoned;
     return 'abandoned';
+  }
+  if (code === CONTRACT_NOT_RUN) {
+    return 'error'; // lock を持っていないので走らせなかった (理由は runContractVerify が出した)
   }
   if (code === SLOT_WAIT_TIMEOUT_EXIT_CODE) {
     // bdboard-wj9m: verify.mjs の予約済み終了コード = 何も走らせずに諦めた。verify スロットの待ちの打ち切りか、
