@@ -7,6 +7,7 @@ import { IssueDraftDismiss } from './IssueDraftDismiss';
 import { IssueDraftLocalSection } from './IssueDraftLocalSection';
 import { IssueDraftPublicSection } from './IssueDraftPublicSection';
 import { IssueDraftVersionSection } from './IssueDraftVersionSection';
+import { ERROR_TEXT_TRIMMED_NOTE } from './issueDraftErrors';
 import { draftKindLabel, draftStatusLabel } from './issueDraftText';
 
 export interface IssueDraftDetailProps {
@@ -18,9 +19,7 @@ export interface IssueDraftDetailProps {
 // 「投稿される内容は変わりません」は、公開本文を保存時に固定している今のサーバーが前提。公開本文を手元のエラー本文から
 // 作り直す処理が入ったら、この文言を見直す (レビュー NIT-10)。
 function savedNotice(response: IssueDraftEditResponseDto): string {
-  return response.errorTextTrimmed
-    ? '保存しました。保存の上限に収めるため、手元のエラー本文の末尾を詰めました (投稿される内容は変わりません)。'
-    : '保存しました。';
+  return response.errorTextTrimmed ? `保存しました。${ERROR_TEXT_TRIMMED_NOTE}` : '保存しました。';
 }
 
 /** 右側の中身: 1) 投稿される内容 2) 投稿されない手元の情報 3) 版の比較、と見送り。 */

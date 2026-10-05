@@ -251,6 +251,21 @@ summary.issue-draft-section-title {
   gap: 8px;
 }
 
+/* 「自動の文に戻す」(bdboard-494n)。欄の下に置き、確認が出るときは同じ行に折り返して並べる。 */
+.issue-draft-editor-reset,
+.issue-draft-editor-reset-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.issue-draft-editor-reset-text {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
 /* .issue-draft-local-list は <details> の直下なので、display は [open] の中だけで当てる
    (閉じていても中身が出る罠: harness pack の references/frontend-gotchas.md)。 */
 .issue-draft-local[open] > .issue-draft-local-list,
@@ -306,6 +321,11 @@ summary.issue-draft-section-title {
 
   .issue-reports-back {
     display: inline-flex;
+  }
+
+  /* 狭い幅 (スマホ) でも押せる大きさ (44px。確認の 2 つのボタンも同じ)。 */
+  .issue-draft-editor-reset-btn {
+    min-height: 44px;
   }
 
   .issue-draft-local[open] > .issue-draft-local-list,

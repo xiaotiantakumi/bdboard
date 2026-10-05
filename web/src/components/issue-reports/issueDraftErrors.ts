@@ -23,6 +23,8 @@ export const STORAGE_FULL_HELP =
 export const DRAFT_TOO_LARGE_HELP =
   '下書き全体が保存できる大きさを超えます (手元のエラー本文を詰めても収まりませんでした)。本文を短くしてから保存してください。';
 export const REQUEST_TOO_LARGE_HELP = '送った内容が大きすぎます。本文を短くしてから保存してください。';
+/** 保存の上限に収めるため手元のエラー本文の末尾を詰めたときの説明 (保存と、自動の文へ戻す操作の両方で出す)。 */
+export const ERROR_TEXT_TRIMMED_NOTE = '保存の上限に収めるため、手元のエラー本文の末尾を詰めました (投稿される内容は変わりません)。';
 
 function parsedBody(error: ApiError): Record<string, unknown> {
   if (error.body === undefined) return {};

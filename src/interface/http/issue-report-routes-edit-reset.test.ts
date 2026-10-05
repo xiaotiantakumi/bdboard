@@ -35,6 +35,26 @@ describe('PATCH draft reset', () => {
     expect((await patch(app, id, { title: '⠀' })).status).toBe(200);
   });
 
+  // 不具合報告の画面の「自動の文に戻す」ボタン (bdboard-494n) が頼る契約: #889 (pnvj) より前に '' と「直した」印で保存された欄も、
+  // 欄を空にした PATCH で自動の文へ戻る (サーバーは今の値を見ない)。画面はこのとき、保存済みの値が空でも差分に関係なく送る。
+  it('puts back a title and a body that were saved empty with the edited mark, one field at a time (bdboard-494n)', async () => {
+    const { app, storage, id } = await setup();
+    const automatic = storage.drafts.get(id);
+    if (automatic === undefined) throw new Error('draft was not created');
+    storage.drafts.set(id, { ...automatic, title: '', body: '', titleEditedByUser: true, bodyEditedByUser: true });
+    const bodyReset = await patch(app, id, { body: '' });
+    expect(bodyReset.status).toBe(200);
+    const afterBody = ((await bodyReset.json()) as { draft: { title: string; body: string; titleEditedByUser: boolean; bodyEditedByUser: boolean } }).draft;
+    expect(afterBody).toMatchObject({ title: '', titleEditedByUser: true, bodyEditedByUser: false, body: automatic.body });
+    expect(storage.drafts.get(id)).toMatchObject({ title: '', titleEditedByUser: true, bodyEditedByUser: false, body: automatic.body });
+    const titleReset = await patch(app, id, { title: '' });
+    expect(titleReset.status).toBe(200);
+    const afterTitle = ((await titleReset.json()) as { draft: { title: string; titleEditedByUser: boolean } }).draft;
+    expect(afterTitle).toMatchObject({ title: automatic.title, titleEditedByUser: false });
+    expect(afterTitle.title).not.toBe('');
+    expect(storage.drafts.get(id)).toMatchObject({ title: automatic.title, titleEditedByUser: false });
+  });
+
   it('resets a whitespace-only body and a whitespace-only title, including a lone newline', async () => {
     const { app, storage, id } = await setup();
     await patch(app, id, { title: 'custom', body: 'custom body' });
