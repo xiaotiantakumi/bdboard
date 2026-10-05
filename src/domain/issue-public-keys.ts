@@ -20,7 +20,7 @@
  *
  * RegExp オブジェクトは `g` フラグで lastIndex を持つので、使うたびに lastIndex = 0 に戻す (別の呼び出しの状態を引きずらない)。
  */
-import { MAX_FRAGMENT_KEY_CODE_POINTS, toFragmentKey, type FragmentKey } from './issue-public-fragments.js';
+import { fragmentKeyCollector, type FragmentKey } from './issue-public-fragments.js';
 import { codePointLength, normalizeInline } from './issue-public-text.js';
 import { nounVariants, prepareRoot } from './issue-public-key-variants.js';
 import type { LocalOnlyKeys, ProperNounCategory } from './issue-public-types.js';
@@ -102,21 +102,9 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
 
   const rootPatterns: RegExp[] = [];
   // 端の検査の鍵: たたんだ後で同じになる変種は 1 つにし、合計のコードポイント数に上限を置く (記憶量。5節「欄の端の断片」)。
-  const fragmentKeys: FragmentKey[] = [];
-  const seenFragmentKeys = new Set<string>();
-  let fragmentCodePoints = 0;
+  const fragments = fragmentKeyCollector();
   const addFragmentKey = (variant: string): void => {
-    const length = codePointLength(variant);
-    if (fragmentCodePoints + length > MAX_FRAGMENT_KEY_CODE_POINTS) {
-      truncated = true;
-      return;
-    }
-    const key = toFragmentKey(variant);
-    const id = key.forward.join('\u0000');
-    if (seenFragmentKeys.has(id)) return;
-    seenFragmentKeys.add(id);
-    fragmentCodePoints += length;
-    fragmentKeys.push(key);
+    if (!fragments.add(variant)) truncated = true;
   };
   const seenRoots = new Set<string>();
   for (const raw of keys.projectRoots) {
@@ -161,6 +149,7 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
       } else shortNouns.push(entry);
     }
   }
+  const fragmentKeys: readonly FragmentKey[] = fragments.keys;
   return { projectRoots: rootPatterns, replaceableNouns, detectableNouns, shortNouns, fragmentKeys, truncated };
 }
 

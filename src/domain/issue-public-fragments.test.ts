@@ -6,6 +6,7 @@ import {
   MIN_FRAGMENT_CODE_POINTS,
   NO_EDGES,
   findEdgeFragmentSpans,
+  fragmentKeyCollector,
   toFragmentKey,
 } from './issue-public-fragments.js';
 import { prepareKeys } from './issue-public-keys.js';
@@ -171,6 +172,15 @@ describe('root variants and the size of the keys', () => {
     expect(result.body).not.toContain('acme-co');
   });
 
+  it('checks duplicates before the cap: a variant that folds to an existing key never counts as over the cap', () => {
+    const collector = fragmentKeyCollector(12);
+    expect(collector.add('example-user')).toBe(true);
+    expect(collector.add('EXAMPLE-USER')).toBe(true);
+    expect(collector.keys).toHaveLength(1);
+    expect(collector.add('abcd')).toBe(false);
+    expect(collector.keys).toHaveLength(1);
+  });
+
   it('keeps one fragment key for variants that fold to the same text', () => {
     const one = prepareKeys({ projectRoots: [ROOT], properNouns: [] }).fragmentKeys.length;
     expect(prepareKeys({ projectRoots: [ROOT, ROOT.toUpperCase()], properNouns: [] }).fragmentKeys.length).toBe(one);
@@ -273,6 +283,13 @@ describe('tokens and emails cut at the end of a field', () => {
     const result = build('errorText', `line\nat ${glued}`);
     expect(result.body).toContain(FRAGMENT);
     expect(result.body).not.toMatch(/sk-proj|sk_live|eyJhbG/);
+  });
+
+  it('replaces what sticks out past a replaced fixed-length token (the overlap only drops candidates inside a reported match)', () => {
+    // npm_ の 36 文字ちょうどが AIza の候補の頭に食い込む。候補を捨てると、はみ出した yyyyyyyyyy が素通りする。
+    const result = build('errorText', `line\nat k npm_${'n'.repeat(30)}AIzaXY${'y'.repeat(10)}`);
+    expect(result.body).toContain('k <redacted-token>');
+    expect(result.body).not.toContain('y'.repeat(10));
   });
 
   it('leaves a cut token glued to a letter or digit (the whole token is only reported, and the cut one is too short)', () => {

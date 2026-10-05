@@ -68,10 +68,40 @@ function failureOf(pattern: readonly string[]): number[] {
   return failure;
 }
 
-export function toFragmentKey(value: string): FragmentKey {
-  const forward = Array.from(value, fold);
+function keyOf(forward: readonly string[]): FragmentKey {
   const backward = [...forward].reverse();
   return { forward, forwardFailure: failureOf(forward), backward, backwardFailure: failureOf(backward) };
+}
+
+export function toFragmentKey(value: string): FragmentKey {
+  return keyOf(Array.from(value, fold));
+}
+
+/** 端の検査の鍵を集める (prepareKeys)。たたんだ後で同じになる鍵は 1 つにし、合計のコードポイント数を上限までに抑える。 */
+export interface FragmentKeyCollector {
+  /** 鍵を足す。たたんだ後で同じ鍵がもうあれば何もしない。上限を超えるなら足さずに false を返す (呼び出し側が truncated を立てる)。 */
+  add(value: string): boolean;
+  readonly keys: readonly FragmentKey[];
+}
+
+export function fragmentKeyCollector(maxCodePoints: number = MAX_FRAGMENT_KEY_CODE_POINTS): FragmentKeyCollector {
+  const keys: FragmentKey[] = [];
+  const seen = new Set<string>();
+  let total = 0;
+  return {
+    keys,
+    add(value) {
+      const forward = Array.from(value, fold);
+      const id = forward.join('\u0000');
+      // 重複を先に見る: 上限の直前でも、すでにある鍵と同じ変種 (大小文字だけ違う根など) では truncated を立てない。
+      if (seen.has(id)) return true;
+      if (total + forward.length > maxCodePoints) return false;
+      seen.add(id);
+      total += forward.length;
+      keys.push(keyOf(forward));
+      return true;
+    },
+  };
 }
 
 /**

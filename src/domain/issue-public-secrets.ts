@@ -127,15 +127,19 @@ export const TOKEN_PREFIX_AT_END: Readonly<Record<string, { readonly source: str
 
 /**
  * 文字列の末尾で途中まで切れたトークンの範囲 (TOKEN_PREFIX_AT_END。形どうしで重なりうる。統合は呼び出し側)。
- * 最後の網の緩い形 (findTokenSpans の loose) に重なるものは返さない: 英数字に貼り付いて置き換えられず、最後の網が報告する完全な
- * トークン ("id1eyJ….eyJ….sig" の 2 つ目の "eyJ…"・"id1sk-…" の途中の "-sk-…") の一部だけを断片として消すと、残りが報告の
- * 長さの下限を割って黙って残るため。そのトークンは丸ごと残り、報告される。候補があるときだけ緩い形を探す (ふつうは候補が無い)。
+ * 報告だけの一致 (最後の網の緩い形のうち、置き換えの形と同じ範囲ではないもの) に重なるものは返さない: 英数字に貼り付いて置き換えられず、
+ * 最後の網が報告する完全なトークン ("id1eyJ….eyJ….sig" の 2 つ目の "eyJ…"・"id1sk-…" の途中の "-sk-…") の一部だけを断片として消すと、
+ * 残りが報告の長さの下限を割って黙って残るため。そのトークンは丸ごと残り、報告される。置き換わる完全な形に重なるものは返す
+ * (統合で完全な形と 1 つになり、後ろにはみ出した部分も消える: "npm_…AIzaXY" + "yyyy" の "yyyy")。候補があるときだけ探す。
  */
 export function findTokenPrefixesAtEnd(text: string): SecretSpan[] {
   const candidates = Object.values(TOKEN_PREFIX_AT_END).flatMap(({ source, flags }) => spansFor(text, source, `${flags}g`));
   if (candidates.length === 0) return candidates;
-  const reported = findTokenSpans(text, true);
-  return candidates.filter((span) => !reported.some((loose) => loose.start < span.end && span.start < loose.end));
+  const replaced = findTokenSpans(text);
+  const reportOnly = findTokenSpans(text, true).filter(
+    (loose) => !replaced.some((strict) => strict.start === loose.start && strict.end === loose.end),
+  );
+  return candidates.filter((span) => !reportOnly.some((loose) => loose.start < span.end && span.start < loose.end));
 }
 
 function spansFor(text: string, source: string, flags: string): SecretSpan[] {
