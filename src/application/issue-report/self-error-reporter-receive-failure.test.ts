@@ -300,6 +300,15 @@ describe('observeRefresh(): a failed save of the report that the kind run issued
     expect(receive).toHaveBeenCalledTimes(4);
   });
 
+  it('reaches receive again when the first three texts were the same, the save failed, and the text changed afterwards', async () => {
+    const receive = vi.fn().mockResolvedValueOnce(unsaved).mockResolvedValue({ ok: true });
+    const { reporter } = setup(receive);
+    const same = refresh('unknown', 'dolt server unreachable');
+    for (let round = 0; round < 3; round += 1) await reporter.observeRefresh(same, [project]);
+    for (let round = 0; round < WORDS.length; round += 1) await reporter.observeRefresh(shifting(round), [project]);
+    expect(receive.mock.calls.map(([call]) => (call as { readonly errorText: string }).errorText)).toEqual(['dolt server unreachable', 'database alpha is not reachable']);
+  });
+
   it('does not re-arm when a refresh that succeeded came in while the save was pending (c)', async () => {
     const gate = deferred<typeof unsaved>();
     const receive = vi.fn().mockReturnValueOnce(gate.promise).mockResolvedValue({ ok: true });

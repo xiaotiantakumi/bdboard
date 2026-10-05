@@ -119,6 +119,32 @@ describe('release(): a report whose save failed, issued by the kind run (shiftin
     expect(tracker.observe(shifting(3, 'alpha'), projects, at(4 * MINUTE))).toHaveLength(1);
   });
 
+  it('owes the kind when the third sighting of the run had the same text three times too, so a text that changed afterwards is reported', () => {
+    const tracker = createRefreshErrorTracker();
+    const same = result([err('alpha', 'unknown', 'dolt server unreachable')]);
+    tracker.observe(same, projects, at(0));
+    tracker.observe(same, projects, at(MINUTE));
+    releaseAll(tracker, tracker.observe(same, projects, at(2 * MINUTE)));
+    // 同じ文はもう出ない。連続は続いている: 次に見えた文で 1 回だけ報告する。
+    expect(tracker.observe(shifting(0), projects, at(3 * MINUTE))).toHaveLength(1);
+    expect(tracker.observe(shifting(1), projects, at(4 * MINUTE))).toEqual([]);
+  });
+
+  it('owes the kind again when the report that paid the debt was also due by its own key and its save failed', () => {
+    const tracker = createRefreshErrorTracker();
+    const a = result([err('alpha', 'unknown', 'database alpha is not reachable')]);
+    const b = result([err('alpha', 'unknown', 'database bravo is not reachable')]);
+    tracker.observe(a, projects, at(0));
+    tracker.observe(b, projects, at(MINUTE));
+    releaseAll(tracker, tracker.observe(a, projects, at(2 * MINUTE)));
+    // a は 3 回目 (同じキーでも due) で、借りも返す回。その保存も失敗した。
+    const paid = tracker.observe(a, projects, at(3 * MINUTE));
+    expect(paid).toHaveLength(1);
+    releaseAll(tracker, paid);
+    expect(tracker.observe(shifting(2), projects, at(4 * MINUTE))).toHaveLength(1);
+    expect(tracker.observe(shifting(3), projects, at(5 * MINUTE))).toEqual([]);
+  });
+
   it('drops the debt of a project that went away', () => {
     const tracker = createRefreshErrorTracker();
     tracker.observe(shifting(0), projects, at(0));
@@ -133,19 +159,24 @@ describe('release(): a report whose save failed, issued by the kind run (shiftin
 });
 
 describe('release(): reports that need no debt', () => {
-  it('forgets the key of a report issued by the same key three times in a row, and does not owe the kind (the same key is due again by itself)', () => {
+  it('forgets the key of a report issued by the same key three times in a row after the run was used, and does not owe the kind (the same key is due again by itself)', () => {
     const throttle = createSelfErrorThrottle();
     const tracker = createRefreshErrorTracker({ throttle });
+    // kind の連続の回は、ずれる文の報告で使った (保存できた)。
+    tracker.observe(shifting(0), projects, at(0));
+    tracker.observe(shifting(1), projects, at(MINUTE));
+    expect(tracker.observe(shifting(2), projects, at(2 * MINUTE))).toHaveLength(1);
     const same = result([err('alpha', 'unknown', 'dolt server unreachable')]);
-    tracker.observe(same, projects, at(0));
-    tracker.observe(same, projects, at(MINUTE));
-    const reports = tracker.observe(same, projects, at(2 * MINUTE));
+    tracker.observe(same, projects, at(3 * MINUTE));
+    tracker.observe(same, projects, at(4 * MINUTE));
+    const reports = tracker.observe(same, projects, at(5 * MINUTE));
     expect(reports).toHaveLength(1);
     releaseAll(tracker, reports);
-    expect(throttle.size()).toBe(0);
+    // ずれる文の報告 (保存できた) の記録だけが残る。
+    expect(throttle.size()).toBe(1);
     // 同じ文はもう一度報告する。別の文は、借りが無いので報告しない。
-    expect(tracker.observe(shifting(0), projects, at(3 * MINUTE))).toEqual([]);
-    expect(tracker.observe(same, projects, at(4 * MINUTE))).toHaveLength(1);
+    expect(tracker.observe(shifting(3), projects, at(6 * MINUTE))).toEqual([]);
+    expect(tracker.observe(same, projects, at(7 * MINUTE))).toHaveLength(1);
   });
 
   it('forgets the key of a deterministic kind and reports the same text again on the next refresh', () => {

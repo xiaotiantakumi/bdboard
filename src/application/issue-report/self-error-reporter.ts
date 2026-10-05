@@ -5,7 +5,7 @@
  * 失敗した報告が 1 時間 `throttled` (= 報告済み) に見えて、下書きが 1 件もできないままになるのを避ける。
  * - `report()`: 同じキーの保存が終わらないうちにもう一度来たら、保存を重ねず 1 回目の結果を待つ (成功なら `throttled`、失敗なら `skipped`)。
  * - `observeRefresh()`: 記録は tracker (6.2) が聞いた時点で取る。保存に失敗した報告は `tracker.release(report)` で返す (キーを忘れさせ、
- *   kind の連続だけで出した報告なら、次にその kind が見えた結果を再び due にする。レビュー F1)。
+ *   kind の連続の回に出した報告なら、次にその kind が見えた結果を再び due にする。レビュー F1)。
  */
 import type { DraftEnvInfo } from '../../domain/issue-draft.js';
 import { createRefreshErrorTracker, selfErrorKey } from '../../domain/refresh-error-tracker.js';
@@ -51,6 +51,11 @@ function safeCode(error: unknown): string {
 
 /** tracker の報告 (`bd-refresh:<kind>`) と `report()` の入力 (`api:…`) の両方を受ける内部の形。 */
 type ReceiveInput = Omit<SelfErrorReportInput, 'source'> & { readonly source: string };
+
+/** 保存中の同じキーに合流した呼び出しの結果。1 回目が保存できたら `throttled`、できなかったら `skipped`。reporter の外で作る (入力を保持しないため)。 */
+function joinedOutcome(inFlight: Promise<SelfErrorReportOutcome>): Promise<SelfErrorReportOutcome> {
+  return inFlight.then((outcome) => (outcome === 'recorded' ? 'throttled' : 'skipped'), () => 'skipped');
+}
 
 export function createSelfErrorReporter(deps: SelfErrorReporterDeps): SelfErrorReporter {
   const now = deps.now ?? (() => new Date());
@@ -106,8 +111,9 @@ export function createSelfErrorReporter(deps: SelfErrorReporterDeps): SelfErrorR
         // 同じキーの保存が終わっていない: 二重の下書きにしない。1 回目の結果を待つ (成功ならもう保存できている = throttled。失敗なら何も保存していない = skipped で、
         // この呼び出しは保存を重ねない。同時に来た全員が失敗のたびに再試行して、壊れた保存先を押しつぶさないため。再試行は次の report())。
         const inFlight = pendingByKey.get(key);
-        // await ではなく then で返す: 保存が終わらない間、合流した呼び出しが入力 (errorText は最大十数 KB) を抱えたこの関数の frame ごと待ち続けない。
-        if (inFlight !== undefined) return inFlight.then((outcome) => (outcome === 'recorded' ? 'throttled' : 'skipped'), () => 'skipped');
+        // await せず、外で作った then に渡す: 保存が終わらない間、合流した呼び出しが入力 (errorText は最大十数 KB) を抱えたまま待ち続けない
+        // (ここで書いた矢印関数は、この関数の変数を使わなくても同じスコープの入力ごと保持する。V8 で確かめた)。
+        if (inFlight !== undefined) return joinedOutcome(inFlight);
         // 記録は保存の前に取る (同じキーが同時に来ても、2 回目以降は上の待ちか、ここの false になる)。保存に失敗したら取り消す。
         if (!deps.throttle.shouldReport(key, now())) return 'throttled';
         // この async 関数は、最初の await (receive) より前に終わらないこと: 先に終わると finally の delete が下の set より先に走り、
