@@ -176,7 +176,8 @@ describe('acquireVerifySlot', () => {
   // 後に着いたことになり、走っている holder が 0 本に見えて待ち手が枠を取った (Windows の CI で 1 回、738ms で
   // resolve)。2 人目は走っている holder (acquiredAt あり) として、待ち手との前後を固定した joinedAt で書く。
   // 順序は「2 人目を書いてから 1 人目を消す」(同期で続けて呼ぶので poll は間に入れないが、走っている holder が
-  // 0 本の状態は作らない)。
+  // 0 本の状態は作らない)。現行形式では到着順は挙動に効かないので、2 ケースは本番コードでは同じ経路を通る。
+  // 'after' は 2 人目を旧形式で書く形に戻されたときに落ちる回帰の番人。
   it.each([
     ['before', -500],
     ['after', 100],
@@ -187,19 +188,25 @@ describe('acquireVerifySlot', () => {
       const first = spawnLiveProcess();
       const second = spawnLiveProcess();
       try {
+        // 入れ替え (400ms 後) が待ち手の最初の打ち切り (参加から WAIT_TIMEOUT_MS) より確実に前に来るよう、打ち切りは
+        // 入れ替えより十分長く取る。600ms だと、400ms の前後をまたいで 250ms ほどイベントループが止まる (負荷の高い runner)
+        // と、止まった後の poll が入れ替えより先に走って参加から数えた打ち切りで reject し、下の検査が落ちる。
+        const WAIT_TIMEOUT_MS = 1_500;
         const started = Date.now();
         writeRunningHolder(dir, first.pid, started - 1_000);
-        const pending = acquireVerifySlot(fastOptions(dir, { waitTimeoutMs: 600 }), noLog);
+        const pending = acquireVerifySlot(fastOptions(dir, { waitTimeoutMs: WAIT_TIMEOUT_MS }), noLog);
         let rejectedAt = null;
         pending.catch(() => {
           rejectedAt = Date.now();
         });
         await sleep(400);
         // 走っている holder が入れ替わった (列が進んだ) ので、待ちの打ち切りは数え直しになる。
+        const swappedAt = Date.now();
         writeRunningHolder(dir, second.pid, started + arrivalOffsetMs);
         fs.unlinkSync(holderFile(dir, first.pid));
         await expect(pending).rejects.toBeInstanceOf(SlotWaitTimeoutError);
-        expect(rejectedAt - started).toBeGreaterThanOrEqual(900);
+        // 打ち切りは入れ替えの後の poll から数え直される (入れ替えより前に打ち切られていれば負になる)。
+        expect(rejectedAt - swappedAt).toBeGreaterThanOrEqual(WAIT_TIMEOUT_MS);
       } finally {
         first.kill('SIGKILL');
         second.kill('SIGKILL');
