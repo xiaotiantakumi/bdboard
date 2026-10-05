@@ -1,4 +1,4 @@
-import type { DraftEnvInfo, DraftKind } from './issue-draft.js';
+import { isMassOccurrenceFingerprint, ISSUE_DRAFT_MAX_FOLDED_FINGERPRINTS, type DraftEnvInfo, type DraftKind, type IssueDraft } from './issue-draft.js';
 
 /**
  * 下書きの題名・本文の暫定版 (bdboard-4y8q.1)。
@@ -39,6 +39,35 @@ export interface ProvisionalTextInput {
 export interface DraftText {
   readonly title: string;
   readonly body: string;
+}
+
+/**
+ * 下書きの今の状態 (回数・時刻・版・名前) から自動で組む題名・本文。受け取りが「直していない欄」を作り直すとき
+ * (issue-draft-build.ts の finalize) と、PATCH で空にされた欄を自動の値へ戻すとき (issue-draft-edit.ts) の共通の入口 (bdboard-pnvj)。
+ * 名前は下書きが持っている source / catalogSlug を使う (指紋から切り出し直さない)。
+ */
+export function autoTextOf(draft: IssueDraft): DraftText {
+  if (isMassOccurrenceFingerprint(draft.fingerprint)) {
+    const folded = draft.localOnly.foldedFingerprints ?? [];
+    return buildMassOccurrenceText({
+      kind: draft.kind,
+      bucket: draft.fingerprint.slice(draft.fingerprint.lastIndexOf(':') + 1),
+      foldedCount: folded.length,
+      foldedCountCapped: folded.length >= ISSUE_DRAFT_MAX_FOLDED_FINGERPRINTS,
+      occurrenceCount: draft.occurrenceCount,
+      firstOccurredAt: draft.firstOccurredAt,
+      lastOccurredAt: draft.lastOccurredAt,
+    });
+  }
+  return buildProvisionalDraftText({
+    kind: draft.kind,
+    ...(draft.catalogSlug !== undefined ? { catalogSlug: draft.catalogSlug } : {}),
+    ...(draft.source !== undefined ? { source: draft.source } : {}),
+    versions: draft.localOnly.envInfo,
+    occurrenceCount: draft.occurrenceCount,
+    firstOccurredAt: draft.firstOccurredAt,
+    lastOccurredAt: draft.lastOccurredAt,
+  });
 }
 
 export function buildProvisionalDraftText(input: ProvisionalTextInput): DraftText {

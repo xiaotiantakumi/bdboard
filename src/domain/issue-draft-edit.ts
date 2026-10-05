@@ -5,6 +5,7 @@ import { draftJsonBytes } from './issue-draft-size.js';
 import { prepareKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
 import type { LocalOnlyKeys } from './issue-public-types.js';
+import { autoTextOf } from './issue-draft-text.js';
 
 /**
  * 下書きの題名・本文の編集 (bdboard-4y8q.3.1、docs/ISSUE-REPORTING.md 3節「閲覧・編集(PATCH)側のフィールド範囲」)。
@@ -104,9 +105,17 @@ export function scanEditedText(text: DraftTextToScan, keys: LocalOnlyKeys): Draf
   };
 }
 
+/** どの欄も直していない下書きに、古い疑いを残さない (「一度も直していない下書きには無い」の約束。直した印を戻した PATCH のあと)。 */
+function withoutSuspectedLeaks(draft: IssueDraft): IssueDraft {
+  const clean: { -readonly [K in keyof IssueDraft]: IssueDraft[K] } = { ...draft };
+  delete clean.suspectedLeaks;
+  delete clean.suspectedLeaksOmitted;
+  return clean;
+}
+
 /** 直した欄に検出をかけ直した疑いを持たせる (手元の鍵 = 発生したプロジェクトのパスと名前)。直した欄が無ければそのまま。 */
 export function withRescannedLeaks(draft: IssueDraft): IssueDraft {
-  if (!draft.titleEditedByUser && !draft.bodyEditedByUser) return draft;
+  if (!draft.titleEditedByUser && !draft.bodyEditedByUser) return withoutSuspectedLeaks(draft);
   const scan = scanEditedText(
     { title: draft.title, body: draft.body, titleEdited: draft.titleEditedByUser, bodyEdited: draft.bodyEditedByUser },
     localKeysOf(draft.occurredProjects),
@@ -154,12 +163,15 @@ export interface DraftEditOutcome {
  * 疑いは保存する下書きの鍵と食い違わない。疑いの分 (最大 200 件) も大きさに入れて削る。
  */
 export function applyDraftEdit(draft: IssueDraft, edit: DraftTextEdit): DraftEditOutcome {
+  const automatic = autoTextOf(draft);
+  const titleReset = edit.title !== undefined && edit.title.trim() === '';
+  const bodyReset = edit.body !== undefined && edit.body.trim() === '';
   const edited = withRescannedLeaks({
     ...draft,
-    title: edit.title ?? draft.title,
-    body: edit.body ?? draft.body,
-    titleEditedByUser: draft.titleEditedByUser || edit.title !== undefined,
-    bodyEditedByUser: draft.bodyEditedByUser || edit.body !== undefined,
+    title: titleReset ? automatic.title : edit.title ?? draft.title,
+    body: bodyReset ? automatic.body : edit.body ?? draft.body,
+    titleEditedByUser: titleReset ? false : draft.titleEditedByUser || edit.title !== undefined,
+    bodyEditedByUser: bodyReset ? false : draft.bodyEditedByUser || edit.body !== undefined,
   });
   // 編集の上限は 200KB から余白を引いた大きさ。受け取りで既にそれを超えている下書きは、今より大きくしなければ通す
   // (題名の一字の直しまで断らない。余白を割ったのは編集ではないので、編集が余白を食うことにはならない)。

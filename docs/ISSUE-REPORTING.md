@@ -35,7 +35,7 @@ interface IssueDraft {
   readonly source?: string;               // B/C のみ。同上
   title: string;                          // 公開題名(編集可。初期値は5節の組み立て関数の出力)
   body: string;                           // 公開本文(編集可、同上)
-  titleEditedByUser: boolean;             // true なら次の同一指紋マージ時も自動再生成しない
+  titleEditedByUser: boolean;             // true なら次の同一指紋マージ時も自動再生成しない(PATCH で題名を空にすると false に戻り自動の値になる。3節)
   bodyEditedByUser: boolean;
   readonly localOnly: LocalOnlyContext;   // 手元だけの生データ(公開本文には使わない。4/5節参照)
   readonly occurredProjects: readonly OccurredProject[]; // 発生したプロジェクトの一覧(手元限定)
@@ -196,7 +196,8 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 `firstOccurredAt`、`lastOccurredAt`、`status`、`dismissReason`、`issueNumber`、`issueUrl`、
 `sourceTicketRef`、`harnessVersionAtOccurrence`、`suspectedLeaks`・`suspectedLeaksOmitted`(下の「閲覧・編集(PATCH)側のフィールド範囲」。
 トンネル側は、返す(畳んだ)題名・本文にかけ直した値)、`draftSchemaVersion`、`restricted`。画像の一覧は別の API。
-応答の外側には `latestHarnessVersion`(この bdboard の `harness/packs/bdboard-harness/pack.json` の `version`。読めなければ `null`)も載せる
+応答の外側には `latestHarnessVersion`(この bdboard の `harness/packs/bdboard-harness/pack.json` の `version`。読めなければ `null`。
+全 pack を読む `listPacks` の結果を 30 秒使い回す: 版が変わるのは bdboard の更新のときで、再起動でも作り直され、ずれるのは版の比較の表示だけ。失敗はキャッシュしない。pack が一覧に無い結果(`undefined`)は失敗ではないので 30 秒キャッシュする。bdboard-pnvj)も載せる
 (秘密ではないので、ローカル直アクセスかどうかで分けない)。
 このうち**呼び出し側・利用者の入力がほぼそのまま入る**のは次で、手元の外へ出てよい形に入口で絞る:
 
@@ -302,6 +303,13 @@ head/tail が置き換え後の文章から作られるようになったら、�
 - `title`、`body`(公開前の編集用。どちらか一方だけでもよい)。`titleEditedByUser` / `bodyEditedByUser` は**送らせない**
   (送ると 400)。サーバーが、渡された欄の分だけ true にする(bdboard-4y8q.3.1 で、当初の「4 つを受け付ける」から改めた。
   利用者が印だけを倒して、直した文を次の受け取りの自動の作り直しで上書きさせる道を作らない)。
+  **空にすると自動生成へ戻る**(bdboard-pnvj): 前後の空白を落として空になる `title` / `body`(`""` や空白だけ)を渡すと、その欄の
+  「直した」印を false に戻し、題名・本文を今の下書きの状態(回数・時刻・版)から自動で組み直した値にする(`autoTextOf`。受け取りが
+  直していない欄を作り直すのと同じ文)。渡していない欄は値も印も変えない。以前は `body: ""` が空の本文を「直した」印つきで保存し、
+  自動生成へ戻す道が無かった(`title: ""` は 400)。両方の欄の印が false に戻ったら、保存してある置き換え漏れの疑い(`suspectedLeaks` /
+  `suspectedLeaksOmitted`)も下書きから取り除く(一度も直していない下書きには無い、という約束と揃える)。片方の印が残るときは、残った欄だけを
+  かけ直す。題名の「見える文字の無いものは 400」は、空白だけの題名が空として通ることを除いて変わらない(`"\u2800"` だけの題名は空ではなく 400)。
+  画面(不具合報告タブの「直す」)は、変えた欄だけを送るので、欄を空にして保存すればこの道を通る(入力欄の下に注意書きを出す)。
   **`title` と `body` の長さは入口(4y8q.3.1)で上限を掛ける**: `draft.json` は 200KB まで(4節「上限」)で、縮めるのは
   生ログ・一覧・メモなどだけ。題名・本文は縮める対象にしていないので、保存層は 200KB を超える下書きを
   黙って書かずに断る(`save` が投げる)。入口で止めないと、編集の保存が 500 になる。実装(`issue-report-edit-routes.ts`):
@@ -344,11 +352,18 @@ head/tail が置き換え後の文章から作られるようになったら、�
     (`displayedKeysOf`)。疑いの種類と位置は鍵との一致を伝えるので、パスを鍵に使うと、題名・本文に書いたパスの当て推量が
     合っているかをトンネルの読み手が確かめられてしまう(レビュー M-1)。そのためトンネルの疑いはローカル直より少ないことがあり、
     パスの疑いは出ない。`GET .../:id` のトンネル応答も同じ。
+  - **トンネル側の検出の結果は再利用する**(bdboard-pnvj): トンネル経由の `GET .../:id` と `PATCH` の応答は、返す題名・本文にその場で検出をかけ直す
+    ので、本文 × 鍵の数に比例して毎回かかる(実測: 検出は 3〜8ms、指紋の計算は 0.14ms。#882 のレビュー時の 565ms は、鍵ごとに正規表現を作っていた #886 より前の値)。`issue-report-leak-cache.ts` が、**下書き id ごと**に
+    入力の指紋(返す題名・本文・直した印・鍵の値の sha256)が同じあいだ結果を持ち回る。内容か鍵(発生したプロジェクトの表示名)が変われば指紋が変わるので、
+    再利用は編集と新しいプロジェクトの追加の後に古い結果を返さない。上限は 256 件(いちばん長く使われていないものから落とす)。ローカル直アクセスは保存した
+    疑いをそのまま返すので、検出もキャッシュも通らない。
 - **未処理件数**: `GET /api/issue-reports/pending-count` → `{ "pendingCount": N }`(タブのバッジとデイリーダイジェスト用。読み取りなので
   トンネルの Basic 認証で読める)。受け取りの索引(`issue-draft-index.ts`)に状態を持たせて数え、呼ぶたびに全件の `draft.json` を
   読まない(全件を読むのは 1 回だけ: 起動時の掃除の棚卸しが読んだ中身から作る。掃除が失敗した・一覧が欠けていたときだけ、
   起動後の最初の受け取りか件数の問い合わせが読む。bdboard-xvo2)。割り切り: 手で消した `pending` の下書きは、同じ指紋が
   届くか再起動するまで数に残る(期限と容量の掃除が消すのは終端の下書きだけなので、掃除は数を変えない)。
+  一覧の `pendingCount`(読んだ一覧から数える)と `pending-count`(索引から数える)の食い違い、欠けた一覧のあいだの全件の読み直し、
+  掃除が消した下書きが索引の `statusById` に残り続けること(単調増加)は、bdboard-vsuc で対応予定(bdboard-pnvj の残り)。
 - `dismissReason`(`/dismiss` 経由。`status` を直接 `'dismissed'` に書き換えさせず、
   専用エンドポイント `PATCH .../:id/dismiss` に限定する)
 

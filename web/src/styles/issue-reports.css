@@ -226,6 +226,12 @@ summary.issue-draft-section-title {
   color: var(--color-text-secondary);
 }
 
+.issue-draft-editor-hint {
+  margin: 0.25rem 0 0;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+}
+
 .issue-draft-editor-title,
 .issue-draft-editor-body,
 .issue-draft-dismiss-reason {

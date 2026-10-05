@@ -130,6 +130,7 @@ export function IssueDraftEditor({ draft, onCancel, onSaved, onInputChange }: Is
           report(title, event.target.value);
         }}
       />
+      <p className="issue-draft-editor-hint">題名や本文を空にして保存すると、自動で組んだ内容に戻ります。</p>
       {error !== null && (
         <p className="error-message" role="alert">
           {error}
