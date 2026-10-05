@@ -45,7 +45,7 @@ const FREE_TEXT_FIELDS: readonly { key: 'symptomRaw' | 'causeRaw' | 'preventionR
  */
 export function IssueDraftLocalSection({ draft, images }: IssueDraftLocalSectionProps) {
   const localOnly = draft.localOnly ?? {};
-  const projects = Array.isArray(draft.occurredProjects) ? draft.occurredProjects : [];
+  const projects = draft.occurredProjects ?? [];
   return (
     <details className="issue-draft-section issue-draft-local">
       <summary className="issue-draft-section-title">投稿されない手元の情報</summary>

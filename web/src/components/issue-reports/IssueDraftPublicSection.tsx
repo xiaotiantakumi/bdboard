@@ -66,7 +66,7 @@ function LeakWarnings({ draft }: { readonly draft: IssueDraftDetailDto }) {
 export function IssueDraftPublicSection({ draft, onSaved }: IssueDraftPublicSectionProps) {
   const [mode, setMode] = useState<PublicMode>('preview');
   const editable = draft.status === 'pending';
-  const leaks = Array.isArray(draft.suspectedLeaks) ? draft.suspectedLeaks : [];
+  const leaks = draft.suspectedLeaks ?? [];
   const rangesOf = (field: 'title' | 'body') => leaks.filter((leak) => leak.field === field);
   const modes: { mode: PublicMode; label: string }[] = [
     { mode: 'preview', label: 'プレビュー' },

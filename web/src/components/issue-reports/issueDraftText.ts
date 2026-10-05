@@ -74,7 +74,7 @@ export function describeLeaks(
   saved: { readonly title: string; readonly body: string },
   leaks: readonly IssueDraftSuspectedLeakDto[] | undefined,
 ): LeakItem[] {
-  if (!Array.isArray(leaks)) return [];
+  if (leaks === undefined) return [];
   return leaks.map((leak, index) => {
     const text = leak.field === 'title' ? saved.title : saved.body;
     const kind = typeof leak.kind === 'string' ? leak.kind : String(leak.kind);

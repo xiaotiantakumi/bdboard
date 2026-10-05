@@ -594,4 +594,22 @@ describe('buildDailyDigestMarkdown', () => {
     expect(markdown).toContain('## 完了 (1件)');
     expect(markdown).toContain('- [Project One] bdboard-closed closed only (P2)');
   });
+
+  it('adds the pending issue report count only when it is given (bdboard-4y8q.3.2)', () => {
+    const base = {
+      now: new Date('2026-08-15T09:30:00+09:00'),
+      windowDays: 1 as const,
+      activityEvents: [],
+      board: null,
+      pendingDecisions: [],
+      projectNames: new Map<string, string>(),
+      selectedProjectIds: [],
+    };
+    expect(buildDailyDigestMarkdown(base)).not.toContain('## 不具合報告');
+    expect(buildDailyDigestMarkdown({ ...base, issueReportPendingCount: 3 })).toMatch(/## 不具合報告\n- 未処理 3件$/);
+    expect(buildDailyDigestMarkdown({ ...base, issueReportPendingCount: 0 })).toMatch(/## 不具合報告\n- 未処理 0件$/);
+    expect(buildDailyDigestMarkdown({ ...base, issueReportPendingCount: null })).toMatch(
+      /## 不具合報告\n- 未処理の件数を読み込めませんでした$/,
+    );
+  });
 });

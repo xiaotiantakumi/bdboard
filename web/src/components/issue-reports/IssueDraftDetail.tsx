@@ -41,7 +41,7 @@ export function IssueDraftDetail({ draftId, onBack }: IssueDraftDetailProps) {
   }
 
   const { draft } = query.data;
-  const images = Array.isArray(query.data.images) ? query.data.images : [];
+  const images = query.data.images ?? [];
   return (
     <article className="issue-draft-detail" aria-label="下書きの中身">
       <button type="button" className="btn btn-small issue-reports-back" onClick={onBack}>

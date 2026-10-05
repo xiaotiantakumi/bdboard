@@ -24,7 +24,7 @@ export function IssueReportsPanel() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const listQuery = useQuery({ queryKey: ISSUE_REPORTS_LIST_QUERY_KEY, queryFn: fetchIssueDrafts });
 
-  const allDrafts = Array.isArray(listQuery.data?.drafts) ? listQuery.data.drafts : [];
+  const allDrafts = listQuery.data?.drafts ?? [];
   const drafts = allDrafts.filter((draft) => draft.status === status);
   const countOf = (target: IssueDraftStatus) => allDrafts.filter((draft) => draft.status === target).length;
 
