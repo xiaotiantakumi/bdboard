@@ -64,6 +64,17 @@ describe('createFsIssueDraftStorage', () => {
     expect(onDisk.id).toBe(ID_1);
   });
 
+  it('keeps the suspected leaks of an edited draft through a save and a read (bdboard-4y8q.3.1)', async () => {
+    const storage = createFsIssueDraftStorage(baseDir);
+    const draft = makeDraft(ID_1, {
+      bodyEditedByUser: true,
+      suspectedLeaks: [{ field: 'body', kind: 'home-path', start: 3, end: 20 }],
+      suspectedLeaksOmitted: 0,
+    });
+    await storage.save(draft);
+    expect(await storage.get(ID_1)).toEqual(draft);
+  });
+
   it('overwrites on a second save and leaves no temp file behind', async () => {
     const storage = createFsIssueDraftStorage(baseDir);
     await storage.save(makeDraft(ID_1));

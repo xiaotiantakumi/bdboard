@@ -161,10 +161,29 @@ export function addOccurrence(existing: IssueDraft, input: ReceiveDraftInput, no
   if (existing.status !== 'pending') return countOnly(existing);
   return finalize({
     ...existing,
+    ...latestEnvironment(existing, input),
     occurrenceCount: existing.occurrenceCount + 1,
     lastOccurredAt: nowIso,
     occurredProjects: upsertProject(existing.occurredProjects, input.project, nowIso),
   });
+}
+
+/**
+ * 手元の版 (envInfo と harnessVersionAtOccurrence) を最後の発生のものにする (#859 のレビュー m-6、bdboard-4y8q.3.1)。
+ * 画面の「版の比較」は、最新の harness pack の版と並べて「最新の版では直っているかもしれない」を出すので、比べるのは
+ * 最後に起きたときの版。最初の発生の版は残さない (残すなら欄を足す。docs/ISSUE-REPORTING.md 4節の状態遷移の表)。
+ * 版の分からない報告 (envInfo の無い報告) では前の値を残す。envInfo があってハーネスの版だけ無い報告では、
+ * harnessVersionAtOccurrence も無くす (envInfo.harnessVersion と食い違わせない)。
+ */
+function latestEnvironment(
+  existing: IssueDraft,
+  input: ReceiveDraftInput,
+): Pick<IssueDraft, 'localOnly' | 'harnessVersionAtOccurrence'> {
+  if (input.envInfo === undefined) {
+    return { localOnly: existing.localOnly, harnessVersionAtOccurrence: existing.harnessVersionAtOccurrence };
+  }
+  const envInfo = normalizeEnvInfo(input.envInfo);
+  return { localOnly: { ...existing.localOnly, envInfo }, harnessVersionAtOccurrence: envInfo.harnessVersion };
 }
 
 /**

@@ -47,7 +47,9 @@ interface IssueDraft {
   issueNumber?: number;                   // 投稿後の GitHub issue 番号
   issueUrl?: string;
   sourceTicketRef?: string;               // harness-upstream 取り込み元のチケットID(4y8q.7)。/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/ だけ受け取る
-  harnessVersionAtOccurrence?: string;    // A/Bのみ。注入先 .claude/bdboard-packs.json の version
+  harnessVersionAtOccurrence?: string;    // A/Bのみ。注入先 .claude/bdboard-packs.json の version(最後の発生のもの。4節 m-6)
+  suspectedLeaks?: DraftSuspectedLeak[];  // 直した欄の置き換え漏れの疑い {field,kind,start,end}(PATCH で更新。3節、4y8q.3.1)
+  suspectedLeaksOmitted?: number;         // 上限 200 件で落とした数
   readonly draftSchemaVersion: 1;         // draft.json 自体のフォーマット版(将来の移行用)
 }
 
@@ -132,7 +134,7 @@ bdboard-727y(添付画像の保存先バグ)は PR #782 で 2026-09-25 にマー
 | 経路 | メソッド/パス | 呼び出し元 | 必要な認可 |
 |---|---|---|---|
 | 受け取り | `POST /api/issue-reports/drafts` | 各プロジェクトに注入される報告スクリプト(注入先では `.claude/skills/bdboard-harness/scripts/report-issue.sh`、パック正本は `harness/packs/bdboard-harness/scripts/report-issue.sh`。4y8q.12)、bdboard 自身のエラー捕捉(4y8q.6) | **ローカル直アクセスのみ**(トンネル不可) |
-| 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss` | 不具合報告タブの UI | PATCH は通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル)。GET は `createWriteGuardMiddleware` の対象外(メソッドで素通しする)なので、ほかの読み取り API と同じく、トンネルではトンネルの認証(Basic 認証)を通れば読める(パスワードの強度は問わない)。**ただし `GET .../:id` だけは、全部を返すのはローカル直アクセスのみ**(下の「1 件の取得はトンネルでは絞る」) |
+| 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss`、`GET /api/issue-reports/pending-count` | 不具合報告タブの UI | PATCH は通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル)。GET は `createWriteGuardMiddleware` の対象外(メソッドで素通しする)なので、ほかの読み取り API と同じく、トンネルではトンネルの認証(Basic 認証)を通れば読める(パスワードの強度は問わない)。**ただし `GET .../:id` だけは、全部を返すのはローカル直アクセスのみ**(下の「1 件の取得はトンネルでは絞る」) |
 | 投稿 | `POST /api/issue-reports/drafts/:id/publish` | 不具合報告タブの投稿ボタン | **ローカル直アクセスのみ** |
 
 エピック決定 4「投稿はローカル直アクセスからだけ。トンネル経由では、見る・直す・見送るまで」
@@ -192,7 +194,10 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 `titleEditedByUser`、`bodyEditedByUser`、`localOnly.errorTextTruncated`、`localOnly.envInfo`(版)、
 `occurredProjects[]` の `name` / `firstSeenAt` / `lastSeenAt`(パス無し)、`occurrenceCount`、
 `firstOccurredAt`、`lastOccurredAt`、`status`、`dismissReason`、`issueNumber`、`issueUrl`、
-`sourceTicketRef`、`harnessVersionAtOccurrence`、`draftSchemaVersion`、`restricted`。画像の一覧は別の API。
+`sourceTicketRef`、`harnessVersionAtOccurrence`、`suspectedLeaks`・`suspectedLeaksOmitted`(下の「閲覧・編集(PATCH)側のフィールド範囲」。
+トンネル側は、返す(畳んだ)題名・本文にかけ直した値)、`draftSchemaVersion`、`restricted`。画像の一覧は別の API。
+応答の外側には `latestHarnessVersion`(この bdboard の `harness/packs/bdboard-harness/pack.json` の `version`。読めなければ `null`)も載せる
+(秘密ではないので、ローカル直アクセスかどうかで分けない)。
 このうち**呼び出し側・利用者の入力がほぼそのまま入る**のは次で、手元の外へ出てよい形に入口で絞る:
 
 | 欄 | 入口での絞り |
@@ -277,6 +282,7 @@ head/tail が置き換え後の文章から作られるようになったら、�
 一覧(`GET .../drafts`)の応答には、もともと本文も `localOnly` も載せない。載せるのは `id`・`kind`・
 `fingerprint`・`title`・`status`・回数・時刻・プロジェクト数・`dismissReason`・`issueNumber`・`issueUrl`・
 `sourceTicketRef` で、`fingerprint` と `title` に入る `source` / `catalogSlug` は上の表の絞りを通った値(さらに上の多層防御の畳み込みをかけて返す)。
+一覧の応答の外側には、読んだ一覧から数えた `pendingCount`(未処理の件数)も載せる(bdboard-4y8q.3.1)。
 
 未対応で残るもの: 画像(`GET .../images/:fileName`)はトンネルの Basic 認証だけで読める。スクリーンショットに
 秘密が写りうるという点で同じ種類の問題だが、画像の扱いは 4y8q.3 の画面設計と合わせて決める。
@@ -288,10 +294,34 @@ head/tail が置き換え後の文章から作られるようになったら、�
 よい」という意味ではない。`PATCH /api/issue-reports/drafts/:id` が受け付けるフィールドは
 次に限定し、それ以外のキーを含むリクエストは 400 で拒否する:
 
-- `title`、`body`、`titleEditedByUser`、`bodyEditedByUser`(いずれも公開前の編集用)。**`title` と `body` の
-  長さは入口(4y8q.3)で上限を掛ける**: `draft.json` は 200KB まで(4節「上限」)で、縮めるのは
+- `title`、`body`(公開前の編集用。どちらか一方だけでもよい)。`titleEditedByUser` / `bodyEditedByUser` は**送らせない**
+  (送ると 400)。サーバーが、渡された欄の分だけ true にする(bdboard-4y8q.3.1 で、当初の「4 つを受け付ける」から改めた。
+  利用者が印だけを倒して、直した文を次の受け取りの自動の作り直しで上書きさせる道を作らない)。
+  **`title` と `body` の長さは入口(4y8q.3.1)で上限を掛ける**: `draft.json` は 200KB まで(4節「上限」)で、縮めるのは
   生ログ・一覧・メモなどだけ。題名・本文は縮める対象にしていないので、保存層は 200KB を超える下書きを
-  黙って書かずに断る(`save` が投げる)。入口で止めないと、編集の保存が 500 になる
+  黙って書かずに断る(`save` が投げる)。入口で止めないと、編集の保存が 500 になる。実装(`issue-report-edit-routes.ts`):
+  - 題名は 1 行(見送りの理由と同じ整え方: ZWSP・BOM を落とし、ZWJ・ZWNJ は許し、改行・制御文字・不可視の書式文字と、
+    見える文字の無いものは 400。前後の空白を落とす)で **256 文字**まで、本文は **65536 文字**まで(どちらも GitHub の
+    issue の上限。UTF-16 のコード単位で数える)。超えたら **413** `{"error":"title or body is too long","code":"too-long",…}`。
+    本文の文字の種類は見ない(見えない文字の可視化は投稿前の確認画面の仕事。5節「プレビュー表示時の注意」)。
+  - リクエスト本文そのものは 512KiB まで(超えたら読む前に 413)。65536 文字の本文が JSON のエスケープで膨らんでも入る大きさ。
+  - 文字数の上限を守っても、制御文字の JSON エスケープ(1 文字 6 バイト)で `draft.json` が 200KB を超えうる。編集で大きく
+    なった分は、見送り・回数の追加と同じく `fitDraftToByteLimit` で手元の欄(生ログの末尾から)削り、削り切っても超えるときは
+    保存せずに **413** `{"error":"draft would exceed the size limit","code":"draft-too-large"}`(500 にしない)。
+  - `pending` 以外は **409** `{"error":"draft is not pending","status":…}`(見送りと同じ形)。合計容量の上限に当たれば 507。
+  - 直した欄(`titleEditedByUser` / `bodyEditedByUser` が true の欄)に、5節の置き換え漏れの検出(`detectSuspectedLeaks`)を
+    かけ直し、`suspectedLeaks`(`field`・`kind`・`start`・`end`。位置の順に最大 200 件)と `suspectedLeaksOmitted`
+    (上限で落とした件数)を下書きに保存して応答にも載せる。一致した文字列は保存しない(位置で切り出せる。`draft.json` を
+    大きくしない)。置き換えはしない(利用者の文を黙って書き換えない)。手元の鍵は発生したプロジェクトのパスと名前だけ
+    (ユーザー名・ホスト名・ブランチ名は受け取りに無い。5節「4y8q.2 の範囲外」)。印(`RedactionMark`)は無いので、
+    `<project>` のような印の文字列の中の一致も疑いに出る(過検出の側)。自動で組んだ(直していない)欄は調べない。
+    これは `buildPublicIssueBody` の配線ではない(検出だけ。5節の「どこにも配線してはいけない」は組み立ての側)。
+  - 応答は `{ draft }` で、`GET .../:id` と同じ形(ローカル直は全部、トンネルは `restricted: true` の許可リスト)。トンネル側の
+    `suspectedLeaks` は、保存した位置(畳む前の文字列の位置)ではなく、返す畳んだ題名・本文にかけ直した位置にする。
+- **未処理件数**: `GET /api/issue-reports/pending-count` → `{ "pendingCount": N }`(タブのバッジとデイリーダイジェスト用。読み取りなので
+  トンネルの Basic 認証で読める)。受け取りの索引(`issue-draft-index.ts`)に状態を持たせて数え、呼ぶたびに全件の `draft.json` を
+  読まない(起動後の最初の受け取りか件数の問い合わせで 1 回だけ読む)。割り切り: 手で消した `pending` の下書きは、同じ指紋が
+  届くか再起動するまで数に残る(期限と容量の掃除が消すのは終端の下書きだけなので、掃除は数を変えない)。
 - `dismissReason`(`/dismiss` 経由。`status` を直接 `'dismissed'` に書き換えさせず、
   専用エンドポイント `PATCH .../:id/dismiss` に限定する)
 
@@ -372,7 +402,7 @@ function normalizeErrorText(text: string): string {
 | 受信した指紋の状態 | 動作 |
 |---|---|
 | 既存の下書きなし | 新規作成、`status='pending'`、`occurrenceCount=1` |
-| `pending` の下書きあり | 新規作成しない。`occurrenceCount+=1`、`lastOccurredAt` 更新、`occurredProjects` に無ければ追加。`titleEditedByUser`/`bodyEditedByUser` が false なら5節の関数で `title`/`body` を再生成(件数・最終発生時刻の反映) |
+| `pending` の下書きあり | 新規作成しない。`occurrenceCount+=1`、`lastOccurredAt` 更新、`occurredProjects` に無ければ追加。手元の `envInfo` と `harnessVersionAtOccurrence` を**最後の発生のもの**に替える(m-6、下)。`titleEditedByUser`/`bodyEditedByUser` が false なら5節の関数で `title`/`body` を再生成(件数・最終発生時刻・版の反映) |
 | `dismissed` の下書きあり | 新規作成しない。`occurrenceCount+=1` のみ(エピック決定どおり) |
 | `posted` かつ issue が open(4y8q.5) | 新規作成しない。「その後 N 回起きた」を表示、issue へコメントを足すボタンを出す |
 | `posted` かつ issue が closed(4y8q.5) | 「再発(#N は閉じ済み)」として新規下書きを作る |
@@ -530,7 +560,9 @@ function normalizeErrorText(text: string): string {
 
 - `posted` の下書きも 30 日の最終更新で消える。4y8q.5 が「`posted` かつ issue が open のとき、その後の発生を表示する」を
   入れるとき、open の issue に結びついた `posted` を消してよいかを決め直す(`issueNumber` が消えると再発の紐づけが切れる)。
-- 一覧(`GET .../drafts`)の応答には `updatedAt` を足していない。画面(4y8q.3)が「あと何日で消える」を見せたくなったら足す。
+- 一覧(`GET .../drafts`)の応答には `updatedAt` を足していない。画面(4y8q.3)が「あと何日で消える」を見せたくなったら足す
+  (4y8q.3.1 でも足していない: 4y8q.3 の一覧の行は種類・題名・プロジェクト・回数・最後に起きた時刻で、消えるまでの日数は出さない。
+  `updatedAt` は `draft.json` の mtime で下書きの欄に無く、足すには保存層の一覧で stat が要る)。
 
 ### 実装との差分(bdboard-4y8q.1、PR #859)
 
@@ -543,7 +575,7 @@ function normalizeErrorText(text: string): string {
 |---|---|---|
 | 1 | 1時間20件の数え方 | **種別 A/B/C をまたいだ合計**で 1 時間(UTC の暦時間バケツ)に 20 件。設計の文面が種別ごとか合計か曖昧だったので、枠を小さく保つほうを選んだ。「大量発生」は種別 × 時間で 1 件ずつ、20 件には数えない。**注意**: 合計なので、ある 1 種別が 20 件を使い切ると、同じ時間の他の種別の新規指紋は、その種別の個別の下書きが 1 件も無くても「大量発生」に丸められる(1 種別がほかを飢えさせうる)。種別ごとの枠にするかは、実際に起きてから決める |
 | 2 | 題名・本文 | 公開してよい題名・本文を作る 4y8q.2 がまだ無いので**暫定の組み立て**: 種別・名前(source / catalogSlug)・回数・時刻・版数だけ。症状・原因・エラー文・プロジェクト名は入れない。4y8q.2 が入ったら `domain/issue-draft-build.ts` の `finalize` を差し替える |
-| 3 | 題名・本文の編集(`PATCH .../:id`) | 4y8q.3 に回した。画面 API はチケットどおり一覧・取得・見送りだけ。`titleEditedByUser` / `bodyEditedByUser` は保存形式と再生成の判定には入っている |
+| 3 | 題名・本文の編集(`PATCH .../:id`) | 4y8q.3 に回した。画面 API はチケットどおり一覧・取得・見送りだけ。`titleEditedByUser` / `bodyEditedByUser` は保存形式と再生成の判定には入っている。**bdboard-4y8q.3.1 で入れた**(3節「閲覧・編集(PATCH)側のフィールド範囲」) |
 | 4 | 画像の追加 | 受け取りの本文を 1 MiB に抑えるため、**1 枚ずつ別のエンドポイント**(`POST .../:id/images`) |
 | 5 | `normalizeErrorText` の順 | 時刻の置換を 16 進・行:列の置換より**先**に行う。得られるのは、小数秒ありの `…56.789Z` と無しの `…56Z` が同じ値になること(同じ書式どうしは、どちらの順でも数字が `<n>` になって揃う) |
 | 6 | 64KB の生エラー文 | **文字数**で数え(64Ki 文字)、バイトの 200KB を別に掛ける |
@@ -688,7 +720,12 @@ function normalizeErrorText(text: string): string {
 **この PR ではやらないこと**
 
 - 保存期間・ディスク総量の上限(m-4)。この PR では下書きと画像が増え続けた。bdboard-00qh で対応した(4節「保持期限と合計容量」)。
-- 手元の `envInfo` を、マージのたびに最新へ更新すること(m-6)。4y8q.3 で扱う。
+- 手元の `envInfo` を、マージのたびに最新へ更新すること(m-6)。4y8q.3 で扱う。**bdboard-4y8q.3.1 で入れた**: `pending` の下書きへ
+  まとめるとき、報告に `envInfo` があれば `envInfo` と `harnessVersionAtOccurrence` を最後の発生のものに替える(`addOccurrence`)。
+  `envInfo` の無い報告では前の値を残し、`envInfo` があってハーネスの版だけ無いときは `harnessVersionAtOccurrence` も無くす(二つの報告の
+  値を混ぜない)。**最初の発生の版は残さない**: 画面の「版の比較」は最新の pack の版と並べて「最新の版では直っているかもしれない」を
+  出すためのもので、比べる相手は最後に起きたときの版(最初の版と比べると、もう直った版での発生を古い版の発生と見誤る)。最初の版が
+  要るなら欄を足す(`firstEnvInfo` など)。見送り済み・投稿済み(回数だけ足す)と「大量発生」の下書きの版は替えない。
 
 ## 5. 公開本文の組み立てと置き換え(項目 e、bdboard-4y8q.2)
 

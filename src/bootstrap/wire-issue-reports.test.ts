@@ -70,6 +70,7 @@ describe('wireIssueReports: the start-up prune', () => {
       repoRoot: root,
       env: { BDBOARD_ISSUE_DRAFTS_DIR: draftsDir },
       writeAccess: {},
+      packRegistry: { listPacks: async () => [] },
       log: vi.fn(),
     });
 
@@ -81,5 +82,42 @@ describe('wireIssueReports: the start-up prune', () => {
       { timeout: 4000, interval: 25 }, // テストの既定の 5 秒より短く
     );
     expect(await exists(ID_OLD_OPEN)).toBe(true);
+  });
+
+  it('puts the version of the bdboard-harness pack this bdboard ships next to the draft (bdboard-4y8q.3.1)', async () => {
+    await seed(makeDraft(ID_OLD_OPEN, 'pending'), 0);
+    const pack = (name: string, version: string) => ({ name, version, description: '', hooks: [] });
+    const { issueReportsRouter } = wireIssueReports({
+      repoRoot: root,
+      env: { BDBOARD_ISSUE_DRAFTS_DIR: draftsDir },
+      writeAccess: {},
+      packRegistry: { listPacks: async () => [pack('other-pack', '9.9.9'), pack('bdboard-harness', '0.57.0')] },
+      log: vi.fn(),
+    });
+    const res = await issueReportsRouter.request(
+      `/api/issue-reports/drafts/${ID_OLD_OPEN}`,
+      { headers: { host: 'localhost:8787' } },
+      { incoming: { socket: { remoteAddress: '127.0.0.1', localPort: 8787 } } },
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { latestHarnessVersion: unknown }).latestHarnessVersion).toBe('0.57.0');
+  });
+
+  it('answers null for the latest version when the pack cannot be read, without failing the read', async () => {
+    await seed(makeDraft(ID_OLD_OPEN, 'pending'), 0);
+    const { issueReportsRouter } = wireIssueReports({
+      repoRoot: root,
+      env: { BDBOARD_ISSUE_DRAFTS_DIR: draftsDir },
+      writeAccess: {},
+      packRegistry: { listPacks: () => Promise.reject(new Error('EIO')) },
+      log: vi.fn(),
+    });
+    const res = await issueReportsRouter.request(
+      `/api/issue-reports/drafts/${ID_OLD_OPEN}`,
+      { headers: { host: 'localhost:8787' } },
+      { incoming: { socket: { remoteAddress: '127.0.0.1', localPort: 8787 } } },
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { latestHarnessVersion: unknown }).latestHarnessVersion).toBeNull();
   });
 });

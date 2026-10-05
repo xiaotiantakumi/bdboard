@@ -7,6 +7,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Hono } from 'hono';
 import { createIssueDraftService } from '../application/issue-report/issue-draft-service.js';
+import type { PackRegistryPort } from '../application/ports/pack-registry.js';
 import { createFsIssueDraftStorage } from '../infrastructure/fs/fs-issue-draft-storage.js';
 import { resolveIssueDraftsDir } from '../infrastructure/fs/resolve-issue-drafts-dir.js';
 import { createIssueReportRoutes } from '../interface/http/issue-report-routes.js';
@@ -16,8 +17,16 @@ export interface WireIssueReportsDeps {
   readonly repoRoot: string;
   readonly env: NodeJS.ProcessEnv;
   readonly writeAccess: WriteGuardDeps;
+  /** 最新の harness pack の版を読む (1 件の取得の「版の比較」、bdboard-4y8q.3.1)。 */
+  readonly packRegistry: Pick<PackRegistryPort, 'listPacks'>;
   readonly log?: (message: string) => void;
 }
+
+/**
+ * 版を比べる pack。注入先の .claude/bdboard-packs.json に記録される version (下書きの harnessVersionAtOccurrence)
+ * と、この bdboard の harness/packs/bdboard-harness/pack.json の version を並べる。
+ */
+const COMPARED_PACK_NAME = 'bdboard-harness';
 
 export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRouter: Hono } {
   const log = deps.log ?? console.log;
@@ -30,7 +39,12 @@ export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRout
     newId: () => `${Date.now()}-${randomBytes(8).toString('hex')}`,
   });
 
-  const issueReportsRouter = createIssueReportRoutes({ service, writeAccess: deps.writeAccess });
+  const issueReportsRouter = createIssueReportRoutes({
+    service,
+    writeAccess: deps.writeAccess,
+    latestHarnessVersion: async () =>
+      (await deps.packRegistry.listPacks()).find((pack) => pack.name === COMPARED_PACK_NAME)?.version,
+  });
 
   // 起動時の掃除 (bdboard-00qh): 見送り・投稿済みで 30 日を過ぎた下書きを画像ごと消す。待たない・失敗しても
   // 起動は止めない (service が警告だけ出して投げない)。開いている (pending) 下書きは消さない。

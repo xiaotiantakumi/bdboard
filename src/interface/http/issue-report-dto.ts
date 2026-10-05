@@ -1,6 +1,7 @@
 import type { StoredDraftImage } from '../../application/ports/issue-draft-storage.js';
 import type { IssueDraft, LocalOnlyContext, OccurredProject } from '../../domain/issue-draft.js';
 import { foldHomePaths, foldHomePathsInValues } from '../../domain/issue-draft-identifier.js';
+import { scanEditedText } from '../../domain/issue-draft-edit.js';
 
 /** 不具合報告の下書き API (bdboard-4y8q.1) の応答の形。 */
 
@@ -106,14 +107,16 @@ export type IssueDraftDetailDto =
  */
 export function toDetailDto(draft: IssueDraft, access: { readonly local: boolean }): IssueDraftDetailDto {
   if (access.local) return { ...draft, restricted: false };
+  const title = foldHomePaths(draft.title);
+  const body = foldHomePaths(draft.body);
   return {
     id: draft.id,
     kind: draft.kind,
     fingerprint: foldFingerprint(draft.fingerprint),
     ...(draft.catalogSlug !== undefined ? { catalogSlug: foldHomePaths(draft.catalogSlug) } : {}),
     ...(draft.source !== undefined ? { source: foldHomePaths(draft.source) } : {}),
-    title: foldHomePaths(draft.title),
-    body: foldHomePaths(draft.body),
+    title,
+    body,
     titleEditedByUser: draft.titleEditedByUser,
     bodyEditedByUser: draft.bodyEditedByUser,
     localOnly: {
@@ -136,9 +139,28 @@ export function toDetailDto(draft: IssueDraft, access: { readonly local: boolean
     ...(draft.harnessVersionAtOccurrence !== undefined
       ? { harnessVersionAtOccurrence: foldHomePaths(draft.harnessVersionAtOccurrence) }
       : {}),
+    ...restrictedLeaks(draft, title, body),
     draftSchemaVersion: draft.draftSchemaVersion,
     restricted: true,
   };
+}
+
+/**
+ * トンネル側の置き換え漏れの疑い (bdboard-4y8q.3.1)。保存してある位置は畳む前の題名・本文の位置で、畳んだ文字列とは
+ * ずれる (ホームのパスが "~/" に縮む)。そこで、返す (畳んだ) 題名・本文にかけ直す。位置は返す文字列の位置になり、
+ * 一致した部分も返す文字列の切り出しなので、題名・本文より多くは出ない。直していない下書き (保存に無い) には足さない。
+ */
+function restrictedLeaks(
+  draft: IssueDraft,
+  title: string,
+  body: string,
+): Pick<IssueDraft, 'suspectedLeaks' | 'suspectedLeaksOmitted'> {
+  if (draft.suspectedLeaks === undefined) return {};
+  const scan = scanEditedText(
+    { title, body, titleEdited: draft.titleEditedByUser, bodyEdited: draft.bodyEditedByUser },
+    draft.occurredProjects,
+  );
+  return { suspectedLeaks: scan.suspectedLeaks, suspectedLeaksOmitted: scan.omitted };
 }
 
 export function toImageDto(draftId: string, image: StoredDraftImage): IssueDraftImageDto {

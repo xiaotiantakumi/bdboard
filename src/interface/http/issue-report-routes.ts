@@ -22,6 +22,7 @@ import {
   extensionForMimeType,
 } from './attachment-validation.js';
 import { ISSUE_DRAFTS_PATH, toDetailDto, toImageDto, toSummaryDto } from './issue-report-dto.js';
+import { registerIssueDraftEditRoutes } from './issue-report-edit-routes.js';
 import { isLocalBasicAuthRequest } from './local-request.js';
 import { parseJsonBody } from './request-body.js';
 import {
@@ -41,7 +42,9 @@ import {
  *     認証 (Basic 認証) を通れば読める。
  *   - 1 件の取得 (GET drafts/:id): 全部を返すのはローカル直アクセスだけ。トンネル経由は
  *     生ログ・自由記述の生の文・絶対パスを除いた形 (`restricted: true`、toDetailDto)。
- *   - 見送り (PATCH dismiss): 通常の write-guard (ローカル直、または強パスワード + セッション)。
+ *   - 見送り (PATCH dismiss) と題名・本文の編集 (PATCH drafts/:id、issue-report-edit-routes.ts): 通常の write-guard
+ *     (ローカル直、または強パスワード + セッション)。
+ *   - 未処理件数 (GET pending-count、issue-report-edit-routes.ts): ほかの読み取り API と同じ。
  *
  * このルーターは何も外へ送らない。投稿 (bdboard-4y8q.4) は別の経路。
  */
@@ -135,8 +138,23 @@ const imageBodySchema = z.object({
 
 export interface IssueReportRoutesDeps {
   readonly service: IssueDraftService;
-  /** 見送り (PATCH) にだけ効く。省略時はローカル直アクセス限定 (fail-closed)。 */
+  /** 見送り・編集 (PATCH) にだけ効く。省略時はローカル直アクセス限定 (fail-closed)。 */
   readonly writeAccess?: WriteGuardDeps;
+  /**
+   * この bdboard が配る最新の harness pack (bdboard-harness) の版 (bdboard-4y8q.3.1)。1 件の取得の応答に
+   * `latestHarnessVersion` として載せ、画面が下書きの harnessVersionAtOccurrence と並べる。省略・読めないときは null。
+   */
+  readonly latestHarnessVersion?: () => Promise<string | undefined>;
+}
+
+/** 最新の harness pack の版。読めなくても 1 件の取得は落とさない (版の比較が出ないだけ)。 */
+async function readLatestHarnessVersion(deps: IssueReportRoutesDeps): Promise<string | null> {
+  if (deps.latestHarnessVersion === undefined) return null;
+  try {
+    return (await deps.latestHarnessVersion()) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function limitBody(maxSize: number) {
@@ -178,7 +196,9 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
 
   app.get(ISSUE_DRAFTS_PATH, async (c) => {
     const drafts = await service.list();
-    return c.json({ drafts: drafts.map(toSummaryDto) });
+    // 未処理件数は、読んだ一覧そのものから数える (画面の一覧と食い違わない)。軽い数え方は GET pending-count。
+    const pendingCount = drafts.filter((draft) => draft.status === 'pending').length;
+    return c.json({ drafts: drafts.map(toSummaryDto), pendingCount });
   });
 
   app.get(`${ISSUE_DRAFTS_PATH}/:id`, async (c) => {
@@ -192,6 +212,7 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
     return c.json({
       draft: toDetailDto(draft, { local }),
       images: images.map((image) => toImageDto(id, image)),
+      latestHarnessVersion: await readLatestHarnessVersion(deps),
     });
   });
 
@@ -206,6 +227,8 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
     if (result.reason === 'not-found') return c.json({ error: 'draft not found', id }, 404);
     return c.json({ error: 'draft is not pending', status: result.status }, 409);
   });
+
+  registerIssueDraftEditRoutes(app, { service });
 
   app.post(`${ISSUE_DRAFTS_PATH}/:id/images`, localOnlyGuard, limitBody(ATTACHMENT_BODY_MAX_BYTES), async (c) => {
     const id = c.req.param('id');
