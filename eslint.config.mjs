@@ -91,6 +91,28 @@ export default tseslint.config(
     rules: { '@typescript-eslint/no-floating-promises': 'off' },
   },
   {
+    // bdboard-6ux8: Vitest は beforeEach/beforeAll が返した関数を後始末として登録する
+    // (@vitest/runner の getBeforeHookCleanupCallback)。`beforeEach(() => mock.mockReset())`
+    // のように式の本体で書くと mock 自身が返り、各テストの後にその mock が引数無しで呼ばれる
+    // (mockRejectedValue を残すと本体は通ったのにテストが落ち、settle しない実装だと hook の
+    // タイムアウトまで止まる)。波括弧の本体なら何も返らない。afterEach/afterAll の戻り値は
+    // 無視されるので対象外。Vitest のテスト (*.test.ts/tsx) だけを対象にする。
+    // no-restricted-syntax はこのブロックだけが持つ。足すときは配列に追加すること
+    // (flat config は同じ rule を後のブロックが丸ごと置き換える)。
+    files: ['**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'CallExpression[callee.name=/^(beforeEach|beforeAll)$/] > ArrowFunctionExpression[expression=true]',
+          message:
+            'beforeEach/beforeAll の本体は波括弧で書く — 返した関数は Vitest が後始末として呼ぶ (bdboard-6ux8)',
+        },
+      ],
+    },
+  },
+  {
     // 型情報を要するルール (require-await 等) は scripts/**/*.mjs (disableTypeChecked =
     // parserOptions.project 無し) では rule 作成自体が例外を投げるため、型ありファイルだけに絞る。
     files: ['src/**/*.ts', 'web/src/**/*.{ts,tsx}'],

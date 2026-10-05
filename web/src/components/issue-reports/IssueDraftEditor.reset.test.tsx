@@ -12,7 +12,9 @@ const draft: IssueDraftDetailDto = {
   titleEditedByUser: true, bodyEditedByUser: true, localOnly: { errorTextTruncated: false, envInfo: {} }, occurredProjects: [], restricted: true,
 };
 describe('IssueDraftEditor reset hint', () => {
-  beforeEach(() => vi.mocked(patchIssueDraft).mockReset());
+  beforeEach(() => {
+    vi.mocked(patchIssueDraft).mockReset();
+  });
   it('shows the reset hint and sends an empty edited body', async () => {
     vi.mocked(patchIssueDraft).mockResolvedValue({ draft, errorTextTrimmed: false });
     render(<QueryClientProvider client={new QueryClient()}><IssueDraftEditor draft={draft} onCancel={vi.fn()} onSaved={vi.fn()} /></QueryClientProvider>);

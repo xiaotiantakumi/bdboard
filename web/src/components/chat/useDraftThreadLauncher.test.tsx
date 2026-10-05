@@ -69,7 +69,9 @@ function useLauncherProbe(projectId: string) {
 }
 
 describe('useDraftThreadLauncher', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+  });
 
   it('carries a same-batch pending edit into the new draft on an agent switch (T9: handleAgentChange reads prev)', () => {
     const { result } = renderHook(() => useLauncherProbe('proj-a'));

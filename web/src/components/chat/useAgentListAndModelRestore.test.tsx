@@ -26,7 +26,9 @@ const agent: ChatAgentDto = {
 };
 
 describe('useAgentListAndModelRestore', () => {
-  beforeEach(() => vi.mocked(fetchChatAgents).mockResolvedValue([]));
+  beforeEach(() => {
+    vi.mocked(fetchChatAgents).mockResolvedValue([]);
+  });
 
   it('loads agents and chooses a default only when the current ID is empty', async () => {
     vi.mocked(fetchChatAgents).mockResolvedValue([agent]);

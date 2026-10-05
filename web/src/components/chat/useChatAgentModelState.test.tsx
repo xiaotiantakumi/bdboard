@@ -19,7 +19,9 @@ const agent: ChatAgentDto = {
 };
 
 describe('useChatAgentModelState', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+  });
 
   it('starts empty and computes selectable and effective model values', () => {
     const { result } = renderHook(() =>
