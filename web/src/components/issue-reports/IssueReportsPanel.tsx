@@ -143,6 +143,7 @@ export function IssueReportsPanel({ reportProject, hostname = window.location.ho
         {composing ? (
           <IssueDraftManualForm
             project={reportProject}
+            localAccess={localAccess}
             onCancel={() => setComposing(false)}
             onCreated={(draft) => {
               // 作った下書きは必ず未処理。見送りなどの一覧を見ていても、未処理に切り替えて選ぶ。

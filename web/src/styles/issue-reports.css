@@ -258,6 +258,78 @@ summary.issue-draft-section-title {
   gap: 8px;
 }
 
+/* 「新しく報告」の画像の欄 (bdboard-4y8q.6.9)。貼り付け・ドロップ・「画像を選ぶ」で入れ、縮小表示を並べる。 */
+.issue-draft-image-picker {
+  min-width: 0;
+  margin: 8px 0 0;
+  padding: 8px 12px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.issue-draft-image-drop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 12px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+}
+
+/* ファイルをドラッグして領域に入っている間だけ強調する。 */
+.issue-draft-image-drop.is-dragging {
+  border-color: var(--color-accent);
+  background: var(--color-bg-grouped);
+}
+
+.issue-draft-image-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.issue-draft-image-list li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 160px;
+  min-width: 0;
+}
+
+.issue-draft-image-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-grouped);
+}
+
+/* 貼り付けの名前は image.png ばかりでなく、長いファイル名もあるので、折り返す。 */
+.issue-draft-image-name {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* .error-message は余白の大きい中央寄せなので、欄の中では左寄せの短い余白に戻す。 */
+.error-message.issue-draft-image-problems,
+.error-message.issue-draft-image-alert {
+  margin: 8px 0;
+  padding: 0;
+  text-align: left;
+}
+
+.issue-draft-image-problem-list,
+.issue-draft-image-failures {
+  margin: 4px 0;
+  padding-left: 1.2em;
+}
+
 /* 「自動の文に戻す」(bdboard-494n)。欄の下に置き、確認が出るときは同じ行に折り返して並べる。 */
 .issue-draft-editor-reset,
 .issue-draft-editor-reset-confirm {
@@ -332,6 +404,11 @@ summary.issue-draft-section-title {
 
   /* 狭い幅 (スマホ) でも押せる大きさ (44px。確認の 2 つのボタンも同じ)。 */
   .issue-draft-editor-reset-btn {
+    min-height: 44px;
+  }
+
+  /* 画像の欄の「画像を選ぶ」「外す」も同じ大きさ (bdboard-4y8q.6.9)。上の規則は 494n のテストが形を見ているので、別の規則にしてある。 */
+  .issue-draft-image-picker .btn {
     min-height: 44px;
   }
 

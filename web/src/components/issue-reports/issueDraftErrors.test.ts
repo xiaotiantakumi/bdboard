@@ -3,6 +3,7 @@ import { ApiError } from '../../api';
 import { CROSS_SITE_HELP, NETWORK_FETCH_HELP, RATE_LIMITED_HELP, TUNNEL_WRITE_HELP } from '../../writeAccessMessage';
 import {
   DRAFT_CHANGED_ELSEWHERE_HELP,
+  DRAFT_NOT_FOUND_HELP,
   DRAFT_TOO_LARGE_HELP,
   MANUAL_BAD_REQUEST_HELP,
   MANUAL_ENDPOINT_MISSING_HELP,
@@ -14,6 +15,11 @@ import {
   describeIssueDraftDismissError,
   describeIssueDraftEditError,
   describeIssueDraftManualError,
+  describeIssueDraftImageError,
+  IMAGE_LIMIT_REACHED_HELP,
+  IMAGE_LOCAL_ONLY_HELP,
+  IMAGE_REJECTED_HELP,
+  IMAGE_TOO_LARGE_HELP,
 } from './issueDraftErrors';
 
 function apiError(status: number, body: Record<string, unknown>): ApiError {
@@ -103,5 +109,23 @@ describe('describeIssueDraftManualError (bdboard-4y8q.6.8)', () => {
     const missingRoute = new ApiError(404, '404 Not Found', { body: '404 Not Found' });
     expect(describeIssueDraftManualError(missingRoute)).toBe(MANUAL_ENDPOINT_MISSING_HELP);
     expect(describeIssueDraftManualError(missingRoute)).not.toContain('この下書きは見つかりませんでした');
+  });
+});
+
+describe('describeIssueDraftImageError', () => {
+  it.each([
+    ['409 image limit', apiError(409, { error: 'image limit reached' }), IMAGE_LIMIT_REACHED_HELP],
+    ['409 not pending', apiError(409, { error: 'draft is not pending', code: 'draft-not-pending', status: 'dismissed' }), '見送り'],
+    ['507 storage full', apiError(507, { error: 'full', code: 'storage-full' }), STORAGE_FULL_HELP],
+    ['403 local-only', apiError(403, { error: 'local access only' }), IMAGE_LOCAL_ONLY_HELP],
+    ['403 CSRF', apiError(403, { error: 'cross-site write blocked' }), CROSS_SITE_HELP],
+    ['400 invalid image', apiError(400, { error: 'invalid' }), IMAGE_REJECTED_HELP],
+    ['413 too large', apiError(413, { error: 'too large' }), IMAGE_TOO_LARGE_HELP],
+    ['404 missing', apiError(404, { error: 'missing' }), DRAFT_NOT_FOUND_HELP],
+    ['network failure', new TypeError('Failed to fetch'), NETWORK_FETCH_HELP],
+    ['other HTTP error', apiError(500, { error: 'internal' }), '付けられませんでした (HTTP 500)。'],
+    ['non-ApiError', new Error('other'), '付けられませんでした。'],
+  ])('describes %s', (_label, error, expected) => {
+    expect(describeIssueDraftImageError(error)).toContain(expected);
   });
 });
