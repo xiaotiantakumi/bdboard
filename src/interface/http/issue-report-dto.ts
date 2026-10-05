@@ -2,6 +2,7 @@ import type { StoredDraftImage } from '../../application/ports/issue-draft-stora
 import type { IssueDraft, LocalOnlyContext, OccurredProject } from '../../domain/issue-draft.js';
 import { foldHomePaths, foldHomePathsInValues } from '../../domain/issue-draft-identifier.js';
 import { displayedKeysOf, scanEditedText } from '../../domain/issue-draft-edit.js';
+import type { RestrictedLeakCache } from './issue-report-leak-cache.js';
 
 /** 不具合報告の下書き API (bdboard-4y8q.1) の応答の形。 */
 
@@ -105,7 +106,10 @@ export type IssueDraftDetailDto =
  * 畳んであるはずの値だが、畳み方の漏れや、保存先へ直接書かれた値があっても出さない)。畳むのは
  * foldHomePaths が見つける決まった形だけで、それ以外の秘密の除去ではない (4y8q.2)。
  */
-export function toDetailDto(draft: IssueDraft, access: { readonly local: boolean }): IssueDraftDetailDto {
+export function toDetailDto(
+  draft: IssueDraft,
+  access: { readonly local: boolean; readonly leakCache?: RestrictedLeakCache },
+): IssueDraftDetailDto {
   if (access.local) return { ...draft, restricted: false };
   const title = foldHomePaths(draft.title);
   const body = foldHomePaths(draft.body);
@@ -139,7 +143,7 @@ export function toDetailDto(draft: IssueDraft, access: { readonly local: boolean
     ...(draft.harnessVersionAtOccurrence !== undefined
       ? { harnessVersionAtOccurrence: foldHomePaths(draft.harnessVersionAtOccurrence) }
       : {}),
-    ...restrictedLeaks(draft, title, body),
+    ...restrictedLeaks(draft, title, body, access.leakCache),
     draftSchemaVersion: draft.draftSchemaVersion,
     restricted: true,
   };
@@ -157,12 +161,13 @@ function restrictedLeaks(
   draft: IssueDraft,
   title: string,
   body: string,
+  leakCache?: RestrictedLeakCache,
 ): Pick<IssueDraft, 'suspectedLeaks' | 'suspectedLeaksOmitted'> {
   if (draft.suspectedLeaks === undefined) return {};
-  const scan = scanEditedText(
-    { title, body, titleEdited: draft.titleEditedByUser, bodyEdited: draft.bodyEditedByUser },
-    displayedKeysOf(draft.occurredProjects),
-  );
+  const text = { title, body, titleEdited: draft.titleEditedByUser, bodyEdited: draft.bodyEditedByUser };
+  const keys = displayedKeysOf(draft.occurredProjects);
+  // 結果の再利用 (bdboard-pnvj): 内容と鍵が同じあいだは、トンネルの GET のたびに O(本文×鍵) の検出を回さない。
+  const scan = leakCache?.scan(draft.id, text, keys) ?? scanEditedText(text, keys);
   return { suspectedLeaks: scan.suspectedLeaks, suspectedLeaksOmitted: scan.omitted };
 }
 

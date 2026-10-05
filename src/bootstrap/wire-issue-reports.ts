@@ -7,6 +7,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Hono } from 'hono';
 import { createIssueDraftService } from '../application/issue-report/issue-draft-service.js';
+import { memoizeAsyncWithTtl } from '../application/issue-report/memoize-with-ttl.js';
 import type { PackRegistryPort } from '../application/ports/pack-registry.js';
 import { caseFoldingTableUsable } from '../domain/issue-public-casefold.js';
 import { createFsIssueDraftStorage } from '../infrastructure/fs/fs-issue-draft-storage.js';
@@ -16,6 +17,8 @@ import type { WriteGuardDeps } from '../interface/http/write-guard.js';
 
 export interface WireIssueReportsDeps {
   readonly repoRoot: string;
+  /** 下書きの時刻と、最新の pack の版の使い回しの時計 (既定は現在時刻。テストが差し替える)。 */
+  readonly now?: () => Date;
   readonly env: NodeJS.ProcessEnv;
   readonly writeAccess: WriteGuardDeps;
   /** 最新の harness pack の版を読む (1 件の取得の「版の比較」、bdboard-4y8q.3.1)。 */
@@ -26,6 +29,12 @@ export interface WireIssueReportsDeps {
 }
 
 /**
+ * 最新の pack の版 (listPacks が全 pack を読む) を使い回す時間 (bdboard-pnvj)。版が変わるのは bdboard の更新のときで、
+ * 再起動でもキャッシュは作り直される。ずれるのは「版の比較」の表示だけで、30 秒は問題にならない。
+ */
+export const LATEST_HARNESS_VERSION_TTL_MS = 30_000;
+
+/**
  * 版を比べる pack。注入先の .claude/bdboard-packs.json に記録される version (下書きの harnessVersionAtOccurrence)
  * と、この bdboard の harness/packs/bdboard-harness/pack.json の version を並べる。
  */
@@ -34,19 +43,24 @@ const COMPARED_PACK_NAME = 'bdboard-harness';
 export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRouter: Hono } {
   const log = deps.log ?? console.log;
   const draftsDir = resolveIssueDraftsDir(deps.repoRoot, deps.env);
+  const now = deps.now ?? (() => new Date());
 
   const service = createIssueDraftService({
     storage: createFsIssueDraftStorage(draftsDir),
-    now: () => new Date(),
+    now,
     // 添付画像と同じ採番規約: <epochMs>-<16桁hex> (ソート可能・衝突耐性・パスとして安全)。
     newId: () => `${Date.now()}-${randomBytes(8).toString('hex')}`,
   });
 
+  const latestHarnessVersion = memoizeAsyncWithTtl(
+    async () => (await deps.packRegistry.listPacks()).find((pack) => pack.name === COMPARED_PACK_NAME)?.version,
+    LATEST_HARNESS_VERSION_TTL_MS,
+    () => now().getTime(),
+  );
   const issueReportsRouter = createIssueReportRoutes({
     service,
     writeAccess: deps.writeAccess,
-    latestHarnessVersion: async () =>
-      (await deps.packRegistry.listPacks()).find((pack) => pack.name === COMPARED_PACK_NAME)?.version,
+    latestHarnessVersion,
   });
 
   // 起動時の掃除 (bdboard-00qh): 見送り・投稿済みで 30 日を過ぎた下書きを画像ごと消す。待たない・失敗しても

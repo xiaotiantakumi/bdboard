@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import type { IssueDraftService } from '../../application/issue-report/issue-draft-service.js';
+import { createRestrictedLeakCache, type RestrictedLeakCache } from './issue-report-leak-cache.js';
 import {
   ISSUE_DRAFT_DISMISS_REASON_MAX_CHARS,
   ISSUE_DRAFT_MAX_IMAGES,
@@ -138,6 +139,7 @@ const imageBodySchema = z.object({
 
 export interface IssueReportRoutesDeps {
   readonly service: IssueDraftService;
+  readonly leakCache?: RestrictedLeakCache;
   /** 見送り・編集 (PATCH) にだけ効く。省略時はローカル直アクセス限定 (fail-closed)。 */
   readonly writeAccess?: WriteGuardDeps;
   /**
@@ -164,6 +166,7 @@ function limitBody(maxSize: number) {
 export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
   const app = new Hono();
   const { service } = deps;
+  const leakCache = deps.leakCache ?? createRestrictedLeakCache();
 
   // このサブアプリは inner (routes.ts) と兄弟として mount されるので、inner のブランケットの
   // 書き込みガードに頼らず、自分で全メソッドの書き込み系に掛ける (attachment-routes.ts と同じ理由)。
@@ -210,7 +213,7 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
     // 全部を返すのはローカル直アクセスだけ。判定できない・疑わしいときは絞った形 (fail-closed)。
     const local = isLocalBasicAuthRequest(c);
     return c.json({
-      draft: toDetailDto(draft, { local }),
+      draft: toDetailDto(draft, { local, leakCache }),
       images: images.map((image) => toImageDto(id, image)),
       latestHarnessVersion: await readLatestHarnessVersion(deps),
     });
@@ -228,7 +231,7 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
     return c.json({ error: 'draft is not pending', status: result.status }, 409);
   });
 
-  registerIssueDraftEditRoutes(app, { service });
+  registerIssueDraftEditRoutes(app, { service, leakCache });
 
   app.post(`${ISSUE_DRAFTS_PATH}/:id/images`, localOnlyGuard, limitBody(ATTACHMENT_BODY_MAX_BYTES), async (c) => {
     const id = c.req.param('id');

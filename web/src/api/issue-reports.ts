@@ -130,6 +130,7 @@ export interface IssueDraftEditResponseDto {
 }
 
 export interface IssueDraftTextEdit {
+  /** 空文字は、その欄を自動生成の内容へ戻す。 */
   readonly title?: string;
   readonly body?: string;
 }

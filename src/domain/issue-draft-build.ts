@@ -3,7 +3,6 @@ import {
   ISSUE_DRAFT_MAX_PROJECTS,
   capErrorTextRaw,
   capFreeText,
-  isMassOccurrenceFingerprint,
   summarizeErrorText,
   type DraftEnvInfo,
   type IssueDraft,
@@ -13,11 +12,7 @@ import {
 import { fitDraftToByteLimit } from './issue-draft-size.js';
 import { withRescannedLeaks } from './issue-draft-edit.js';
 import type { ReceiveDraftInput } from './issue-draft-input.js';
-import {
-  buildMassOccurrenceText,
-  buildProvisionalDraftText,
-  type DraftText,
-} from './issue-draft-text.js';
+import { autoTextOf } from './issue-draft-text.js';
 
 export type { ReceiveDraftInput } from './issue-draft-input.js';
 export { canonicalizeReceiveInput } from './issue-draft-input.js';
@@ -79,34 +74,9 @@ function upsertProject(
   return [...projects, { name: project.name, path: project.path, firstSeenAt: nowIso, lastSeenAt: nowIso }];
 }
 
-function textFor(draft: IssueDraft): DraftText {
-  if (isMassOccurrenceFingerprint(draft.fingerprint)) {
-    const folded = draft.localOnly.foldedFingerprints ?? [];
-    return buildMassOccurrenceText({
-      kind: draft.kind,
-      bucket: draft.fingerprint.slice(draft.fingerprint.lastIndexOf(':') + 1),
-      foldedCount: folded.length,
-      foldedCountCapped: folded.length >= ISSUE_DRAFT_MAX_FOLDED_FINGERPRINTS,
-      occurrenceCount: draft.occurrenceCount,
-      firstOccurredAt: draft.firstOccurredAt,
-      lastOccurredAt: draft.lastOccurredAt,
-    });
-  }
-  // 名前は下書きが持っている source / catalogSlug を使う (指紋から切り出し直さない)。
-  return buildProvisionalDraftText({
-    kind: draft.kind,
-    ...(draft.catalogSlug !== undefined ? { catalogSlug: draft.catalogSlug } : {}),
-    ...(draft.source !== undefined ? { source: draft.source } : {}),
-    versions: draft.localOnly.envInfo,
-    occurrenceCount: draft.occurrenceCount,
-    firstOccurredAt: draft.firstOccurredAt,
-    lastOccurredAt: draft.lastOccurredAt,
-  });
-}
-
 /** 題名・本文を作り直し、大きさの上限に収める。ユーザーが編集済みの項目は触らない (設計 4節)。 */
 function finalize(draft: IssueDraft): IssueDraft {
-  const text = textFor(draft);
+  const text = autoTextOf(draft);
   return fitDraftToByteLimit({
     ...draft,
     title: draft.titleEditedByUser ? draft.title : text.title,
