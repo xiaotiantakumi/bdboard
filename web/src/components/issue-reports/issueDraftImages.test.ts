@@ -41,10 +41,22 @@ describe('screenIssueDraftImages: format, emptiness and size (bdboard-4y8q.6.9)'
     expect(result.problems).toEqual([]);
   });
 
-  it('refuses one byte over 10 MiB, naming the file and showing its size', () => {
+  // bdboard-8zwi: 四捨五入すると「10 MiB を超えている (10.0 MiB)」になり、超えた量が読めない。超過時は小数第 1 位で切り上げる。
+  it('refuses one byte over 10 MiB, naming the file and showing its size rounded up, never as the limit itself', () => {
     const result = screenIssueDraftImages(0, [png('large.png', ISSUE_DRAFT_IMAGE_MAX_BYTES + 1)]);
     expect(result.accepted).toEqual([]);
-    expect(result.problems).toEqual(['「large.png」は 10 MiB を超えているため付けられません (10.0 MiB)。']);
+    expect(result.problems).toEqual(['「large.png」は 10 MiB を超えているため付けられません (10.1 MiB)。']);
+  });
+
+  it.each([
+    [ISSUE_DRAFT_IMAGE_MAX_BYTES + 1, '10.1 MiB'],
+    [ISSUE_DRAFT_IMAGE_MAX_BYTES + 104_857, '10.1 MiB'], // 10.0999 MiB
+    [ISSUE_DRAFT_IMAGE_MAX_BYTES + 104_858, '10.2 MiB'], // 10.10000... MiB より上は次の桁へ
+    [11 * 1024 * 1024, '11.0 MiB'],
+    [25 * 1024 * 1024 + 1, '25.1 MiB'],
+  ])('shows an over-limit size of %i bytes as %s (rounded up to one decimal)', (size, label) => {
+    const result = screenIssueDraftImages(0, [png('large.png', size)]);
+    expect(result.problems).toEqual([`「large.png」は 10 MiB を超えているため付けられません (${label})。`]);
   });
 
   it('refuses an empty file (the server answers 400 for zero bytes)', () => {

@@ -174,7 +174,7 @@ export function fetchIssueReportPendingCount(): Promise<{ pendingCount: number }
 
 /**
  * 下書きへ画像を 1 枚足す (bdboard-4y8q.6.9)。サーバーはローカル直アクセスだけ受け、pending の下書きにだけ付ける。
- * 失敗は ApiError: 400 (形式・大きさ・中身)、403、404、409 (枚数の上限は code 無し、未処理でない下書きは code: draft-not-pending)、413、507。
+ * 失敗は ApiError: 400 (形式・大きさ・中身)、403、404、409 (枚数の上限は code: image-limit-reached、未処理でない下書きは code: draft-not-pending)、413、507。
  */
 export function uploadIssueDraftImage(
   id: string,

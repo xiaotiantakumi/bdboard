@@ -290,6 +290,33 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
       expect(screen.queryByRole('list', { name: '付ける画像' })).toBeNull();
     });
 
+    // bdboard-8zwi: Excel・Word は文字と画像を一度に載せる。文字の欄へは文字を入れ (画像は引き受けない)、欄の外なら画像を付ける。
+    describe('a paste carrying both text and an image (Excel, Word)', () => {
+      const officeClipboard = () => ({
+        files: [png('cells.png')],
+        types: ['text/plain', 'text/html', 'Files'],
+        getData: (type: string) => (type === 'text/plain' ? 'a\tb' : '<table></table>'),
+      });
+
+      it.each([
+        ['description', /説明/],
+        ['title', /題名/],
+      ])('leaves it to the browser in the %s, so the text goes in and no image is attached', (_label, name) => {
+        setup();
+        const prevented = !fireEvent.paste(screen.getByRole('textbox', { name }), { clipboardData: officeClipboard() });
+        expect(prevented).toBe(false);
+        expect(screen.queryByRole('list', { name: '付ける画像' })).toBeNull();
+        expect(screen.queryByText('cells.png')).toBeNull();
+      });
+
+      it('attaches the image when it lands on the form outside the fields', () => {
+        setup();
+        const prevented = !fireEvent.paste(screen.getByRole('form', { name: '新しく報告' }), { clipboardData: officeClipboard() });
+        expect(prevented).toBe(true);
+        expect(screen.getByText('cells.png')).toBeInTheDocument();
+      });
+    });
+
     it('ignores a pasted image through the tunnel (no field to show it in, and the paste is left to the browser)', () => {
       setup(undefined, { localAccess: false });
       const prevented = !fireEvent.paste(screen.getByRole('textbox', { name: /説明/ }), {
@@ -601,7 +628,9 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
 
     it('stops at a 409 limit-reached and says the rest were not sent', async () => {
       vi.mocked(createManualIssueDraft).mockResolvedValue({ outcome: 'created', draft: created });
-      vi.mocked(uploadIssueDraftImage).mockRejectedValueOnce(apiError(409, { error: 'image limit reached (max 20 per draft)' }));
+      vi.mocked(uploadIssueDraftImage).mockRejectedValueOnce(
+        apiError(409, { error: 'image limit reached (max 20 per draft)', code: 'image-limit-reached' }),
+      );
       const { user } = setup();
       await sendWithTwoImages(user);
       await screen.findByRole('heading', { name: '下書きを作りました' });
