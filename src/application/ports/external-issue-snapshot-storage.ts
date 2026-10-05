@@ -11,7 +11,7 @@ import type { StoredExternalIssueSnapshot } from '../../domain/external-issue-sn
 export interface ExternalIssueSnapshotStoragePort {
   /**
    * 読める写しの全件。中身が使えない (JSON でない・形が合わない・番号がファイル名と食い違う) ファイルは、警告を出して
-   * 無いものとして飛ばす (1 件の破損で全体を落とさない。その番号は次の保存で書き直される)。読み取りの I/O の
+   * 飛ばす (1 件の破損で全体を落とさない。その番号は `listUnusable` で分かり、次の保存で書き直される)。読み取りの I/O の
    * 失敗 (権限・EIO など。ファイルが無いのは失敗ではない) は投げる: 読めない写しを「無い」と見て、判定時点の写しを
    * 新しい内容で書き換えてしまわないため。
    */

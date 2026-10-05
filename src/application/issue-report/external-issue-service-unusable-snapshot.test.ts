@@ -50,6 +50,7 @@ describe('poll: a saved snapshot that cannot be used', () => {
     const h = createHarness([makeIssue(5)]);
     h.storage.unusable.add(5);
     await h.service.poll();
+    expect(h.storage.files.get(5)?.needsRejudge).toBe(true);
 
     const result = await h.service.resnapshot(5);
 
