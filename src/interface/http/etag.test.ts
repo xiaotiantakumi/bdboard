@@ -3,7 +3,8 @@ import {
   boardViewDtoStableJson,
   computeStrongEtag,
   computeWeakEtag,
-  ifMatchMatches,
+  etagDigestOf,
+  ifMatchAccepts,
   ifNoneMatchMatches,
   normalizeEtagToken,
 } from './etag.js';
@@ -66,27 +67,49 @@ describe('computeStrongEtag', () => {
   });
 });
 
-describe('ifMatchMatches', () => {
+describe('ifMatchAccepts', () => {
   const etag = computeStrongEtag('current');
   const other = computeStrongEtag('other');
+  /** 全体の ETag との一致 (イコール) で判定する accepts。 */
+  const sameAs = (current: string) => (token: string) => token === normalizeEtagToken(current);
 
-  it('matches the exact ETag, a list that contains it, and *', () => {
-    expect(ifMatchMatches(etag, etag)).toBe(true);
-    expect(ifMatchMatches(` ${other} ,  ${etag}  `, etag)).toBe(true);
-    expect(ifMatchMatches('*', etag)).toBe(true);
+  it('accepts the exact ETag, a list that contains it, and *', () => {
+    expect(ifMatchAccepts(etag, sameAs(etag))).toBe(true);
+    expect(ifMatchAccepts(` ${other} ,  ${etag}  `, sameAs(etag))).toBe(true);
+    expect(ifMatchAccepts('*', sameAs(etag))).toBe(true);
   });
 
   it('ignores a W/ prefix, which the gzip middleware or a tunnel puts on a strong ETag', () => {
-    expect(ifMatchMatches(`W/${etag}`, etag)).toBe(true);
-    expect(ifMatchMatches(etag, `W/${etag}`)).toBe(true);
+    expect(ifMatchAccepts(`W/${etag}`, sameAs(etag))).toBe(true);
+    expect(ifMatchAccepts(etag, sameAs(`W/${etag}`))).toBe(true);
   });
 
-  it('does not match another ETag, garbage or an empty value', () => {
-    expect(ifMatchMatches(other, etag)).toBe(false);
-    expect(ifMatchMatches('W/"deadbeef"', etag)).toBe(false);
-    expect(ifMatchMatches('garbage', etag)).toBe(false);
-    expect(ifMatchMatches('', etag)).toBe(false);
-    expect(ifMatchMatches(' , ', etag)).toBe(false);
+  it('does not accept another ETag, garbage or an empty value', () => {
+    expect(ifMatchAccepts(other, sameAs(etag))).toBe(false);
+    expect(ifMatchAccepts('W/"deadbeef"', sameAs(etag))).toBe(false);
+    expect(ifMatchAccepts('garbage', sameAs(etag))).toBe(false);
+    expect(ifMatchAccepts('', sameAs(etag))).toBe(false);
+    expect(ifMatchAccepts(' , ', sameAs(etag))).toBe(false);
+  });
+
+  it('hands every entry to accepts with the W/ prefix and the quotes stripped, and judges nothing for * or an empty entry', () => {
+    const seen: string[] = [];
+    const never = (token: string) => {
+      seen.push(token);
+      return false;
+    };
+    expect(ifMatchAccepts(' "a" , W/"b",, garbage ', never)).toBe(false);
+    expect(seen).toEqual(['a', 'b', 'garbage']);
+    expect(ifMatchAccepts('*', never)).toBe(true);
+    expect(seen).toHaveLength(3);
+  });
+});
+
+describe('etagDigestOf', () => {
+  it('is the 32-hex digest that both ETag formats are made of', () => {
+    expect(etagDigestOf('hello')).toMatch(/^[0-9a-f]{32}$/);
+    expect(computeStrongEtag('hello')).toBe(`"${etagDigestOf('hello')}"`);
+    expect(computeWeakEtag('hello')).toBe(`W/"${etagDigestOf('hello')}"`);
   });
 });
 

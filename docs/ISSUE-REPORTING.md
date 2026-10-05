@@ -129,11 +129,12 @@ bdboard-727y(添付画像の保存先バグ)は PR #782 で 2026-09-25 にマー
 
 ## 3. 受け口の API とローカル直アクセス限定(項目 c)
 
-3つの経路があり、要求される認可の強さが異なる。
+4つの経路があり、要求される認可の強さが異なる。
 
 | 経路 | メソッド/パス | 呼び出し元 | 必要な認可 |
 |---|---|---|---|
 | 受け取り | `POST /api/issue-reports/drafts` | 各プロジェクトに注入される報告スクリプト(注入先では `.claude/skills/bdboard-harness/scripts/report-issue.sh`、パック正本は `harness/packs/bdboard-harness/scripts/report-issue.sh`。4y8q.12)、bdboard 自身のエラー捕捉(4y8q.6) | **ローカル直アクセスのみ**(トンネル不可) |
+| 手書きの受け取り | `POST /api/issue-reports/manual-drafts` | 不具合報告タブの「新しく報告」(4y8q.6.8) | **ローカル直アクセスのみ**(トンネル不可。書き込み許可つきのセッションがあっても 403)。詳しくは下の「手書きの下書き」 |
 | 閲覧・編集・見送り | `GET /api/issue-reports/drafts`、`GET .../:id`、`PATCH .../:id`、`PATCH .../:id/dismiss`、`GET /api/issue-reports/pending-count` | 不具合報告タブの UI | PATCH は通常の write-guard(ローカル直 または 強パスワード+セッション Cookie のトンネル)。GET は `createWriteGuardMiddleware` の対象外(メソッドで素通しする)なので、ほかの読み取り API と同じく、トンネルではトンネルの認証(Basic 認証)を通れば読める(パスワードの強度は問わない)。**ただし `GET .../:id` だけは、全部を返すのはローカル直アクセスのみ**(下の「1 件の取得はトンネルでは絞る」) |
 | 投稿 | `POST /api/issue-reports/drafts/:id/publish` | 不具合報告タブの投稿ボタン | **ローカル直アクセスのみ** |
 
@@ -294,6 +295,49 @@ head/tail が置き換え後の文章から作られるようになったら、�
 添付画像の URL の直開き(アドレスバーに貼る・ブックマーク)は、ローカルでも 403(ガードの Fetch Metadata の検査で
 `Sec-Fetch-Site` が `same-origin` でないため。応答の文言はガード共通の `cross-site write blocked` のまま)。画面のリンクから開く。
 
+### 手書きの下書き(`POST /api/issue-reports/manual-drafts`、bdboard-4y8q.6.7)
+
+不具合報告タブの「新しく報告」(画面は 4y8q.6.8)から、人が手で書く下書きの受け取り口。自動の受け取り(`POST drafts`)とは別の経路で、
+ルートは `src/interface/http/issue-report-manual-routes.ts`(`wire-issue-reports.ts` が既存のルーターへ載せる)、処理は
+`src/application/issue-report/issue-draft-manual.ts`(`issue-draft-receive.ts` の隣。サービスの `createManual`、受け取りと同じ mutex の中)、
+下書きの組み立ては `src/domain/issue-draft-manual.ts`(`createManualDraft`)。
+
+| 項目 | 内容 |
+|---|---|
+| 認可 | ローカル直アクセスのみ。受け取り・画像の追加と同じ `createPrivilegedApiGuardMiddleware({})`(トンネル用の依存を渡さない)なので、トンネルは書き込み許可つきのセッションがあっても 403。CSRF の検査も残る |
+| 本文の上限 | 64KB(超えたら 413)。説明 8000 文字が JSON のエスケープ(`\uXXXX` で 6 バイト)で膨らんでも入る大きさ |
+| 本文の型 | `{ title, description, project? }`。`title`: 1 行(改行・制御文字・不可視の書式文字は 400。貼り付けで混ざる ZWSP・BOM は落とし、前後の空白も落とす。見送りの理由と同じ整え方)・256 文字まで・必須(見える文字が無ければ 400)。`description`: 8000 文字まで・必須(見える文字が無ければ 400。複数行でよい)。`project`: 任意。受け取りの `project` と同じ形(`{ name, path }`、名前は同じ整え方) |
+| 応答 | 201 `{ outcome: 'created', draft }`(受け取りの応答と同じ形。`draft` は一覧と同じ要約)。400 は固定の文言だけで入力の値は返さない |
+| 指紋 | `C:manual:<16 桁の乱数 hex>`(`randomBytes(8)`)。毎回別の指紋なので、**同じ文を 2 回送ると下書きは 2 件**。既存の下書きへまとめない |
+| 種別・出どころ | 種別 C、`source: 'manual'`。「大量発生」の下書きへ丸めない(自動の 1 時間 20 件の枠が使い切られていても、手書きは自分の下書きを作る) |
+| 説明 | `localOnly.agentNoteRaw` に入れる(手元だけ。トンネルには見せない)。**暫定の公開本文には入らない**。公開本文の組み立て(5 節)に入れるかは、投稿(4y8q.4)が置き換えを通してから決める |
+| 題名 | 「直した題名」として保存する(`titleEditedByUser: true`)ので、直した欄にかかる置き換え漏れの検出(`withRescannedLeaks`)を作成時に通り、`suspectedLeaks` が付く(置き換えはしない。人が直す)。本文は自動の暫定の本文(`bodyEditedByUser: false`) |
+| `envInfo` | サーバーが埋める(画面からは受けない): `bdboardVersion`(package.json の version)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。`bdVersion`・`ghVersion`・`harnessVersion` は埋めない |
+| 件数の上限 | 自動の 1 時間 20 件とは**別の枠**で、既定 1 時間 20 件。一覧(`storage.scan()`)から「指紋が `C:manual:` で始まり、`firstOccurredAt` が今から 60 分以内」の下書きを数える(UTC の暦時間ではなく走っている 60 分。見送り済みも数える。時計が戻って今より後の時刻になった下書きは数えない: 数えると、時計が追い付くまで手書きを断り続ける)。索引の形式は変えない。超えたら 429 `{ error, code: 'manual-rate-limited' }`、容量切れは 507 `{ code: 'storage-full' }`(自動と同じ) |
+| 画像 | 既存の画像の追加(`POST drafts/:id/images`)でそのまま付けられる(pending の下書きなので) |
+
+**自動の枠との分け方**: 受け取りの索引(`issue-draft-index.ts`)の `newDraftsByHour`(自動の 20 件/時)は、起動後や一覧が欠けたあとの
+読み直しでも手書きを数えない(`buildIndex` が `C:manual:` の指紋を除く)。手書きの作成は `newDraftsByHour` を増やさず、
+索引へは状態(未処理の件数)だけ反映する。
+
+**設計(1 節・5 節)からのずれ**(4y8q.11 の規則):
+- **題名を「直した題名」として保存する**: 1 節は `title`/`body` の初期値を 5 節の組み立て関数の出力とし、`titleEditedByUser` は人が直したときだけ
+  true になる。手書きでは、人が書いた題名をそのまま公開題名の初期値にするため、作成時から `titleEditedByUser: true` で保存する
+  (自動の題名 `[bdboard 本体] manual` は使わない)。理由は、直した欄にだけかかる漏れ検出を通すため。PATCH で題名を空にすると、ほかの下書きと同じく
+  `titleEditedByUser` が false に戻り、自動の題名(`[bdboard 本体] manual`)になる。
+- **説明は 5 節の入力(`agentNote`)に今は入れない**: 5 節は「新しく報告」の説明文も `agentNote` として公開本文の組み立てを通すとしている。
+  4y8q.6.7 は説明を `agentNoteRaw` に保存するだけで、暫定の本文には入れない(暫定の本文は固定の項目だけ)。投稿の前に置き換えを通して本文へ
+  入れる経路は、4y8q.4 の範囲。それまでは「直す」で本文を書く(画面は 4y8q.6.8 でそう案内する)。
+- **本文の型に `project?` を足した**: チケットの型は `{ title, description }` だが、漏れ検出の鍵(発生プロジェクトの名前・根のパス)は
+  `occurredProjects` から作る(`localKeysOf`)ので、手書きの下書きにプロジェクトが無いと、題名に書いたプロジェクト名を疑いにできない
+  (受け入れ基準「題名にプロジェクト名を書くと、漏れの疑いが付く」)。送れば `occurredProjects` に 1 件入り、題名・あとから直した題名の
+  検出の鍵になる。送らなければ空で、ホームのパス・トークン・メールなど鍵なしで探せるものだけが疑いになる。全プロジェクトの名前を鍵にする
+  広げ方は、4y8q.4 の申し送り(U13)の範囲。
+
+**既知の限界**: 件数は一覧(`scan()`)から数えるので、一覧が欠けているとき(`complete: false`。読めなかった下書きがあるとき)は、読めた分だけを数える。
+指紋の頭が同じ `C:manual:` になる自動の報告(`kind: 'C'`、`source: 'manual'` の `POST drafts`)は、手書きの枠に数えられ、自動の枠からは外れる
+(`source` に `manual` を使う報告スクリプトは想定していない)。
+
 ### 閲覧・編集(PATCH)側のフィールド範囲
 
 3節冒頭の表で「閲覧・編集・見送り」はトンネル経由(強パスワード+セッション Cookie)でも
@@ -402,22 +446,30 @@ head/tail が置き換え後の文章から作られるようになったら、�
 (これまでは最後の書き込みが勝った)。HTTP のヘッダは interface 層に閉じる(`issue-report-etag.ts`)。応用層の
 `IssueDraftService.edit` は、ヘッダを知らない `precondition(現在の下書き) => Promise<boolean>` を受けるだけ。
 
-- **ETag の作り方**: 応答の本文そのものの版(強い ETag `"<sha256 の先頭 32 桁>"`)。下書きの中身だけでなく、本文に出る画像の一覧・
-  最新の harness pack の版・ローカル/トンネルで絞った形・DTO の形と検出の規則を全部含む(組み立てたあとの DTO から作るので、
-  どれかが変わったのに ETag が変わらない、が起きない)。作る前にキーを並べ替える(`canonicalJson`): 保存層は読むとき zod でキーの順を
-  直すので、編集した直後のメモリ上の下書きと次に読み直した下書きで `JSON.stringify` が違いうる。並べ替えないと、PATCH の応答の ETag で
-  次の PATCH を送ると 412 になる。保存形に版の番号の欄は足さない(手で書き換えた `draft.json`・書き込みの経路の足し忘れで版が古いままにならない)。
+- **ETag の作り方**: 1 件の取得は強い ETag `"<editDigest>-<bodyDigest>"`(各 32 桁。sha256 の先頭 32 桁)。後半の **bodyDigest** は応答の本文そのものの版:
+  下書きの中身だけでなく、本文に出る画像の一覧・最新の harness pack の版・ローカル/トンネルで絞った形・DTO の形と検出の規則を全部含む
+  (組み立てたあとの DTO から作るので、どれかが変わったのに ETag が変わらない、が起きない)。前半の **editDigest** は利用者が直せる欄だけの版
+  (`editDigestOf`): **id・status・題名と本文の「直した」印(`titleEditedByUser` / `bodyEditedByUser`)・直した欄の文**だけから作り、
+  自動で組んだ欄の文は `null` として入れない(新しい発生のたびに作り直されるため)。回数・時刻・版・画像・pack の版・置き換え漏れの疑いは入らない。
+  文は応答の draft の値から作るので、トンネルの読み手へは畳んだ後(`foldHomePaths`)の文の版だけが渡り、畳む前の文の指紋は渡らない。
+  一覧の ETag は従来どおり本文全体の 1 つのダイジェスト `"<32 桁>"`(If-Match の相手ではない)。作る前にキーを並べ替える(`canonicalJson`):
+  保存層は読むとき zod でキーの順を直すので、編集した直後のメモリ上の下書きと次に読み直した下書きで `JSON.stringify` が違いうる。
+  並べ替えないと、PATCH の応答の ETag で次の PATCH を送ると 412 になる。保存形に版の番号の欄は足さない(手で書き換えた `draft.json`・
+  書き込みの経路の足し忘れで版が古いままにならない)。
 - **`GET .../:id`**: `If-None-Match` が一致すれば 304(本文なし。ETag・`Cache-Control: private, no-cache`・`Vary: Accept-Encoding` は付く)。
+  If-None-Match は ETag **全体**(`<editDigest>-<bodyDigest>`)で比べるので、本文のどこが変わっても(回数・画像・pack の版も)古い ETag には 304 ではなく新しい本文を返す。
   手元の生ログを含む応答なので共有キャッシュに置かせず、ブラウザには毎回確かめさせる。
 - **`GET .../`(一覧)**: 本文全体(`drafts` の中身・順・`pendingCount`)の ETag。追加・編集・マージ・見送り・件数・並び順のどれが変わっても変わる。
   一致すれば 304。
-- **`PATCH .../:id`**: `If-Match` があって合わなければ **412**(`{ error, code: 'precondition-failed' }`、何も書かない)。`If-Match` が無ければこれまでどおり
-  通る。`*` は一致、空・読めない値は 412。成功の応答には保存後の下書きの ETag を付ける(次の GET の ETag と同じ値)。自動の文に戻す(空で保存)も同じ。
+- **`PATCH .../:id`**: `If-Match` があって合わなければ **412**(`{ error, code: 'precondition-failed' }`、何も書かない)。**If-Match は ETag の前半(editDigest)だけで
+  比べる**: 付けた ETag の前半が、今の下書きの editDigest(上の「直せる欄だけ」)と同じなら通る。後半(bodyDigest)は見ない。`If-Match` が無ければこれまでどおり
+  通る。`*` は一致、空・読めない値は 412(前の形の ETag `"<32 桁>"` も読めない値で、412 になる。読み直せば新しい形になる)。成功の応答には保存後の下書きの ETag を付ける
+  (次の GET の ETag と同じ値)。自動の文に戻す(空で保存)も同じ。
   検査は書き込みの排他の中で行うので、同じ ETag から同時に来た 2 つの PATCH は、片方が 200、もう片方が 412 になる。順序は 入力の検証(400・題名/本文の長さの 413。ここでは ETag を見ない) → 404 → 409(未処理でない) → 412 →
   保存の 413(下書き全体が大きすぎる)・507。**見送り(`PATCH .../:id/dismiss`)は対象外**(状態の遷移で、同じ見送りの繰り返しも害が無い)。
 - **`W/` を許す**: RFC 9110 の If-Match は強い比較だが、このサーバーの gzip(`hono/compress`)は gzip した応答の強い ETag を `W/"…"` に直し、
   トンネルも同じことをしうる。クライアントは受け取った値をそのまま返すので、`W/` を厳密に拒むと If-Match が使えなくなる。そのため
-  `W/` を無視してダイジェストで比べる(`If-None-Match` と同じ関数)。
+  `W/` と引用符を外してから比べる(`normalizeEtagToken`。If-Match は `ifMatchAccepts` で前半だけ、If-None-Match は `ifNoneMatchMatches` で全体を見る。`*`・リスト・空の扱いは同じ)。
 - **write-guard との関係**: 認証・認可(Basic 認証・`createWriteGuardMiddleware`)はルートの前に走るので、資格の無い相手には 304/412 ではなく 401/403 が返る
   (古い If-Match でも 403 のまま。ETag の一致で書き込みの可否が漏れない)。GET はもともと write-guard の対象外。
 - **CORS・プロキシ**: アプリは CORS のヘッダを出さない(同一オリジン)。web は同一オリジンで `res.headers.get('ETag')` を読め、Vite の開発プロキシ・
@@ -426,9 +478,15 @@ head/tail が置き換え後の文章から作られるようになったら、�
   412 は「ほかの場所で変更されました。最新の内容を読み込み直しました。入力はそのまま残しています…」と出し、一覧と中身の問い合わせを無効にして最新と新しい ETag を
   取り直す(編集欄の入力は読み直しで置き換わらない。次の保存は変えた欄だけを新しい ETag で送る)。成功の応答の ETag は web の中身の問い合わせに置き換える
   (応答に無ければ古い ETag を捨てる)。1 件の取得の 304 はブラウザの HTTP キャッシュが処理する。
-- **割り切り**: ETag が本文全体の版なので、読んだあと PATCH するまでの間に**同じ指紋の新しい発生**(回数・最後の時刻・手元の版が変わり、直していない欄の自動の文も
-  作り直される)・画像の追加・harness pack の版(30 秒の TTL で読み直す)の変化があっただけでも 412 になる(利用者が直した題名・本文は変わっていなくても)。
-  PATCH は排他の中で読み直した今の下書きに題名・本文を当てるので、If-Match が無くてもこれらの変化を上書きで失うことはない。読み直して保存し直せば通る。偽の 412 は上書きの取りこぼしより安全な側として許容する。
+- **偽の 412 を出さない(bdboard-q5pj)**: If-Match は直せる欄だけの版(editDigest)で比べるので、読んだあと PATCH するまでの間の**同じ指紋の新しい発生**(回数・最後の時刻・手元の版が変わり、
+  直していない欄の自動の文も作り直される)・画像の追加・harness pack の版(30 秒の TTL で読み直す)の変化では **412 にならず、編集は通る**(利用者が直した題名・本文は変わっていないので)。
+  PATCH は排他の中で読み直した今の下書きに題名・本文を当て、渡した欄の文と「直した」印だけを書くので、回数・画像・版の変化や、直していない欄の作り直された自動の文は上書きで失われない。
+  412 になるのは、**直せる欄がほかで変わったとき**だけ: 題名・本文の直した文(別の文に直された・直した印が付いた/自動の文へ戻された)。status が変わった(見送り・投稿済み)ときは、
+  412 の前の判定で 409 になる。同じ ETag から同時に来た 2 つの編集は、先に書いた側が直せる欄(文か「直した」印)を変えていれば、後の側は 412 になる(上の排他の説明のとおり)。先の側が直せる欄を変えない編集(同じ文の保存し直し・もともと自動の欄を戻す)なら後の側も通るが、先の側が何も変えていないので失うものは無い。
+  4y8q.6(本体エラーの取り込み)が自動更新のたびに同じ指紋の発生を重ねても、編集中の下書きがそのたびに 412 にならない。
+  **割り切り**: ETag の前半が同じなら、読んだ画面が古い回数・版・自動の文を見ていても編集は通る(書くのは渡した欄の文と印だけで、そのほかは今の下書きのまま。web は保存の応答と読み直しで最新に合わせる)。
+  編集を始めたあとに別の場所で**同じ文に直された**場合も、editDigest が同じなので通る(文も印も同じなので、書く結果は同じ)。
+  トンネルの読み手の editDigest は畳んだ後の文から作るので、ホーム配下のパスの部分だけが別の場所で書き換わった(畳むと同じ文になる)場合も、トンネルからの編集は通る(その読み手には違いが見えない)。
 
 ### なりすましの余地(判定の限界)
 
@@ -536,6 +594,8 @@ function normalizeErrorText(text: string): string {
   という一般的な文面に留め、個別の詳細は出さない)。暦時間区切りは実装が簡単な分、境界をまたぐ
   瞬間だけ実質的な上限が緩む(60分の壁時計窓ではなく1時間区切り)。厳密なスライディングウィンドウ
   が要るなら実装時に変更してよい(小さな決め事なので本ドキュメントではブロックしない)。
+- 手書きの下書き(3節「手書きの下書き」、bdboard-4y8q.6.7)の件数: **上の自動の枠とは別に、1 時間 20 件まで**。自動の 20 件には数えず、
+  21 件目以降を「大量発生」へ丸めもしない(超えたら 429 `manual-rate-limited`)。指紋 `C:manual:<乱数>` で見分け、一覧から走っている 60 分で数える。
 
 ### 保持期限と合計容量(bdboard-00qh)
 
@@ -1623,6 +1683,32 @@ bd label add <新id> harness   # A と B のみ
 (`issue-public-text.ts`)はこれらを取り除くが、機械の検査には入っていない。U+FE0F は絵文字のほとんどに付くので 1 文字ずつ
 数えると騒がしい。異体字選択子を使った埋め込み(1 文字に 1 バイト)は「異体字選択子が 2 つ以上続く」で拾える(正しい使い方は
 1 つだけ)。
+
+### 実装との差分(4y8q.9.2、GitHub の open issue と bd の external_ref を読む層)
+
+4y8q.9.2 は「届いた issue」の**読み取り層だけ**(domain の判定、ポート、gh と bd を読む 2 つの
+reader、メンテナ環境の判定)。一覧の組み立て・写しの保存・定期確認の配線は 4y8q.9.3 以降。設計との
+食い違いと、実装中に決めたことの記録(4y8q.11 の規則)。設計が優先で、ここに無い点は設計どおり。
+
+| # | 項目 | 実装 |
+|---|---|---|
+| 1 | `sanitizeTitle` を移さない | `scripts/check-gh-issues.mjs` の `sanitizeTitle` は題名を**端末へ出す**ための制御文字の置き換え。届いた issue の題名・本文を画面に出す無害化(Markdown の無害化、切り詰め)は 4y8q.9.1 / 4y8q.9.5 が持つので、端末向けの関数を移すと二重になり、「無害化済み」と取り違えやすい。`src/domain/github-issue-link.ts` に移したのは `parseRepoSlug` / `linkedIssueNumbers` / `findUnlinkedIssues` と、`excludePullRequests`(スクリプトでは `parseIssueLines` の中にあった PR の除外)だけ。スクリプト本体は変えない |
+| 2 | `formatReport` を移さない | 端末向けの報告文の整形で、画面や API の形とは関係が無い |
+| 3 | `--paginate` でなく手動の 3 ページ | `gh api --paginate` は全ページを読むので、issue が増えると API の枠を食い、U8「3 ページ(300 件)まで」を守れない。`page=N` を 1 から最大 3 まで順に読み、**100 行未満のページで止める**(PR の行・読めない行も行数に数える)。3 ページとも 100 行なら `truncatedByPageLimit: true`(300 件を超えて続きがありうる) |
+| 4 | `bodyLength` を足した | jq で本文を先頭 20,001 コードポイントに切る(第三者の文章の量と出力の大きさを抑える)と、元の長さが分からなくなり、「20,000 文字を超えたか」「省略の印を付けるか」(上の上限の節)を後段で決められない。切る前の長さを `bodyLength` として一緒に返す。20,001 で切るのは、ちょうど 20,000 文字と超過を区別するため。**単位はコードポイント**(jq の切り出しと `length` はコードポイント単位)で、JS の `String.length` は UTF-16 の単位なので絵文字などで数が食い違う。後段で比べるときは単位をそろえる(ポートの TSDoc に書いた) |
+| 5 | URL は slug と番号から組む | 返す `url` は `https://github.com/<slug>/issues/<N>`。gh の応答の `html_url` は読まない。読む項目を減らし、画面に出す URL が必ず自リポジトリの issue を指すようにする |
+| 6 | slug の検査を厳しくした | スクリプトの `[^/\s]+` は `../`・`?`・`#`・`%` を通す。slug は gh の URL パス(`repos/<slug>/issues`)に埋まるので、`parseRepoSlug` は各部分を `^[A-Za-z0-9_.-]+$` に限り、`.` と `..` だけの部分も拒否する |
+| 7 | 1 ページが読めなければ failed | 途中のページの失敗で、前のページまでの結果を返さない。返すと取りこぼした issue が「届いていない」ように見え、`truncatedByPageLimit` とも区別がつかない。あるページの空でない行がすべて読めない(出力形式が変わった)ときも failed にする(「0 件」と見分けがつかなくなるため)。一部の行だけ読めないときは、`skippedLines` に数えて続ける(スクリプトは 1 行でも読めないと全体を諦める) |
+| 8 | 失敗は stderr だけで 4 種類に分ける | `gh-missing`(spawn 失敗)・`gh-unauthenticated`(exit 4 または未ログインの文言)・`rate-limited`・`failed`(時間切れ・その他)。成功したページの stdout は第三者の文章なので、失敗の分類には混ぜない。**U7: gh が無い・未ログインでも、認証無しの REST・`fetch`・`curl` には落ちない**(状態を返すだけ。画面に出すのは 4y8q.9.5) |
+| 9 | レート制限の文言の判定を共有 | `gh-cli-pr-status-reader.ts` の `RATE_LIMIT_TEXT_PATTERNS` と `looksLikeRateLimit` を `src/infrastructure/gh/gh-cli-failure.ts` へ移し、PR バッジの reader と共有する(挙動は変えない)。未ログインの判定 `looksLikeGhUnauthenticated` と `GH_EXIT_CODE_AUTH_REQUIRED = 4` は同じファイルに足した |
+| 10 | gh は GET だけ、書き込みの引数を実行時にも拒否 | 引数は `['api', '--method', 'GET', '--hostname', 'github.com', 'repos/<slug>/issues?state=open&per_page=100&page=N', '--jq', <jq>]`(`--hostname` は下の 14)。`-f` / `-F` / `--field` / `--raw-field` / `--input` を付けると gh が POST に切り替わるので、`assertReadOnlyGhApiArgs`(`gh-api-readonly.ts`)が実行の直前に拒否する(`--method GET` がちょうど 1 回あることも要る)。テストでも全呼び出しの引数を固定している |
+| 11 | gh の環境 | 継いだ環境に `GH_PROMPT_DISABLED=1` と `GH_NO_UPDATE_NOTIFIER=1` を足す(対話の質問と更新通知で固まらない・stderr を汚さない)。`CommandRunner` の `env` は継承ではなく置き換えなので、継いだ環境を明示的に渡す。時間切れは 20 秒 |
+| 12 | bd の引数に `--readonly -C <root>` と `--no-pager` | スクリプトは cwd で `bd list` を流すが、サーバーは任意の cwd で動くので、`bd-cli-lease-reader.ts` の作法(`--readonly -C <root> … --no-pager`)に揃える。出力は配列と `{issues: []}` の両方を受け、`external_ref` が文字列でない要素は黙って飛ばす(紐付けなし側に倒れ、誤報はしても見逃しはしない) |
+| 13 | メンテナ環境の判定 | `isMaintainerEnvironment(repoRoot)`(`src/infrastructure/fs/is-maintainer-environment.ts`)は `<repoRoot>/.beads` の有無だけ。bdboard 自身の bd があるのはメンテナの main checkout だけで、clone や worktree には無い(親 4y8q.9 の R7) |
+| 14 | `--hostname github.com` を固定 | 継いだ `GH_HOST` が GitHub Enterprise を指していると、gh はそちらへ問い合わせるのに、返す `url`(5)は github.com で組むので食い違う。引数に `--hostname github.com` を固定する |
+| 15 | 引数の検査は許可リスト方式 | 禁止リスト(10)は、`-X POST` や `--method=POST` を正しい `--method GET` の横に置く形(gh は同じフラグの最後の値を採るので POST になる)や、ヘッダでのメソッド上書き(`-H X-HTTP-Method-Override`)のような、載せきれない形を取りこぼしうる。`assertReadOnlyGhApiArgs` は、既知の書き込み系を理由の分かるエラーで先に拒否したうえで、`['api', '--method', 'GET', '--hostname', 'github.com', <endpoint>, '--jq', <jq>]` の形ちょうどだけを通す(endpoint は `repos/<owner>/<repo>/issues?state=open&per_page=<n>&page=<n>` の正規表現)。禁止リストのテストは残してある |
+| 16 | ページ間の重複を番号で除く | 1 ページ目を読んでから 2 ページ目を読むまでの間に新しい issue ができると、押し出された同じ番号が両方のページに現れる。番号で重複を除き、先に読んだほうを残す |
+| 17 | 小さな検査と整形 | `maxPages` は正の整数だけ(0 などは生成時に例外)。時間切れの `detail` は、stderr の途中の出力ではなく「時間切れ」と分かる固定の文言。`detail` は C0/C1 に加えて双方向制御文字(U+200E/200F/061C/202A–202E/2066–2069)も空白にし、300 **コードポイント**で切る(サロゲートの対を割らない)。`excludePullRequests` は PR の行を除くだけで、残りの行の項目は触らない |
 
 ### 2体のエージェント(4y8q.10)
 

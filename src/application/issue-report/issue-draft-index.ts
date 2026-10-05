@@ -1,4 +1,5 @@
 import { hourBucketOf, isMassOccurrenceFingerprint, type DraftStatus, type IssueDraft } from '../../domain/issue-draft.js';
+import { isManualFingerprint } from '../../domain/issue-draft-manual.js';
 import type { DraftIndexEntry, DraftIndexSeed, IssueDraftStoragePort } from '../ports/issue-draft-storage.js';
 
 /**
@@ -84,7 +85,9 @@ export function buildIndex(entries: readonly DraftIndexEntry[]): DraftIndex {
   for (const draft of drafts) {
     idByFingerprint.set(draft.fingerprint, draft.id);
     statusById.set(draft.id, draft.status);
-    if (!isMassOccurrenceFingerprint(draft.fingerprint)) {
+    // 「大量発生」と手書き (bdboard-4y8q.6.7。自動の 20 件/時の枠を使わない) は、自動の枠に数えない。
+    // 起動後や一覧が欠けたあとの読み直しでも、手書きが自動の枠を食わないようにここで除く。
+    if (!isMassOccurrenceFingerprint(draft.fingerprint) && !isManualFingerprint(draft.fingerprint)) {
       const bucket = hourBucketOf(new Date(draft.firstOccurredAt));
       newDraftsByHour.set(bucket, (newDraftsByHour.get(bucket) ?? 0) + 1);
     }

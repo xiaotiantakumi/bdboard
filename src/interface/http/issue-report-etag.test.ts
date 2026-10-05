@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalJson, detailEtagOf, listEtagOf, type IssueDraftDetailBody } from './issue-report-etag.js';
+import {
+  canonicalJson,
+  detailEtagOf,
+  editDigestOf,
+  ifMatchMatchesEdit,
+  listEtagOf,
+  type EditableDraftFields,
+  type IssueDraftDetailBody,
+} from './issue-report-etag.js';
 import type { IssueDraftDetailDto } from './issue-report-dto.js';
 
 /** bdboard-mqoa: ETag の元になる正規化 JSON と、本文から ETag を作る関数。 */
@@ -37,9 +45,10 @@ describe('detailEtagOf and listEtagOf', () => {
   const draft = { id: '1758812345001-0000000000000001', title: 't', restricted: false } as unknown as IssueDraftDetailDto;
   const body: IssueDraftDetailBody = { draft, images: [], latestHarnessVersion: '0.50.0' };
 
-  it('is a strong ETag that follows every part of the body', () => {
+  it('is a strong ETag, "<editDigest>-<bodyDigest>", that follows every part of the body', () => {
     const etag = detailEtagOf(body);
-    expect(etag).toMatch(/^"[0-9a-f]{32}"$/);
+    expect(etag).toMatch(/^"[0-9a-f]{32}-[0-9a-f]{32}"$/);
+    expect(etag.startsWith(`"${editDigestOf(draft)}-`)).toBe(true);
     expect(detailEtagOf({ ...body, draft: { ...draft } })).toBe(etag);
     expect(detailEtagOf({ ...body, draft: { ...draft, title: 'u' } })).not.toBe(etag);
     expect(detailEtagOf({ ...body, latestHarnessVersion: null })).not.toBe(etag);
@@ -54,5 +63,59 @@ describe('detailEtagOf and listEtagOf', () => {
     expect(listEtagOf({ drafts: [one, two], pendingCount: 2 })).toBe(etag);
     expect(listEtagOf({ drafts: [two, one], pendingCount: 2 })).not.toBe(etag);
     expect(listEtagOf({ drafts: [one, two], pendingCount: 1 })).not.toBe(etag);
+  });
+
+  it('keeps the list ETag a single 32-hex digest of the whole body (If-None-Match only)', () => {
+    expect(listEtagOf({ drafts: [], pendingCount: 0 })).toMatch(/^"[0-9a-f]{32}"$/);
+  });
+});
+
+describe('editDigestOf and ifMatchMatchesEdit (bdboard-q5pj)', () => {
+  const edited: EditableDraftFields = {
+    id: '1758812345001-0000000000000001',
+    status: 'pending',
+    title: 'Mine',
+    body: 'My body',
+    titleEditedByUser: true,
+    bodyEditedByUser: true,
+  };
+  const auto: EditableDraftFields = { ...edited, title: 'Auto title', body: 'Auto body', titleEditedByUser: false, bodyEditedByUser: false };
+  const etagOf = (draft: EditableDraftFields) => `"${editDigestOf(draft)}-${'0'.repeat(32)}"`;
+
+  it('is a 32-hex digest that follows the id, the status, the edited flags and the text of an edited field', () => {
+    const digest = editDigestOf(edited);
+    expect(digest).toMatch(/^[0-9a-f]{32}$/);
+    expect(editDigestOf({ ...edited })).toBe(digest);
+    expect(editDigestOf({ ...edited, id: '1758812345002-0000000000000002' })).not.toBe(digest);
+    expect(editDigestOf({ ...edited, status: 'dismissed' })).not.toBe(digest);
+    expect(editDigestOf({ ...edited, title: 'Other' })).not.toBe(digest);
+    expect(editDigestOf({ ...edited, body: 'Other' })).not.toBe(digest);
+    expect(editDigestOf({ ...edited, titleEditedByUser: false })).not.toBe(digest);
+    expect(editDigestOf({ ...edited, bodyEditedByUser: false })).not.toBe(digest);
+  });
+
+  it('leaves out the text of a field the user did not edit (it is rebuilt by every new occurrence)', () => {
+    const digest = editDigestOf(auto);
+    expect(editDigestOf({ ...auto, title: 'Rebuilt title', body: 'Rebuilt body' })).toBe(digest);
+    // 片方だけ直した: 直した側の文は入り、直していない側の文は入らない。
+    const titleOnly = { ...auto, titleEditedByUser: true, title: 'Mine' };
+    expect(editDigestOf({ ...titleOnly, body: 'Rebuilt body' })).toBe(editDigestOf(titleOnly));
+    expect(editDigestOf({ ...titleOnly, title: 'Other' })).not.toBe(editDigestOf(titleOnly));
+  });
+
+  it('judges If-Match by the first half of the ETag only, so the second half (the whole body) may differ', () => {
+    const digest = editDigestOf(edited);
+    expect(ifMatchMatchesEdit(`"${digest}-${'f'.repeat(32)}"`, edited)).toBe(true);
+    expect(ifMatchMatchesEdit(`W/"${digest}-${'1'.repeat(32)}"`, edited)).toBe(true);
+    expect(ifMatchMatchesEdit(`"${editDigestOf(auto)}-${'f'.repeat(32)}"`, edited)).toBe(false);
+  });
+
+  // `"<editDigest>"` だけ (前の形の ETag は 32 桁 1 つ) も、ここの形ではないので 412 になる。
+  it('keeps the rules of the whole-ETag comparison: a list and * match, empty and unreadable values do not', () => {
+    expect(ifMatchMatchesEdit('*', edited)).toBe(true);
+    expect(ifMatchMatchesEdit(` "${'a'.repeat(32)}-${'b'.repeat(32)}" , ${etagOf(edited)} `, edited)).toBe(true);
+    for (const bad of ['', ' , ', 'garbage', '"deadbeef"', `"${editDigestOf(edited)}"`, `"${editDigestOf(edited)}-"`, `"${editDigestOf(edited)}-zz"`]) {
+      expect(ifMatchMatchesEdit(bad, edited)).toBe(false);
+    }
   });
 });

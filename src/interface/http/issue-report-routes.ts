@@ -46,7 +46,7 @@ import {
  *   - 1 件の取得 (GET drafts/:id): 全部を返すのはローカル直アクセスだけ。トンネル経由は
  *     生ログ・自由記述の生の文・絶対パスを除いた形 (`restricted: true`、toDetailDto)。
  *   - 見送り (PATCH dismiss) と題名・本文の編集 (PATCH drafts/:id、issue-report-edit-routes.ts): 通常の write-guard
- *     (ローカル直、または強パスワード + セッション)。編集は If-Match で、読んだ版と今の版が違えば 412 (bdboard-mqoa)。
+ *     (ローカル直、または強パスワード + セッション)。編集は If-Match で、読んだときの直せる欄の版と今の版が違えば 412 (bdboard-mqoa・bdboard-q5pj)。
  *   - 未処理件数 (GET pending-count、issue-report-edit-routes.ts): ほかの読み取り API と同じ。
  *
  * このルーターは何も外へ送らない。投稿 (bdboard-4y8q.4) は別の経路。
@@ -60,7 +60,7 @@ const DISMISS_BODY_MAX_BYTES = 16 * 1024;
  * 受け取りと画像の追加が、issue-drafts の合計容量の上限 (終端の下書きを消しても空かない) に当たったときの
  * 本文 (507)。`code` は機械が読む固定の値 (bdboard-00qh、docs/ISSUE-REPORTING.md 4節)。
  */
-const STORAGE_FULL_BODY = { error: 'issue draft storage is full', code: 'storage-full' } as const;
+export const STORAGE_FULL_BODY = { error: 'issue draft storage is full', code: 'storage-full' } as const;
 
 /** 見送り・投稿済みの下書きへの画像の追加 (409)。`code` は機械が読む固定の値、`status` は下書きの今の状態。 */
 const draftNotPendingBody = (status: string) =>
@@ -82,12 +82,12 @@ const singleLine = (max: number) => z.string().max(max).refine(isSingleLineText,
 const versionString = singleLine(100);
 
 /**
- * プロジェクト名 (表示用): 絵文字の連結 (👩‍💻-tools) などで 400 にしないよう、弾く文字は取り除いて受け、
+ * プロジェクト名 (表示用): 絵文字の連結 (👩\u200D💻-tools) などで 400 にしないよう、弾く文字は取り除いて受け、
  * ホーム配下のパスは "~/" に畳む (sanitizeProjectName)。改行・タブなどパスの区切りにもなる文字と、画面では
  * 空白に見えるハングルの埋め字・U+180E は、取り除かず空白に替えてから畳む (つなげるとパスが前の語に貼り付いて
  * 畳めないため)。結果が空なら 400。
  */
-const projectNameSchema = z
+export const projectNameSchema = z
   .string()
   .max(200)
   .transform(sanitizeProjectName)
