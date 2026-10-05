@@ -42,7 +42,7 @@ describe('describeIssueDraftEditError (bdboard-4y8q.3.2)', () => {
     );
     expect(describeIssueDraftEditError(apiError(404, { error: 'draft not found' }))).toContain('見つかりません');
     expect(describeIssueDraftEditError(apiError(400, { error: 'invalid request body' }))).toBe(
-      '題名は 1 行で、改行や見えない書式文字を含めないでください。',
+      '題名は 1 行で、改行・タブなどの制御文字や見えない書式文字を含めないでください。',
     );
   });
 

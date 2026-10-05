@@ -170,4 +170,48 @@ describe('memoizeAsyncWithTtl', () => {
     expect(await get()).toBe('second'); // 先に始めた読み込みが、あとから終わっても、新しい値を上書きしない
     expect(load).toHaveBeenCalledTimes(2);
   });
+
+  // 置き換えられた古い読み込みが成功で終わっても (値は新しいほうが覚えているので捨てる)、進行中の新しい読み込みは手放さない。
+  it('does not forget the in-flight load when a replaced old load succeeds after a newer value was remembered', async () => {
+    let time = 0;
+    const resolvers: Array<(value: string) => void> = [];
+    const load = vi.fn(() => new Promise<string>((resolve) => { resolvers.push(resolve); }));
+    const get = memoizeAsyncWithTtl(load, 30, () => time);
+    const first = get();
+    time = 30; // 1 つ目の共有の期限
+    const second = get();
+    time = 35;
+    resolvers[1]?.('second');
+    expect(await second).toBe('second');
+    time = 65; // 2 つ目の値の期限
+    const third = get();
+    expect(load).toHaveBeenCalledTimes(3);
+    time = 70;
+    resolvers[0]?.('first');
+    expect(await first).toBe('first'); // 2 つ目の値のほうが新しいので覚えない
+    time = 75;
+    expect(get()).toBe(third); // 3 つ目はまだ進行中で、共有の期限の内
+    expect(load).toHaveBeenCalledTimes(3);
+    resolvers[2]?.('third');
+    expect(await get()).toBe('third');
+  });
+
+  // 新しい読み込みの失敗は、覚えている (期限の内の) 古い値を消さない。
+  it('keeps serving the remembered value of a replaced load when the replacing load fails', async () => {
+    let time = 0;
+    const loads: Array<{ resolve: (value: string) => void; reject: (error: Error) => void }> = [];
+    const load = vi.fn(() => new Promise<string>((resolve, reject) => { loads.push({ resolve, reject }); }));
+    const get = memoizeAsyncWithTtl(load, 30, () => time);
+    const old = get();
+    time = 31;
+    const fresh = get();
+    loads[0]?.resolve('old');
+    expect(await old).toBe('old');
+    loads[1]?.reject(new Error('new failed'));
+    await expect(fresh).rejects.toThrow('new failed');
+    time = 40; // 古い値を覚えてから 9 (期限の内)
+    const hit = get();
+    expect(load).toHaveBeenCalledTimes(2); // 読み直さない
+    expect(await hit).toBe('old');
+  });
 });

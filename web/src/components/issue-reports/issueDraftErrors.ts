@@ -74,7 +74,7 @@ export function describeIssueDraftEditError(error: unknown): string {
       return REQUEST_TOO_LARGE_HELP;
     }
     // 見える文字が無い題名は 400 ではなく自動生成へ戻る (bdboard-ov0t)。400 は、改行・制御文字・見えない書式文字を含む題名のとき。
-    if (error.status === 400) return '題名は 1 行で、改行や見えない書式文字を含めないでください。';
+    if (error.status === 400) return '題名は 1 行で、改行・タブなどの制御文字や見えない書式文字を含めないでください。';
     return `保存できませんでした (HTTP ${error.status})。`;
   }
   return '保存できませんでした。';

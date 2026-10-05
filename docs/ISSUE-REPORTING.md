@@ -197,7 +197,7 @@ const localOnlyGuard = createPrivilegedApiGuardMiddleware({}); // トンネル d
 `sourceTicketRef`、`harnessVersionAtOccurrence`、`suspectedLeaks`・`suspectedLeaksOmitted`(下の「閲覧・編集(PATCH)側のフィールド範囲」。
 トンネル側は、返す(畳んだ)題名・本文にかけ直した値)、`draftSchemaVersion`、`restricted`。画像の一覧は別の API。
 応答の外側には `latestHarnessVersion`(この bdboard の `harness/packs/bdboard-harness/pack.json` の `version`。読めなければ `null`。
-全 pack を読む `listPacks` の結果を 30 秒使い回す: 版が変わるのは bdboard の更新のときで、再起動でも作り直され、ずれるのは版の比較の表示だけ。失敗はキャッシュしない。pack が一覧に無い結果(`undefined`)は失敗ではないので 30 秒キャッシュする。読み込み中の共有にも同じ 30 秒の期限を掛け、終わらない読み込みを期限なく共有しない(期限を過ぎたら新しく読む。bdboard-ov0t)。bdboard-pnvj)も載せる
+全 pack を読む `listPacks` の結果を 30 秒使い回す: 版が変わるのは bdboard の更新のときで、再起動でも作り直され、ずれるのは版の比較の表示だけ。失敗はキャッシュしない。pack が一覧に無い結果(`undefined`)は失敗ではないので 30 秒キャッシュする。読み込み中の共有にも同じ 30 秒の期限を掛け、終わらない読み込みを期限なく共有しない(期限を過ぎたら新しく読む。bdboard-ov0t)。値の期限は読み終えた時刻から数える。置き換えられた古い読み込みが先に終わったときも、より新しく始めた読み込みの値がまだ無ければその値を使う(読み込みが毎回 30 秒より長くても値が覚えられる。bdboard-pvff)。bdboard-pnvj)も載せる
 (秘密ではないので、ローカル直アクセスかどうかで分けない)。
 このうち**呼び出し側・利用者の入力がほぼそのまま入る**のは次で、手元の外へ出てよい形に入口で絞る:
 
