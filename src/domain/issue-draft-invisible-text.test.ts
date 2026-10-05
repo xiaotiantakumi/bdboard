@@ -15,15 +15,15 @@ import type { IssueDraft } from './issue-draft.js';
 const INVISIBLE_ONLY: ReadonlyArray<readonly [string, string]> = [
   ['an empty string', ''],
   ['spaces and a newline', ' \n\t '],
-  ['a lone ZERO WIDTH SPACE (U+200B)', '​'],
+  ['a lone ZERO WIDTH SPACE (U+200B)', '\u200B'],
   ['a lone BRAILLE PATTERN BLANK (U+2800)', '⠀'],
-  ['a lone ZERO WIDTH NON-JOINER (U+200C)', '‌'],
-  ['a lone ZERO WIDTH JOINER (U+200D)', '‍'],
-  ['a lone WORD JOINER (U+2060)', '⁠'],
-  ['a lone byte order mark (U+FEFF)', '﻿'],
+  ['a lone ZERO WIDTH NON-JOINER (U+200C)', '\u200C'],
+  ['a lone ZERO WIDTH JOINER (U+200D)', '\u200D'],
+  ['a lone WORD JOINER (U+2060)', '\u2060'],
+  ['a lone byte order mark (U+FEFF)', '\uFEFF'],
   ['a lone SOFT HYPHEN (U+00AD)', '­'],
-  ['a lone LEFT-TO-RIGHT MARK (U+200E)', '‎'],
-  ['a lone RIGHT-TO-LEFT OVERRIDE (U+202E)', '‮'],
+  ['a lone LEFT-TO-RIGHT MARK (U+200E)', '\u200E'],
+  ['a lone RIGHT-TO-LEFT OVERRIDE (U+202E)', '\u202E'],
   ['a lone HANGUL FILLER (U+3164)', 'ㅤ'],
   ['a lone HALFWIDTH HANGUL FILLER (U+FFA0)', 'ﾠ'],
   ['a lone MONGOLIAN VOWEL SEPARATOR (U+180E)', '᠎'],
@@ -31,7 +31,7 @@ const INVISIBLE_ONLY: ReadonlyArray<readonly [string, string]> = [
   ['a lone control character (U+0001)', '\u0001'],
   ['a lone combining acute accent (U+0301)', '́'],
   ['a lone VARIATION SELECTOR-16 (U+FE0F)', '️'],
-  ['zero-width characters between newlines', '​\n​\n⠀'],
+  ['zero-width characters between newlines', '\u200B\n\u200B\n⠀'],
 ];
 
 describe('hasVisibleText treats every character that draws nothing as invisible (bdboard-ov0t)', () => {
@@ -40,7 +40,7 @@ describe('hasVisibleText treats every character that draws nothing as invisible 
   });
 
   it('stays true as soon as one character is drawn, even next to invisible ones', () => {
-    for (const shown of ['a', '​x​', '⠀⠁', '‮abc', 'é', '👩‍💻', '　x', '⠀.']) {
+    for (const shown of ['a', '\u200Bx\u200B', '⠀⠁', '\u202Eabc', 'é', '👩\u200D💻', '　x', '⠀.']) {
       expect(hasVisibleText(shown)).toBe(true);
     }
   });
@@ -78,14 +78,14 @@ describe('applyDraftEdit resets a field that shows nothing, by one rule for the 
   });
 
   it('keeps a body that has something to see, exactly as written, and marks it edited', () => {
-    const body = '​⠀line\n​';
+    const body = '\u200B⠀line\n\u200B';
     const result = applyDraftEdit({ ...editedDraft(), bodyEditedByUser: false }, { body }).draft;
     expect(result.body).toBe(body);
     expect(result.bodyEditedByUser).toBe(true);
   });
 
   it('does not touch a field that was not sent', () => {
-    const result = applyDraftEdit(editedDraft(), { body: '​' }).draft;
+    const result = applyDraftEdit(editedDraft(), { body: '\u200B' }).draft;
     expect(result.title).toBe('custom title');
     expect(result.titleEditedByUser).toBe(true);
   });

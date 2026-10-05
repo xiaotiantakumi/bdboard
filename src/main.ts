@@ -109,6 +109,7 @@ async function main(): Promise<void> {
     env: process.env,
     writeAccess: auth.writeAccess,
     packRegistry: harness.packRegistry,
+    applicationVersion,
   });
 
   const misc = wireMiscRoutes({
