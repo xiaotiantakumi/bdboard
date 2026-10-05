@@ -88,7 +88,7 @@ export function engineFoldCodePoint(point: string): string {
 
 /**
  * 表で 1 コードポイントをたたむ。表が null (使えないエンジン) のときは engineFoldCodePoint に退避する。foldCodePoint の本体で、
- * 退避の配線をテストできるよう、表を引数で渡せるように分けてある。引数は 1 コードポイントだけ (複数を渡すと先頭の 1 つだけを見て、後ろを落とす)。
+ * 退避の配線をテストできるよう、表を引数で渡せるように分けてある。引数は 1 コードポイントだけ (複数を渡したときの後ろの扱いは決めていない)。
  */
 export function foldCodePointWith(point: string, caseTableValue: CaseTable | null): string {
   const codePoint = point.codePointAt(0);
@@ -185,16 +185,33 @@ function foldCase(value: string, { canonical, bmp }: CaseTable): string {
 
 /**
  * 直前にたたんだ本文とその結果。1 回の置き換えでは、根・LONG の名前・最後の網が同じ本文を続けて探すので、たたむのは 1 回で済む。
- * 純粋な関数の結果を覚えるだけなので、一致の結果は変わらない。本文は手元のパスやトークンを含みうるので、組み立ての終わりに
- * forgetFoldedText で捨てる (公開には出ないが、次の組み立てまでメモリに残さない)。
+ * 純粋な関数の結果を覚えるだけなので、一致の結果は変わらない。本文は手元のパスやトークンを含みうるので、覚えは 1 回の走査の間だけ
+ * (withFoldedTextMemo)。公開には出ないが、次の走査までメモリに残さない。
  */
 let lastText: string | undefined;
 let lastFolded = '';
 
-/** 覚えている本文とたたみを捨てる (buildPublicIssueBody の終わりで呼ぶ)。 */
-export function forgetFoldedText(): void {
+function forgetFoldedText(): void {
   lastText = undefined;
   lastFolded = '';
+}
+
+/**
+ * 1 回の走査 (公開本文の組み立て buildPublicIssueBody、編集した欄の置き換え漏れの再走査 scanEditedText) の間だけ、たたんだ本文を
+ * 覚える。run が返っても投げても、終わりに覚えを捨てる。同期の関数だけを渡す (非同期だと、待つ前に捨てる)。入れ子で呼ぶと内側の終わりで
+ * 外側の覚えも捨てるが、たたみ直すだけで結果は変わらない。
+ */
+export function withFoldedTextMemo<T>(run: () => T): T {
+  try {
+    return run();
+  } finally {
+    forgetFoldedText();
+  }
+}
+
+/** 本文のたたみを覚えているか。テストが、走査の終わりに捨てたことを確かめる。 */
+export function foldedTextRemembered(): boolean {
+  return lastText !== undefined;
 }
 
 function foldText(text: string, caseTableValue: CaseTable): string {

@@ -75,9 +75,16 @@ export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRout
 
   // 公開本文の大文字小文字の表 (bdboard-uudb)。エンジンの自己検査に落ちると、以前の正規表現の探し方に黙って戻る (結果は同じだが、
   // 大きい鍵で組み立てが数分かかる)。起動の後に 1 回だけ確かめ (表は 0.1〜0.3 秒で作られ、以後の組み立てが使う)、落ちたら code だけ出す。
+  // 確かめる処理が投げても、setImmediate の中の未処理の例外でサーバーを落とさない: ログは code だけ (パスも message も出さない)。
+  // 表は作れなかったので、最初の組み立てが同じ理由で投げうる (そのときは組み立ての側の失敗として表に出る)。
   const caseTableUsable = deps.caseTableUsable ?? caseFoldingTableUsable;
   setImmediate(() => {
-    if (!caseTableUsable()) log('issue public body: case table unavailable, using the slow regex search (case-table-fallback)');
+    try {
+      if (!caseTableUsable()) log('issue public body: case table unavailable, using the slow regex search (case-table-fallback)');
+    } catch (error: unknown) {
+      const code = (error as NodeJS.ErrnoException | undefined)?.code;
+      log(`issue public body: case table check failed (case-table-check-failed, ${typeof code === 'string' ? code : 'unknown'})`);
+    }
   });
 
   return { issueReportsRouter };

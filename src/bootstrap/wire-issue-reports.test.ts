@@ -136,6 +136,33 @@ describe('wireIssueReports: the start-up prune', () => {
     expect(log.mock.calls.some(([message]) => String(message).includes('case-table-fallback'))).toBe(false);
   });
 
+  // setImmediate の中で投げると、未処理の例外として起動の直後にサーバーが落ちる (vitest でも未処理の例外として実行全体が失敗する)。
+  it.each([
+    ['an error with a code', Object.assign(new RangeError('/Users/example-user/secret/path exploded'), { code: 'ERR_EXAMPLE' }), 'ERR_EXAMPLE'],
+    ['an error without a code', new Error('/Users/example-user/secret/path exploded'), 'unknown'],
+  ])(
+    'logs only a code and does not crash when the case table check throws: %s (bdboard-qoxj)',
+    async (_name, thrown, expectedCode) => {
+      const log = vi.fn();
+      wireIssueReports({
+        repoRoot: root,
+        env: { BDBOARD_ISSUE_DRAFTS_DIR: draftsDir },
+        writeAccess: {},
+        packRegistry: { listPacks: () => Promise.resolve([]) },
+        log,
+        caseTableUsable: () => {
+          throw thrown;
+        },
+      });
+      await vi.waitFor(() => {
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('(case-table-check-failed, '));
+      });
+      // 表についてのログはこの 1 行だけ: code だけで error.message とパスは出さず、退避の警告 (case-table-fallback) も出さない。
+      const tableMessages = log.mock.calls.map(([message]) => String(message)).filter((message) => message.includes('case table'));
+      expect(tableMessages).toEqual([`issue public body: case table check failed (case-table-check-failed, ${expectedCode})`]);
+    },
+  );
+
   it('answers null for the latest version when the pack cannot be read, without failing the read', async () => {
     await seed(makeDraft(ID_OLD_OPEN, 'pending'), 0);
     const { issueReportsRouter } = wireIssueReports({
