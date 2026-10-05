@@ -29,7 +29,7 @@ describe('wireSelfErrorReporter', () => {
     expect(wired.onRefreshResult).toBeDefined();
     expect(wired.reporter).toBeDefined();
     // kind unknown は 3 回続けて見えてから下書きにする (bdboard-f2ob)。1 回目と 2 回目では何も作らない。
-    wired.onRefreshResult?.(result, [p]);
+    await wired.reporter?.observeRefresh(result, [p]);
     await wired.reporter?.observeRefresh(result, [p]);
     expect((await service.listWithPendingCount()).drafts).toHaveLength(0);
     wired.onRefreshResult?.(result, [p]);
