@@ -83,7 +83,8 @@ export interface LinearTimeReport {
 
 /**
  * vitest の timeout に渡す値 (壁時計)。大は最大 3 回 (`maxAttempts` は 1 回目を含む) で、大が CPU 時間で
- * 10 秒を超えたら測り直さない。小 3 回 x 3 試行と、絶対の上限 30 秒の大が 1 回あっても収まる余裕を取る。
+ * `maxAbsoluteMs / 3` 以上なら測り直さない (既定の上限 30 秒なら 10 秒、`maxAbsoluteMs` を絞ったテストではその 3 分の 1。
+ * build は 10_000 を渡すので 3.3 秒)。小 3 回 x 3 試行と、絶対の上限 30 秒の大が 1 回あっても収まる余裕を取る。
  * 同期のコードは vitest の timeout では中断できない。超過した場合は事後に報告されるだけである。
  */
 export const LINEAR_TIME_TEST_TIMEOUT_MS = 90_000;
@@ -92,8 +93,15 @@ export const LINEAR_TIME_DEFAULT_MAX_RATIO = 25;
 export const LINEAR_TIME_DEFAULT_MAX_ABSOLUTE_MS = 30_000;
 /** 小の時間が 0 のとき (時計が進まなかったとき) に、比が 0 除算で NaN や Infinity にならないための下限 (ms)。 */
 const MIN_DIVISOR_MS = 0.001;
-/** 1 回の測定の合計の下限の既定 (ms)。時計の分解能の 10 倍以上: Windows の CPU 時間は約 15.6ms 刻み。 */
-export const MIN_SAMPLE_MS = process.platform === 'win32' ? 160 : 30;
+/**
+ * 1 回の測定の合計の下限の既定 (ms)。時計の分解能の 10 倍以上: Windows の CPU 時間は約 15.6ms 刻みなので 160。
+ * 両方の値は linear-time-test-support.clock.test.ts が固定する (platform を引数に取るのは、どの OS で走っても
+ * win32 の値を検査できるようにするため)。
+ */
+export function defaultMinSampleMs(platform: string): number {
+  return platform === 'win32' ? 160 : 30;
+}
+export const MIN_SAMPLE_MS = defaultMinSampleMs(process.platform);
 /** 繰り返しの上限。時計が進まない (または極端に軽い) run で無限に回らないための安全弁。 */
 const MAX_REPS = 100_000;
 
@@ -154,7 +162,7 @@ export function measureLinearTime(label: string, setup: LinearTimeSetup, options
     bigMs = Math.min(bigMs, timeOnce(setup, 1, clock, minSampleMs));
     ratio = bigMs / Math.max(smallMs, minSmallMs, MIN_DIVISOR_MS);
     if (ratio < maxRatio) break;
-    // 大が長い (10 秒級) のは負荷の山では説明できず、測り直すとテストの timeout を食うだけなので止める。
+    // 大が絶対の上限の 3 分の 1 以上 (既定なら 10 秒級) と長いのは負荷の山では説明できず、測り直すとテストの timeout を食うだけなので止める。
     if (bigMs >= maxAbsoluteMs / 3) break;
   }
   return { label, smallMs, bigMs, ratio, attempts };

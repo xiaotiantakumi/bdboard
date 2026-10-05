@@ -120,7 +120,7 @@ describe('expectLinearTime', () => {
     );
   });
 
-  it('does not repeat a big run of 10 seconds or more, which a load spike cannot explain', () => {
+  it('does not repeat a big run of maxAbsoluteMs / 3 or more (10 seconds by default), which a load spike cannot explain', () => {
     const clock = fakeClock();
     const setup: LinearTimeSetup = (n) => {
       const count = n(BIG);
