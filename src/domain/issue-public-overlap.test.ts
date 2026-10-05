@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildPublicIssueBody } from './issue-public-build.js';
-import { caseInsensitiveLiteral, escapeRegExp } from './issue-public-casefold.js';
+import { caseInsensitiveLiteral, escapeRegExp, fallbackLiteral } from './issue-public-casefold.js';
 import { prepareKeys } from './issue-public-keys.js';
 import { literalSearcher } from './issue-public-literal-search.js';
 import { redactText } from './issue-public-redact.js';
@@ -124,7 +124,24 @@ describe('literalSearcher: every occurrence is found and overlapping ones are me
     }
   });
 
-  it('leaves no occurrence of a periodic name after redactText', () => {
+  it('the regex fallback for engines without the case table returns the same ranges as the table', () => {
+    // V8 では表が使えるので、退避の正規表現 (先読みの捕獲) はこのテストからしか走らない。
+    const next = lcg(0x2f0d);
+    for (let run = 0; run < 2_000; run += 1) {
+      const classes = CLASSES[next() % CLASSES.length] ?? CLASSES[0];
+      const pool = ['a', 'b', '-', '1', classes[0], classes[1]];
+      const unit = Array.from({ length: 1 + (next() % 4) }, () => pool[next() % pool.length] ?? 'a').join('');
+      const key = unit.repeat(Math.ceil((4 + (next() % 9)) / unit.length));
+      const pieces = [key, key.slice(0, 1 + (next() % key.length)), key.slice(-1 - (next() % key.length)), unit, classes[2], ' ', '2', '.'];
+      const text = Array.from({ length: 1 + (next() % 6) }, () => pieces[next() % pieces.length] ?? '').join('');
+      const root = next() % 2 === 0;
+      const table = literalSearcher(text)(caseInsensitiveLiteral(key, root));
+      expect({ key, text, root, spans: literalSearcher(text)(fallbackLiteral(key, root)) }).toEqual({ key, text, root, spans: table });
+      expect(table).toEqual(oracle(text, key, root));
+    }
+  });
+
+  it('replaces every merged run of a periodic name after redactText, tails included', () => {
     const next = lcg(0x8a21);
     const alphabet = ['a', 'b', '-', '1', 's', 'ſ', 'S', 'σ', 'ς', 'Σ', 'θ', 'ϑ', 'Θ'];
     for (let run = 0; run < 1_000; run += 1) {
@@ -133,18 +150,29 @@ describe('literalSearcher: every occurrence is found and overlapping ones are me
       const key = unit.repeat(Math.ceil(length / unit.length)).slice(0, length);
       const text = Array.from({ length: 1 + (next() % 6) }, () => [key, unit, ' ', '2', 'x', '.', '/'][next() % 7] ?? '').join('');
       const output = redactText(text, prepareKeys(nounKeys(key))).text;
-      expect({ key, text, output, left: oracle(output, key, false) }).toEqual({ key, text, output, left: [] });
+      // 正解の範囲 (重なる出現を併合したもの) をそれぞれ印 1 つに替えた文字列と一致する。完全な鍵が残らないことだけを見ると、
+      // 重なった 2 つ目の出現の後ろ (以前の `<project>1-ba`) は鍵の出現ではないので、以前の実装でも通ってしまう。
+      let expected = '';
+      let from = 0;
+      for (const span of oracle(text, key, false)) {
+        expected += `${text.slice(from, span.start)}<project>`;
+        from = span.end;
+      }
+      expected += text.slice(from);
+      expect({ key, text, output }).toEqual({ key, text, output: expected });
     }
   });
 });
 
 describe('linear time with keys that overlap themselves', () => {
   // [名前, 鍵の単位, 鍵の繰り返し, 本文の単位, 本文の繰り返し, 根か, 本文の末尾]
+  // 鍵の繰り返しも本文と同じ縮尺で伸ばす: 鍵の長さを固定すると、出現ごとに 1 つ右から探し直す O(本文 × 鍵) の実装
+  // (bdboard-0hj9 より前の根の探し方や、素朴な全出現の列挙) も本文の長さには線形で、比に現れない。
   const SHAPES = [
-    ['one repeated character', 'a', 50, 'a', 100_000, false, ''],
-    ['two-character period', 'ab', 25, 'ab', 50_000, false, ''],
-    ['root with a period, mixed followers', '/a', 25, '/a', 50_000, true, 'b'],
-    ['root whose every occurrence is rejected by the follower', 'a', 4, 'a', 100_000, true, ''],
+    ['one repeated character', 'a', 1_000, 'a', 100_000, false, ''],
+    ['two-character period', 'ab', 500, 'ab', 50_000, false, ''],
+    ['root with a period, mixed followers', '/a', 500, '/a', 50_000, true, 'b'],
+    ['root whose every occurrence is rejected by the follower', 'a', 1_000, 'a', 100_000, true, ''],
     ['dense occurrences of a plain key', 'abcd', 1, 'abcd', 25_000, false, ''],
   ] as const;
 
@@ -152,7 +180,7 @@ describe('linear time with keys that overlap themselves', () => {
     expectLinearTime(
       `literalSearcher: ${label}`,
       (n) => {
-        const key = caseInsensitiveLiteral(unit.repeat(copies), root);
+        const key = caseInsensitiveLiteral(unit.repeat(n(copies)), root);
         const text = textUnit.repeat(n(textCopies)) + tail;
         return () => {
           literalSearcher(text)(key);
@@ -164,7 +192,7 @@ describe('linear time with keys that overlap themselves', () => {
 
   it('buildPublicIssueBody grows linearly with a periodic name in the error text', () => {
     expectLinearTime('buildPublicIssueBody: periodic name', (n) => {
-      const keys = nounKeys('ab'.repeat(25));
+      const keys = nounKeys('ab'.repeat(n(250)));
       const errorText = 'ab'.repeat(n(50_000));
       return () => {
         buildPublicIssueBody({ ...BASE, errorText }, keys);

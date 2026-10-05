@@ -215,15 +215,20 @@ export interface CaseInsensitiveLiteral {
   readonly root: boolean;
 }
 
+/**
+ * 表が使えないエンジンの鍵。重なる出現も拾えるよう、鍵は先読みの中で捕獲する (根の直後の文字の条件も先読みの中、捕獲の外)。
+ * V8 では表が使えるのでこの経路は走らない。テストが直接呼んで、表の経路と同じ範囲を返すことを確かめる。
+ */
+export function fallbackLiteral(value: string, root: boolean): CaseInsensitiveLiteral {
+  const suffix = root ? '(?![\\p{L}\\p{N}_-])' : '';
+  const fallback = new RegExp(`(?=(${escapeRegExp(value)})${suffix})`, 'giu');
+  return { folded: value, fallback, codePoints: Array.from(value).length, root };
+}
+
 export function caseInsensitiveLiteral(value: string, root: boolean): CaseInsensitiveLiteral {
   const caseTableValue = caseTable();
-  const codePoints = Array.from(value).length;
-  if (caseTableValue === null) {
-    // 表が使えないエンジンの退避。重なる出現も拾えるよう、鍵は先読みの中で捕獲する (根の直後の文字の条件も先読みの中、捕獲の外)。
-    const suffix = root ? '(?![\\p{L}\\p{N}_-])' : '';
-    return { folded: value, fallback: new RegExp(`(?=(${escapeRegExp(value)})${suffix})`, 'giu'), codePoints, root };
-  }
-  return { folded: foldCase(value, caseTableValue), fallback: undefined, codePoints, root };
+  if (caseTableValue === null) return fallbackLiteral(value, root);
+  return { folded: foldCase(value, caseTableValue), fallback: undefined, codePoints: Array.from(value).length, root };
 }
 
 /**
