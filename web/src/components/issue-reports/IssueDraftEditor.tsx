@@ -9,6 +9,7 @@ import {
   type IssueDraftTextEdit,
 } from '../../api/issue-reports';
 import { IssueDraftFieldReset } from './IssueDraftFieldReset';
+import { changedFields, withEditResponse } from './issueDraftCache';
 import {
   ERROR_TEXT_TRIMMED_NOTE,
   ISSUE_DRAFT_BODY_MAX_CHARS,
@@ -38,17 +39,6 @@ type TextBase = IssueDraftTextInput;
 type TextField = keyof IssueDraftTextInput;
 
 const FIELD_LABELS: Readonly<Record<TextField, string>> = { title: '題名', body: '本文' };
-
-/**
- * 変えた欄だけを送る (サーバーは渡された欄にだけ「直した」印を立てる)。比べる相手は編集を始めたときの値: 編集中に
- * 裏で作り直された欄を、触っていないのに古い値で上書きしないため。
- */
-function changedFields(base: TextBase, title: string, body: string): IssueDraftTextEdit {
-  return {
-    ...(title !== base.title ? { title } : {}),
-    ...(body !== base.body ? { body } : {}),
-  };
-}
 
 /**
  * 公開される題名・本文をその場で直す (PATCH drafts/:id)。保存に成功したら中身の問い合わせを応答で置き換え、
@@ -85,16 +75,11 @@ export function IssueDraftEditor({ draft, etag, onCancel, onSaved, onInputChange
   const sendEdit = (edit: IssueDraftTextEdit) =>
     etag === undefined ? patchIssueDraft(draft.id, edit) : patchIssueDraft(draft.id, edit, { ifMatch: etag });
 
-  /**
-   * 保存・戻すの成功: 応答の draft は GET の draft と同じ形 (images・latestHarnessVersion は載らないので前の値を残す)。応答の ETag も
-   * 一緒に置く (次の保存の If-Match になる)。応答に無ければ消す: 古い ETag を残すと、次の保存が必ず 412 になる。
-   */
+  /** 保存・戻すの成功: 中身の問い合わせを応答で置き換える (応答の ETag も。issueDraftCache.ts)。一覧・件数は読み直す。 */
   const applyResponse = (response: IssueDraftEditResponseDto) => {
-    queryClient.setQueryData<IssueDraftDetailResponseDto>(['issue-reports', 'detail', draft.id], (previous) => {
-      if (previous === undefined) return previous;
-      const { etag: _stale, ...rest } = previous;
-      return { ...rest, draft: response.draft, ...(response.etag !== undefined ? { etag: response.etag } : {}) };
-    });
+    queryClient.setQueryData<IssueDraftDetailResponseDto>(['issue-reports', 'detail', draft.id], (previous) =>
+      previous === undefined ? previous : withEditResponse(previous, response),
+    );
     void queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
   };
 

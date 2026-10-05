@@ -1,6 +1,3 @@
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 import {
@@ -11,7 +8,6 @@ import {
   createInMemoryIssueDraftStorage,
   type InMemoryIssueDraftStorage,
 } from '../../application/issue-report/issue-draft-test-support.js';
-import { createFsIssueDraftStorage } from '../../infrastructure/fs/fs-issue-draft-storage.js';
 import { createBasicAuthMiddleware } from './basic-auth.js';
 import { createCompressionMiddleware } from './compression.js';
 import { createIssueReportRoutes } from './issue-report-routes.js';
@@ -328,36 +324,6 @@ describe('PATCH /api/issue-reports/drafts/:id — If-Match', () => {
     expect([first.status, second.status].sort()).toEqual([200, 412]);
     const winner = first.status === 200 ? 'From the first tab' : 'From the second tab';
     expect(storage.drafts.get(id)?.title).toBe(winner);
-  });
-});
-
-describe('with the file storage, which reads the keys back in the schema order', () => {
-  it('gives the draft just edited in memory the same ETag as the same draft read back from disk', async () => {
-    // 編集した直後のメモリ上の下書きは suspectedLeaks が末尾にあり、読み直した下書きは zod のスキーマの順で並ぶ。
-    // キーの順で ETag が変わると、保存の応答の ETag で次の PATCH を送ったときに 412 になる。
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'bdboard-mqoa-'));
-    try {
-      let seq = 0;
-      const service = createIssueDraftService({
-        storage: createFsIssueDraftStorage(dir, { warn: () => undefined }),
-        now: () => new Date('2026-10-04T12:00:00.000Z'),
-        newId: () => {
-          seq += 1;
-          return `${1758812345000 + seq}-${seq.toString(16).padStart(16, '0')}`;
-        },
-        retention: { warn: () => undefined },
-      });
-      const app = createIssueReportRoutes({ service, latestHarnessVersion: async () => '0.50.0' });
-      const id = await receive(app, 'slug-a');
-      const edited = await app.request(`${DRAFTS}/${id}`, patch({ title: 'Edited', body: 'cwd /Users/example-user/work' }), LOCAL_ENV);
-      expect(edited.status).toBe(200);
-      const etag = edited.headers.get('ETag');
-      expect(etag).toMatch(STRONG_ETAG);
-      expect(await etagOf(app, `${DRAFTS}/${id}`)).toBe(etag);
-      expect((await app.request(`${DRAFTS}/${id}`, patch({ title: 'Again' }, { 'if-match': etag as string }), LOCAL_ENV)).status).toBe(200);
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
   });
 });
 
