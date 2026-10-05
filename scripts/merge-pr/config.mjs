@@ -34,7 +34,7 @@ export const SLOT_MODES = ['S1', 'S2', 'S3'];
 export const PREDICTED_MODES = ['S2', 'S3'];
 /**
  * クラス L の軽量チェックの既定。scripts/verify.mjs の --light は verify スロットに並んでから
- * verify:light (check:file-size + lint:verify + build + build:web + check:boundaries。テストは回さない)
+ * verify:light (check:file-size + check:invisible-chars + lint:verify + build + build:web + check:boundaries。テストは回さない)
  * を走らせる。契約の merge.lightCheck で置き換えられる。
  */
 export const DEFAULT_LIGHT_CHECK = 'npm run verify -- --light';

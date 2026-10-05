@@ -17,6 +17,8 @@ import { wireAuthAndTunnel } from './bootstrap/wire-auth-and-tunnel.js';
 import { wireBoardApi } from './bootstrap/wire-board-api.js';
 import { wireAttachments } from './bootstrap/wire-attachments.js';
 import { wireIssueReports } from './bootstrap/wire-issue-reports.js';
+import { wireIssueDraftService } from './bootstrap/wire-issue-draft-service.js';
+import { wireSelfErrorReporter } from './bootstrap/wire-self-error-reporter.js';
 import { wireHarness } from './bootstrap/wire-harness.js';
 import { wireMiscRoutes } from './bootstrap/wire-misc-routes.js';
 import { wireFeatureRoutes } from './bootstrap/wire-feature-routes.js';
@@ -31,6 +33,10 @@ async function main(): Promise<void> {
   const infra = wireCoreInfra({ ...config });
 
   const bdServices = wireBdServices(infra.commandRunner, { ...config });
+
+  // 下書きサービスは初回リフレッシュの結果を受けるため、lifecycle より先に作る。
+  const issueDrafts = wireIssueDraftService({ repoRoot, env: process.env, applicationVersion });
+  const selfErrors = wireSelfErrorReporter({ env: process.env, service: issueDrafts, cache: infra.cache, applicationVersion });
 
   // Windows は「全機能対応」ではなく「機能制限 + 正直な案内」で出す方針
   // (bdboard-70z.9)。BDBOARD_IGNORE_PLATFORM_LIMITS は、独自に環境を整えた
@@ -50,6 +56,7 @@ async function main(): Promise<void> {
     scanRootsConfigStore: infra.scanRootsConfigStore,
     repository: bdServices.repository,
     cache: infra.cache,
+    onRefreshResult: selfErrors.onRefreshResult,
     humanDecisions: bdServices.humanDecisions,
     platformSupport,
     sessionDiscoverySupported,
@@ -107,9 +114,9 @@ async function main(): Promise<void> {
   const issueReports = wireIssueReports({
     repoRoot,
     env: process.env,
+    service: issueDrafts,
     writeAccess: auth.writeAccess,
     packRegistry: harness.packRegistry,
-    applicationVersion,
   });
 
   const misc = wireMiscRoutes({

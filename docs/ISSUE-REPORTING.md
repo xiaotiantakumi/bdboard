@@ -980,6 +980,82 @@ function normalizeErrorText(text: string): string {
 
 **この PR ではやらないこと**: `refreshProjects` との配線、下書きサービスの呼び出し、環境変数 `BDBOARD_SELF_ERROR_DRAFTS` による停止(U6)、
 `LocalOnlyKeys` を全プロジェクトの名前・根・接頭辞に広げること(U13、4y8q.4)。後続は 4y8q.6.3。
+(配線・下書きサービスの呼び出し・U6 は次の「本体エラーの取り込み」(4y8q.6.3)で行った。U13 は 4y8q.4 のまま。)
+
+### 本体エラーの取り込み(bdboard-4y8q.6.3、リフレッシュの失敗)
+
+画面の自動更新(`refreshProjects`)の失敗 — プロジェクトの DB を開けない(#432 の種類)、bd の出力を読めない(`schema-mismatch`)など — を、
+種類 C(bdboard 本体)の下書きにする。bd や Dolt など bdboard 以外のツールが原因のこともあるが、原因の切り分けはせず、起きたことをそのまま入れる
+(切り分けは下書きを見た人がする)。
+
+**HTTP でなくプロセスの中から呼ぶ**: この取り込みは `POST /api/issue-reports` を通らない。サーバーのプロセスの中で
+`createSelfErrorReporter`(`src/application/issue-report/self-error-reporter.ts`)が `IssueDraftService.receive` を直接呼ぶ。
+外から呼べる口は増えない(write-guard・トンネルの判定の対象外)。`wireBoardRefresh` が 1 回のリフレッシュ(起動時の初回と、定期・watcher・手動の再実行の
+どれも)の結果を `onRefreshResult` で渡し、`src/bootstrap/wire-self-error-reporter.ts` がそれを reporter の `observeRefresh` につなぐ。
+下書きサービスは、初回リフレッシュの結果を受けるため `wireBoardLifecycle` より前に作る(`src/bootstrap/wire-issue-draft-service.ts`。
+`wireIssueReports` は作ったサービスを受け取る。渡さなければ自分で作る。envInfo の扱いは下の逸脱表の 10)。
+
+| 部品 | 役割 |
+|---|---|
+| `createSelfErrorReporter({service, throttle, listProjects, envInfo, log, now?})` | `report({source, errorText, agentNote?, project?})`(伏せる → 間引く → `receive` を待たずに呼ぶ)と `observeRefresh(result, projects)`(6.2 の tracker が選んだ報告をそのまま `receive` へ)。どちらも返す Promise は **reject しない**(呼び出し側は `void` で捨ててよい) |
+| `createRefreshResultObserver({discovery, cache, onResult, logError})`(`src/application/board/refresh-result-observer.ts`) | `discover()` の結果を覚える包みと、結果 1 回ごとの `onResult(result, projects)` の呼び出し(投げない) |
+| `wireSelfErrorReporter` | throttle・envInfo(`serverEnvInfo`)・停止の環境変数をつないで、`reporter` と `onRefreshResult` を返す(止めているときは両方 `undefined`) |
+
+**source の語彙**: 下書きの指紋は `C:<source>:<伏せたエラー文の寄せたハッシュ>`、題名は `[bdboard 本体] <source>` なので、source にはパス・プロジェクト名・ID を入れない。
+
+| source | 出どころ | チケット |
+|---|---|---|
+| `bd-refresh:<kind>` | `refreshProjects` の `errors[].kind`(`bd-not-found` / `not-a-beads-project` / `lock-contention` / `timeout` / `schema-mismatch` / `unknown`)。#432 の文は `bd-refresh:unknown` で、題名は `[bdboard 本体] bd-refresh:unknown` | 4y8q.6.3 |
+| `api:<METHOD> <route>` | API の 5xx と処理されなかった例外(予約。具体的なパスは入れない) | 4y8q.6.4 |
+| 画面のエラー | 予約(語彙は 4y8q.6.5 が決め、この表に足す) | 4y8q.6.5 |
+
+**間引きと「二重に間引かない」**: 間引くのは 1 つの出どころごとに 1 回だけ。`observeRefresh` は 6.2 の tracker(キーは `(kind, 伏せた detail を寄せたもの)`、1 時間に 1 回、
+`lock-contention` と `timeout` は 3 回続けて)が選んだ報告を、reporter が**もう一度伏せも間引きもせず**そのまま送る(tracker が通した報告を reporter の間引きが落とすと、
+その 1 時間は報告が消える)。`report()`(リフレッシュ以外の呼び出し。4y8q.6.4 以降)は自分で伏せ、`selfErrorKey(source, 伏せた文)` を同じ throttle に聞く(tracker のキーとは
+`kind` と `source` で名前の空間が分かれるので衝突しない)。throttle は 1 つのサーバーで 1 個を共有する(500 キーの LRU)。
+
+**伏せるための一覧**: tracker は伏せるときの一覧(`id`・名前・根と別名のパス・接頭辞)を引数で受ける。ここで渡す一覧は **discovery の一覧に、キャッシュの接頭辞を合わせたもの**:
+discovery が返す Project は `prefixes` が常に `[]` で(接頭辞は bd のデータから集めてキャッシュに入る)、`cache.listProjects()` をそのまま一覧にすると、一度もキャッシュされずに失敗し続けるプロジェクト
+(#432 の状況)の失敗が「未知のプロジェクト」として捨てられる。`wireBoardRefresh` は `discover()` の結果を覚え(`createRefreshResultObserver`)、結果ごとにキャッシュ(`readProjectRefs`)から
+`id` で接頭辞だけを引いて合わせる。キャッシュにあって discovery に無いプロジェクトは入れない(`removed` で状態が捨てられる)。
+
+**回数の意味**: 下書きの `occurrenceCount` は「実際に起きた回数」ではなく**「1 時間ごとの報告の数」**(U3)。同じエラーが続いても 1 時間に 1 回しか `receive` しないので、
+出続けた 1 日で 24 に近づく。見送り・投稿済みの下書きは今までどおり回数だけが増える(4節の状態遷移の表)。help-content の「不具合報告」にも同じことを書く。
+
+**失敗の扱い**: 取り込みは、リフレッシュを止めない・遅らせない・落とさない。`receive` が reject・同期 throw・`{ok:false}` を返しても、envInfo・伏せる処理・tracker が throw しても、
+reporter の中で握って**ログに code だけ**出す: `self error draft failed (<code>)`(`error.code` が `[A-Za-z0-9_-]{1,40}` のときだけ。それ以外は `unknown`)と
+`self error draft not saved (<reason>)`(`storage-full` など固定の語彙)。パス・message・stack・エラー文は出さない。保存に失敗した報告は、throttle がすでに「報告済み」にしているので、同じキーはその 1 時間は再試行しない(消えるのは 1 件分で、続いていれば
+1 時間後に次の報告が来る)。`onRefreshResult` を呼ぶ側(`createRefreshResultObserver`)も、
+コールバックが throw したら固定文 `Refresh result observer failed` だけ出して続ける。
+なお、起動時の初回リフレッシュが以前から出している `Refresh error [kind] project=…: detail`(`console.error`)はこの取り込みとは別で、今回は変えていない。
+
+**envInfo はサーバーが埋める**: `bdboardVersion`(既存の `ApplicationVersionProvider`)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。元は共有の `serverEnvInfo`(`wire-issue-draft-service.ts`)で、
+手書きの下書き(4y8q.6.7)も本体エラーも同じもの。`bdVersion` は入れない
+(bd の版は起動時に 1 回読んで捨てるだけで、リフレッシュの失敗のたびに `bd version` を起動するのは安価でなく、bd が壊れているときこそ読めない)。
+
+**止め方(U6)**: 環境変数 `BDBOARD_SELF_ERROR_DRAFTS` が `off` / `0` / `false`(前後の空白・大小は無視)のとき、取り込み全体が何もしない(`receive` を呼ばない)。起動時にログを 1 回出す。
+止めているときは `wireSelfErrorReporter` が `reporter` も `onRefreshResult` も **`undefined`** で返し、`wireBoardRefresh` は結果の observer を作らない(止めた分の空の関数や、結果ごとの
+キャッシュの読み出しは走らない)。**起動時に 1 回だけ読む**ので、値を変えたら**サーバーの再起動が要る**(実行中に切り替える口は無い)。
+README の環境変数の表にも載せた。
+なお、observer はエラーの無いリフレッシュ(大半)ではキャッシュの一覧(`readProjectRefs`)を読まない。接頭辞は伏せるときにだけ要るので、エラーがあるときだけ読む。
+`createSelfErrorMasker` の組み立ても、tracker が最初の伏せる文を見るまで遅らせる(エラーの無いリフレッシュでは作らない)。
+`BDBOARD_SELF_ERROR_DRAFTS` を既存の `envBoolDefaultTrue` で読まないのは、受け付ける値が違うため(`envBoolDefaultTrue` は `0` / `false` だけで、`off` と前後の空白を見ない)。
+
+**設計からずれた点・決めたこと**
+
+| # | 項目 | 実装 |
+|---|---|---|
+| 1 | `observeRefresh` の引数 | 仕様は `observeRefresh(result)`。実装は **`observeRefresh(result, projects)`**。discovery の一覧を持つのは `wireBoardRefresh` の中で、reporter は discovery より前(`wireBoardLifecycle` の前)に作るため、一覧は結果と一緒に渡す。`listProjects` dep は `report()` が文を伏せるときだけ使う(キャッシュの一覧) |
+| 2 | `onRefreshResult` の形 | `(result, projects) => void`。`refreshRunner` の `onResult` の末尾と、起動時の初回リフレッシュの後の両方で呼ぶ。呼ぶ側は投げない |
+| 3 | `report` / `observeRefresh` の戻り値 | 仕様の「`receive` を待たずに呼ぶ」に合わせ、呼び出し側は待たない。戻りは `Promise<void>` で決して reject しない(テストが完了を待てるようにするため) |
+| 4 | deps の `now` | 足した(`() => new Date()` が既定)。tracker と `report()` の throttle が時刻を要る |
+| 5 | `bdVersion` | 入れなかった(上の「envInfo」) |
+| 6 | Dolt のデータベース名(`.beads/metadata.json` の `dolt_database`) | **4y8q.4 に回した**。この PR では公開本文を作らず(題名・本文の暫定版は `errorText` を含まない。3節の暫定版の説明)、`errorText` が入るのは手元限定の `errorTextRaw` だけ。読み取りは全プロジェクトの `metadata.json` を読む IO で、公開本文の鍵 `LocalOnlyKeys` を全プロジェクトの名前・根・接頭辞に広げる U13(4y8q.4)と同じ場所で一度に足すほうが自然で、ここで足すと 6.2 の `SelfErrorMaskProject` と port の追加が要る。**4y8q.4 の申し送り**: `LocalOnlyKeys` に `dolt_database` も足す |
+| 7 | 一度もキャッシュされないプロジェクトの接頭辞 | 接頭辞が分からないので、接頭辞から作られる Dolt のデータベース名(#432 の文 `database "epic_haslett_00ae14" not found …`)は伏せられず、手元の `errorTextRaw` に残る。名前とパスは discovery の一覧で伏せる。下書きの指紋はこの文から作るので、別のプロジェクトの同じ種類のエラーは別の下書きになる(漏らさない側に倒した)。6 の読み取りを足せば解消する |
+| 8 | 環境変数による停止(U6) | 6.2 が「後続は 4y8q.6.3」としたものを、この PR で入れた(6.3 の本文には無かったが、ほかに担当のチケットが無い) |
+| 9 | 6.2 の domain への変更 | `selfErrorKey(kind, errorText)` を公開した(tracker の内部のキー関数。`report()` が同じ畳み方でキーを作る)。ほかは触っていない |
+| 10 | `wireIssueDraftService` / `wireIssueReports` と envInfo(#911=4y8q.6.7 との意味の衝突) | `wireIssueReports` の `service` を省略可能な引数にした(渡さなければ自分で作る)。#911 は手書きの下書きの `envInfo` を `wireIssueReports` が作るサービスに入れていたが、この PR で `main.ts` が**サービスを先に作って渡す**ので、そのままだと手書きの下書きの版が黙って `unknown` になる(文面の衝突ではなく意味の衝突。git は検出しない)。そこで envInfo の元を **`wireIssueDraftService` の必須の引数 `applicationVersion`** に移し、共有の `serverEnvInfo(applicationVersion)`(`bdboardVersion`・`os`・`nodeVersion`)を手書きの下書きと本体エラーの両方に使う。`wireIssueReports` の `applicationVersion` は、サービスを渡さないとき(テスト)に自分で作るサービスにだけ使う。受け入れは `wire-issue-draft-service.test.ts`(main.ts と同じ組み立てで、手書きの下書きの envInfo に渡した版が入る) |
+| 11 | 既知の限界: `occurredProjects` | (**4y8q.6.2 の逸脱表 12 の再掲**)下書きの `occurredProjects` には、**1 時間に 1 プロジェクトしか載らない**。間引きのキーをプロジェクトで共有するので、同じ文の 2 つ目以降のプロジェクトは 1 時間のあいだ報告されない。ふつう `occurredProjects` は「どのプロジェクトで起きたか」の一覧だが、本体エラーでは当てにしない(回数も「プロジェクトの数」ではない) |
 
 ## 5. 公開本文の組み立てと置き換え(項目 e、bdboard-4y8q.2)
 
@@ -1735,6 +1811,33 @@ reader、メンテナ環境の判定)。一覧の組み立て・写しの保存�
 | 15 | 引数の検査は許可リスト方式 | 禁止リスト(10)は、`-X POST` や `--method=POST` を正しい `--method GET` の横に置く形(gh は同じフラグの最後の値を採るので POST になる)や、ヘッダでのメソッド上書き(`-H X-HTTP-Method-Override`)のような、載せきれない形を取りこぼしうる。`assertReadOnlyGhApiArgs` は、既知の書き込み系を理由の分かるエラーで先に拒否したうえで、`['api', '--method', 'GET', '--hostname', 'github.com', <endpoint>, '--jq', <jq>]` の形ちょうどだけを通す(endpoint は `repos/<owner>/<repo>/issues?state=open&per_page=<n>&page=<n>` の正規表現)。禁止リストのテストは残してある |
 | 16 | ページ間の重複を番号で除く | 1 ページ目を読んでから 2 ページ目を読むまでの間に新しい issue ができると、押し出された同じ番号が両方のページに現れる。番号で重複を除き、先に読んだほうを残す |
 | 17 | 小さな検査と整形 | `maxPages` は正の整数だけ(0 などは生成時に例外)。時間切れの `detail` は、stderr の途中の出力ではなく「時間切れ」と分かる固定の文言。`detail` は C0/C1 に加えて双方向制御文字(U+200E/200F/061C/202A–202E/2066–2069)も空白にし、300 **コードポイント**で切る(サロゲートの対を割らない)。`excludePullRequests` は PR の行を除くだけで、残りの行の項目は触らない |
+
+### 実装との差分(4y8q.9.3、届いた issue の一覧と判定時点の写し)
+
+4y8q.9.3 は、9.1 の純粋関数と 9.2 の読み取りを使って「一覧を作り、最初に見た時点の写しを保存し、GitHub 側の編集に印を付ける」
+層。HTTP・定期実行の配線は 4y8q.9.4、画面は 4y8q.9.5、判定は 4y8q.10。設計との食い違いと、実装中に決めたことの記録(4y8q.11 の規則)。
+ここに無い点は設計どおり。
+
+| ファイル | 中身 |
+|---|---|
+| `src/domain/external-issue-snapshot-record.ts` | 保存する記録の型 `StoredExternalIssueSnapshot`、`prepareExternalIssue`(切り詰め → 検査)、`createSnapshotRecord`、番号の形、保持期限と上限の選び方 `selectSnapshotsToRemove`(IO なし) |
+| `src/application/ports/external-issue-snapshot-storage.ts` | `ExternalIssueSnapshotStoragePort`(`list` / `get` / `save` / `remove`) |
+| `src/application/issue-report/external-issue-service.ts` | `createExternalIssueService`(`poll` / `getList` / `resnapshot`) |
+| `src/infrastructure/fs/fs-external-issue-snapshot-storage.ts` | ファイル版の保存先。読み込み時の形の確認は `external-issue-snapshot-schema.ts`、置き場は `resolve-external-issues-dir.ts` |
+
+| # | 項目 | 実装 |
+|---|---|---|
+| 1 | `poll` の流れ | gh で open issue を読む → bd の external_ref を読み、紐付いたものを除く → 500 件までに切る(下の 8)→ 排他の中で、保存済みの写しを読む → 1 件ずつ**切り詰め → 検査**(検査にも保存にも、切った先の文字列は渡らない)→ 写しが無ければ最初の写しとして保存 / 有れば `compareWithSnapshot` で比べて印を残す → 一覧から外れた写しに印を付ける → 古い写しを消す。チケットの手順 1 の「PR を除く」は 9.2 の reader が済ませている(`ExternalIssue` は PR を含まない)ので、ここでは bd に紐付いたものだけを除く |
+| 2 | 一覧の形 | `{ state: 'idle' \| 'ok' \| 'error', fetchedAt, issues[], error, truncated, skippedLines }`。チケットの `{state, fetchedAt, issues[]}` に、止まった理由 `error`、続きがありうる印 `truncated`、gh が読めず捨てた行数 `skippedLines` を足した(9.2 のポートが返すのに、ここで落とすと 9.4 以降が使えない)。`issues[]` の題名・本文・検査・updatedAt は GitHub の**現在**の内容(切り詰めた後)で、判定時点の写しは `snapshot: { snapshotAt, updatedAt, needsRejudge, updatedAtChanged }` の要約だけを添える(本文を二重に持たない。写しそのものは `ExternalIssueSnapshotStoragePort.get`)。順番は gh が返した順 |
+| 3 | 失敗は状態で、例外にしない | gh の 4 種類(`gh-missing` / `gh-unauthenticated` / `rate-limited` / `failed`)、bd の読み取りの失敗(`bd-failed`)、写しの読み書きの失敗(`storage-failed`)、それ以外(`unexpected`)。いずれも `poll` は reject せず `state: 'error'` を返し、`issues` と `fetchedAt` は**直近の成功のまま**(止まった回の途中の結果は混ぜない)。`error.detail` は固定の短い文言(gh の失敗は 9.2 が整えた `detail`)。保存の失敗は errno の code(`ENOSPC` など)だけを添え、パスもメッセージも第三者の文章も入れない。`unexpected` は画面には固定の文言だけを返し、警告ログには例外の `name` だけを出す(識別子の形でなければ `unknown`。message と stack は出さない) |
+| 4 | bd が読めなければ一覧を作らない | 紐付いた issue を除けず、「紐付いた issue は並ばない」を守れないため。写しも書かない |
+| 5 | 写しの保存の失敗は「全部か、無し」 | 1 件でも写しを残せなかったら、一覧は前回のまま `storage-failed`。「一覧に載る issue には必ず写しがある」を崩さない(4y8q.10 は載っている issue の写しを読む)。書き込めた分は残り、次の `poll` はそれを土台に続ける。**写しを読めない**(権限・EIO)ときは、読めない写しを「無い」と見て最初の内容で書き換えてしまわないよう、書かずに `storage-failed`。使えないファイル(JSON でない・形が合わない・番号がファイル名と食い違う・ディレクトリ)だけは、警告して「無い」として飛ばし、次の保存で書き直す。ただし `<number>.json` の名前でディレクトリが居座っているときは rename が `EISDIR` で失敗するので書き直せず、手で消すまで `storage-failed` が続く。gh が返した番号が `^[1-9][0-9]{0,9}$` の外なら、その 1 件は読めなかった行(`skippedLines`)として除き、一覧全体は止めない |
+| 6 | `needsRejudge` は下ろさない | 比べる相手は、最初の(または `resnapshot` で取り直した)写し。題名か本文(切り詰めた文字列と切る前の全長)が違えば立て、**記録に残す**。元の文章に戻されても、次の `poll` でも残る(取り直すまで)。`updatedAt` だけの変化では立たない(U9。`updatedAtChanged` を一覧の要約で返すだけ)。写しの題名・本文は書き換えない(判定した時点のまま)。ファイルを書くのは、印が変わったときと、一覧から外れた・戻ったときだけで、変化の無い `poll` では書かない |
+| 7 | 記録の欄を足した: `missingSince` | チケットの「保存するもの」(題名・切り詰めた本文・全長・updatedAt・写しの時刻・検査の結果・needsRejudge)に、`titleTruncated` / `bodyTruncated`(切ったかの印)と `missingSince`(一覧から外れたのを最初に見た時刻。載っているあいだは null)を足した。`missingSince` は保持期限の起点で、外れた最初の `poll` で 1 回だけ書き、載り直したら null に戻す。コメントは取り込まない・取りにも行かない。author・url も写しに入れない(保存の前にスキーマで余分な欄を落とす) |
+| 8 | 保持期限 30 日と上限 500 | 「open から消えて 30 日」は、**一覧(open で、bd に紐付いていない)から外れて 30 日**と読んだ。閉じられた issue に加え、取り込まれて bd に紐付いた issue の写しも、外れてから 30 日で消える(取り込んだ後は判定に使わず、第三者の文章を残し続けないため)。上限 500 は、一覧に載っている issue の写しは消さない、を優先する: 一覧そのものを 500 件までに切り(`truncated: true`。gh の既定は 3 ページ = 300 件なので普通は届かない)、500 を超える分は一覧から外れた写しを**外れた時刻の古い順**に消す。一覧が最後まで読めなかったとき(gh のページの上限で打ち切った・500 で切った)は、載っていない issue がまだ open かもしれないので、外れた印を付けず、日数での削除もしない(500 のための削除は行う)。gh が失敗した `poll` は何も書かず何も消さない。古い写しを消せなかったときは警告だけで、`poll` は成功とする(次の回にまた試す)。**限界**: open の issue と PR が gh のページの上限(既定 300 件)を超えて毎回打ち切られる状態が続くと、外れた印が付かないので写しの数は 500 を超えて増えうる(今の公開リポジトリの規模では起きない。起きたら 4y8q.9.4 のページ数の設定か、別チケットで扱う) |
+| 9 | 同時に 1 本 | `poll` の実行中に `poll` を呼ぶと、新しく始めずその実行の結果を返す。写しの読み → 書き → 一覧の差し替えと `resnapshot` は同じ排他で 1 本ずつ流す(読んだ写しを古いまま上書きし合い、取り直した写しを `poll` の印の書き込みが潰すのを防ぐ。テストで順序を固定している) |
+| 10 | `resnapshot(number)` | **直近の一覧にある現在の内容**で写しを取り直し(`needsRejudge` を下ろす、`snapshotAt` を更新)、一覧の要約も更新する。GitHub は読み直さない: 判定に渡した内容とカードに見せた内容を同じにするため。直前の内容を取りたいときは、呼び出し側(4y8q.10)が先に `poll` する。一覧に無い番号は `not-listed`、保存の失敗は `storage-failed`(どちらも投げない)。HTTP には出さない |
+| 11 | 保存層 | `<基点>/external-issues/<number>.json`(基点は `resolveDataDirBase`)。ディレクトリは作るとき 0700、ファイルは 0600(umask 任せにしない)。同じディレクトリの `<number>.json.<hex>.tmp` に書いて rename。`number` は `^[1-9][0-9]{0,9}$` だけで、外れた値は投げる(読み取りの失敗ではなくプログラムの誤り)。読むファイル名も同じ形に限り、一時ファイルや迷い込んだファイルは読まない。置き場を環境変数で差し替える口は作っていない(配線は 4y8q.9.4)。**権限の 0600/0700 は POSIX だけで意味がある**(Windows の Node はモードのビットを無視する。テストは Windows では飛ばす)。クラッシュで残った一時ファイルの掃除はしない(下書きの保存層と同じ) |
 
 ### 2体のエージェント(4y8q.10)
 
