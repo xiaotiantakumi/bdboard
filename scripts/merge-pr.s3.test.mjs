@@ -37,7 +37,6 @@ import {
   readState,
   REPO_ROOT,
   registerTempRepoHooks,
-  RM_OPTIONS,
   run,
   setup,
   simulateMerge,
@@ -48,6 +47,7 @@ import {
   work,
   writeFake,
 } from './merge-pr.test-support.mjs';
+import { RM_OPTIONS } from './test-support/quiet-git.mjs';
 
 const LIGHT = 'node verify.cjs --light';
 const S3 = { mode: 'S3', lightCheck: LIGHT };

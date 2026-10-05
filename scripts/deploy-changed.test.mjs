@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { RM_OPTIONS, quietGitEnv } from './test-support/quiet-git.mjs';
+
 const SCRIPT = fileURLToPath(new URL('./deploy-changed.sh', import.meta.url));
 
 function hasGit() {
@@ -69,7 +71,7 @@ describe.skipIf(process.platform === 'win32' || !hasGit())('deploy-changed.sh', 
   beforeEach(() => {
     tmpRoot = mkdtempSync(path.join(tmpdir(), 'bdboard-deploy-changed-'));
     repo = path.join(tmpRoot, 'repo');
-    env = { ...process.env, HOME: path.join(tmpRoot, 'home'), CDPATH: '' };
+    env = { ...process.env, HOME: path.join(tmpRoot, 'home'), CDPATH: '', ...quietGitEnv(tmpRoot) };
     mkdirSync(env.HOME, { recursive: true });
     mkdirSync(path.join(repo, 'src'), { recursive: true });
     writeFileSync(path.join(repo, 'src', 'index.ts'), 'export const a = 1;\n');
@@ -78,7 +80,7 @@ describe.skipIf(process.platform === 'win32' || !hasGit())('deploy-changed.sh', 
   });
 
   afterEach(() => {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(tmpRoot, RM_OPTIONS);
   });
 
   it('reports no relevant change when OLD and NEW are the same commit', () => {

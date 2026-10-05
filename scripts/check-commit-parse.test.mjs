@@ -22,6 +22,7 @@ import {
   parseCommitsFromGitLog,
 } from './check-commit-parse.mjs';
 import * as CheckCommitParseModule from './check-commit-parse.mjs';
+import { RM_OPTIONS, useQuietGitProcessEnv } from './test-support/quiet-git.mjs';
 
 // ---- export surface: bdboard-sso1.63 のモジュール分割で公開面が変わっていないことの固定 ----
 describe('check-commit-parse.mjs export surface', () => {
@@ -336,6 +337,7 @@ describe('formatFindings', () => {
 });
 
 describe('check-commit-parse CLI', () => {
+  useQuietGitProcessEnv();
   let tmpRoot;
 
   function sh(cwd, ...args) {
@@ -414,7 +416,7 @@ describe('check-commit-parse CLI', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, RM_OPTIONS);
   });
 
   it(

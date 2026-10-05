@@ -10,7 +10,7 @@
 // bdboard-4dqo: 1500 行の max-lines に余裕を作るため分割した。一時リポジトリの harness は
 // merge-pr.test-support.mjs、finish 系のテストは merge-pr.finish.test.mjs (describe 名は同じ)。
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -1005,7 +1005,9 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     const moved = commitAll(mainCheckout, 'docs(peer): rename README');
     git(mainCheckout, ['push', '-q', 'origin', 'main']);
     // 既定の改名検出なら「改名 + 変更」で綺麗に混ざる。利用者設定のまま走ると modify/delete の衝突になる。
-    writeFileSync(path.join(env.HOME, '.gitconfig'), '[merge]\n\trenames = false\n');
+    // GIT_CONFIG_GLOBAL (test-support/quiet-git.mjs) が ~/.gitconfig を置き換えるので、利用者の global 設定はそちらに足す。
+    appendFileSync(env.GIT_CONFIG_GLOBAL, '[merge]\n\trenames = false\n');
+    expect(git(work, ['config', '--get', 'merge.renames'])).toBe('false'); // 前提 (利用者設定) が git に見えていること
     const prepared = run(['prepare', String(PR)]);
     expect(prepared.status).toBe(0);
     const expectedTree = git(work, ['-c', 'merge.renames=true', 'merge-tree', '--write-tree', moved, head]);

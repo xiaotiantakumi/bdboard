@@ -8,6 +8,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { forgetLoadInduced, judgePredictedFailure, rememberLoadInduced } from './merge-pr/predicted-timeouts.mjs';
+import { RM_OPTIONS } from './test-support/quiet-git.mjs';
 
 const HEAD = 'a'.repeat(40);
 const OTHER_HEAD = 'b'.repeat(40);
@@ -37,7 +38,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.resetAllMocks();
   vi.restoreAllMocks();
-  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  rmSync(root, RM_OPTIONS);
 });
 
 describe('judgePredictedFailure', () => {

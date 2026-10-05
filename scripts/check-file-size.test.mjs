@@ -23,6 +23,7 @@ import {
   validateEntryShape,
 } from './check-file-size.mjs';
 import * as CheckFileSizeModule from './check-file-size.mjs';
+import { RM_OPTIONS, useQuietGitProcessEnv } from './test-support/quiet-git.mjs';
 
 const SCRIPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-file-size.mjs');
 
@@ -591,6 +592,7 @@ describe('buildFileRecords', () => {
 
 // ---- CLI 統合テスト: 一時 git リポジトリで実行し、exit code と出力を確認する ----
 describe('check-file-size CLI', () => {
+  useQuietGitProcessEnv();
   let tmpRoot;
   let work;
 
@@ -641,7 +643,7 @@ describe('check-file-size CLI', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, RM_OPTIONS);
   });
 
   it('exits 0 with no target files', () => {
@@ -768,7 +770,7 @@ describe('listGitFiles', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, RM_OPTIONS);
   });
 
   it('includes both committed and untracked-but-not-ignored files, POSIX-separated', () => {
