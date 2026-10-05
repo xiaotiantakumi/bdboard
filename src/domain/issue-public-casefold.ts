@@ -209,9 +209,9 @@ export function withFoldedTextMemo<T>(run: () => T): T {
   }
 }
 
-/** 本文のたたみを覚えているか。テストが、走査の終わりに捨てたことを確かめる。 */
+/** 本文かそのたたみを覚えているか。テストが、走査の終わりに両方を捨てたことを確かめる。 */
 export function foldedTextRemembered(): boolean {
-  return lastText !== undefined;
+  return lastText !== undefined || lastFolded !== '';
 }
 
 function foldText(text: string, caseTableValue: CaseTable): string {

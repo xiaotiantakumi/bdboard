@@ -1033,6 +1033,8 @@ ESC が先に失われて `[36m` だけが残ったものは、取り除かず(�
 UTF-16 の長さが混ざらないこと、表の外の文字が表のどの文字とも同じとみなされないことを確かめる)。単体テストが、特殊な類(Kelvin・
 long s・ß/ẞ・İ/ı・σ/ς・θ/ϑ/ϴ・U+0345・Cherokee・Deseret など)を混ぜた乱択と、大文字小文字で変わりうる全文字を鍵にした場合で、以前の
 正規表現と同じ一致を返すことを確かめる。2〜3 コードポイントの名前(報告だけ)は前後の条件つきの正規表現のまま。
+探索は、本文の長さ n と鍵の長さの合計 m について、V8 の文字列探索(`indexOf`)の時間になる(重なる出現を読み進める分は下の KMP で、
+鍵 1 つあたり O(n + 鍵の長さ) を足すだけ)。上限(最大 200 件 × 512/1024 コードポイント、端の検査の鍵の 200 万コードポイント)はそのまま。
 
 **表が使えるかの確かめとログの code(bdboard-uudb、bdboard-qoxj)**: 表を作るときの検査に落ちるエンジンは表を使わず、以前と同じ `/…/giu` で探す
 (結果は同じだが、大きい鍵では組み立てが数分かかる)。この退避が黙って起きないよう、サーバーは起動の直後に 1 回だけ、表が使えるかを確かめる
@@ -1041,16 +1043,14 @@ long s・ß/ẞ・İ/ı・σ/ς・θ/ϑ/ϴ・U+0345・Cherokee・Deseret など)
 
 | code | ログ | いつ |
 |---|---|---|
-| `case-table-fallback` | `issue public body: case table unavailable, using the slow regex search (case-table-fallback)` | 表を作れたが検査に落ちた。以前の正規表現で探す。1 回だけ |
-| `case-table-check-failed` | `issue public body: case table check failed (case-table-check-failed, <error.code。無ければ unknown>)` | 確かめる処理自体が投げた。サーバーは落とさない。表は作れていないので、最初の組み立てが同じ理由で投げうる(そのときは組み立ての側の失敗として表に出る) |
+| `case-table-fallback` | `issue public body: case table unavailable, using the slow regex search (case-table-fallback)` | 表を作るときの検査に落ちた(表は作らず、以前の正規表現で探す)。1 回だけ |
+| `case-table-check-failed` | `issue public body: case table check failed (case-table-check-failed, <error.code。無ければ unknown>)` | 確かめる処理自体が投げた。サーバーは落とさない。表は作れていないので、以後の組み立て・再走査のたびに表の作り直しを試み、投げている間は結果を返さない(黙って退避しない。投げたものは組み立て・再走査の側の失敗として表に出る) |
 
 **たたんだ本文の覚えは 1 回の走査の間だけ**(bdboard-uudb、bdboard-qoxj): 根・LONG の名前・最後の網は同じ本文を続けて探すので、直前にたたんだ本文を 1 つだけ覚えて
 たたむのを 1 回にする。純粋な関数の結果を覚えるだけなので一致は変わらず、公開にも出ない。ただし本文は手元のパスやトークンを含みうるので、覚えは
 `withFoldedTextMemo`(`issue-public-casefold.ts`)の中だけで持ち、返っても投げても終わりに捨てる。入口は 2 つで、組み立て(`buildPublicIssueBody`)と、編集した欄の
 置き換え漏れの再走査(`scanEditedText`。`withRescannedLeaks`・`applyDraftEdit` もここを通る)。呼び出しごとに「忘れる」を足す形にしなかったのは、return の直前に
 置くと投げたときに残り、入口を足すたびに呼び忘れるため。単体テスト(`issue-public-fold-memo.test.ts`)が、どの入口でも終わりに覚えが残らないこと(投げた場合を含む)を確かめる。
-探索は、本文の長さ n と鍵の長さの合計 m について、V8 の文字列探索(`indexOf`)の時間になる(重なる出現を読み進める分は下の KMP で、
-鍵 1 つあたり O(n + 鍵の長さ) を足すだけ)。上限(最大 200 件 × 512/1024 コードポイント、端の検査の鍵の 200 万コードポイント)はそのまま。
 
 **自分と重なる鍵(bdboard-0hj9)**: 鍵が自分と重なる(`-ba1-ba1-ba` のように先頭と末尾が同じ部分を持つ周期的な綴り)とき、以前の探索は
 一致の終わりから次を探したので、欄の途中で 2 つの出現が重なって現れると 2 つ目を拾わず、その後ろが残った
