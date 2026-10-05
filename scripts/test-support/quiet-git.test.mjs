@@ -2,10 +2,11 @@
 // 起こさないことを、設定と、実際に起きる git の子プロセス (GIT_TRACE2_EVENT の cmd_name) の両方で確かめる。
 // scripts/merge-pr.test-support.test.mjs (bdboard-myla) の形にならう。repo 側には何も設定せず、global の gitconfig
 // だけで効くことを見る。対照 (保守は起きるが前景で走る gitconfig) では保守が起きる = 計測が本当に働いている、も同じテストで見る。
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { QUIET_GIT_CONFIG, quietGitEnv, RM_OPTIONS, useQuietGitProcessEnv } from './quiet-git.mjs';
@@ -119,5 +120,47 @@ describe('quiet git config (bdboard-w8hr)', { timeout: 15_000 }, () => {
 describe('useQuietGitProcessEnv restores the environment (bdboard-w8hr)', () => {
   it('puts GIT_CONFIG_GLOBAL back to its original value once the suite above has finished', () => {
     expect(process.env.GIT_CONFIG_GLOBAL).toBe(originalGlobalConfig);
+  });
+});
+
+// bdboard-sl0n: 復元のケース B。同じ suite で useQuietGitProcessEnv の後に登録された別の beforeAll が失敗しても元に戻る。
+// beforeAll を失敗させるとそのファイルが失敗扱いになるので、題材 (scripts/fixtures/quiet-git-sibling-hook-failure.fixture.mjs) を
+// 子の vitest プロセスで流して結果 (JSON reporter) を読む。題材は *.test.mjs ではないので、このリポジトリの include には入らない。
+// 子には最小の設定 (root と include だけ。globalSetup なし) を一時ファイルで渡し、リポジトリの vitest.config.ts は読ませない。
+// 戻り値の cleanup を返す形 (beforeAll が返した cleanup は、後から登録された beforeAll が失敗すると捨てられる) に戻すと、ここが落ちる。
+describe('useQuietGitProcessEnv restores the environment when a sibling beforeAll fails (bdboard-sl0n)', { timeout: 60_000 }, () => {
+  const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
+  const fixture = 'scripts/fixtures/quiet-git-sibling-hook-failure.fixture.mjs';
+  let tmp;
+  afterEach(() => {
+    if (tmp) {
+      rmSync(tmp, RM_OPTIONS);
+    }
+  });
+
+  it('puts GIT_CONFIG_GLOBAL back and removes the temporary gitconfig even though the file fails', () => {
+    tmp = mkdtempSync(path.join(os.tmpdir(), 'bdboard-quiet-git-child-'));
+    const configPath = path.join(tmp, 'vitest.config.mjs');
+    const reportPath = path.join(tmp, 'report.json');
+    writeFileSync(configPath, `export default ${JSON.stringify({ root: repoRoot, test: { include: [fixture], testTimeout: 30_000 } })};\n`);
+    const child = spawnSync(
+      process.execPath,
+      [path.join(repoRoot, 'node_modules', 'vitest', 'vitest.mjs'), 'run', '--config', configPath, '--reporter=json', `--outputFile=${reportPath}`, '--maxWorkers=1'],
+      { cwd: repoRoot, encoding: 'utf8', timeout: 50_000 },
+    );
+    const output = `exit=${child.status} signal=${child.signal}\n${child.stdout}\n${child.stderr}`;
+    expect(existsSync(reportPath), `the child vitest wrote no report:\n${output}`).toBe(true);
+    const files = JSON.parse(readFileSync(reportPath, 'utf8')).testResults;
+    expect(files, output).toHaveLength(1);
+    const titled = (title) => files[0].assertionResults.find((assertion) => assertion.title === title);
+
+    // 子が失敗を起こせている (起こせていないと、復元を確かめたことにならない)。失敗した beforeAll の suite のテストは走らず、ファイルは
+    // 失敗扱い (JSON reporter は beforeAll の例外の文面を載せない。失敗の中身は、題材が失敗する beforeAll の中で値を控えたことで確かめる)。
+    expect(files[0].status, output).toBe('failed');
+    expect(titled('sibling beforeAll registered after it fails')?.status, output).toBe('skipped');
+    // 失敗した suite の後で、元の値に戻り、一時の gitconfig の dir が消えている (題材の側の expect。落ちたらその文面を出す)。
+    const restored = titled('restores GIT_CONFIG_GLOBAL and removes the temporary gitconfig directory');
+    expect(restored, output).toBeDefined();
+    expect(restored.status, `${restored.failureMessages.join('\n')}\n${output}`).toBe('passed');
   });
 });
