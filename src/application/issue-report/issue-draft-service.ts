@@ -17,8 +17,15 @@ import {
   foldIntoMassDraft,
   type ReceiveDraftInput,
 } from '../../domain/issue-draft-build.js';
-import type { IssueDraftStoragePort, StoredDraftImage } from '../ports/issue-draft-storage.js';
-import { countPending, createDraftIndexCache, noteDraftStatus } from './issue-draft-index.js';
+import type { DraftListing, IssueDraftStoragePort, StoredDraftImage } from '../ports/issue-draft-storage.js';
+import {
+  countPending,
+  countPendingStatuses,
+  createDraftIndexCache,
+  forgetDrafts,
+  noteDraftStatus,
+  syncStatuses,
+} from './issue-draft-index.js';
 import { createDraftRetention, type DraftRetentionOptions } from './issue-draft-retention.js';
 
 export type { ReceiveDraftInput } from '../../domain/issue-draft-build.js';
@@ -57,13 +64,24 @@ export type AddDraftImageResult =
 
 export interface IssueDraftService {
   receive(input: ReceiveDraftInput): Promise<ReceiveDraftResult>;
-  /** 最後に起きた時刻の新しい順。 */
+  /**
+   * 最後に起きた時刻の新しい順。全件を読む (storage.scan)。索引を読み込み済みなら、完全な一覧に索引の状態を突き合わせる
+   * (サーバーの外で消された・足された下書きを件数に反映する。bdboard-vsuc)。
+   */
   list(): Promise<readonly IssueDraft[]>;
+  /**
+   * list() と同じ一覧に、その一覧そのものから (pendingCount() と同じ countPendingStatuses で) 数えた未処理件数を添える。
+   * GET drafts の応答の元。画面の一覧と件数が食い違わない。
+   */
+  listWithPendingCount(): Promise<{ readonly drafts: readonly IssueDraft[]; readonly pendingCount: number }>;
   get(id: string): Promise<IssueDraft | undefined>;
   dismiss(id: string, reason: string): Promise<DismissDraftResult>;
   /** 題名・本文を直す (bdboard-4y8q.3.1)。長さの上限は入口 (HTTP) で掛けてある前提。 */
   edit(id: string, edit: DraftTextEdit): Promise<EditDraftResult>;
-  /** 未処理 (pending) の件数。索引から数える (呼ぶたびに全件を読まない)。 */
+  /**
+   * 未処理 (pending) の件数。索引から数える (呼ぶたびに全件を読まない)。サーバーの外の変更は、list() が一覧を読んだときに
+   * 合う。一覧が欠けているあいだは、直近の欠けた索引を 30 秒使い回す (bdboard-vsuc)。
+   */
   pendingCount(): Promise<number>;
   addImage(id: string, extension: string, data: Uint8Array): Promise<AddDraftImageResult>;
   /** 下書きが無ければ undefined。 */
@@ -108,7 +126,7 @@ function compareNewestFirst(a: IssueDraft, b: IssueDraft): number {
 export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraftService {
   const exclusive = createMutex();
   const storageFull = { ok: false, reason: 'storage-full' } as const;
-  const indexCache = createDraftIndexCache(deps.storage);
+  const indexCache = createDraftIndexCache(deps.storage, { now: () => deps.now().getTime() });
   const retention = createDraftRetention({
     ...deps.retention,
     storage: deps.storage,
@@ -116,7 +134,23 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
     onPruned: (survey, removedIds) => {
       if (survey.indexSeed !== undefined) indexCache.seed(survey.indexSeed, removedIds);
     },
+    onRemoved: (ids) => indexCache.forget(ids),
   });
+
+  /**
+   * 一覧の読み。mutex の外で動く (一覧は受け取りを待たせない) ので、読んでいるあいだに受け取り・見送り・掃除が索引へ書きうる。
+   * 索引へ状態を突き合わせるのは、完全な一覧で、かつ読む前と後で index.version が同じ (= そのあいだ索引への書き込みが無かった)
+   * ときだけ: 書き込みが重なった古い一覧で、書いたばかりの状態を戻したり消したりしない。突き合わせは statusById を同期的に
+   * 直すだけなので、確かめてから直すまでに書き込みは割り込まない。欠けた一覧 (complete: false) では消さない: 読めなかった
+   * だけで下書きは残っている。索引を読んでいなければ (undefined) 突き合わせるものが無い。
+   */
+  async function readListing(): Promise<DraftListing> {
+    const index = await indexCache.loaded().catch(() => undefined); // 読み込みの失敗では一覧を落とさない
+    const version = index?.version;
+    const listing = await deps.storage.scan();
+    if (index !== undefined && listing.complete && index.version === version) syncStatuses(index, listing.drafts);
+    return listing;
+  }
 
   /**
    * 合計容量の上限に収まるときだけ書く (収まらなければ false で、何も書かない)。previous は上書きされる前の
@@ -153,7 +187,7 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
     }
     // 索引にあるのにディスクに無いのは、手で消されたとき。新しい下書きとして作り直す。
     index.idByFingerprint.delete(fingerprint);
-    if (knownId !== undefined) index.statusById.delete(knownId);
+    if (knownId !== undefined) forgetDrafts(index, [knownId]);
 
     const bucket = hourBucketOf(now);
     if ((index.newDraftsByHour.get(bucket) ?? 0) >= ISSUE_DRAFT_NEW_PER_HOUR) {
@@ -167,7 +201,7 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
         nowIso,
       });
       if (!(await saveWithinCap(folded, existingMass))) return storageFull;
-      if (massId !== undefined && massId !== folded.id) index.statusById.delete(massId);
+      if (massId !== undefined && massId !== folded.id) forgetDrafts(index, [massId]);
       index.idByFingerprint.set(massFingerprint, folded.id);
       noteDraftStatus(index, folded);
       return { ok: true, outcome: 'folded', draft: folded };
@@ -185,7 +219,12 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
     receive: (input) => exclusive(() => receiveLocked(input)),
 
     async list() {
-      return [...(await deps.storage.list())].sort(compareNewestFirst);
+      return [...(await readListing()).drafts].sort(compareNewestFirst);
+    },
+
+    async listWithPendingCount() {
+      const drafts = [...(await readListing()).drafts].sort(compareNewestFirst);
+      return { drafts, pendingCount: countPendingStatuses(drafts.map((draft) => draft.status)) };
     },
 
     async get(id) {
@@ -221,7 +260,7 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
         return { ok: true, draft: edited, errorTextTrimmed };
       }),
 
-    pendingCount: () => exclusive(async () => countPending(await indexCache.get())),
+    pendingCount: () => exclusive(async () => countPending(await indexCache.getForCount())),
 
     addImage: (id, extension, data) =>
       exclusive(async (): Promise<AddDraftImageResult> => {

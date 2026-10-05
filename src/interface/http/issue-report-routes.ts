@@ -198,9 +198,8 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
   });
 
   app.get(ISSUE_DRAFTS_PATH, async (c) => {
-    const drafts = await service.list();
-    // 未処理件数は、読んだ一覧そのものから数える (画面の一覧と食い違わない)。軽い数え方は GET pending-count。
-    const pendingCount = drafts.filter((draft) => draft.status === 'pending').length;
+    // 未処理件数は、読んだ一覧そのものからサービスが数える (画面の一覧と食い違わない。数え方は GET pending-count と同じ 1 つ)。
+    const { drafts, pendingCount } = await service.listWithPendingCount();
     return c.json({ drafts: drafts.map(toSummaryDto), pendingCount });
   });
 
