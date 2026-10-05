@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { RM_OPTIONS, quietGitEnv } from '../../../scripts/test-support/quiet-git.mjs';
 import type { CommandResult } from '../../application/ports/command-runner.js';
 import { NodeCommandRunner } from '../process/node-command-runner.js';
 import { createFsPackRegistry } from './fs-pack-registry.js';
@@ -66,7 +67,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
   });
 
   afterEach(() => {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(tmpRoot, RM_OPTIONS);
   });
 
   describe('pack packaging', () => {
@@ -853,6 +854,9 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
    * 子プロセスの環境を最小限に固定する。NodeCommandRunner の `env` は継承ではなく
    * 置き換えなので、PATH と HOME だけを与えてユーザーの global gitconfig や
    * 実物の bd を巻き込まないようにする。
+   *
+   * env を一から組み立てるので、git の自動保守 (`git maintenance run --auto --detach`) を止める一時の gitconfig も
+   * `quietGitEnv` で足す (bdboard-5py8)。detach した保守が afterEach の rmSync と競合して ENOTEMPTY になるのを防ぐ。
    */
   function isolatedEnv(pathPrefix?: string): Record<string, string> {
     const home = path.join(tmpRoot, 'home');
@@ -861,6 +865,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
     return {
       PATH: pathPrefix === undefined ? basePath : `${pathPrefix}${path.delimiter}${basePath}`,
       HOME: home,
+      ...quietGitEnv(home),
     };
   }
 
@@ -906,7 +911,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
 
     const home = path.join(tmpRoot, 'home');
     mkdirSync(home, { recursive: true });
-    return { PATH: binDir, HOME: home };
+    return { PATH: binDir, HOME: home, ...quietGitEnv(home) };
   }
 
   async function initGitRepo(

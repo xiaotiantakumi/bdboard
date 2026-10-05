@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { RM_OPTIONS, useQuietGitProcessEnv } from '../../../scripts/test-support/quiet-git.mjs';
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
 import {
   startLiveCwdProcess,
@@ -19,6 +20,11 @@ const ROOT = '/Users/example/repo';
 const TICKET_ID = 'bdboard-54be.1';
 const WORKTREE_PATH = path.join(ROOT, '.claude/worktrees', TICKET_ID);
 const BRANCH_NAME = `bd/${TICKET_ID}`;
+
+// bdboard-5py8: 実 git を使う 2 本 (lifecycle / master) は runner.run に env を渡さず process.env を継ぐ。provisioner が起こす
+// `git fetch origin` も同じ。process.env 側を静かにして、commit / push / fetch の後の `git maintenance run --auto --detach` が
+// 後始末の rmSync と競合して ENOTEMPTY になるのを防ぐ。
+useQuietGitProcessEnv();
 
 interface FakeRunnerOptions {
   readonly branchListResult?: CommandResult;
@@ -612,7 +618,7 @@ describe('createGitWorktreeProvisioner', () => {
       if (child !== undefined) {
         await child.stop();
       }
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(tmpDir, RM_OPTIONS);
     }
   });
 
@@ -1350,7 +1356,7 @@ describe('createGitWorktreeProvisioner with a non-main mainBranch (bdboard-pkr6.
       );
       expect(oldBranch.exitCode).not.toBe(0);
     } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(tmpDir, RM_OPTIONS);
     }
   });
 });
