@@ -105,12 +105,17 @@ export function scanEditedText(text: DraftTextToScan, keys: LocalOnlyKeys): Draf
   };
 }
 
+/** どの欄も直していない下書きに、古い疑いを残さない (「一度も直していない下書きには無い」の約束。直した印を戻した PATCH のあと)。 */
+function withoutSuspectedLeaks(draft: IssueDraft): IssueDraft {
+  const clean: { -readonly [K in keyof IssueDraft]: IssueDraft[K] } = { ...draft };
+  delete clean.suspectedLeaks;
+  delete clean.suspectedLeaksOmitted;
+  return clean;
+}
+
 /** 直した欄に検出をかけ直した疑いを持たせる (手元の鍵 = 発生したプロジェクトのパスと名前)。直した欄が無ければそのまま。 */
 export function withRescannedLeaks(draft: IssueDraft): IssueDraft {
-  if (!draft.titleEditedByUser && !draft.bodyEditedByUser) {
-    const { suspectedLeaks: _leaks, suspectedLeaksOmitted: _omitted, ...clean } = draft;
-    return clean;
-  }
+  if (!draft.titleEditedByUser && !draft.bodyEditedByUser) return withoutSuspectedLeaks(draft);
   const scan = scanEditedText(
     { title: draft.title, body: draft.body, titleEdited: draft.titleEditedByUser, bodyEdited: draft.bodyEditedByUser },
     localKeysOf(draft.occurredProjects),
