@@ -105,31 +105,37 @@ export const TOKEN_SHAPES: readonly TokenShape[] = Object.freeze(
 /**
  * 欄の末尾で途中まで切れたトークンの形 (bdboard-4y8q.13。issue-public-fragments.ts が欄の末尾にだけかける)。TOKEN_SHAPES の形ごとに 1 つ:
  * 接頭辞の後に本体が 1 文字以上あり、置き換えの長さの下限に届かないうちに文字列が終わるもの (届いたものは TOKEN_SHAPES が置き換える。
- * JWT は 3 つの部分が揃わないもの)。sk-・Stripe・JWT の開始の条件は置き換えの形より 1 段厳しく、直前の `_` `.` `-` も除く
- * (FRAGMENT_START): 英数字に貼り付いて置き換えられず最後の網が報告するトークン ("id1eyJ….eyJ….sig") の途中の "eyJ" や "-sk-" から
- * 断片を始めると、報告されるはずの一致を短く削って報告の下限を割らせるため。Bearer は置き換えの形と同じ条件。本体の長さに
- * 上限がある (JWT は "." で区切られた 3 つの部分まで) ので、どの開始位置も決まった長さしか読まない。TOKEN_SHAPES に形を足すときは
- * ここにも足す (単体テストが名前がそろっていることを確かめる)。
+ * JWT は 3 つの部分が揃わないもの)。開始の条件は置き換えの形と同じ (sk-・Stripe・Bearer は RUN_START、JWT は JWT_START): 完全な形が
+ * 置き換わる位置 ("cfg.sk-…"・"MY_KEY_sk-…"・"session.eyJ…") で切れたものは、断片も置き換える。本体の長さに上限がある (JWT は "." で
+ * 区切られた 3 つの部分まで) ので、どの開始位置も決まった長さしか読まない。TOKEN_SHAPES に形を足すときはここにも足す (単体テストが
+ * 名前がそろっていることを確かめる)。
  */
-const FRAGMENT_START = String.raw`(?:(?<![A-Za-z0-9_.-])|(?<=\\[nrt]|%[0-9A-Fa-f]{2}))`;
 
 export const TOKEN_PREFIX_AT_END: Readonly<Record<string, { readonly source: string; readonly flags: string }>> = Object.freeze({
   github: { source: String.raw`gh[pousr]_[A-Za-z0-9]{1,19}$`, flags: '' },
   'github-fine-grained': { source: String.raw`github_pat_[A-Za-z0-9_]{1,19}$`, flags: '' },
-  'sk-family': { source: `${FRAGMENT_START}sk-[A-Za-z0-9_-]{1,19}$`, flags: '' },
-  stripe: { source: `${FRAGMENT_START}[sr]k_live_[A-Za-z0-9]{1,15}$`, flags: '' },
+  'sk-family': { source: `${RUN_START}sk-[A-Za-z0-9_-]{1,19}$`, flags: '' },
+  stripe: { source: `${RUN_START}[sr]k_live_[A-Za-z0-9]{1,15}$`, flags: '' },
   'aws-access-key-id': { source: String.raw`(?:AKIA|ASIA)[0-9A-Z]{1,15}$`, flags: '' },
   slack: { source: String.raw`(?:xox[abeprs]|xapp)-[A-Za-z0-9-]{1,9}$`, flags: '' },
   'google-api-key': { source: String.raw`AIza[0-9A-Za-z_-]{1,34}$`, flags: '' },
   'google-oauth': { source: String.raw`ya29\.[A-Za-z0-9_-]{1,19}$`, flags: '' },
   npm: { source: String.raw`npm_[A-Za-z0-9]{1,35}$`, flags: '' },
-  jwt: { source: `${FRAGMENT_START}eyJ[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]*){0,2}$`, flags: '' },
+  jwt: { source: `${JWT_START}eyJ[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]*){0,2}$`, flags: '' },
   bearer: { source: String.raw`${RUN_START}Bearer(?:[ \t]|%20){1,16}[A-Za-z0-9._~+/-]{1,15}$`, flags: 'i' },
 });
 
-/** 文字列の末尾で途中まで切れたトークンの範囲 (TOKEN_PREFIX_AT_END。形どうしで重なりうる。統合は呼び出し側)。 */
+/**
+ * 文字列の末尾で途中まで切れたトークンの範囲 (TOKEN_PREFIX_AT_END。形どうしで重なりうる。統合は呼び出し側)。
+ * 最後の網の緩い形 (findTokenSpans の loose) に重なるものは返さない: 英数字に貼り付いて置き換えられず、最後の網が報告する完全な
+ * トークン ("id1eyJ….eyJ….sig" の 2 つ目の "eyJ…"・"id1sk-…" の途中の "-sk-…") の一部だけを断片として消すと、残りが報告の
+ * 長さの下限を割って黙って残るため。そのトークンは丸ごと残り、報告される。候補があるときだけ緩い形を探す (ふつうは候補が無い)。
+ */
 export function findTokenPrefixesAtEnd(text: string): SecretSpan[] {
-  return Object.values(TOKEN_PREFIX_AT_END).flatMap(({ source, flags }) => spansFor(text, source, `${flags}g`));
+  const candidates = Object.values(TOKEN_PREFIX_AT_END).flatMap(({ source, flags }) => spansFor(text, source, `${flags}g`));
+  if (candidates.length === 0) return candidates;
+  const reported = findTokenSpans(text, true);
+  return candidates.filter((span) => !reported.some((loose) => loose.start < span.end && span.start < loose.end));
 }
 
 function spansFor(text: string, source: string, flags: string): SecretSpan[] {
@@ -179,8 +185,13 @@ export function findEmailSpans(text: string): SecretSpan[] {
  * 完全なメールにも一致するが、統合でメールの印が勝つ (issue-public-spans.ts の PRIORITY で 'fragment' がいちばん低い)。
  */
 const EMAIL_PREFIX_AT_END = `${EMAIL_LOCAL}(?:\\p{L}[\\p{L}\\p{N}.-]*)?$`;
+/**
+ * 区切り "%40" の途中で切れたもの ("jdoe%4"・"jdoe%")。"progress 50%" を消さないよう、ローカル部に文字を 1 つ以上求める
+ * (先読みの [\p{N}_.+-]* と \p{L} は互いに素なので後戻りしない。開始位置は連の先頭だけ)。
+ */
+const EMAIL_CUT_IN_PERCENT_AT_END = String.raw`(?<![\p{L}\p{N}_.+-])(?=[\p{N}_.+-]*\p{L})[\p{L}\p{N}_.+-]+%4?$`;
 
 /** 文字列の末尾で途中まで切れたメールの範囲。 */
 export function findEmailPrefixAtEnd(text: string): SecretSpan[] {
-  return spansFor(text, EMAIL_PREFIX_AT_END, 'gu');
+  return [...spansFor(text, EMAIL_PREFIX_AT_END, 'gu'), ...spansFor(text, EMAIL_CUT_IN_PERCENT_AT_END, 'gu')];
 }

@@ -21,6 +21,14 @@ import { codeUnitIndexAfterCodePoints, codeUnitIndexBeforeTailCodePoints } from 
 /** これより短い断片は置き換えない (固有名詞の LONG の下限と同じ。2〜3 文字では元の名前を特定できず、一般語を壊す)。 */
 export const MIN_FRAGMENT_CODE_POINTS = 4;
 
+/**
+ * 端の検査の鍵の合計コードポイント数の上限 (prepareKeys が数える。超えた鍵は端の検査に使わず、truncated を立てる)。
+ * 鍵 1 コードポイントあたり、前向き・逆向きの並びと 2 つの失敗関数で数十バイトを持つ。根の変種 (区切り・NFC/NFD・パーセント表記) は
+ * 1 つの根を数十倍に広げるので、上限が無いと、根 200 件 × 1024 コードポイントの非 ASCII の鍵で数百 MB〜GB になる (5節)。
+ * 現実の鍵 (根と名前が数十件、各 100 コードポイント程度) は数万コードポイントで、この上限に届かない。
+ */
+export const MAX_FRAGMENT_KEY_CODE_POINTS = 2_000_000;
+
 /** どちらの端を見るか。保存の上限で切れるのは末尾、末尾だけを取る送り手で切れるのは先頭。 */
 export interface FieldEdges {
   readonly start: boolean;

@@ -105,6 +105,14 @@ describe('cutKeepingTail (tail-capture)', () => {
 
   it('drops CRLF as one line break', () => {
     expect(cutKeepingTail('line one\r\nline two', 12)).toBe('line two');
+    // 切れ目が CR と LF の間に落ちても、残す側を LF で始めない。
+    expect(cutKeepingTail('aaa\r\nbbb', 4)).toBe('bbb');
+  });
+
+  it('treats the line separators of the public body normalization as line breaks too', () => {
+    expect(cutKeepingTail('line one\u2029line two', 12)).toBe('line two');
+    expect(cutKeepingHead('line one\u2028line two', 12)).toBe('line one\u2028');
+    expect(cutKeepingHead('line one\u0085line two', 12)).toBe('line one\u0085');
   });
 
   it('cuts at the cap when there is no newline (a one-line field)', () => {

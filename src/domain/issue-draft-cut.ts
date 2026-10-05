@@ -15,8 +15,11 @@
 /** 行の境目を探して戻る最大の距離 (UTF-16 コード単位)。スタックトレースやログの 1 行はふつうこれより短い。 */
 export const CUT_LINE_BACKOFF_MAX_CHARS = 4096;
 
+/** 公開本文の整形 (issue-public-text.ts の normalizeBlock) が行の区切りとして扱う文字と同じ: \n \r \v \f U+0085 U+2028 U+2029。 */
 function isLineBreak(unit: number): boolean {
-  return unit === 0x0a || unit === 0x0d;
+  return (
+    unit === 0x0a || unit === 0x0d || unit === 0x0b || unit === 0x0c || unit === 0x85 || unit === 0x2028 || unit === 0x2029
+  );
 }
 
 function isHighSurrogate(unit: number): boolean {
@@ -52,8 +55,11 @@ export function cutKeepingTail(text: string, maxUnits: number): string {
   if (text.length <= maxUnits) return text;
   let start = text.length - Math.max(0, maxUnits);
   if (start < text.length && isLowSurrogate(text.charCodeAt(start)) && isHighSurrogate(text.charCodeAt(start - 1))) start += 1;
-  // 切れ目の直前が改行なら、残す側は行の始まりから始まっている。
-  if (isLineBreak(text.charCodeAt(start - 1))) return text.slice(start);
+  // 切れ目の直前が改行なら、残す側は行の始まりから始まっている。CRLF の間で切れたら LF も捨てる (残す側を空行で始めない)。
+  if (isLineBreak(text.charCodeAt(start - 1))) {
+    const crlf = text.charCodeAt(start - 1) === 0x0d && text.charCodeAt(start) === 0x0a;
+    return text.slice(crlf ? start + 1 : start);
+  }
   const ceiling = Math.min(text.length, start + CUT_LINE_BACKOFF_MAX_CHARS);
   for (let index = start; index < ceiling; index += 1) {
     if (!isLineBreak(text.charCodeAt(index))) continue;

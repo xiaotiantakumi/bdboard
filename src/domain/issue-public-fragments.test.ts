@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { cutKeepingHead, cutKeepingTail } from './issue-draft-cut.js';
 import { buildPublicIssueBody } from './issue-public-build.js';
-import { MIN_FRAGMENT_CODE_POINTS, NO_EDGES, findEdgeFragmentSpans, toFragmentKey } from './issue-public-fragments.js';
+import {
+  MAX_FRAGMENT_KEY_CODE_POINTS,
+  MIN_FRAGMENT_CODE_POINTS,
+  NO_EDGES,
+  findEdgeFragmentSpans,
+  toFragmentKey,
+} from './issue-public-fragments.js';
+import { prepareKeys } from './issue-public-keys.js';
 import { TOKEN_PREFIX_AT_END, TOKEN_SHAPES } from './issue-public-secrets.js';
 import type { LocalOnlyKeys, PublicBuildInput, PublicBuildResult } from './issue-public-types.js';
 
@@ -134,7 +141,7 @@ describe('what the edge check leaves alone', () => {
   });
 
   it('keeps prose whose last word only resembles the start of a token or an email', () => {
-    for (const text of ['it is risk-free', 'send the bearer', 'pinned react@18', 'see task-force']) {
+    for (const text of ['it is risk-free', 'send the bearer', 'pinned react@18', 'see task-force', 'progress 50%']) {
       expect(build('symptom', text).body).toContain(text);
     }
   });
@@ -152,6 +159,44 @@ describe('what the edge check leaves alone', () => {
   });
 });
 
+describe('root variants and the size of the keys', () => {
+  const WINDOWS_ROOT = String.raw`D:\work\acme-corp\example-project`;
+  it.each([
+    ['JSON-escaped backslashes', String.raw`D:\\work\\acme-co`],
+    ['forward slashes', 'D:/work/acme-co'],
+    ['percent-encoded', 'D%3A%5Cwork%5Cacme-co'],
+  ])('replaces a cut root written with %s', (_name, piece) => {
+    const result = build('symptom', `at ${piece}`, { projectRoots: [WINDOWS_ROOT], properNouns: [] });
+    expect(result.body).toContain(`at ${FRAGMENT}`);
+    expect(result.body).not.toContain('acme-co');
+  });
+
+  it('keeps one fragment key for variants that fold to the same text', () => {
+    const one = prepareKeys({ projectRoots: [ROOT], properNouns: [] }).fragmentKeys.length;
+    expect(prepareKeys({ projectRoots: [ROOT, ROOT.toUpperCase()], properNouns: [] }).fragmentKeys.length).toBe(one);
+  });
+
+  it(
+    'caps the total code points of the fragment keys (200 non-ASCII roots of 1024 code points)',
+    () => {
+      const pool = ['が', 'ぎ', 'ぐ', '仕', '事', 'ば', 'ぶ', 'プ'];
+      // 根の長さの上限 (1024 コードポイント) ちょうどにする (超えた根は鍵にならない)。
+      const root = (index: number): string =>
+        Array.from(
+          Array.from({ length: 1024 }, (_, at) => (at === 0 ? `/作業${index}` : at % 8 === 0 ? '/' : pool[at % pool.length])).join(''),
+        )
+          .slice(0, 1024)
+          .join('');
+      const prepared = prepareKeys({ projectRoots: Array.from({ length: 200 }, (_, index) => root(index)), properNouns: [] });
+      const total = prepared.fragmentKeys.reduce((sum, key) => sum + key.forward.length, 0);
+      expect(total).toBeLessThanOrEqual(MAX_FRAGMENT_KEY_CODE_POINTS);
+      expect(total).toBeGreaterThan(MAX_FRAGMENT_KEY_CODE_POINTS / 2);
+      expect(prepared.truncated).toBe(true);
+    },
+    30_000,
+  );
+});
+
 describe('the longest overlap with a name that repeats its own start', () => {
   // 名前の先頭が名前の中で繰り返す (exex…) と、素朴に照合をやり直すと最長の重なりを見落とす (KMP の失敗関数で戻る)。
   it('finds the longest prefix at the end', () => {
@@ -159,6 +204,15 @@ describe('the longest overlap with a name that repeats its own start', () => {
     expect(findEdgeFragmentSpans('owner exexexample-us', keys, { start: false, end: true })).toEqual([
       { kind: 'fragment', start: 8, end: 20 },
     ]);
+  });
+
+  it('falls back through the failure function to the longest overlap', () => {
+    // 鍵ごとに欄の端から鍵の長さぶんだけを読む。失敗関数を作るときの後戻りを外すと、前者は 1 (4 文字が漏れる)、
+    // 後者は 4 (断片でないものを消す) になる (総当たりで見つけた最短の反例)。
+    expect(findEdgeFragmentSpans('x abaababaa', [toFragmentKey('abaababab')], { start: false, end: true })).toEqual([
+      { kind: 'fragment', start: 7, end: 11 },
+    ]);
+    expect(findEdgeFragmentSpans('x aaaaba', [toFragmentKey('aaaabb')], { start: false, end: true })).toEqual([]);
   });
 
   it('finds the longest suffix at the start', () => {
@@ -190,17 +244,56 @@ describe('tokens and emails cut at the end of a field', () => {
     ['bearer', `Bearer ${'y'.repeat(10)}`],
     ['an email cut in the domain', 'jdoe@exam'],
     ['an email cut after the at sign', 'jdoe@'],
+    ['an email cut inside %40', 'jdoe%4'],
+    ['an email cut after the % of %40', 'jdoe%'],
   ])('replaces %s', (_name, piece) => {
     const result = build('symptom', `value ${piece}`);
     expect(result.body).toContain(`value ${FRAGMENT}`);
     expect(result.body).not.toContain(piece);
   });
 
-  it('still reports, not replaces, a whole glued token at the end (the start condition is stricter for fragments)', () => {
+  it('still reports, not replaces, a whole glued token at the end (a fragment inside a reported token is left to the report)', () => {
     const jwt = `eyJ${'a'.repeat(20)}.eyJ${'b'.repeat(20)}.${'c'.repeat(20)}`;
     const glued = build('symptom', `id1${jwt}`);
     expect(glued.body).not.toContain(FRAGMENT);
     expect(glued.suspectedLeaks.map((leak) => leak.kind)).toEqual(['token']);
+    // 途中の "-sk-" から断片を始めると、報告されるはずの "sk-…" が短く削られる。
+    const sk = build('symptom', `id1sk-proj-${'a'.repeat(20)}-sk-abc`);
+    expect(sk.body).not.toContain(FRAGMENT);
+    expect(sk.suspectedLeaks.map((leak) => leak.kind)).toEqual(['token']);
+  });
+
+  it.each([
+    ['sk- after a dot', 'cfg.sk-proj-abcdefgh'],
+    ['sk- after an underscore', 'MY_KEY_sk-proj-abcdefgh'],
+    ['sk- after a hyphen', 'x-sk-proj-abcdefgh'],
+    ['Stripe after an underscore', 'k_sk_live_abcdef'],
+    ['a JWT after a dot', 'session.eyJhbGciOiJIUzI1'],
+  ])('replaces a cut token where the whole token would be replaced: %s', (_name, glued) => {
+    const result = build('errorText', `line\nat ${glued}`);
+    expect(result.body).toContain(FRAGMENT);
+    expect(result.body).not.toMatch(/sk-proj|sk_live|eyJhbG/);
+  });
+
+  it('leaves a cut token glued to a letter or digit (the whole token is only reported, and the cut one is too short)', () => {
+    // 5節「それでも拾えないもの」の 2 つ目。完全な形でも置き換わらない位置なので、断片も置き換えない ("risk-free" を守る条件と同じ)。
+    expect(build('symptom', 'id1sk-proj-abcdefgh').body).toContain('id1sk-proj-abcdefgh');
+  });
+
+  it.each([
+    ['github', 'ghp_', 'x', 20],
+    ['github-fine-grained', 'github_pat_', 'x', 20],
+    ['sk-family', 'sk-', 'x', 20],
+    ['stripe', 'sk_live_', 'x', 16],
+    ['aws-access-key-id', 'AKIA', 'X', 16],
+    ['slack', 'xoxb-', 'x', 10],
+    ['google-api-key', 'AIza', 'x', 35],
+    ['google-oauth', 'ya29.', 'x', 20],
+    ['npm', 'npm_', 'x', 36],
+    ['bearer', 'Bearer ', 'y', 16],
+  ])('treats %s one character short of the full shape as a fragment, and the full shape as a token', (_name, prefix, unit, min) => {
+    expect(build('symptom', `value ${prefix}${unit.repeat(min - 1)}`).body).toContain(`value ${FRAGMENT}`);
+    expect(build('symptom', `value ${prefix}${unit.repeat(min)}`).body).toContain('value <redacted-token>');
   });
 
   it('replaces a cut token that becomes visible only after a glued name was replaced (the second pass looks at the edges too)', () => {
