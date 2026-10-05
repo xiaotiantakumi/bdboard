@@ -48,6 +48,12 @@ export interface DraftRetentionDeps extends DraftRetentionOptions {
    * 棚卸しや、失敗した棚卸しでは呼ばない。メモリ内だけの処理で、投げない前提。
    */
   readonly onPruned?: (survey: DraftSurvey, removedIds: ReadonlySet<string>) => void;
+  /**
+   * 掃除 (期限切れの削除) と容量を空けるための削除が、1 件以上消せたあとに、消せた id を渡す。サービスが受け取りの索引
+   * (statusById・idByFingerprint) から落とす (索引が単調に増えず、消えた下書きの id を読みに行かないため、bdboard-vsuc)。
+   * 失敗 (投げる・reject) しても警告だけで、掃除も受け取りも落とさない。pruneNow の onPruned より前に呼ぶ。
+   */
+  readonly onRemoved?: (removedIds: ReadonlySet<string>) => void | Promise<void>;
 }
 
 export interface DraftRetention {
@@ -143,7 +149,10 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
     }
   }
 
-  /** 消せたものの id を返す (消せなかったものは警告して残す)。 */
+  /**
+   * 消せたものの id を返す (消せなかったものは警告して残す)。1 件以上消せたら onRemoved に渡して、受け取りの索引から落とさせる
+   * (期限切れの掃除も、容量を空けるための削除も通る道。bdboard-vsuc)。onRemoved が失敗しても、掃除も受け取りも落とさない。
+   */
   async function removeAll(targets: readonly DraftFootprint[]): Promise<ReadonlySet<string>> {
     const removed = new Set<string>();
     for (const target of targets) {
@@ -156,6 +165,13 @@ export function createDraftRetention(deps: DraftRetentionDeps): DraftRetention {
       }
     }
     snapshot = snapshot.filter((draft) => !removed.has(draft.id));
+    if (removed.size > 0) {
+      try {
+        await deps.onRemoved?.(removed);
+      } catch (error) {
+        warnOnce(`issue draft index could not drop removed drafts (${errorCode(error)})`);
+      }
+    }
     return removed;
   }
 
