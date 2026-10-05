@@ -307,7 +307,8 @@ head/tail が置き換え後の文章から作られるようになったら、�
   - リクエスト本文そのものは 512KiB まで(超えたら読む前に 413)。65536 文字の本文が JSON のエスケープで膨らんでも入る大きさ。
   - 文字数の上限を守っても、制御文字の JSON エスケープ(1 文字 6 バイト)で `draft.json` が 200KB を超えうる。**編集の上限は
     200KB から余白 32KiB を引いた 168KiB**(`ISSUE_DRAFT_EDIT_HEADROOM_BYTES`)。編集で上限を超えた分は**生ログ(`errorTextRaw`)の
-    末尾だけ**を削り(`errorTextTruncated` を true にし、応答の `errorTextTrimmed` を true にする)、生ログを削り切っても超えるときは
+    末尾だけ**を削り(切れ目は行の境目へ戻し、サロゲートの対を割らない: 5節「欄の端の断片」。`errorTextTruncated` を true にし、
+    応答の `errorTextTrimmed` を true にする)、生ログを削り切っても超えるときは
     保存せずに **413** `{"error":"draft would exceed the size limit","code":"draft-too-large"}`(500 にしない)。見送り・回数の追加と違い
     `fitDraftToByteLimit` は使わない — それは発生したプロジェクトの一覧や畳んだ指紋も縮めるので、利用者の編集が発生の記録を消して
     しまう(bdboard-4y8q.3.1 のレビュー M-2)。置き換え漏れの検出(下)は削った後の下書きにかける。

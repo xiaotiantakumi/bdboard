@@ -186,6 +186,29 @@ describe('applyDraftEdit: fitting 200KB trims only the raw error text (review M-
     expect(outcome.draft.occurredProjects).toEqual(before.occurredProjects);
     expect(outcome.draft.localOnly.symptomRaw).toBe(before.localOnly.symptomRaw);
   });
+
+  it('cuts the raw error text at a line end, not inside a root or a token (bdboard-4y8q.13)', () => {
+    const token = `ghp_${'a'.repeat(36)}`;
+    const raw = `${Array.from({ length: 500 }, (_, index) => `    at fn${index} (${PROJECT.path}/src/a${index}.ts:1:1) ${token}`).join('\n')}\n`;
+    const before = { ...big(), localOnly: { ...big().localOnly, errorTextRaw: raw } };
+    const outcome = applyDraftEdit(before, { body: 'あ'.repeat(40_000) });
+    expect(outcome).toMatchObject({ errorTextTrimmed: true, fits: true });
+    const trimmed = outcome.draft.localOnly.errorTextRaw ?? '';
+    expect(trimmed.length).toBeGreaterThan(0);
+    expect(trimmed.length).toBeLessThan(raw.length);
+    expect(raw.startsWith(trimmed)).toBe(true);
+    // 行の終わりで切れているので、最後の行も根とトークンが丸ごと残る完全な行。
+    expect(trimmed.endsWith(`${token}\n`)).toBe(true);
+  });
+
+  it('does not split a surrogate pair when the raw error text has no newline', () => {
+    const before = { ...big(), localOnly: { ...big().localOnly, errorTextRaw: String.fromCodePoint(0x1f600).repeat(30_000) } };
+    const outcome = applyDraftEdit(before, { body: 'あ'.repeat(40_000) });
+    expect(outcome).toMatchObject({ errorTextTrimmed: true, fits: true });
+    const trimmed = outcome.draft.localOnly.errorTextRaw ?? '';
+    expect(trimmed.length % 2).toBe(0);
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(trimmed)).toBe(false);
+  });
 });
 
 describe('the keys used for the tunnel and for the merge rescan (review M-1, m-1)', () => {
