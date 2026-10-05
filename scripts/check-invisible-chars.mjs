@@ -1,81 +1,120 @@
 // bdboard-ekvi: PR #908 で正規表現の文字クラスに bidi 制御文字が生のまま入り、GitHub の警告と
 // レビュー困難を招いた。Trojan Source に使われる文字や、見えない書式文字の生記述を検出する。
 // ESLint の対象外を含むソースを同じ規則で確認し、追加依存や disable コメントによる回避を防ぐ。
-// 対象は git の追跡ファイルと未追跡・非 ignore ファイルで、src / web/src / scripts の
-// 指定拡張子に限る。削除済みパス (ENOENT / ENOTDIR) だけ読み飛ばし、それ以外で読めないファイルと
+// 対象は git の追跡ファイルと未追跡・非 ignore ファイルで、下の TARGET_PREFIXES / TARGET_FILES と
+// EXTENSIONS に当たるものに限る (src / web/src / scripts / bin / test/e2e と、ルートと web/ の設定ファイル)。
+// 削除済みパス (ENOENT / ENOTDIR) だけ読み飛ばし、それ以外で読めないファイルと
 // git の一覧取得の失敗は、通ったことにせず検査不能 (exit 2) として失敗する。
-// 生の文字そのものは診断に含めず、コードポイント・名前・位置だけを表示する。
+// 生の文字そのものは診断に含めず、コードポイント・名前・位置だけを表示する。ファイル名も同じで、
+// 制御文字・書式文字・見えない文字は \uXXXX (BMP 外は \u{XXXXX}) のエスケープにして出す (bdboard-rqzv)。
+//
+// bdboard-rqzv: 範囲 (bin・e2e・設定ファイル・.jsx/.cts) と文字 (U+00AD U+115F U+1160 U+180E U+3164 U+FFA0
+// U+2061-2064 U+206A-206F U+E0000-E007F U+2028/2029) を広げた。あわせて、symlink を含むパスから
+// 起動しても直接起動と判定する (N5)、UTF-16 (BOM 付き) のファイルをデコードして検査する (N7)、
+// repo の外を指す symlink は辿らず警告して読み飛ばす (N7) ようにした。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { charName, escapeForDisplay, findInvisibleChars } from './check-invisible-chars/chars.mjs';
+
+export { charName, escapeForDisplay, findInvisibleChars };
 
 export const EXIT_OK = 0;
 export const EXIT_FOUND = 1;
 export const EXIT_UNAVAILABLE = 2;
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.mjs', '.js', '.cjs']);
-const CHAR_NAMES = new Map([
-  [0x061c, 'ARABIC LETTER MARK'],
-  [0x200e, 'LEFT-TO-RIGHT MARK'],
-  [0x200f, 'RIGHT-TO-LEFT MARK'],
-  [0x202a, 'LEFT-TO-RIGHT EMBEDDING'],
-  [0x202b, 'RIGHT-TO-LEFT EMBEDDING'],
-  [0x202c, 'POP DIRECTIONAL FORMATTING'],
-  [0x202d, 'LEFT-TO-RIGHT OVERRIDE'],
-  [0x202e, 'RIGHT-TO-LEFT OVERRIDE'],
-  [0x2066, 'LEFT-TO-RIGHT ISOLATE'],
-  [0x2067, 'RIGHT-TO-LEFT ISOLATE'],
-  [0x2068, 'FIRST STRONG ISOLATE'],
-  [0x2069, 'POP DIRECTIONAL ISOLATE'],
-  [0x200b, 'ZERO WIDTH SPACE'],
-  [0x200c, 'ZERO WIDTH NON-JOINER'],
-  [0x200d, 'ZERO WIDTH JOINER'],
-  [0x2060, 'WORD JOINER'],
-  [0xfeff, 'ZERO WIDTH NO-BREAK SPACE (BOM)'],
-]);
+const EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.mjs', '.js', '.cjs', '.jsx']);
+// ディレクトリ (末尾 /) は配下すべて、ファイルは完全一致。git ls-files の pathspec も同じ一覧から作る。
+const TARGET_PREFIXES = ['src/', 'web/src/', 'scripts/', 'bin/', 'test/e2e/'];
+const TARGET_FILES = [
+  'vitest.config.ts',
+  'eslint.config.mjs',
+  '.dependency-cruiser.cjs',
+  'web/vite.config.ts',
+  'web/vitest.config.ts',
+  'web/vitest.setup.ts',
+];
+const GIT_PATHSPECS = [...TARGET_PREFIXES.map((prefix) => prefix.slice(0, -1)), ...TARGET_FILES];
 
 export function isTargetPath(relPath) {
   const normalized = relPath.replaceAll('\\', '/');
-  const inScope = ['src/', 'web/src/', 'scripts/'].some((prefix) => normalized.startsWith(prefix));
+  const inScope = TARGET_PREFIXES.some((prefix) => normalized.startsWith(prefix)) || TARGET_FILES.includes(normalized);
   return inScope && EXTENSIONS.has(path.posix.extname(normalized));
 }
 
-export function findInvisibleChars(text) {
-  const findings = [];
-  let line = 1;
-  let column = 1;
-  for (let index = 0; index < text.length; index += 1) {
-    const codePoint = text.codePointAt(index);
-    const char = String.fromCodePoint(codePoint);
-    if (CHAR_NAMES.has(codePoint)) {
-      findings.push({ line, column, codePoint: `U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}` });
-    }
-    if (char === '\r') {
-      if (text[index + 1] === '\n') index += 1;
-      line += 1;
-      column = 1;
-    } else if (char === '\n') {
-      line += 1;
-      column = 1;
-    } else {
-      column += char.length;
-      if (char.length === 2) index += 1;
+// 複数行になりうる外部のエラー文 (git の stderr など) を、改行で診断行を偽造されない 1 行にして出す。
+function oneLine(message) {
+  return message.trim().split(/\r?\n/).map(escapeForDisplay).join(' / ');
+}
+
+// ファイルの中身を文字列にする。UTF-16 (BOM 付き) で保存されたファイルは UTF-8 として読むと NUL 混じりの
+// 別の文字列になり何も検出できないので、BOM でデコードし分ける。BOM (U+FEFF) 自体は文字列の先頭に残るので、
+// 通常の UTF-8 の BOM と同じく 1:1 の検出になる (リポジトリのソースに BOM は要らない)。BOM の無い UTF-16 は判別しない。
+export function decodeSource(buffer) {
+  if (buffer.length >= 2) {
+    const evenLength = buffer.length - (buffer.length % 2);
+    if (buffer[0] === 0xff && buffer[1] === 0xfe) return Buffer.from(buffer.subarray(0, evenLength)).toString('utf16le');
+    if (buffer[0] === 0xfe && buffer[1] === 0xff) {
+      return Buffer.from(buffer.subarray(0, evenLength)).swap16().toString('utf16le');
     }
   }
-  return findings;
+  return buffer.toString('utf8');
+}
+
+// Node は main モジュールの symlink を実体に解決した URL を import.meta.url にするが、process.argv[1] は
+// 渡されたパスのまま (macOS の /tmp -> /private/tmp など)。文字列の比較では外れて、何も検査せず exit 0 になる。
+// 先に従来の文字列比較を見て、外れたときだけ両方を realpath にして比べる (従来 true だった起動は必ず true のまま。
+// Windows のパス表記の揺れで realpath の結果だけがずれても、検査せず exit 0 に退行しない)。
+export function isDirectRun(moduleUrl, scriptArg) {
+  if (scriptArg === undefined) return false;
+  if (moduleUrl === pathToFileURL(scriptArg).href) return true;
+  try {
+    return fs.realpathSync(fileURLToPath(moduleUrl)) === fs.realpathSync(scriptArg);
+  } catch {
+    return false;
+  }
 }
 
 function listGitFiles(repoRoot) {
   const output = execFileSync(
     'git',
-    ['-c', 'core.quotePath=false', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', 'src', 'web/src', 'scripts'],
+    ['-c', 'core.quotePath=false', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', ...GIT_PATHSPECS],
     { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   );
   // マージ競合中のパスは git ls-files が段 (stage) ごとに 1 行ずつ返すので、同じファイルを何度も報告しないよう重複を除く
   // (git の --deduplicate は旧い git にあるか分からないので JS で除く)。
   return [...new Set(output.split('\0').filter(Boolean))];
+}
+
+function isInside(realRoot, realPath) {
+  const relative = path.relative(realRoot, realPath);
+  return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function classifyReadError(error) {
+  // 追跡中だが作業ツリーで消したファイル (git ls-files --cached は一覧に残す) や、指す先の無い symlink は読み飛ばす。
+  if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return { status: 'gone' };
+  return { status: 'unreadable', reason: error.code ?? error.message };
+}
+
+// 実体のパスを求めて repo の中にあるものだけ読む。repo の外を指す symlink を辿ると、チェックの対象外の
+// ファイル (他人のホーム配下など) を読むことになり、その失敗や中身で結果が変わってしまう。
+function loadSource(repoRoot, realRoot, relPath) {
+  let realPath;
+  try {
+    realPath = fs.realpathSync(path.join(repoRoot, relPath));
+  } catch (error) {
+    return classifyReadError(error);
+  }
+  if (!isInside(realRoot, realPath)) return { status: 'outside' };
+  try {
+    return { status: 'ok', text: decodeSource(fs.readFileSync(realPath)) };
+  } catch (error) {
+    return classifyReadError(error);
+  }
 }
 
 export function main(argv) {
@@ -88,8 +127,14 @@ export function main(argv) {
   try {
     files = listGitFiles(repoRoot);
   } catch (error) {
-    console.error(`invisible-chars: git ls-files に失敗しました (${error.message.trim()})`);
+    console.error(`invisible-chars: git ls-files に失敗しました (${oneLine(error.message)})`);
     return EXIT_UNAVAILABLE;
+  }
+  let realRoot;
+  try {
+    realRoot = fs.realpathSync(repoRoot);
+  } catch {
+    realRoot = repoRoot;
   }
 
   let inspected = 0;
@@ -98,24 +143,27 @@ export function main(argv) {
   const affected = new Set();
   for (const relPath of files) {
     if (!isTargetPath(relPath)) continue;
-    let text;
-    try {
-      text = fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
-    } catch (error) {
-      // 追跡中だが作業ツリーで消したファイル (git ls-files --cached は一覧に残す) は読み飛ばす。
-      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
+    // 診断に出すパスは必ずエスケープする (ファイル名に bidi 制御文字や改行があっても、出力の見え方を変えさせない)。
+    const shownPath = escapeForDisplay(relPath);
+    const source = loadSource(repoRoot, realRoot, relPath);
+    if (source.status === 'gone') continue;
+    if (source.status === 'outside') {
+      console.error(`invisible-chars: ${shownPath} は repo の外を指す symlink のため辿らず、検査しません (symlink target is outside the repository)`);
+      continue;
+    }
+    if (source.status === 'unreadable') {
       unreadable += 1;
-      console.error(`invisible-chars: ${relPath} を読めませんでした (${error.code ?? error.message})`);
+      console.error(`invisible-chars: ${shownPath} を読めませんでした (${escapeForDisplay(String(source.reason))})`);
       continue;
     }
     inspected += 1;
-    for (const finding of findInvisibleChars(text)) {
+    for (const finding of findInvisibleChars(source.text)) {
       count += 1;
       affected.add(relPath);
       const codePoint = Number.parseInt(finding.codePoint.slice(2), 16);
       // 診断は ASCII だけで書く (生の文字を出力に混ぜない)。JSX のテキスト・属性では \u のエスケープが解釈されないので、その案内も添える。
       console.error(
-        `invisible-chars: ${relPath}:${finding.line}:${finding.column} ${finding.codePoint} ${CHAR_NAMES.get(codePoint)} - write it as a \\uXXXX escape, not the raw character (in JSX text or attributes the escape is not interpreted: use a JS expression such as {'\\u200B'})`,
+        `invisible-chars: ${shownPath}:${finding.line}:${finding.column} ${finding.codePoint} ${charName(codePoint)} - write it as a \\uXXXX escape, not the raw character (in JSX text or attributes the escape is not interpreted: use a JS expression such as {'\\u200B'})`,
       );
     }
   }
@@ -132,5 +180,4 @@ export function main(argv) {
   return EXIT_OK;
 }
 
-const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) process.exitCode = main(process.argv.slice(2));
+if (isDirectRun(import.meta.url, process.argv[1])) process.exitCode = main(process.argv.slice(2));
