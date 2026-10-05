@@ -319,12 +319,13 @@ describe('prepared patterns carry no state between calls', () => {
       projectRoots: ['/work/example-project'],
       properNouns: [noun('user', 'example-user'), noun('host', 'tom')],
     });
+    // 根と LONG の名前は正規表現を持たない (issue-public-casefold.ts。表が使えないエンジンでだけ fallback の正規表現を持つ)。
     const patterns = [
-      ...prepared.projectRoots,
-      ...prepared.replaceableNouns.map(({ pattern }) => pattern),
-      ...prepared.detectableNouns.map(({ pattern }) => pattern),
+      ...prepared.projectRoots.flatMap(({ fallback }) => (fallback === undefined ? [] : [fallback])),
+      ...prepared.replaceableNouns.flatMap(({ literal }) => (literal.fallback === undefined ? [] : [literal.fallback])),
+      ...prepared.shortNouns.map(({ pattern }) => pattern),
     ];
-    expect(patterns.length).toBeGreaterThan(3);
+    expect(patterns.length).toBeGreaterThan(0);
     for (const pattern of patterns) pattern.lastIndex = 9_999;
     const text = '/work/example-project example-user tom';
     expect(findProjectRootSpans(text, prepared)).toHaveLength(1);

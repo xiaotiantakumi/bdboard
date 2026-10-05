@@ -184,7 +184,6 @@ describe('findReportOnlySpans: the subset the elision cut avoids (no key-side sc
   it('keeps only the short names in shortNouns, and the long ones in replaceableNouns', () => {
     expect(prepared.shortNouns).toHaveLength(1);
     expect(prepared.replaceableNouns.length).toBeGreaterThan(0);
-    expect(prepared.detectableNouns).toHaveLength(prepared.shortNouns.length + prepared.replaceableNouns.length);
   });
 });
 

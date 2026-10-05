@@ -31,16 +31,18 @@ function isLowSurrogate(unit: number): boolean {
 }
 
 /**
- * 先頭を残して maxUnits コード単位以下にする。上限の内側に改行があれば (CUT_LINE_BACKOFF_MAX_CHARS の範囲で) その直後で切り、
+ * 先頭を残して maxUnits コード単位以下にする。上限の内側に改行があれば (maxBackoff の範囲で) その直後で切り、
  * 不完全な最後の行を残さない。無ければコードポイントの境目で切る。収まっていればそのまま返す。
+ * maxBackoff は戻る距離の上限 (既定 CUT_LINE_BACKOFF_MAX_CHARS)。表示用の短い切り出しは、残す長さの下限を保つために小さくする
+ * (summarizeErrorText。bdboard-uudb の NIT-10)。
  */
-export function cutKeepingHead(text: string, maxUnits: number): string {
+export function cutKeepingHead(text: string, maxUnits: number, maxBackoff: number = CUT_LINE_BACKOFF_MAX_CHARS): string {
   if (text.length <= maxUnits) return text;
   let end = Math.max(0, maxUnits);
   if (end > 0 && isHighSurrogate(text.charCodeAt(end - 1)) && isLowSurrogate(text.charCodeAt(end))) end -= 1;
   // 切れ目の直後が改行なら、残す側は行の終わりで終わっている。
   if (isLineBreak(text.charCodeAt(end))) return text.slice(0, end);
-  const floor = Math.max(0, end - CUT_LINE_BACKOFF_MAX_CHARS);
+  const floor = Math.max(0, end - maxBackoff);
   for (let index = end - 1; index >= floor; index -= 1) {
     if (isLineBreak(text.charCodeAt(index))) return text.slice(0, index + 1);
   }
@@ -48,10 +50,10 @@ export function cutKeepingHead(text: string, maxUnits: number): string {
 }
 
 /**
- * 末尾を残して maxUnits コード単位以下にする (tail-capture)。最初の不完全な行は (CUT_LINE_BACKOFF_MAX_CHARS の範囲で) 捨てる。
- * 範囲に改行が無ければコードポイントの境目で切る。収まっていればそのまま返す。
+ * 末尾を残して maxUnits コード単位以下にする (tail-capture)。最初の不完全な行は (maxBackoff の範囲で) 捨てる。
+ * 範囲に改行が無ければコードポイントの境目で切る。収まっていればそのまま返す。maxBackoff は cutKeepingHead と同じ。
  */
-export function cutKeepingTail(text: string, maxUnits: number): string {
+export function cutKeepingTail(text: string, maxUnits: number, maxBackoff: number = CUT_LINE_BACKOFF_MAX_CHARS): string {
   if (text.length <= maxUnits) return text;
   let start = text.length - Math.max(0, maxUnits);
   if (start < text.length && isLowSurrogate(text.charCodeAt(start)) && isHighSurrogate(text.charCodeAt(start - 1))) start += 1;
@@ -60,7 +62,7 @@ export function cutKeepingTail(text: string, maxUnits: number): string {
     const crlf = text.charCodeAt(start - 1) === 0x0d && text.charCodeAt(start) === 0x0a;
     return text.slice(crlf ? start + 1 : start);
   }
-  const ceiling = Math.min(text.length, start + CUT_LINE_BACKOFF_MAX_CHARS);
+  const ceiling = Math.min(text.length, start + maxBackoff);
   for (let index = start; index < ceiling; index += 1) {
     if (!isLineBreak(text.charCodeAt(index))) continue;
     // CRLF は 2 文字まとめて捨てる (残す側を空行で始めない)。

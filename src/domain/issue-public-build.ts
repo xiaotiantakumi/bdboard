@@ -15,6 +15,7 @@
  *   (0) 孤立サロゲートの除去 → 行・不可視文字の整形 (1 行の値は 1 行にする) — issue-public-text.ts
  *   (1) 同じ整形後の文字列に全 finder をかけて一致を集め、重なりを統合し、印に置き換える。置き換えの結果にもう一度
  *       (最大 2 回) かけて、印に替わったことで新しく現れた一致 ("<project>sk-…") も置き換える — issue-public-redact.ts。
+ *       根と LONG の名前は、表で大文字小文字をたたんだ indexOf で探す — issue-public-casefold.ts。
  *       複数行の欄は、保存の上限などで切れた欄の端の断片も探す (末尾はどの欄も、先頭はエラー文だけ) — issue-public-fragments.ts
  *   (2) 置換「後」にコードポイント単位で省略する (先に切ると、切れ目でトークンが半分になって形に一致しなくなる)
  *   (3) code context で包み、固定の文言と並べる。印の位置は組み立ての場所で最終の title / body の位置へずらす
@@ -28,6 +29,7 @@
  * これは best-effort の機械処理であり、唯一の防御ではない。投稿の前に人が見ることが本来の防御。
  */
 import type { DraftKind } from './issue-draft.js';
+import { forgetFoldedText } from './issue-public-casefold.js';
 import { prepareKeys, type PreparedKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
 import { codeBlock, codeSpan, type MarkdownPiece } from './issue-public-markdown.js';
@@ -213,6 +215,8 @@ export function buildPublicIssueBody<I extends PublicBuildInput>(
     ...detectSuspectedLeaks('title', title.text, redactions, prepared),
     ...detectSuspectedLeaks('body', body.text, redactions, prepared),
   ];
+  // たたんだ本文の覚え (手元のパスやトークンを含みうる) を、次の組み立てまで持ち越さない。
+  forgetFoldedText();
   return { title: title.text, body: body.text, redactions, suspectedLeaks, keysTruncated: prepared.truncated };
 }
 

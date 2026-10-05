@@ -191,6 +191,21 @@ describe('the storage caps cut at a line end and never leave half a surrogate pa
     expect(hasLoneSurrogate(split.head) || hasLoneSurrogate(split.tail)).toBe(false);
   });
 
+  it('summarizeErrorText keeps at least half of the edge when the nearest line break is far away (NIT-10)', () => {
+    const edge = ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS;
+    // 先頭の短い行の後に長い 1 行: 保存の上限と同じ距離 (4096) まで戻すと、head は "x\n" の 2 文字になっていた。
+    const text = `x\n${'y'.repeat(5000)}\n${'z'.repeat(5000)}\nw`;
+    const summary = summarizeErrorText(text);
+    expect(summary.head).toBe(`x\n${'y'.repeat(edge - 2)}`);
+    expect(summary.tail).toBe(`${'z'.repeat(edge - 2)}\nw`);
+    expect(summary.omittedChars).toBe(text.length - summary.head.length - summary.tail.length);
+    // 半分以内に改行があれば、今までどおり行の境目で切る。
+    const near = `${'h'.repeat(edge / 2 + 10)}\n${'m'.repeat(5000)}\n${'t'.repeat(edge / 2 + 10)}`;
+    const nearSummary = summarizeErrorText(near);
+    expect(nearSummary.head).toBe(`${'h'.repeat(edge / 2 + 10)}\n`);
+    expect(nearSummary.tail).toBe('t'.repeat(edge / 2 + 10));
+  });
+
   function draftWith(localOnly: Partial<IssueDraft['localOnly']>): IssueDraft {
     return {
       id: '1758812345678-a1b2c3d4e5f6a7b8',

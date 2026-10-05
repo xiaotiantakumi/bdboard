@@ -103,6 +103,39 @@ describe('wireIssueReports: the start-up prune', () => {
     expect(((await res.json()) as { latestHarnessVersion: unknown }).latestHarnessVersion).toBe('0.57.0');
   });
 
+  it('warns once with a code when the public body case table cannot be used (bdboard-uudb)', async () => {
+    const log = vi.fn();
+    wireIssueReports({
+      repoRoot: root,
+      env: { BDBOARD_ISSUE_DRAFTS_DIR: draftsDir },
+      writeAccess: {},
+      packRegistry: { listPacks: async () => [] },
+      log,
+      caseTableUsable: () => false,
+    });
+    await vi.waitFor(() => {
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('(case-table-fallback)'));
+    });
+    expect(log.mock.calls.filter(([message]) => String(message).includes('case-table-fallback'))).toHaveLength(1);
+  });
+
+  it('does not warn about the case table when it can be used', async () => {
+    const log = vi.fn();
+    const usable = vi.fn(() => true);
+    wireIssueReports({
+      repoRoot: root,
+      env: { BDBOARD_ISSUE_DRAFTS_DIR: draftsDir },
+      writeAccess: {},
+      packRegistry: { listPacks: async () => [] },
+      log,
+      caseTableUsable: usable,
+    });
+    await vi.waitFor(() => {
+      expect(usable).toHaveBeenCalledTimes(1);
+    });
+    expect(log.mock.calls.some(([message]) => String(message).includes('case-table-fallback'))).toBe(false);
+  });
+
   it('answers null for the latest version when the pack cannot be read, without failing the read', async () => {
     await seed(makeDraft(ID_OLD_OPEN, 'pending'), 0);
     const { issueReportsRouter } = wireIssueReports({
