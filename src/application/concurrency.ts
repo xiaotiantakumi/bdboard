@@ -131,3 +131,19 @@ export class Semaphore {
     return this.waiters.splice(highIndex, 1)[0]!.resolve;
   }
 }
+
+/**
+ * 呼び出しを 1 本ずつ直列に流す。前の呼び出しが失敗しても次は走る。
+ * 戻り値と reject は fn のものがそのまま呼び出し元に届く。
+ */
+export function createMutex(): <T>(fn: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return (fn) => {
+    const result = tail.then(fn);
+    tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+}

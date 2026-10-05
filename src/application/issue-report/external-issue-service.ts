@@ -26,7 +26,7 @@ import {
   type ExternalIssueListErrorKind,
   type ResnapshotResult,
 } from './external-issue-list.js';
-import { createMutex } from './issue-draft-mutex.js';
+import { createMutex } from '../concurrency.js';
 
 export type {
   ExternalIssueEntry,
