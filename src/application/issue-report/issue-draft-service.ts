@@ -26,6 +26,7 @@ import {
   noteDraftStatus,
   syncStatuses,
 } from './issue-draft-index.js';
+import { createMutex } from './issue-draft-mutex.js';
 import { createDraftRetention, type DraftRetentionOptions } from './issue-draft-retention.js';
 
 export type { ReceiveDraftInput } from '../../domain/issue-draft-build.js';
@@ -103,19 +104,6 @@ export interface IssueDraftServiceDeps {
   readonly newId: () => string;
   /** 保持期限・掃除の間隔・合計容量の上限・警告の出力。省略時は domain の既定値 (30 日・1 時間・1 GiB)。 */
   readonly retention?: DraftRetentionOptions;
-}
-
-/** 呼び出しを 1 本ずつ直列に流す。受け取り・見送り・画像追加の「確認してから書く」を割り込ませない。 */
-function createMutex(): <T>(fn: () => Promise<T>) => Promise<T> {
-  let tail: Promise<unknown> = Promise.resolve();
-  return (fn) => {
-    const result = tail.then(fn);
-    tail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  };
 }
 
 function compareNewestFirst(a: IssueDraft, b: IssueDraft): number {
