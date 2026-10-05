@@ -6,7 +6,8 @@
  *
  * shutdownForSignal 内の後始末順序 (refresh → session → transcript → CFD snapshot →
  * ai-quota-alert のタイマー停止 → reclaimScheduler.stop() → shutdown()) は元の
- * main.ts と完全に同じ。drain 内部の順序 (runStore → tunnelService → watchHandle →
+ * main.ts と完全に同じ (bdboard-4y8q.9.4: reclaimScheduler.stop() の次に、届いた issue の
+ * 定期確認の停止 externalIssues.stop() を足した)。drain 内部の順序 (runStore → tunnelService → watchHandle →
  * cache → chatRepositories) は application/board/shutdown-drain.ts 側の契約であり、
  * ここでは変えない。
  *
@@ -47,6 +48,7 @@ export interface WireShutdownDeps extends Omit<ShutdownDrainDeps, 'runStore' | '
   readonly cfdSnapshotIntervalTimer: ReturnType<typeof setInterval> | undefined;
   readonly aiQuotaAlertIntervalTimer: ReturnType<typeof setInterval> | undefined;
   readonly reclaimScheduler: Pick<ReclaimScheduler, 'stop'>;
+  /** 届いた issue の定期確認 (bdboard-4y8q.9.4)。無効なら `stop` は何もしない。省略可 (テスト・古い呼び出し)。 */
   readonly externalIssues?: { readonly stop: () => void };
   readonly exit?: (code: number) => void;
   readonly log?: Pick<typeof console, 'error'>;
