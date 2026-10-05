@@ -10,7 +10,9 @@ const FIXTURE_PATTERN = /(^|\/)fixtures(\/|$)/;
 // (web/src/index.css 等) は引き続きここで見る。harness/ (ESLint の ignores 対象) と
 // test/ (ESLint の lint 対象外、test/e2e/*.ts など) は二重管理の対象にならないため、
 // 従来どおり全拡張子を見る。
-// bdboard-hncr: eslint.config.mjs 166行目の files と1対1で対応させる。単一配列だと
+// bdboard-hncr: eslint.config.mjs の NON_TEST_MAX_LINES を使う max-lines ブロック (files が
+// src/**/*.ts・web/src/**/*.{ts,tsx}・scripts/**/*.mjs の3パターンのもの) と1対1で対応させる。
+// 行番号はずれるので書かない。単一配列だと
 // src/foo.js のような組み合わせを「ESLint 対象」と誤判定し、check-file-size と ESLint
 // max-lines の両方から漏れる穴になっていた。この対応がずれたら下のテストの
 // 「eslint.config.mjs drift guard」が落ちる。
