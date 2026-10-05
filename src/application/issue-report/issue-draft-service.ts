@@ -43,7 +43,8 @@ export type DismissDraftResult =
   | { readonly ok: false; readonly reason: 'not-pending'; readonly status: DraftStatus };
 
 export type EditDraftResult =
-  | { readonly ok: true; readonly draft: IssueDraft }
+  /** errorTextTrimmed: 200KB に収めるために手元の生ログの末尾を削った (応答で知らせる)。 */
+  | { readonly ok: true; readonly draft: IssueDraft; readonly errorTextTrimmed: boolean }
   /** too-large: 手元の欄を削り切っても draft.json が 200KB を超える (入口の長さの上限の後ろの最後の砦)。 */
   | { readonly ok: false; readonly reason: 'not-found' | 'too-large' | 'storage-full' }
   /** 直せるのは pending の下書きだけ。 */
@@ -206,11 +207,11 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
         const draft = isDraftId(id) ? await deps.storage.get(id) : undefined;
         if (draft === undefined) return { ok: false, reason: 'not-found' };
         if (draft.status !== 'pending') return { ok: false, reason: 'not-pending', status: draft.status };
-        const edited = applyDraftEdit(draft, edit);
+        const { draft: edited, errorTextTrimmed } = applyDraftEdit(draft, edit);
         // 保存層は 200KB を超える下書きを投げる (500 になる)。その手前で断る。
         if (draftJsonBytes(edited) > ISSUE_DRAFT_MAX_JSON_BYTES) return { ok: false, reason: 'too-large' };
         if (!(await saveWithinCap(edited, draft))) return storageFull;
-        return { ok: true, draft: edited };
+        return { ok: true, draft: edited, errorTextTrimmed };
       }),
 
     pendingCount: () => exclusive(async () => countPending(await indexCache.get())),

@@ -1,5 +1,5 @@
-import type { DraftSuspectedLeak, IssueDraft, OccurredProject } from './issue-draft.js';
-import { fitDraftToByteLimit } from './issue-draft-size.js';
+import { ISSUE_DRAFT_MAX_JSON_BYTES, type DraftSuspectedLeak, type IssueDraft, type OccurredProject } from './issue-draft.js';
+import { draftJsonBytes } from './issue-draft-size.js';
 import { prepareKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
 import type { LocalOnlyKeys } from './issue-public-types.js';
@@ -45,6 +45,19 @@ export interface DraftTextToScan {
 }
 
 /**
+ * トンネル (手元の外) の読み手へ返す疑いの鍵: 表示名だけで、根のパスは入れない (bdboard-4y8q.3.1 のレビュー M-1)。
+ * トンネルの読み手は occurredProjects[].name を見ているが path は見ていない。根を鍵にすると、本文に推測のパスを
+ * 並べて送り、疑いの種別 (project-path) が付くかどうかで隠したパスやフォルダ名を当てて確かめられる (根の末尾の
+ * フォルダ名も名前の鍵として足されるため)。ホームのパス・トークン・鍵ブロック・メールは鍵なしで探すので、そのまま出る。
+ */
+export function displayedKeysOf(projects: readonly OccurredProject[]): LocalOnlyKeys {
+  return {
+    projectRoots: [],
+    properNouns: projects.map((project) => ({ category: 'project' as const, value: project.name })),
+  };
+}
+
+/**
  * 手元の鍵: 発生したプロジェクトの根のパスと、その名前。ユーザー名・ホスト名・ブランチ名は、今の受け取りの入力に無い
  * (docs/ISSUE-REPORTING.md 5節「4y8q.2 の範囲外」の配線)。ホームのパス・トークン・鍵ブロック・メールは鍵が無くても探す。
  */
@@ -60,8 +73,8 @@ export function localKeysOf(projects: readonly OccurredProject[]): LocalOnlyKeys
  * 無いので、印の文字列 (`<project>` など) の中の一致も疑いとして出る (過検出の側)。鍵を上限で落としたときは、
  * 4y8q.2 の組み立てと同じく位置の無い 'key-overflow' を先頭に足す (「疑いが空か」だけを見る側が漏れなしと読まない)。
  */
-export function scanEditedText(text: DraftTextToScan, projects: readonly OccurredProject[]): DraftLeakScan {
-  const prepared = prepareKeys(localKeysOf(projects));
+export function scanEditedText(text: DraftTextToScan, keys: LocalOnlyKeys): DraftLeakScan {
+  const prepared = prepareKeys(keys);
   const overflow: DraftSuspectedLeak[] = prepared.truncated
     ? [{ field: 'body', kind: 'key-overflow', start: 0, end: 0 }]
     : [];
@@ -76,27 +89,59 @@ export function scanEditedText(text: DraftTextToScan, projects: readonly Occurre
   };
 }
 
+/** 直した欄に検出をかけ直した疑いを持たせる (手元の鍵 = 発生したプロジェクトのパスと名前)。直した欄が無ければそのまま。 */
+export function withRescannedLeaks(draft: IssueDraft): IssueDraft {
+  if (!draft.titleEditedByUser && !draft.bodyEditedByUser) return draft;
+  const scan = scanEditedText(
+    { title: draft.title, body: draft.body, titleEdited: draft.titleEditedByUser, bodyEdited: draft.bodyEditedByUser },
+    localKeysOf(draft.occurredProjects),
+  );
+  return { ...draft, suspectedLeaks: scan.suspectedLeaks, suspectedLeaksOmitted: scan.omitted };
+}
+
+/**
+ * 編集で 200KB を超えた分を、手元の生ログ (errorTextRaw) の末尾からだけ削る (レビュー M-2)。発生プロジェクト (漏れ検出の鍵と
+ * パス)・丸め込んだ指紋・人が書いた欄 (症状・原因・対策・メモ) は、編集では削らない: 手元の外 (トンネル) の書き手が
+ * 本文の大きさだけで、見られない手元のデータを消せてしまうため。先頭・末尾の切り出し (errorTextHead / Tail) は残す。
+ * 削ったら errorTextTruncated を立てる。生ログを削り切っても超えるなら、そのまま返す (呼び出し側が 413 にする)。
+ */
+function trimErrorTextToFit(draft: IssueDraft): { readonly draft: IssueDraft; readonly trimmed: boolean } {
+  let current = draft;
+  let trimmed = false;
+  for (;;) {
+    const excess = draftJsonBytes(current) - ISSUE_DRAFT_MAX_JSON_BYTES;
+    const raw = current.localOnly.errorTextRaw;
+    if (excess <= 0 || raw === undefined || raw.length === 0) return { draft: current, trimmed };
+    // fitDraftToByteLimit の cutTextFrom と同じく、1 文字は最大 3 バイトとして一度に落とす (足りなければもう一周)。
+    const cut = Math.max(1, Math.ceil(excess / 3));
+    current = {
+      ...current,
+      localOnly: { ...current.localOnly, errorTextRaw: raw.slice(0, Math.max(0, raw.length - cut)), errorTextTruncated: true },
+    };
+    trimmed = true;
+  }
+}
+
+export interface DraftEditOutcome {
+  readonly draft: IssueDraft;
+  /** 200KB に収めるために生ログの末尾を削った。 */
+  readonly errorTextTrimmed: boolean;
+}
+
 /**
  * 題名・本文を替え、渡した欄の「直した」印を立て、置き換え漏れの検出をかけ直す。状態の確認 (pending だけ) と長さの
- * 上限は呼び出し側。大きくなった分は、ほかの書き込み (見送り・回数の追加) と同じく fitDraftToByteLimit で手元の欄
- * (生ログの末尾など) から削る。削り切っても 200KB を超えるなら、呼び出し側が draftJsonBytes で見て断る。
+ * 上限は呼び出し側。大きくなった分は生ログの末尾からだけ削り (trimErrorTextToFit)、それでも 200KB を超えるなら、呼び出し側が
+ * draftJsonBytes で見て断る。検出の入力 (題名・本文・発生プロジェクト) は削る前と後で変わらない (削るのは生ログだけ) ので、
+ * 疑いは保存する下書きの鍵と食い違わない。疑いの分 (最大 200 件) も大きさに入れて削る。
  */
-export function applyDraftEdit(draft: IssueDraft, edit: DraftTextEdit): IssueDraft {
-  const title = edit.title ?? draft.title;
-  const body = edit.body ?? draft.body;
-  const titleEditedByUser = draft.titleEditedByUser || edit.title !== undefined;
-  const bodyEditedByUser = draft.bodyEditedByUser || edit.body !== undefined;
-  const scan = scanEditedText(
-    { title, body, titleEdited: titleEditedByUser, bodyEdited: bodyEditedByUser },
-    draft.occurredProjects,
-  );
-  return fitDraftToByteLimit({
+export function applyDraftEdit(draft: IssueDraft, edit: DraftTextEdit): DraftEditOutcome {
+  const edited = withRescannedLeaks({
     ...draft,
-    title,
-    body,
-    titleEditedByUser,
-    bodyEditedByUser,
-    suspectedLeaks: scan.suspectedLeaks,
-    suspectedLeaksOmitted: scan.omitted,
+    title: edit.title ?? draft.title,
+    body: edit.body ?? draft.body,
+    titleEditedByUser: draft.titleEditedByUser || edit.title !== undefined,
+    bodyEditedByUser: draft.bodyEditedByUser || edit.body !== undefined,
   });
+  const fitted = trimErrorTextToFit(edited);
+  return { draft: fitted.draft, errorTextTrimmed: fitted.trimmed };
 }

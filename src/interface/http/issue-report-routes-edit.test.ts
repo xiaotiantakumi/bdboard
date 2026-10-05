@@ -200,6 +200,90 @@ describe('PATCH /api/issue-reports/drafts/:id — through the tunnel', () => {
   });
 });
 
+describe('PATCH /api/issue-reports/drafts/:id — review follow-ups (bdboard-4y8q.3.1)', () => {
+  it('drops a zero-width space and a BOM pasted into the title instead of refusing it', async () => {
+    const { app, storage } = setup();
+    const id = await createDraft(app);
+    const res = await app.request(`${DRAFTS}/${id}`, patch({ title: '\u200BHello\uFEFF' }), LOCAL_ENV);
+    expect(res.status).toBe(200);
+    expect(storage.drafts.get(id)?.title).toBe('Hello');
+  });
+
+  it('refuses the tunnel with a weak password and a cookie, and with a strong password but no cookie (403)', async () => {
+    for (const writeAccess of [
+      { isTunnelWriteAllowed: () => false, hasTunnelSession: () => true },
+      { isTunnelWriteAllowed: () => true, hasTunnelSession: () => false },
+    ]) {
+      const { app, storage } = setup({ writeAccess });
+      const id = await createDraft(app);
+      const res = await app.request(`${DRAFTS}/${id}`, patch({ title: 'x' }, CF_HEADERS), LOCAL_ENV);
+      expect(res.status).toBe(403);
+      expect(storage.drafts.get(id)?.titleEditedByUser).toBe(false);
+    }
+  });
+
+  it('gives the tunnel no suspectedLeaks for a draft nobody has edited', async () => {
+    const { app } = setup();
+    const id = await createDraft(app);
+    const res = await app.request(`${DRAFTS}/${id}`, { headers: { ...CF_HEADERS } }, LOCAL_ENV);
+    const { draft } = (await res.json()) as { draft: Record<string, unknown> };
+    expect(draft.restricted).toBe(true);
+    expect(draft).not.toHaveProperty('suspectedLeaks');
+  });
+
+  it('answers a right and a wrong guess of the hidden project path the same way through the tunnel (M-1)', async () => {
+    const hiddenPath = '/Users/alice/work/secret-proj';
+    const answers = async (guess: string): Promise<string[]> => {
+      const { app } = setup({ writeAccess: TUNNEL_WRITE_ALLOWED });
+      const created = await app.request(
+        DRAFTS,
+        request('POST', { kind: 'A', catalogSlug: 'slug-a', project: { name: 'public-name', path: hiddenPath } }),
+        LOCAL_ENV,
+      );
+      const { id } = ((await created.json()) as { draft: { id: string } }).draft;
+      const patched = await app.request(`${DRAFTS}/${id}`, patch({ body: guess }, CF_HEADERS), LOCAL_ENV);
+      const read = await app.request(`${DRAFTS}/${id}`, { headers: { ...CF_HEADERS } }, LOCAL_ENV);
+      const leaksOf = async (res: Response) =>
+        JSON.stringify(((await res.json()) as { draft: { suspectedLeaks?: unknown } }).draft.suspectedLeaks);
+      return [await leaksOf(patched), await leaksOf(read)];
+    };
+    // 同じ長さの推測: 正しいパスとフォルダ名 / 外れたパスとフォルダ名。
+    const right = await answers('x/Users/alice/work/secret-proj | secret-proj | public-name');
+    const wrong = await answers('x/Users/carol/work/guessx-proj | guessx-proj | public-name');
+    expect(right).toEqual(wrong);
+    expect(right[0]).not.toContain('project-path');
+    expect(right[0]).toContain('"kind":"project"'); // 見えている表示名は疑いに出る
+  });
+
+  it('trims only the raw error text to fit 200KB, says so, and keeps the projects (M-2)', async () => {
+    const { app, storage } = setup({ writeAccess: TUNNEL_WRITE_ALLOWED });
+    const created = await app.request(
+      DRAFTS,
+      request('POST', {
+        kind: 'C',
+        source: 'server',
+        errorText: 'e'.repeat(60_000),
+        symptom: 's'.repeat(8_000),
+        project: { name: 'example-project', path: PROJECT_PATH },
+      }),
+      LOCAL_ENV,
+    );
+    const { id } = ((await created.json()) as { draft: { id: string } }).draft;
+    const res = await app.request(`${DRAFTS}/${id}`, patch({ body: 'あ'.repeat(45_000) }, CF_HEADERS), LOCAL_ENV);
+    expect(res.status).toBe(200);
+    const payload = (await res.json()) as { errorTextTrimmed: boolean; draft: { localOnly: { errorTextTruncated: boolean } } };
+    expect(payload.errorTextTrimmed).toBe(true);
+    expect(payload.draft.localOnly.errorTextTruncated).toBe(true);
+    const stored = storage.drafts.get(id);
+    expect(stored?.occurredProjects).toHaveLength(1);
+    expect(stored?.localOnly.symptomRaw).toHaveLength(8_000);
+    expect((stored?.localOnly.errorTextRaw?.length ?? 0) < 60_000).toBe(true);
+
+    const small = await app.request(`${DRAFTS}/${id}`, patch({ body: 'short' }, CF_HEADERS), LOCAL_ENV);
+    expect(((await small.json()) as { errorTextTrimmed: boolean }).errorTextTrimmed).toBe(false);
+  });
+});
+
 describe('pending count and the latest harness pack version', () => {
   it('GET pending-count and the list answer the number of pending drafts', async () => {
     const { app } = setup();

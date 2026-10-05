@@ -79,7 +79,14 @@ export function registerIssueDraftEditRoutes(app: Hono, deps: IssueDraftEditRout
         ...(edit.title !== undefined ? { title: edit.title } : {}),
         ...(edit.body !== undefined ? { body: edit.body } : {}),
       });
-      if (result.ok) return c.json({ draft: toDetailDto(result.draft, { local: isLocalBasicAuthRequest(c) }) });
+      if (result.ok) {
+        // 応答は GET drafts/:id の draft と同じ形 (images・latestHarnessVersion は載せない)。errorTextTrimmed は、200KB に収めるため
+        // 手元の生ログの末尾を削ったか (削ったら draft.localOnly.errorTextTruncated も true)。
+        return c.json({
+          draft: toDetailDto(result.draft, { local: isLocalBasicAuthRequest(c) }),
+          errorTextTrimmed: result.errorTextTrimmed,
+        });
+      }
       switch (result.reason) {
         case 'not-found':
           return c.json({ error: 'draft not found', id }, 404);

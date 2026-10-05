@@ -71,7 +71,8 @@ export const draftSchema = z.object({
         kind: z.string(),
         start: z.number().int().nonnegative(),
         end: z.number().int().nonnegative(),
-      }),
+      })
+      .refine((leak) => leak.start <= leak.end),
     )
     .optional(),
   suspectedLeaksOmitted: z.number().int().nonnegative().optional(),

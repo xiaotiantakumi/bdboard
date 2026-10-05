@@ -1,7 +1,7 @@
 import type { StoredDraftImage } from '../../application/ports/issue-draft-storage.js';
 import type { IssueDraft, LocalOnlyContext, OccurredProject } from '../../domain/issue-draft.js';
 import { foldHomePaths, foldHomePathsInValues } from '../../domain/issue-draft-identifier.js';
-import { scanEditedText } from '../../domain/issue-draft-edit.js';
+import { displayedKeysOf, scanEditedText } from '../../domain/issue-draft-edit.js';
 
 /** 不具合報告の下書き API (bdboard-4y8q.1) の応答の形。 */
 
@@ -147,8 +147,11 @@ export function toDetailDto(draft: IssueDraft, access: { readonly local: boolean
 
 /**
  * トンネル側の置き換え漏れの疑い (bdboard-4y8q.3.1)。保存してある位置は畳む前の題名・本文の位置で、畳んだ文字列とは
- * ずれる (ホームのパスが "~/" に縮む)。そこで、返す (畳んだ) 題名・本文にかけ直す。位置は返す文字列の位置になり、
- * 一致した部分も返す文字列の切り出しなので、題名・本文より多くは出ない。直していない下書き (保存に無い) には足さない。
+ * ずれる (ホームのパスが "~/" に縮む)。そこで、返す (畳んだ) 題名・本文にかけ直す。位置は返す文字列の位置になる。
+ * 鍵は**トンネルが既に見ているものだけ** (発生プロジェクトの表示名。根のパスは渡さない: displayedKeysOf)。疑いの種別は
+ * 「鍵に一致したか」という本文に無い情報を返すので、隠したパス (と、その末尾のフォルダ名) を鍵にすると、推測のパスを本文に
+ * 並べて当てて確かめる道具になる (レビュー M-1)。そのため、トンネル側にはパスの一致 (project-path) は出ず、ローカル側
+ * (保存した疑い) より少ないことがある。直していない下書き (保存に無い) には足さない。
  */
 function restrictedLeaks(
   draft: IssueDraft,
@@ -158,7 +161,7 @@ function restrictedLeaks(
   if (draft.suspectedLeaks === undefined) return {};
   const scan = scanEditedText(
     { title, body, titleEdited: draft.titleEditedByUser, bodyEdited: draft.bodyEditedByUser },
-    draft.occurredProjects,
+    displayedKeysOf(draft.occurredProjects),
   );
   return { suspectedLeaks: scan.suspectedLeaks, suspectedLeaksOmitted: scan.omitted };
 }

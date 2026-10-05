@@ -39,15 +39,20 @@ async function receive(service: ReturnType<typeof setup>['service'], letter: str
   return result.draft.id;
 }
 
-/** scan (全件読み) の回数を数える。 */
+/** 全件読み (scan と list) の回数を数える。 */
 function countingScans(storage: InMemoryIssueDraftStorage): { storage: InMemoryIssueDraftStorage; scans: () => number } {
   let scans = 0;
   const scan = storage.scan.bind(storage);
+  const list = storage.list.bind(storage);
   const counted: InMemoryIssueDraftStorage = {
     ...storage,
     scan: async () => {
       scans += 1;
       return scan();
+    },
+    list: async () => {
+      scans += 1;
+      return list();
     },
   };
   return { storage: counted, scans: () => scans };
@@ -133,6 +138,28 @@ describe('IssueDraftService.pendingCount', () => {
     const { service } = setup(seeded.storage);
     await service.dismiss(a, 'not a bug');
     expect(await service.pendingCount()).toBe(1);
+  });
+
+  it('does not count a posted draft as pending', async () => {
+    const seeded = setup();
+    const a = await receive(seeded.service, 'a');
+    await receive(seeded.service, 'b');
+    const stored = seeded.storage.drafts.get(a);
+    if (stored !== undefined) seeded.storage.drafts.set(a, { ...stored, status: 'posted', issueNumber: 1 });
+    const { service } = setup(seeded.storage);
+    expect(await service.pendingCount()).toBe(1);
+  });
+
+  it('forgets a 大量発生 draft removed by hand when the next fold creates a new one', async () => {
+    const { service, storage } = setup();
+    for (let index = 0; index < 20; index += 1) await receive(service, `n${index}`);
+    const first = await service.receive(report('over-1'));
+    expect(first.ok && first.outcome).toBe('folded');
+    expect(await service.pendingCount()).toBe(21);
+    if (first.ok) storage.drafts.delete(first.draft.id);
+    const second = await service.receive(report('over-2'));
+    expect(second.ok && second.outcome).toBe('folded');
+    expect(await service.pendingCount()).toBe(21);
   });
 
   it('forgets a pending draft that was removed by hand once the same fingerprint is received again', async () => {

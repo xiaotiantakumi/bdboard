@@ -306,8 +306,11 @@ head/tail が置き換え後の文章から作られるようになったら、�
     本文の文字の種類は見ない(見えない文字の可視化は投稿前の確認画面の仕事。5節「プレビュー表示時の注意」)。
   - リクエスト本文そのものは 512KiB まで(超えたら読む前に 413)。65536 文字の本文が JSON のエスケープで膨らんでも入る大きさ。
   - 文字数の上限を守っても、制御文字の JSON エスケープ(1 文字 6 バイト)で `draft.json` が 200KB を超えうる。編集で大きく
-    なった分は、見送り・回数の追加と同じく `fitDraftToByteLimit` で手元の欄(生ログの末尾から)削り、削り切っても超えるときは
-    保存せずに **413** `{"error":"draft would exceed the size limit","code":"draft-too-large"}`(500 にしない)。
+    なった分は**生ログ(`errorTextRaw`)の末尾だけ**を削り(`errorTextTruncated` を true にし、応答の `errorTextTrimmed` を
+    true にする)、生ログを削り切っても超えるときは保存せずに **413** `{"error":"draft would exceed the size limit","code":"draft-too-large"}`
+    (500 にしない)。見送り・回数の追加と違い `fitDraftToByteLimit` は使わない — それは発生したプロジェクトの一覧や畳んだ指紋も
+    縮めるので、利用者の編集が発生の記録を消してしまう(bdboard-4y8q.3.1 のレビュー M-2)。置き換え漏れの検出(下)は削った後の
+    下書きにかける。
   - `pending` 以外は **409** `{"error":"draft is not pending","status":…}`(見送りと同じ形)。合計容量の上限に当たれば 507。
   - 直した欄(`titleEditedByUser` / `bodyEditedByUser` が true の欄)に、5節の置き換え漏れの検出(`detectSuspectedLeaks`)を
     かけ直し、`suspectedLeaks`(`field`・`kind`・`start`・`end`。位置の順に最大 200 件)と `suspectedLeaksOmitted`
@@ -316,8 +319,15 @@ head/tail が置き換え後の文章から作られるようになったら、�
     (ユーザー名・ホスト名・ブランチ名は受け取りに無い。5節「4y8q.2 の範囲外」)。印(`RedactionMark`)は無いので、
     `<project>` のような印の文字列の中の一致も疑いに出る(過検出の側)。自動で組んだ(直していない)欄は調べない。
     これは `buildPublicIssueBody` の配線ではない(検出だけ。5節の「どこにも配線してはいけない」は組み立ての側)。
-  - 応答は `{ draft }` で、`GET .../:id` と同じ形(ローカル直は全部、トンネルは `restricted: true` の許可リスト)。トンネル側の
-    `suspectedLeaks` は、保存した位置(畳む前の文字列の位置)ではなく、返す畳んだ題名・本文にかけ直した位置にする。
+    直した欄がある `pending` の下書きに、まとめで新しいプロジェクトが加わったときも、広がった鍵でかけ直して保存する
+    (`addOccurrence`。直した文は作り直さないので、かけ直さないと新しいプロジェクトの名前が疑いに出ない。レビュー m-1)。
+  - 応答は `{ draft, errorTextTrimmed }`。`draft` は `GET .../:id` の `draft` と同じ形(ローカル直は全部、トンネルは
+    `restricted: true` の許可リスト)だが、`images` と `latestHarnessVersion` は載せない(画像も版も編集では変わらない。要るなら
+    GET し直す)。トンネル側の `suspectedLeaks` は、保存した位置(畳む前の文字列の位置)ではなく、返す畳んだ題名・本文に
+    **トンネルにもう見えている鍵だけ**(発生したプロジェクトの表示名。プロジェクトのパスは使わない)でかけ直した位置にする
+    (`displayedKeysOf`)。疑いの種類と位置は鍵との一致を伝えるので、パスを鍵に使うと、題名・本文に書いたパスの当て推量が
+    合っているかをトンネルの読み手が確かめられてしまう(レビュー M-1)。そのためトンネルの疑いはローカル直より少ないことがあり、
+    パスの疑いは出ない。`GET .../:id` のトンネル応答も同じ。
 - **未処理件数**: `GET /api/issue-reports/pending-count` → `{ "pendingCount": N }`(タブのバッジとデイリーダイジェスト用。読み取りなので
   トンネルの Basic 認証で読める)。受け取りの索引(`issue-draft-index.ts`)に状態を持たせて数え、呼ぶたびに全件の `draft.json` を
   読まない(起動後の最初の受け取りか件数の問い合わせで 1 回だけ読む)。割り切り: 手で消した `pending` の下書きは、同じ指紋が
@@ -402,7 +412,7 @@ function normalizeErrorText(text: string): string {
 | 受信した指紋の状態 | 動作 |
 |---|---|
 | 既存の下書きなし | 新規作成、`status='pending'`、`occurrenceCount=1` |
-| `pending` の下書きあり | 新規作成しない。`occurrenceCount+=1`、`lastOccurredAt` 更新、`occurredProjects` に無ければ追加。手元の `envInfo` と `harnessVersionAtOccurrence` を**最後の発生のもの**に替える(m-6、下)。`titleEditedByUser`/`bodyEditedByUser` が false なら5節の関数で `title`/`body` を再生成(件数・最終発生時刻・版の反映) |
+| `pending` の下書きあり | 新規作成しない。`occurrenceCount+=1`、`lastOccurredAt` 更新、`occurredProjects` に無ければ追加。手元の `envInfo` と `harnessVersionAtOccurrence` を**最後の発生のもの**に替える(m-6、下。版の無い報告では版は前の値を残す)。`titleEditedByUser`/`bodyEditedByUser` が false なら5節の関数で `title`/`body` を再生成(件数・最終発生時刻・版の反映)。直した欄があり新しいプロジェクトが加わったら、直した欄の置き換え漏れの検出をかけ直す(4y8q.3.1 レビュー m-1) |
 | `dismissed` の下書きあり | 新規作成しない。`occurrenceCount+=1` のみ(エピック決定どおり) |
 | `posted` かつ issue が open(4y8q.5) | 新規作成しない。「その後 N 回起きた」を表示、issue へコメントを足すボタンを出す |
 | `posted` かつ issue が closed(4y8q.5) | 「再発(#N は閉じ済み)」として新規下書きを作る |
@@ -722,8 +732,8 @@ function normalizeErrorText(text: string): string {
 - 保存期間・ディスク総量の上限(m-4)。この PR では下書きと画像が増え続けた。bdboard-00qh で対応した(4節「保持期限と合計容量」)。
 - 手元の `envInfo` を、マージのたびに最新へ更新すること(m-6)。4y8q.3 で扱う。**bdboard-4y8q.3.1 で入れた**: `pending` の下書きへ
   まとめるとき、報告に `envInfo` があれば `envInfo` と `harnessVersionAtOccurrence` を最後の発生のものに替える(`addOccurrence`)。
-  `envInfo` の無い報告では前の値を残し、`envInfo` があってハーネスの版だけ無いときは `harnessVersionAtOccurrence` も無くす(二つの報告の
-  値を混ぜない)。**最初の発生の版は残さない**: 画面の「版の比較」は最新の pack の版と並べて「最新の版では直っているかもしれない」を
+  `envInfo` の無い報告では前の値を残す。`envInfo` があってハーネスの版だけ無いとき(`{}` など)は、`envInfo` は最後の報告のものに
+  替え、`harnessVersionAtOccurrence` は前の値を残す(版を書かない報告で、知っている版を消さない。レビュー m-4)。**最初の発生の版は残さない**: 画面の「版の比較」は最新の pack の版と並べて「最新の版では直っているかもしれない」を
   出すためのもので、比べる相手は最後に起きたときの版(最初の版と比べると、もう直った版での発生を古い版の発生と見誤る)。最初の版が
   要るなら欄を足す(`firstEnvInfo` など)。見送り済み・投稿済み(回数だけ足す)と「大量発生」の下書きの版は替えない。
 
