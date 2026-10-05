@@ -7,10 +7,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { classifyVerifyFailure, retryLoadInduced } from './merge-pr/load-retry.mjs';
+import { greenIdenticalTree } from './merge-pr/green-tree.mjs';
+import { classifyVerifyFailure, retryLandedFailure } from './merge-pr/load-retry.mjs';
+import { sleptSeconds, startSleepClock } from './merge-pr/slept.mjs';
 import {
   advanceMain,
   auditText,
+  base,
+  calls,
   commitAll,
   CONTEXT,
   env,
@@ -21,6 +25,7 @@ import {
   posted,
   PR,
   readFake,
+  readState,
   registerTempRepoHooks,
   run,
   setup,
@@ -147,7 +152,7 @@ describe('classifyVerifyFailure (bdboard-xdk8)', () => {
   });
 });
 
-describe('retryLoadInduced: the retry reservation never outlives the call (bdboard-xdk8)', () => {
+describe('retryLandedFailure: the retry reservation never outlives the call (bdboard-xdk8)', () => {
   it('removes the reservation in finally on the path that does not retry, and leaves no exit hook behind', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'load-retry-reservation-'));
     const saved = { dir: process.env.BDBOARD_VERIFY_SLOT_DIR, slots: process.env.BDBOARD_VERIFY_SLOTS };
@@ -159,7 +164,7 @@ describe('retryLoadInduced: the retry reservation never outlives the call (bdboa
       const logPath = path.join(dir, 'landed-verify.log');
       writeFileSync(logPath, vitestLog(' FAIL  a.test.ts > b\nAssertionError: expected 1 to be 2\n', '1 failed | 1 passed (2)'));
       const attempt = { ctx: {}, sha: 'abc123', logPath, activeChild: {} };
-      const result = await retryLoadInduced({ attempt, queue: { priority: 'landed' }, code: 1, by: 'test', firstQueuedAt: Date.now() - 60_000 });
+      const result = await retryLandedFailure({ attempt, queue: { priority: 'landed' }, code: 1, by: 'test', firstQueuedAt: Date.now() - 60_000 });
       expect(result).toEqual({ code: 1, retried: null });
       expect(existsSync(slotDir)).toBe(true);
       expect(readdirSync(slotDir)).toEqual([]);
@@ -228,16 +233,35 @@ function loadRetryEnv(exits, text = vitestLog(TIMEOUTS, '2 failed | 100 passed (
   return { FAKE_VERIFY_OUTPUT_FILE: output, FAKE_VERIFY_EXIT_SEQUENCE: exits, FAKE_VERIFY_SEQUENCE_FILE: path.join(tmp, 'fake-verify-seq') };
 }
 
+// 2 回の実行で違うログ (例: 1 回目は ETIMEDOUT 2 件、再実行は 1 件) を出す偽の verify.cjs。FAKE_VERIFY_SEQUENCE_FILE が
+// あれば 2 回目以降 (VERIFY_JS が終了時に数える前なので、ファイルがあれば 1 回は走っている) で別の出力ファイルに差し替える。
+const SWITCH_OUTPUT_ON_RETRY = `{
+  const seq = process.env.FAKE_VERIFY_SEQUENCE_FILE;
+  if (process.env.FAKE_VERIFY_OUTPUT_FILE_RETRY && seq && require('node:fs').existsSync(seq)) process.env.FAKE_VERIFY_OUTPUT_FILE = process.env.FAKE_VERIFY_OUTPUT_FILE_RETRY;
+}
+`;
+
+// bdboard-xw00: 着地した木が green 済みの木 (PR head の木) と同一だと、finish は形を見ずに再実行する (reason=identical-tree)。
+// 分類器 (reason=timeouts、凍結) の経路を finish で通すには、gate の後に main を 1 コミット進めてから squash を着地させ、
+// 着地木を head の木と違うものにする (クラス N なので着地予定ツリーも無い)。
+function landOffGreen() {
+  advanceMain({ 'peer.txt': 'peer\n' });
+  return landSquash();
+}
+
+// 時間切れの形ではない失敗 (bdboard-2bif の再現: spawnSync の子が殺されて status が null になり、それを比べて落ちる)。
+const ASSERTION = vitestLog(' FAIL  scripts/merge-pr.test.mjs > finish\nAssertionError: expected null to be 2 // Object.is equality\n', '1 failed | 100 passed (101)');
+
 // bdboard-e8jj: 再実行の verify が予約を消せない (unlink が EPERM) 状況の子 (merge-pr.test-support-retry-child.mjs)。
 // 子は本物の acquireVerifySlot で自分の holder を書き、見えたことを RETRY_CHILD_REPORT に残す。
 const RETRY_CHILD = fileURLToPath(new URL('./merge-pr.test-support-retry-child.mjs', import.meta.url));
 const retryChildVerifyJs = () =>
   `if (process.env.BDBOARD_VERIFY_SLOT_HANDOFF) require('node:child_process').execFileSync(process.execPath, [${JSON.stringify(RETRY_CHILD)}], { stdio: 'inherit' });\n${VERIFY_JS}`;
 
-// retryLoadInduced を merge-pr の別プロセスではなくこのプロセスで呼ぶ。呼び出しが戻った時点で予約が無いこと (merge-pr の
+// retryLandedFailure を merge-pr の別プロセスではなくこのプロセスで呼ぶ。呼び出しが戻った時点で予約が無いこと (merge-pr の
 // finally が消したこと) を見るには、プロセスが生きている間に見る必要がある: 別プロセスの merge-pr は終了時の 'exit' フックも
 // 予約を消すので、終わった後の置き場を見ても finally の有無が区別できない。gh / audit / スロットの置き場は setup() の偽の環境に向ける。
-describe.skipIf(process.platform === 'win32')('retryLoadInduced: a reservation the retry cannot delete is gone when the call returns (bdboard-e8jj)', { timeout: 30_000 }, () => {
+describe.skipIf(process.platform === 'win32')('retryLandedFailure: a reservation the retry cannot delete is gone when the call returns (bdboard-e8jj)', { timeout: 30_000 }, () => {
   registerTempRepoHooks();
   const NAMES = [
     ...SLOT_IDENTITY_ENV, 'BDBOARD_VERIFY_SLOTS', 'BDBOARD_VERIFY_SLOT_DIR', 'BDBOARD_VERIFY_SLOT_WAIT_MS', 'BDBOARD_MERGE_GH', 'BDBOARD_MERGE_BD',
@@ -284,8 +308,8 @@ describe.skipIf(process.platform === 'win32')('retryLoadInduced: a reservation t
       hold: { lock: { supported: false } },
     };
     const exitHooks = process.listenerCount('exit');
-    const result = await retryLoadInduced({ attempt, queue: { priority: 'landed' }, code: 1, by: 'test', firstQueuedAt: Date.now() - 60_000 });
-    expect(result).toEqual({ code: 0, retried: { timeouts: 3 } });
+    const result = await retryLandedFailure({ attempt, queue: { priority: 'landed' }, code: 1, by: 'test', firstQueuedAt: Date.now() - 60_000 });
+    expect(result).toEqual({ code: 0, retried: { reason: 'timeouts', timeouts: 3, green: null, firstLog: expect.stringContaining('.first-attempt-') } });
     const seen = JSON.parse(readFileSync(report, 'utf8'));
     expect(seen.presentAtStart).toBe(true);
     expect(seen.warnings.join('\n')).toMatch(/could not remove the landed retry reservation .*\(EPERM\)/);
@@ -295,6 +319,8 @@ describe.skipIf(process.platform === 'win32')('retryLoadInduced: a reservation t
   });
 });
 
+// 着地木が green 済みの木ではない (landOffGreen) ので、ここの finish は従来の分類器 (凍結) で再実行を決める。
+// 予約・worktree lock・exit 75 など再実行の仕組みのテストは、同じ仕組みを使う reason=identical-tree の着地 (simulateMerge) で回す。
 describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after a load-induced landed failure (bdboard-xdk8)', { timeout: 30_000 }, () => {
   registerTempRepoHooks();
 
@@ -302,16 +328,19 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     setup({ branchFiles: { 'verify.cjs': PROBE + VERIFY_JS } });
     expect(run(['prepare', String(PR)]).status).toBe(0);
     expect(run(['gate', String(PR)]).status).toBe(0);
-    const landed = simulateMerge();
+    const landed = landOffGreen();
     const finished = run(['finish', String(PR)], { ...loadRetryEnv('1,0'), ...probeEnv() });
     expect(finished.status, finished.stderr).toBe(0);
     expect(verified()).toHaveLength(2);
     expect(finished.stderr).toContain('負荷由来とみなし、1 回だけ再実行します');
+    expect(finished.stderr).toContain('1 回目の failure は非決定的 (環境かフレーク)'); // bdboard-xw00: 理由を問わず再実行で通ったら
     const states = posted().map(({ sha, state }) => [sha, state]);
     expect(states).toEqual([[landed, 'pending'], [landed, 'pending'], [landed, 'success']]);
+    expect(posted()[1].description).toContain('retrying after load-induced failure');
     expect(posted().at(-1).description).toContain('retried after load-induced failure: 3 timeouts');
     expect(readFake().slot.holder).toBeNull();
-    expect(auditText()).toMatch(/\tlanded-verify-retry\t.*exit=1\ttimeouts=3\t/);
+    expect(auditText()).toMatch(/\tlanded-verify-retry\t.*\treason=timeouts\texit=1\ttimeouts=3\t/);
+    expect(auditText()).not.toContain('green=');
     expect(auditText()).toMatch(/\tlanded-verify\t.*\tresult=success\tretried=1\n/);
     // 残したのは 1 回目のログで、今の名前のログは 2 回目のもの (中身が同じ偽の出力なので、何回目かで見分ける)。
     const kept = landedLogs().filter((name) => name.includes('.first-attempt-'));
@@ -386,13 +415,14 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     setup();
     expect(run(['prepare', String(PR)]).status).toBe(0);
     expect(run(['gate', String(PR)]).status).toBe(0);
-    const landed = simulateMerge();
+    const landed = landOffGreen();
     const finished = run(['finish', String(PR)], loadRetryEnv('1,1'));
     expect(finished.status).toBe(6);
     expect(verified()).toHaveLength(2);
     expect(posted().map(({ state }) => state)).toEqual(['pending', 'pending', 'failure']);
     expect(posted().at(-1).description).toContain('retried after load-induced failure');
     expect(readFake().slot.holder).toContain(`main-broken ${landed.slice(0, 12)}`);
+    expect(finished.stderr).not.toContain('green だったのに 2 回 failure'); // 同一ツリーの案内は reason=identical-tree のときだけ
   });
 
   // bdboard-7qhq: ログにある子プロセスの時間切れ (spawnSync ETIMEDOUT) の件数を、メッセージと監査行に出す。
@@ -403,19 +433,11 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
   );
   // 件数 count の行が stderr に何回出たか (重複して出るのも見つけるため、toContain ではなく数える)。
   const etimedoutNotes = (stderr, count = 2) => stderr.split(`子プロセスの時間切れ (ETIMEDOUT) が ${count} 件`).length - 1;
-  // 2 回の実行で ETIMEDOUT の件数が違うログ (1 回目は 2 件、再実行は 1 件) を出す偽の verify.cjs。FAKE_VERIFY_SEQUENCE_FILE が
-  // あれば 2 回目以降 (VERIFY_JS が終了時に数える前なので、ファイルがあれば 1 回は走っている) で別の出力ファイルに差し替える。
-  const SWITCH_OUTPUT_ON_RETRY = `{
-  const seq = process.env.FAKE_VERIFY_SEQUENCE_FILE;
-  if (process.env.FAKE_VERIFY_OUTPUT_FILE_RETRY && seq && require('node:fs').existsSync(seq)) process.env.FAKE_VERIFY_OUTPUT_FILE = process.env.FAKE_VERIFY_OUTPUT_FILE_RETRY;
-}
-`;
-
   it('says how many child processes hit their timeout (ETIMEDOUT) when it retries, and puts etimedout=N on the retry audit line', () => {
     setup();
     expect(run(['prepare', String(PR)]).status).toBe(0);
     expect(run(['gate', String(PR)]).status).toBe(0);
-    simulateMerge();
+    landOffGreen();
     const finished = run(['finish', String(PR)], loadRetryEnv('1,0', killedByTimeout));
     expect(finished.status, finished.stderr).toBe(0);
     expect(verified()).toHaveLength(2);
@@ -429,7 +451,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     setup();
     expect(run(['prepare', String(PR)]).status).toBe(0);
     expect(run(['gate', String(PR)]).status).toBe(0);
-    simulateMerge();
+    landOffGreen();
     const finished = run(['finish', String(PR)], loadRetryEnv('1,1', killedByTimeout));
     expect(finished.status).toBe(6);
     expect(verified()).toHaveLength(2);
@@ -442,7 +464,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     setup({ branchFiles: { 'verify.cjs': SWITCH_OUTPUT_ON_RETRY + VERIFY_JS } });
     expect(run(['prepare', String(PR)]).status).toBe(0);
     expect(run(['gate', String(PR)]).status).toBe(0);
-    simulateMerge();
+    landOffGreen();
     const oneKilled = vitestLog(' FAIL  scripts/a.test.mjs > one\nError: spawnSync /bin/sh ETIMEDOUT\n', '1 failed | 100 passed (101)');
     const retryOutput = path.join(tmp, 'fake-verify-output-retry.txt');
     writeFileSync(retryOutput, oneKilled);
@@ -474,7 +496,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     setup();
     expect(run(['prepare', String(PR)]).status).toBe(0);
     expect(run(['gate', String(PR)]).status).toBe(0);
-    simulateMerge();
+    landOffGreen();
     const mixed = vitestLog(
       ' FAIL  scripts/a.test.mjs > one\nError: spawnSync /bin/sh ETIMEDOUT\n\n FAIL  scripts/b.test.mjs > two\nAssertionError: expected null to be +0 // Object.is equality\n',
       '2 failed | 100 passed (102)',
@@ -492,7 +514,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     setup();
     expect(run(['prepare', String(PR)]).status).toBe(0);
     expect(run(['gate', String(PR)]).status).toBe(0);
-    simulateMerge();
+    landOffGreen();
     const finished = run(['finish', String(PR)], loadRetryEnv('1,1'));
     expect(finished.status).toBe(6);
     expect(finished.stderr).not.toContain('ETIMEDOUT');
@@ -737,7 +759,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     setup();
     expect(run(['prepare', String(PR)]).status).toBe(0);
     expect(run(['gate', String(PR)]).status).toBe(0);
-    simulateMerge();
+    landOffGreen();
     const finished = run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' });
     expect(finished.status).toBe(6);
     expect(verified()).toHaveLength(1);
@@ -746,5 +768,221 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(auditText()).toMatch(/\tlanded-verify\t.*\tresult=failure\n/); // 再実行しなければ retried は出さない
     expect(landedLogs().some((name) => name.includes('.first-attempt-'))).toBe(false);
     expect(existsSync(path.join(tmp, 'fake-verify-seq'))).toBe(false);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('greenIdenticalTree (bdboard-xw00)', () => {
+  registerTempRepoHooks();
+
+  it('prefers the verified predicted tree of class F, falls back to the PR head tree, and never uses the light tree', () => {
+    setup();
+    const ctx = { cwd: work };
+    const landed = simulateMerge(); // 着地木 = PR head の木
+    const tree = git(work, ['rev-parse', `${head}^{tree}`]);
+    const other = git(work, ['rev-parse', `${base}^{tree}`]);
+    expect(greenIdenticalTree(ctx, { class: 'F', predictedTree: tree, predictedVerifiedAt: 'x', head }, landed)).toEqual({ how: 'predicted', tree });
+    expect(greenIdenticalTree(ctx, { class: 'F', predictedTree: tree, head }, landed)).toEqual({ how: 'ci-head', tree }); // verify の記録が無い
+    expect(greenIdenticalTree(ctx, { class: 'N', head }, landed)).toEqual({ how: 'ci-head', tree });
+    expect(greenIdenticalTree(ctx, { class: 'L', lightTree: tree, head: base }, landed)).toBeNull(); // 軽量チェックは証拠にしない
+    expect(greenIdenticalTree(ctx, { class: 'F', predictedTree: other, predictedVerifiedAt: 'x', head: base }, landed)).toBeNull();
+    expect(greenIdenticalTree(ctx, { class: 'N', head }, 'f'.repeat(40))).toBeNull(); // 着地コミットを読めない
+    expect(greenIdenticalTree(ctx, { class: 'N', head }, landed, '')).toBeNull();
+  });
+});
+
+describe('sleptSeconds: wall clock minus monotonic clock, only past 30 s (bdboard-xw00, audit only)', () => {
+  it('returns nothing while the clocks agree or differ by 30 s or less, and the rounded seconds beyond', () => {
+    expect(sleptSeconds(0, 0)).toBeUndefined();
+    expect(sleptSeconds(600_000, 600_000)).toBeUndefined();
+    expect(sleptSeconds(30_000, 0)).toBeUndefined();
+    expect(sleptSeconds(30_400, 0)).toBeUndefined(); // 丸めて 30
+    expect(sleptSeconds(31_000, 0)).toBe(31);
+    expect(sleptSeconds(4_000_000, 400_000)).toBe(3600);
+    expect(sleptSeconds(1_000, 50_000)).toBeUndefined(); // 壁時計が戻った (時刻合わせ) は眠りではない
+  });
+
+  it('startSleepClock measures from when it started', () => {
+    let now = { wall: 1_000, monotonic: 50 };
+    const slept = startSleepClock(() => now);
+    now = { wall: 1_000 + 120_000, monotonic: 50 + 5_000 };
+    expect(slept()).toBe(115);
+    now = { wall: 1_000 + 10_000, monotonic: 50 + 10_000 };
+    expect(slept()).toBeUndefined();
+    expect(startSleepClock()()).toBeUndefined(); // 既定の時計 (Date.now / performance.now)
+  });
+});
+
+// bdboard-xw00: 着地した木が green 済みの木と同一なら、着地後検証の 1 回目の failure は失敗の形を見ずに 1 回だけ再実行する
+// (reason=identical-tree)。設計 (bdboard-xw00 の設計コメント) のテスト 1〜7。8 (slept_s) は上の sleptSeconds。
+describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry when the landed tree was already verified green (bdboard-xw00)', { timeout: 60_000 }, () => {
+  registerTempRepoHooks();
+
+  const short = (sha) => sha.slice(0, 12);
+  const treeOfSha = (sha) => git(work, ['rev-parse', `${sha}^{tree}`]);
+  const retryLines = () => auditText().split('\n').filter((line) => line.includes('\tlanded-verify-retry\t'));
+  const landedRuns = (landed) => verified().filter((line) => line === landed);
+  const TIMEOUTS_ONLY = vitestLog(TIMEOUTS, '2 failed | 100 passed (102)');
+
+  /** S2 のクラス F を gate まで進める (着地予定ツリーの verify は success)。 */
+  function gateClassF(branchFiles = {}) {
+    setup({ merge: { mode: 'S2' }, branchFiles });
+    const moved = advanceMain({ 'peer.txt': 'peer\n' });
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status, prepared.stderr).toBe(0);
+    expect(readState()).toMatchObject({ class: 'F' });
+    writeFake({ statuses: { [moved]: [status('success')] } });
+    expect(run(['gate', String(PR)]).status).toBe(0);
+  }
+
+  it('1. F: a non-timeout failure on the verified predicted tree is retried once without reading its shape (2bif repro)', () => {
+    gateClassF();
+    const landed = landSquash(); // merge-tree の木 = 着地予定ツリー
+    const tree = treeOfSha(landed);
+    expect(readState().predictedTree).toBe(tree);
+    const finished = run(['finish', String(PR)], loadRetryEnv('1,0', ASSERTION));
+    expect(finished.status, finished.stderr).toBe(0);
+    expect(landedRuns(landed)).toHaveLength(2);
+    expect(finished.stderr).toContain(`着地した木 ${short(tree)} は predicted (prepare の着地予定ツリーの verify) で green だった木と同一なので、失敗の形を見ずに 1 回だけ再実行します`);
+    expect(finished.stderr).not.toContain('負荷由来');
+    expect(finished.stderr).toContain('1 回目の failure は非決定的 (環境かフレーク)。1 回目のログ ');
+    expect(finished.stderr).toContain('bd create --type bug で起票 (failure-catalog unrelated-flake-broke-landed-verify)');
+    expect(posted().map(({ sha, state }) => [sha, state])).toEqual([[landed, 'pending'], [landed, 'pending'], [landed, 'success']]);
+    expect(posted()[1].description).toContain('retrying after failure on a tree already verified green (predicted)');
+    expect(posted().at(-1).description).toContain('npm run verify passed (retried: first run failed on a green tree [predicted])');
+    const [line, ...more] = retryLines();
+    expect(more).toEqual([]);
+    expect(line).toMatch(new RegExp(`\\treason=identical-tree\\tgreen=predicted\\ttree=${short(tree)}\\texit=1\\tload1=`));
+    expect(auditText()).toMatch(/\tlanded-verify\t.*\tresult=success\tretried=1\n/);
+    expect(readFake().slot.holder).toBeNull();
+    const kept = landedLogs().filter((name) => name.includes('.first-attempt-'));
+    expect(kept).toHaveLength(1);
+    expect(readFileSync(path.join(mergeDir(), kept[0]), 'utf8')).toContain('AssertionError: expected null to be 2');
+    expect(finished.stderr).toContain(kept[0]);
+  });
+
+  it('2. F: when the retry fails too it records failure and takes main-broken; no third run even if the second failure is timeouts only', () => {
+    gateClassF({ 'verify.cjs': SWITCH_OUTPUT_ON_RETRY + VERIFY_JS });
+    const landed = landSquash();
+    const retryOutput = path.join(tmp, 'fake-verify-output-retry.txt');
+    writeFileSync(retryOutput, TIMEOUTS_ONLY);
+    // 3 回目があれば exit 0 で success になるので、failure で終わることが「3 回目は無い」の確かめになる。
+    const finished = run(['finish', String(PR)], { ...loadRetryEnv('1,1,0', ASSERTION), FAKE_VERIFY_OUTPUT_FILE_RETRY: retryOutput });
+    expect(finished.status).toBe(6);
+    expect(landedRuns(landed)).toHaveLength(2);
+    expect(posted().map(({ state }) => state)).toEqual(['pending', 'pending', 'failure']);
+    expect(posted().at(-1).description).toContain('npm run verify failed (exit 1) (retried: first run failed on a green tree [predicted])');
+    expect(readFake().slot.holder).toBe(`demo-1 / main-broken ${short(landed)}`);
+    const twice = finished.stderr.indexOf('同一ツリーは predicted (prepare の着地予定ツリーの verify) で green だったのに 2 回 failure: 環境要因の継続 (load1=');
+    expect(twice).toBeGreaterThan(-1);
+    expect(twice).toBeLessThan(finished.stderr.indexOf('この上にマージしません')); // brokenMainSteps の前
+    expect(finished.stderr).toMatch(/両ログ: \S+\.first-attempt-\S+\.log \S+landed-verify-[0-9a-f]{12}\.log\n/);
+    expect(finished.stderr).not.toContain('1 回目の failure は非決定的');
+    expect(retryLines()).toHaveLength(1);
+    expect(auditText()).toMatch(/\tlanded-verify\t.*\tresult=failure\tretried=1\n/);
+  });
+
+  it('3. N: a non-timeout failure on the PR head tree is retried once as ci-head (xdk8 repro)', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = simulateMerge(); // 着地木 = PR head の木
+    const finished = run(['finish', String(PR)], loadRetryEnv('1,0', ASSERTION));
+    expect(finished.status, finished.stderr).toBe(0);
+    expect(landedRuns(landed)).toHaveLength(2);
+    expect(finished.stderr).toContain('は ci-head (PR head の必須チェック (CI)) で green だった木と同一なので');
+    expect(posted()[1].description).toContain('retrying after failure on a tree already verified green (ci-head)');
+    expect(posted().at(-1).description).toContain('(retried: first run failed on a green tree [ci-head])');
+    expect(retryLines()[0]).toMatch(new RegExp(`\\treason=identical-tree\\tgreen=ci-head\\ttree=${short(treeOfSha(head))}\\t`));
+    expect(auditText()).not.toContain('\tpredicted-tree\t'); // クラス N には着地予定ツリーが無い
+  });
+
+  it.each([
+    ['a non-timeout failure is recorded right away', ASSERTION, 6, 1],
+    ['a timeouts-only failure is retried by the frozen classifier (reason=timeouts)', TIMEOUTS_ONLY, 0, 2],
+  ])('4. F whose landed tree is not the predicted tree: %s', (_name, output, exitCode, runs) => {
+    gateClassF();
+    advanceMain({ 'peer2.txt': 'peer two\n' }); // gate の後に main が動いた: 着地木は着地予定ツリーとも head の木とも違う
+    const landed = landSquash();
+    const finished = run(['finish', String(PR)], loadRetryEnv('1,0', output));
+    expect(finished.status, finished.stderr).toBe(exitCode);
+    expect(landedRuns(landed)).toHaveLength(runs);
+    expect(auditText()).toMatch(/\tpredicted-tree\t.*\tmatch=false\t/);
+    expect(auditText()).not.toContain('green=');
+    expect(finished.stderr).not.toContain('green だった木と同一');
+    if (runs === 1) {
+      expect(finished.stderr).toContain('負荷由来とは判断できないので再実行しません');
+      expect(retryLines()).toEqual([]);
+    } else {
+      expect(retryLines()[0]).toMatch(/\treason=timeouts\texit=1\ttimeouts=3\t/);
+      expect(posted().at(-1).description).toContain('retried after load-induced failure: 3 timeouts');
+    }
+  });
+
+  it('5. L: a light-checked landing gets no structural retry; a non-timeout failure is a slip right away', () => {
+    setup({ merge: { mode: 'S3', lightCheck: 'node verify.cjs --light' } });
+    const moved = advanceMain({ 'peer.txt': 'peer\n' });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(readState()).toMatchObject({ class: 'L' });
+    writeFake({ statuses: { [moved]: [status('success')] } });
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = landSquash(); // 着地木 = lightTree (head の木とも違う)
+    expect(readState().lightTree).toBe(treeOfSha(landed));
+    const finished = run(['finish', String(PR)], loadRetryEnv('1,0', ASSERTION));
+    expect(finished.status).toBe(6);
+    expect(landedRuns(landed)).toHaveLength(1);
+    expect(retryLines()).toEqual([]);
+    expect(finished.stderr).toContain('負荷由来とは判断できないので再実行しません');
+    expect(finished.stderr).toContain('S3 のすり抜け');
+    expect(auditText()).toMatch(new RegExp(`\tlight-landed\tpr=${PR}\tid=demo-1\tnew=${landed}\tresult=failure\tby=finish\n`));
+  });
+
+  it.each([
+    ['1,0', 0, 'returns the main-broken slot after the retry passes'],
+    ['1,1', 6, 'keeps holding the main-broken slot when the retry fails too'],
+  ])('6. a repair PR (N) takes the same path: exits %s → %s, %s', (exits, exitCode) => {
+    setup();
+    writeFake({ statuses: { [base]: [status('failure')] } });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR), '--repair']).status).toBe(0);
+    const holder = `demo-1 / main-broken ${short(base)}`;
+    expect(readFake().slot.holder).toBe(holder);
+    const landed = simulateMerge();
+    const finished = run(['finish', String(PR)], loadRetryEnv(exits, ASSERTION));
+    expect(finished.status, finished.stderr).toBe(exitCode);
+    expect(landedRuns(landed)).toHaveLength(2);
+    expect(retryLines()[0]).toMatch(/\treason=identical-tree\tgreen=ci-head\t/);
+    if (exitCode === 0) {
+      expect(readFake().slot.holder).toBeNull();
+      expect(auditText()).toContain('\trepair-released\t');
+      expect(finished.stderr).toContain('main が緑に戻った');
+      expect(finished.stderr).toContain('1 回目の failure は非決定的');
+    } else {
+      expect(readFake().slot.holder).toBe(holder);
+      expect(calls('bd', 'release')).toEqual([]);
+      expect(finished.stderr).toContain('修復後も failure です');
+      expect(finished.stderr).toContain('同一ツリーは ci-head (PR head の必須チェック (CI)) で green だったのに 2 回 failure');
+    }
+  });
+
+  it('7. manual verify and the gate self-heal have no green record: a non-timeout failure is recorded after one run (unchanged)', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = simulateMerge(); // 着地木は PR head の木と同じだが、手動の verify は gate 済みの記録を証拠に使わない
+    const manual = run(['verify', landed], loadRetryEnv('1,0', ASSERTION));
+    expect(manual.status).toBe(6);
+    expect(landedRuns(landed)).toHaveLength(1);
+    expect(manual.stderr).toContain('負荷由来とは判断できないので再実行しません');
+    expect(retryLines()).toEqual([]);
+
+    setup({ mainDate: '2026-01-01T00:00:00Z' });
+    writeFake({ statuses: {} }); // PRED_BASE の台帳が LEASE を過ぎても無い → gate が自己修復する
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    const gated = run(['gate', String(PR)], loadRetryEnv('1,0', ASSERTION));
+    expect(gated.status).toBe(4);
+    expect(auditText()).toContain('\tgate-self-heal\t');
+    expect(verified()).toEqual([base]);
+    expect(posted().map(({ state }) => state)).toEqual(['pending', 'failure']);
+    expect(retryLines()).toEqual([]);
   });
 });
