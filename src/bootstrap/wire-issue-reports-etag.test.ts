@@ -14,10 +14,36 @@ import { createIssueReportRoutes } from '../interface/http/issue-report-routes.j
 const LOCAL_ENV = { incoming: { socket: { remoteAddress: '127.0.0.1', localPort: 8787 } } };
 const LOCAL_HOST = 'localhost:8787';
 const DRAFTS = '/api/issue-reports/drafts';
-const STRONG_ETAG = /^"[0-9a-f]{32}"$/;
+/** 1 件の取得・編集の ETag は `"<editDigest>-<bodyDigest>"` (bdboard-q5pj)。 */
+const DETAIL_ETAG = /^"[0-9a-f]{32}-[0-9a-f]{32}"$/;
 
 function json(method: string, body: unknown, headers: Record<string, string> = {}): RequestInit {
   return { method, headers: { 'content-type': 'application/json', host: LOCAL_HOST, ...headers }, body: JSON.stringify(body) };
+}
+
+/** ファイル保存の下書きの API。ディレクトリは呼び出し側が作って消す。 */
+function fileBackedApp(dir: string) {
+  let seq = 0;
+  const service = createIssueDraftService({
+    storage: createFsIssueDraftStorage(dir, { warn: () => undefined }),
+    now: () => new Date('2026-10-04T12:00:00.000Z'),
+    newId: () => {
+      seq += 1;
+      return `${1758812345000 + seq}-${seq.toString(16).padStart(16, '0')}`;
+    },
+    retention: { warn: () => undefined },
+  });
+  const app = createIssueReportRoutes({ service, latestHarnessVersion: async () => '0.50.0' });
+  const receive = async (): Promise<string> => {
+    const received = await app.request(
+      DRAFTS,
+      json('POST', { kind: 'A', catalogSlug: 'slug-a', envInfo: { bdboardVersion: '0.1.2', os: 'darwin', nodeVersion: 'v22.14.0' } }),
+      LOCAL_ENV,
+    );
+    expect([200, 201]).toContain(received.status);
+    return ((await received.json()) as { draft: { id: string } }).draft.id;
+  };
+  return { app, receive };
 }
 
 describe('the ETag with the file storage, which reads the keys back in the schema order', () => {
@@ -26,24 +52,8 @@ describe('the ETag with the file storage, which reads the keys back in the schem
     // キーの順で ETag が変わると、保存の応答の ETag で次の PATCH を送ったときに 412 になる。
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'bdboard-mqoa-'));
     try {
-      let seq = 0;
-      const service = createIssueDraftService({
-        storage: createFsIssueDraftStorage(dir, { warn: () => undefined }),
-        now: () => new Date('2026-10-04T12:00:00.000Z'),
-        newId: () => {
-          seq += 1;
-          return `${1758812345000 + seq}-${seq.toString(16).padStart(16, '0')}`;
-        },
-        retention: { warn: () => undefined },
-      });
-      const app = createIssueReportRoutes({ service, latestHarnessVersion: async () => '0.50.0' });
-      const received = await app.request(
-        DRAFTS,
-        json('POST', { kind: 'A', catalogSlug: 'slug-a', envInfo: { bdboardVersion: '0.1.2', os: 'darwin', nodeVersion: 'v22.14.0' } }),
-        LOCAL_ENV,
-      );
-      expect([200, 201]).toContain(received.status);
-      const id = ((await received.json()) as { draft: { id: string } }).draft.id;
+      const { app, receive } = fileBackedApp(dir);
+      const id = await receive();
       const edited = await app.request(
         `${DRAFTS}/${id}`,
         json('PATCH', { title: 'Edited', body: 'cwd /Users/example-user/work' }),
@@ -51,7 +61,7 @@ describe('the ETag with the file storage, which reads the keys back in the schem
       );
       expect(edited.status).toBe(200);
       const etag = edited.headers.get('ETag');
-      expect(etag).toMatch(STRONG_ETAG);
+      expect(etag).toMatch(DETAIL_ETAG);
       const read = await app.request(`${DRAFTS}/${id}`, { headers: { host: LOCAL_HOST } }, LOCAL_ENV);
       expect(read.status).toBe(200);
       expect(read.headers.get('ETag')).toBe(etag);
@@ -61,6 +71,25 @@ describe('the ETag with the file storage, which reads the keys back in the schem
         LOCAL_ENV,
       );
       expect(again.status).toBe(200);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // bdboard-q5pj: 読んだあとの新しい発生 (回数・時刻と、直していない欄の自動の文の作り直し) では、編集は 412 にならない。
+  it('lets an edit through after a new occurrence of the same fingerprint, and keeps the count and the rebuilt text', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'bdboard-q5pj-'));
+    try {
+      const { app, receive } = fileBackedApp(dir);
+      const id = await receive();
+      const read = await app.request(`${DRAFTS}/${id}`, { headers: { host: LOCAL_HOST } }, LOCAL_ENV);
+      const stale = read.headers.get('ETag') as string;
+      expect(await receive()).toBe(id);
+      const res = await app.request(`${DRAFTS}/${id}`, json('PATCH', { title: 'Mine' }, { 'if-match': stale }), LOCAL_ENV);
+      expect(res.status).toBe(200);
+      const after = await app.request(`${DRAFTS}/${id}`, { headers: { host: LOCAL_HOST } }, LOCAL_ENV);
+      expect(((await after.json()) as { draft: { title: string; occurrenceCount: number } }).draft).toMatchObject({ title: 'Mine', occurrenceCount: 2 });
+      expect(after.headers.get('ETag')).toBe(res.headers.get('ETag'));
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

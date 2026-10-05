@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import type { IssueDraftService } from '../../application/issue-report/issue-draft-service.js';
 import type { IssueDraft } from '../../domain/issue-draft.js';
-import { computeStrongEtag, ifNoneMatchMatches } from './etag.js';
+import { computeStrongEtag, etagDigestOf, ifMatchAccepts, ifNoneMatchMatches } from './etag.js';
 import {
   toDetailDto,
   toImageDto,
@@ -15,10 +15,13 @@ import type { RestrictedLeakCache } from './issue-report-leak-cache.js';
  * 不具合報告の下書き API の条件付き GET (If-None-Match → 304) と、編集の If-Match (不一致 → 412) の元になる ETag
  * (bdboard-mqoa、docs/ISSUE-REPORTING.md 3節「条件付き GET と編集の If-Match」)。HTTP のヘッダはこの層に閉じる。
  *
- * ETag は「応答の本文そのもの」の版: 下書きの中身の版 (draft.json のダイジェスト) だけでなく、応答に入る画像の一覧・最新の
- * harness pack の版・ローカル/トンネルで絞った形・DTO の形と検出の規則まで、応答の本文に出るものを全部含む。下書きの版だけ
- * から作ると、画像の追加や bdboard の更新のあとも 304 で古い本文を使い続けてしまう。本文は組み立てたあとの値 (DTO) から
- * 作るので、そのどれかが変わったのに ETag が変わらない、ということが起きない。
+ * 1 件の取得の ETag は `"<editDigest>-<bodyDigest>"` (bdboard-q5pj)。後半の bodyDigest は「応答の本文そのもの」の版: 下書きの
+ * 中身の版 (draft.json のダイジェスト) だけでなく、応答に入る画像の一覧・最新の harness pack の版・ローカル/トンネルで絞った形・
+ * DTO の形と検出の規則まで、応答の本文に出るものを全部含む。下書きの版だけから作ると、画像の追加や bdboard の更新のあとも 304 で
+ * 古い本文を使い続けてしまう。本文は組み立てたあとの値 (DTO) から作るので、そのどれかが変わったのに ETag が変わらない、ということが
+ * 起きない。If-None-Match (304) はこの全体で比べる。前半の editDigest は利用者が直せる欄だけの版 (editDigestOf) で、編集の
+ * If-Match (412) はこちらだけで比べる: 新しい発生・画像の追加・pack の版の変化だけでは、直した欄が変わっていない編集を 412 にしない。
+ * 一覧の ETag は従来どおり本文全体の 1 つのダイジェスト (If-Match の相手ではない)。
  * 保存形の欄 (版の番号) は足していない: 手で書き換えた draft.json や、書き込みの経路の足し忘れでも、版が古いままにならない。
  */
 
@@ -54,9 +57,51 @@ function canonicalOf(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** 1 件の取得の応答の ETag (強い ETag)。PATCH の応答の ETag と If-Match の判定も、同じ関数で作った値を使う。 */
+/** 利用者が直せる欄の版 (editDigestOf) の入力。1 件の取得の応答の draft から、この欄だけ取る。 */
+export type EditableDraftFields = Pick<
+  IssueDraftDetailDto,
+  'id' | 'status' | 'title' | 'body' | 'titleEditedByUser' | 'bodyEditedByUser'
+>;
+
+/**
+ * 編集 (PATCH) の If-Match が見る版: 利用者が直せる欄だけのダイジェスト。入るのは id・status・題名と本文の「直した」印と、
+ * 直した欄の文だけ。自動で組んだ欄の文は null として入れない: 同じ指紋の新しい発生 (回数・時刻・手元の版) のたびに作り直されるので、
+ * 入れると、利用者が何も直していなくても読んだあとの発生で偽の 412 になる (bdboard-q5pj)。回数・画像・pack の版・疑い
+ * (直した欄と鍵から決まる) も入れない。PATCH は排他の中で今の下書きに題名・本文を当てるので、それらは上書きで失われない。
+ * 文は応答の draft の値 (トンネルでは foldHomePaths で畳んだ値) から作るので、トンネルの読み手へ畳む前の文の指紋を渡さない。
+ */
+export function editDigestOf(draft: EditableDraftFields): string {
+  return etagDigestOf(
+    canonicalJson({
+      id: draft.id,
+      status: draft.status,
+      titleEditedByUser: draft.titleEditedByUser,
+      bodyEditedByUser: draft.bodyEditedByUser,
+      title: draft.titleEditedByUser ? draft.title : null,
+      body: draft.bodyEditedByUser ? draft.body : null,
+    }),
+  );
+}
+
+/**
+ * 1 件の取得の応答の ETag (強い ETag)。`"<editDigest>-<bodyDigest>"`: 前半は直せる欄だけの版 (editDigestOf)、後半は応答の本文全体の版。
+ * If-None-Match (304) は全体で比べるので、本文のどこが変わっても変わる。If-Match (PATCH) は前半だけで比べる (ifMatchMatchesEdit)。
+ * PATCH の応答の ETag も、同じ関数で作った値を使う。
+ */
 export function detailEtagOf(body: IssueDraftDetailBody): string {
-  return computeStrongEtag(canonicalJson(body));
+  return `"${editDigestOf(body.draft)}-${etagDigestOf(canonicalJson(body))}"`;
+}
+
+const DETAIL_ETAG_TOKEN = /^([0-9a-f]{32})-[0-9a-f]{32}$/;
+
+/**
+ * 編集の If-Match を、今の下書きの直せる欄の版 (editDigestOf) だけで判定する。If-Match の中の ETag (ここが返した `"<editDigest>-<bodyDigest>"`)
+ * は前半だけを見て、後半 (本文全体の版) は見ない。`*`・リスト・`W/`・空・読めない値の扱いは etag.ts の ifMatchAccepts のとおり
+ * (読めない値には、前の形の ETag `"<32 桁>"` も入る: ここの形ではないので一致しない = 412。読み直せば新しい形になる)。
+ */
+export function ifMatchMatchesEdit(ifMatch: string, current: EditableDraftFields): boolean {
+  const expected = editDigestOf(current);
+  return ifMatchAccepts(ifMatch, (token) => DETAIL_ETAG_TOKEN.exec(token)?.[1] === expected);
 }
 
 /** 一覧の応答の ETag。並び順 (配列の順) と未処理件数も本文に入っているので、どちらが変わっても変わる。 */

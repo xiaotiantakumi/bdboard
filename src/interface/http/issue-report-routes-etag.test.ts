@@ -16,6 +16,7 @@ import type { WriteGuardDeps } from './write-guard.js';
 /**
  * bdboard-mqoa: 一覧と 1 件の取得の ETag / If-None-Match (304) と、編集 (PATCH) の If-Match (412)。
  * ETag は応答の本文そのものから作る (issue-report-etag.ts) ので、本文に出るものが変わるたびに変わることを 1 つずつ確かめる。
+ * bdboard-q5pj: 1 件の ETag は `"<editDigest>-<bodyDigest>"`。If-None-Match は全体、If-Match は editDigest (直せる欄だけ) で比べる。
  */
 
 const LOCAL_ENV = { incoming: { socket: { remoteAddress: '127.0.0.1', localPort: 8787 } } };
@@ -24,7 +25,11 @@ const CF_HEADERS = { 'cf-ray': 'abc123-NRT', 'cf-connecting-ip': '203.0.113.9' }
 const DRAFTS = '/api/issue-reports/drafts';
 const PNG_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64');
 const TUNNEL_WRITE_ALLOWED: WriteGuardDeps = { isTunnelWriteAllowed: () => true, hasTunnelSession: () => true };
-const STRONG_ETAG = /^"[0-9a-f]{32}"$/;
+/** 1 件の取得・編集の応答の ETag は `"<editDigest>-<bodyDigest>"` (bdboard-q5pj)。一覧は本文全体の 1 つのダイジェスト。 */
+const DETAIL_ETAG = /^"[0-9a-f]{32}-[0-9a-f]{32}"$/;
+const LIST_ETAG = /^"[0-9a-f]{32}"$/;
+/** If-Match に付ける、形は合っていて中身が違う ETag。 */
+const WRONG_ETAG = `"${'0'.repeat(32)}-${'1'.repeat(32)}"`;
 
 interface Setup {
   readonly app: Hono;
@@ -78,7 +83,7 @@ async function etagOf(app: Hono, path: string, env: object = LOCAL_ENV, headers:
   const res = await app.request(path, read(headers), env);
   expect(res.status).toBe(200);
   const etag = res.headers.get('ETag');
-  expect(etag).toMatch(STRONG_ETAG);
+  expect(etag).toMatch(path === DRAFTS ? LIST_ETAG : DETAIL_ETAG);
   return etag as string;
 }
 
@@ -88,7 +93,7 @@ describe('GET /api/issue-reports/drafts/:id — ETag and If-None-Match', () => {
     const id = await receive(app, 'slug-a');
     const res = await app.request(`${DRAFTS}/${id}`, read(), LOCAL_ENV);
     expect(res.status).toBe(200);
-    expect(res.headers.get('ETag')).toMatch(STRONG_ETAG);
+    expect(res.headers.get('ETag')).toMatch(DETAIL_ETAG);
     expect(res.headers.get('Cache-Control')).toBe('private, no-cache');
     expect(await etagOf(app, `${DRAFTS}/${id}`)).toBe(res.headers.get('ETag'));
   });
@@ -224,7 +229,7 @@ describe('PATCH /api/issue-reports/drafts/:id — If-Match', () => {
     const res = await app.request(`${DRAFTS}/${id}`, patch({ title: 'Edited' }, { 'if-match': before }), LOCAL_ENV);
     expect(res.status).toBe(200);
     const after = res.headers.get('ETag');
-    expect(after).toMatch(STRONG_ETAG);
+    expect(after).toMatch(DETAIL_ETAG);
     expect(after).not.toBe(before);
     expect(await etagOf(app, `${DRAFTS}/${id}`)).toBe(after);
     // 応答の ETag のまま、次の編集を続けて送れる (保存のたびに 412 にならない)。
@@ -272,11 +277,11 @@ describe('PATCH /api/issue-reports/drafts/:id — If-Match', () => {
     const autoTitle = storage.drafts.get(id)?.title;
     expect((await app.request(`${DRAFTS}/${id}`, patch({ title: 'Mine' }), LOCAL_ENV)).status).toBe(200);
     const current = await etagOf(app, `${DRAFTS}/${id}`);
-    expect((await app.request(`${DRAFTS}/${id}`, patch({ title: '' }, { 'if-match': '"0123456789abcdef0123456789abcdef"' }), LOCAL_ENV)).status).toBe(412);
+    expect((await app.request(`${DRAFTS}/${id}`, patch({ title: '' }, { 'if-match': WRONG_ETAG }), LOCAL_ENV)).status).toBe(412);
     expect(storage.drafts.get(id)).toMatchObject({ title: 'Mine', titleEditedByUser: true });
     const reset = await app.request(`${DRAFTS}/${id}`, patch({ title: '' }, { 'if-match': current }), LOCAL_ENV);
     expect(reset.status).toBe(200);
-    expect(reset.headers.get('ETag')).toMatch(STRONG_ETAG);
+    expect(reset.headers.get('ETag')).toMatch(DETAIL_ETAG);
     expect(storage.drafts.get(id)).toMatchObject({ title: autoTitle, titleEditedByUser: false });
   });
 
@@ -288,27 +293,146 @@ describe('PATCH /api/issue-reports/drafts/:id — If-Match', () => {
     expect(await edit('*')).toBe(200);
     expect(await edit(`"deadbeef", ${await current()}`)).toBe(200);
     expect(await edit(`W/${await current()}`)).toBe(200);
-    for (const bad of ['', 'garbage', '"deadbeef"', 'W/"deadbeef"']) expect(await edit(bad)).toBe(412);
+    for (const bad of ['', ' , ', 'garbage', '"deadbeef"', 'W/"deadbeef"', WRONG_ETAG, `W/${WRONG_ETAG}`]) expect(await edit(bad)).toBe(412);
   });
 
-  it('is made stale by a new occurrence, an added image or a moved pack version too, since the viewed body changed', async () => {
-    const { app, world } = setup();
+  // 前の形の ETag (本文全体の 32 桁 1 つ) は、この形ではないので一致しない。デプロイをまたいだ古い画面は 1 回 412 になり、読み直せば新しい形になる。
+  it('does not take the previous ETag format, a single 32-hex digest, and the 412 leaves the draft as it was', async () => {
+    const { app, storage } = setup();
     const id = await receive(app, 'slug-a');
-    const staleAfter = async (change: () => Promise<unknown> | void) => {
+    const [editDigest] = (await etagOf(app, `${DRAFTS}/${id}`)).slice(1, -1).split('-');
+    const res = await app.request(`${DRAFTS}/${id}`, patch({ title: 'Mine' }, { 'if-match': `"${editDigest}"` }), LOCAL_ENV);
+    expect(res.status).toBe(412);
+    expect(storage.drafts.get(id)?.titleEditedByUser).toBe(false);
+  });
+
+  // 直せる欄の版は、読み手が見た形の題名・本文から作る。トンネルの読み手へは、ホーム配下のパスを畳んだ後の文の版だけを渡し、畳む前の文の
+  // 指紋は渡さない (パスの一部を当てて確かめる道具にしない)。直した題名にパスがあれば、手元とトンネルで前半が違う。
+  it('makes the edit digest from the text as the reader saw it: a home path in an edited title differs between local and tunnel', async () => {
+    const { app, storage } = setup({ writeAccess: TUNNEL_WRITE_ALLOWED });
+    const id = await receive(app, 'slug-a');
+    expect((await app.request(`${DRAFTS}/${id}`, patch({ title: 'Fails in /Users/example-user/work/app' }), LOCAL_ENV)).status).toBe(200);
+    const local = await etagOf(app, `${DRAFTS}/${id}`);
+    const tunnel = await etagOf(app, `${DRAFTS}/${id}`, LOCAL_ENV, CF_HEADERS);
+    expect(local.slice(1, 33)).not.toBe(tunnel.slice(1, 33));
+    const edit = (ifMatch: string, headers: Record<string, string>, title: string) =>
+      app.request(`${DRAFTS}/${id}`, patch({ title }, { ...headers, 'if-match': ifMatch }), LOCAL_ENV);
+    expect((await edit(local, CF_HEADERS, 'From the tunnel')).status).toBe(412);
+    expect((await edit(tunnel, {}, 'From local')).status).toBe(412);
+    expect(storage.drafts.get(id)?.title).toBe('Fails in /Users/example-user/work/app');
+    expect((await edit(tunnel, CF_HEADERS, 'From the tunnel')).status).toBe(200);
+    expect((await edit(await etagOf(app, `${DRAFTS}/${id}`), {}, 'From local')).status).toBe(200);
+  });
+
+  // bdboard-q5pj: If-Match は ETag の前半 (直せる欄だけの版) で比べる。読んだあとの新しい発生・画像の追加・pack の版の変化は、
+  // 応答の本文 (If-None-Match の相手の ETag) は変えても、直せる欄は変えないので、編集は通る。PATCH は今の下書きへ当たるので、
+  // それらは上書きで失われない。
+  describe('a change that is not an edited field (a new occurrence, an added image, a moved pack version)', () => {
+    const imagePost = json('POST', { mimeType: 'image/png', data: PNG_BASE64 });
+
+    const changes: ReadonlyArray<readonly [string, (ctx: Setup, id: string) => Promise<void> | void]> = [
+      ['a new occurrence', async ({ app, world }) => {
+        world.now = new Date('2026-10-04T13:00:00.000Z');
+        await receive(app, 'slug-a');
+      }],
+      ['an added image', async ({ app }, id) => {
+        expect((await app.request(`${DRAFTS}/${id}/images`, imagePost, LOCAL_ENV)).status).toBe(201);
+      }],
+      ['a moved pack version', ({ world }) => {
+        world.latest = '9.9.9';
+      }],
+      ['a pack version that became unreadable', ({ world }) => {
+        world.latest = undefined;
+      }],
+    ];
+
+    it.each(changes)('does not stale If-Match after %s: the edit passes although the whole-body ETag moved', async (what, change) => {
+      const ctx = setup();
+      const { app, storage } = ctx;
+      const id = await receive(app, 'slug-a');
       const stale = await etagOf(app, `${DRAFTS}/${id}`);
-      await change();
-      const res = await app.request(`${DRAFTS}/${id}`, patch({ body: 'text' }, { 'if-match': stale }), LOCAL_ENV);
-      expect(res.status).toBe(412);
-    };
-    await staleAfter(async () => {
+      await change(ctx, id);
+      expect(await etagOf(app, `${DRAFTS}/${id}`), `${what} moves the ETag of the whole body`).not.toBe(stale);
+      // 条件付き GET の相手は本文全体の版のまま: 古い ETag の If-None-Match には 304 ではなく新しい本文を返す。
+      expect((await app.request(`${DRAFTS}/${id}`, read({ 'if-none-match': stale }), LOCAL_ENV)).status).toBe(200);
+      const res = await app.request(`${DRAFTS}/${id}`, patch({ body: 'My body' }, { 'if-match': stale }), LOCAL_ENV);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('ETag')).toBe(await etagOf(app, `${DRAFTS}/${id}`));
+      expect(storage.drafts.get(id)).toMatchObject({ body: 'My body', bodyEditedByUser: true });
+    });
+
+    it('loses nothing the others changed: the count from the new occurrence and the added image are still there after the edit', async () => {
+      const { app, world, storage, service } = setup();
+      const id = await receive(app, 'slug-a');
+      const stale = await etagOf(app, `${DRAFTS}/${id}`);
       world.now = new Date('2026-10-04T13:00:00.000Z');
       await receive(app, 'slug-a');
+      expect((await app.request(`${DRAFTS}/${id}/images`, imagePost, LOCAL_ENV)).status).toBe(201);
+      expect((await app.request(`${DRAFTS}/${id}`, patch({ title: 'Mine' }, { 'if-match': stale }), LOCAL_ENV)).status).toBe(200);
+      expect(storage.drafts.get(id)).toMatchObject({ title: 'Mine', occurrenceCount: 2, lastOccurredAt: '2026-10-04T13:00:00.000Z' });
+      expect(await service.listImages(id)).toHaveLength(1);
     });
-    await staleAfter(async () => {
-      await app.request(`${DRAFTS}/${id}/images`, json('POST', { mimeType: 'image/png', data: PNG_BASE64 }), LOCAL_ENV);
+
+    // 直していない欄の自動の文は、新しい発生で作り直される。古い版を読んだ画面の編集が、それを古い文で上書きしない。
+    it('keeps what the new occurrence rebuilt in the field that was not edited (the stale text is not written back)', async () => {
+      const { app, world, storage } = setup();
+      const id = await receive(app, 'slug-a');
+      expect((await app.request(`${DRAFTS}/${id}`, patch({ title: 'Mine' }), LOCAL_ENV)).status).toBe(200);
+      const stale = await etagOf(app, `${DRAFTS}/${id}`);
+      const oldBody = storage.drafts.get(id)?.body;
+      world.now = new Date('2026-10-04T13:00:00.000Z');
+      await receive(app, 'slug-a');
+      const rebuiltBody = storage.drafts.get(id)?.body;
+      expect(rebuiltBody).not.toBe(oldBody);
+      const res = await app.request(`${DRAFTS}/${id}`, patch({ title: 'Mine, again' }, { 'if-match': stale }), LOCAL_ENV);
+      expect(res.status).toBe(200);
+      expect(storage.drafts.get(id)).toMatchObject({ title: 'Mine, again', body: rebuiltBody, occurrenceCount: 2, bodyEditedByUser: false });
     });
-    await staleAfter(() => {
-      world.latest = '9.9.9';
+
+    it('passes for the tunnel reader too, with the ETag it read (the restricted form)', async () => {
+      const { app, world, storage } = setup({ writeAccess: TUNNEL_WRITE_ALLOWED });
+      const id = await receive(app, 'slug-a');
+      const stale = await etagOf(app, `${DRAFTS}/${id}`, LOCAL_ENV, CF_HEADERS);
+      world.now = new Date('2026-10-04T13:00:00.000Z');
+      await receive(app, 'slug-a');
+      const res = await app.request(`${DRAFTS}/${id}`, patch({ title: 'From the tunnel' }, { ...CF_HEADERS, 'if-match': stale }), LOCAL_ENV);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('ETag')).toBe(await etagOf(app, `${DRAFTS}/${id}`, LOCAL_ENV, CF_HEADERS));
+      expect(storage.drafts.get(id)).toMatchObject({ title: 'From the tunnel', occurrenceCount: 2 });
+    });
+  });
+
+  // 直せる欄 (題名・本文の文と「直した」印) が読んだあとにほかで変わったときは、従来どおり 412 で、何も書かない。
+  describe('a change in an edited field elsewhere', () => {
+    it('answers 412 when the title was edited, the body was edited, or a field was put back to automatic', async () => {
+      const { app, storage } = setup();
+      const id = await receive(app, 'slug-a');
+      const staleAfter = async (what: string, elsewhere: object) => {
+        const stale = await etagOf(app, `${DRAFTS}/${id}`);
+        expect((await app.request(`${DRAFTS}/${id}`, patch(elsewhere), LOCAL_ENV)).status).toBe(200);
+        const before = structuredClone(storage.drafts.get(id));
+        const res = await app.request(`${DRAFTS}/${id}`, patch({ body: 'Mine' }, { 'if-match': stale }), LOCAL_ENV);
+        expect(res.status, what).toBe(412);
+        expect(storage.drafts.get(id), what).toEqual(before);
+      };
+      await staleAfter('the title edited for the first time', { title: 'Edited elsewhere' });
+      await staleAfter('the title edited again', { title: 'Edited elsewhere again' });
+      await staleAfter('the body edited for the first time', { body: 'Body elsewhere' });
+      await staleAfter('the body edited again', { body: 'Body elsewhere again' });
+      await staleAfter('the title put back to automatic', { title: '' });
+      await staleAfter('the body put back to automatic', { body: '' });
+    });
+
+    it('answers 412 even after a new occurrence moved the rest, and the 412 writes nothing', async () => {
+      const { app, world, storage } = setup();
+      const id = await receive(app, 'slug-a');
+      const stale = await etagOf(app, `${DRAFTS}/${id}`);
+      expect((await app.request(`${DRAFTS}/${id}`, patch({ title: 'Edited elsewhere' }), LOCAL_ENV)).status).toBe(200);
+      world.now = new Date('2026-10-04T13:00:00.000Z');
+      await receive(app, 'slug-a');
+      const before = structuredClone(storage.drafts.get(id));
+      expect((await app.request(`${DRAFTS}/${id}`, patch({ title: 'Mine' }, { 'if-match': stale }), LOCAL_ENV)).status).toBe(412);
+      expect(storage.drafts.get(id)).toEqual(before);
     });
   });
 
@@ -364,7 +488,7 @@ describe('the ETag with the write guard, Basic auth and gzip', () => {
     const closed = setup();
     const id = await receive(closed.app, 'slug-a');
     const etag = await etagOf(closed.app, `${DRAFTS}/${id}`);
-    const stale = '"0123456789abcdef0123456789abcdef"';
+    const stale = WRONG_ETAG;
     expect((await closed.app.request(`${DRAFTS}/${id}`, patch({ title: 'x' }, { ...CF_HEADERS, 'if-match': stale }), LOCAL_ENV)).status).toBe(403);
     expect((await closed.app.request(`${DRAFTS}/${id}`, patch({ title: 'x' }, { 'sec-fetch-site': 'cross-site', 'if-match': etag }), LOCAL_ENV)).status).toBe(403);
     expect(closed.storage.drafts.get(id)?.titleEditedByUser).toBe(false);
@@ -373,8 +497,7 @@ describe('the ETag with the write guard, Basic auth and gzip', () => {
     const open = setup({ writeAccess: TUNNEL_WRITE_ALLOWED });
     const openId = await receive(open.app, 'slug-a');
     const tunnelEtag = await etagOf(open.app, `${DRAFTS}/${openId}`, LOCAL_ENV, CF_HEADERS);
-    const localEtag = await etagOf(open.app, `${DRAFTS}/${openId}`);
-    expect((await open.app.request(`${DRAFTS}/${openId}`, patch({ title: 'x' }, { ...CF_HEADERS, 'if-match': localEtag }), LOCAL_ENV)).status).toBe(412);
+    expect((await open.app.request(`${DRAFTS}/${openId}`, patch({ title: 'x' }, { ...CF_HEADERS, 'if-match': stale }), LOCAL_ENV)).status).toBe(412);
     const allowed = await open.app.request(`${DRAFTS}/${openId}`, patch({ title: 'x' }, { ...CF_HEADERS, 'if-match': tunnelEtag }), LOCAL_ENV);
     expect(allowed.status).toBe(200);
     expect(allowed.headers.get('ETag')).toBe(await etagOf(open.app, `${DRAFTS}/${openId}`, LOCAL_ENV, CF_HEADERS));
@@ -399,7 +522,7 @@ describe('the ETag with the write guard, Basic auth and gzip', () => {
     const first = await app.request(`${DRAFTS}/${id}`, read(gzip), LOCAL_ENV);
     expect(first.headers.get('Content-Encoding')).toBe('gzip');
     const weak = first.headers.get('ETag') as string;
-    expect(weak).toMatch(/^W\/"[0-9a-f]{32}"$/);
+    expect(weak).toMatch(/^W\/"[0-9a-f]{32}-[0-9a-f]{32}"$/);
     expect((await app.request(`${DRAFTS}/${id}`, read({ ...gzip, 'if-none-match': weak }), LOCAL_ENV)).status).toBe(304);
     const edited = await app.request(`${DRAFTS}/${id}`, patch({ title: 'Edited' }, { ...gzip, 'if-match': weak }), LOCAL_ENV);
     expect(edited.status).toBe(200);

@@ -46,7 +46,7 @@ import {
  *   - 1 件の取得 (GET drafts/:id): 全部を返すのはローカル直アクセスだけ。トンネル経由は
  *     生ログ・自由記述の生の文・絶対パスを除いた形 (`restricted: true`、toDetailDto)。
  *   - 見送り (PATCH dismiss) と題名・本文の編集 (PATCH drafts/:id、issue-report-edit-routes.ts): 通常の write-guard
- *     (ローカル直、または強パスワード + セッション)。編集は If-Match で、読んだ版と今の版が違えば 412 (bdboard-mqoa)。
+ *     (ローカル直、または強パスワード + セッション)。編集は If-Match で、読んだときの直せる欄の版と今の版が違えば 412 (bdboard-mqoa・bdboard-q5pj)。
  *   - 未処理件数 (GET pending-count、issue-report-edit-routes.ts): ほかの読み取り API と同じ。
  *
  * このルーターは何も外へ送らない。投稿 (bdboard-4y8q.4) は別の経路。
