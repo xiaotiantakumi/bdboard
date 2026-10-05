@@ -24,6 +24,11 @@ vi.mock('../api', () => ({
   projectNameFallback: (id: string) => id.split(/[/\\]/).pop() ?? id,
 }));
 
+// bdboard-4y8q.3.2: 不具合報告の未処理件数は別のモジュールから読む。
+vi.mock('../api/issue-reports', () => ({
+  fetchIssueReportPendingCount: vi.fn(),
+}));
+
 vi.mock('../bdCommands', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../bdCommands')>();
   return { ...actual, copyTextToClipboard: vi.fn() };
@@ -35,6 +40,7 @@ import {
   fetchPendingDecisions,
   fetchProjects,
 } from '../api';
+import { fetchIssueReportPendingCount } from '../api/issue-reports';
 import { copyTextToClipboard } from '../bdCommands';
 
 const fetchActivityMock = vi.mocked(fetchActivity);
@@ -42,6 +48,7 @@ const fetchBoardMock = vi.mocked(fetchBoard);
 const fetchPendingDecisionsMock = vi.mocked(fetchPendingDecisions);
 const fetchProjectsMock = vi.mocked(fetchProjects);
 const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
+const fetchIssueReportPendingCountMock = vi.mocked(fetchIssueReportPendingCount);
 
 const FIXED_NOW = new Date('2026-08-15T09:30:00+09:00');
 
@@ -185,6 +192,7 @@ function expectedMarkdown(): string {
     pendingDecisions: defaultPendingDecisions,
     projectNames: new Map(defaultProjects.map((project) => [project.id, project.name])),
     selectedProjectIds: ['proj-a'],
+    issueReportPendingCount: 2,
   });
 }
 
@@ -197,7 +205,14 @@ function mockAllQueries(options?: {
   boardReject?: Error;
   pendingReject?: Error;
   projectsReject?: Error;
+  issueReportPendingReject?: Error;
 }) {
+  if (options?.issueReportPendingReject !== undefined) {
+    fetchIssueReportPendingCountMock.mockRejectedValue(options.issueReportPendingReject);
+  } else {
+    fetchIssueReportPendingCountMock.mockResolvedValue({ pendingCount: 2 });
+  }
+
   if (options?.activityReject !== undefined) {
     fetchActivityMock.mockRejectedValue(options.activityReject);
   } else {
@@ -264,6 +279,7 @@ describe('DailyDigest', () => {
     fetchBoardMock.mockReset();
     fetchPendingDecisionsMock.mockReset();
     fetchProjectsMock.mockReset();
+    fetchIssueReportPendingCountMock.mockReset();
     copyTextToClipboardMock.mockReset();
     copyTextToClipboardMock.mockResolvedValue(undefined);
   });

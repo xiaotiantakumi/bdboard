@@ -8,6 +8,7 @@ import {
 } from '../api';
 import { copyTextToClipboard } from '../bdCommands';
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
+import { useIssueReportPendingCount } from '../hooks/useIssueReportPendingCount';
 import {
   ACTIVITY_WINDOW_DAYS,
   activityWindowLabel,
@@ -69,6 +70,9 @@ export function DailyDigest({
     queryFn: fetchProjects,
   });
 
+  // 不具合報告の未処理件数 (bdboard-4y8q.3.2)。読めなくてもダイジェスト全体は落とさない (その旨の 1 行になる)。
+  const issueReportPending = useIssueReportPendingCount();
+
   const now = nowOverride ?? new Date();
 
   const projectNames = useMemo(() => {
@@ -96,6 +100,7 @@ export function DailyDigest({
       pendingDecisions: pendingDecisionsQuery.data,
       projectNames,
       selectedProjectIds: projectIds,
+      issueReportPendingCount: issueReportPending.count,
     });
   }, [
     activityQuery.data,
@@ -105,6 +110,7 @@ export function DailyDigest({
     now,
     windowDays,
     projectIds,
+    issueReportPending.count,
   ]);
 
   // bdboard-ty72: コピー結果の表示は await の継続から出るので、素の setTimeout だと
@@ -133,7 +139,8 @@ export function DailyDigest({
     activityQuery.isLoading ||
     boardQuery.isLoading ||
     pendingDecisionsQuery.isLoading ||
-    projectsQuery.isLoading;
+    projectsQuery.isLoading ||
+    issueReportPending.isLoading;
 
   const isError =
     activityQuery.isError ||

@@ -20,6 +20,7 @@ export const VIEW_LABELS: Record<ViewMode, string> = {
   hygiene: '健全性',
   graph: '依存グラフ',
   events: 'イベント',
+  'issue-reports': '不具合報告',
   settings: '設定',
 };
 

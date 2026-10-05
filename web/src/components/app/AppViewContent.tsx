@@ -15,6 +15,7 @@ import { DependencyGraphView } from '../DependencyGraphView';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { EventCenterPanel } from '../EventCenterPanel';
 import { HygienePanel } from '../HygienePanel';
+import { IssueReportsPanel } from '../issue-reports/IssueReportsPanel';
 import { type NextUpRunLoopController } from '../nextUpRunLoop';
 import { SettingsPanel } from '../SettingsPanel';
 import { ThroughputStats } from '../ThroughputStats';
@@ -37,7 +38,7 @@ import { AppBoardViewSwitch } from './AppBoardViewSwitch';
  *
  * ボード系ビュー(split)の JSX は ESLint の200行上限のため
  * ./AppBoardViewSwitch.tsx へさらに分けた。ここは ErrorBoundary と
- * ボード以外のビュー(activity/digest/stats/hygiene/graph/settings/events)
+ * ボード以外のビュー(activity/digest/stats/hygiene/graph/settings/events/issue-reports)
  * の出し分けだけを持つ。
  */
 export interface AppViewContentProps {
@@ -150,6 +151,7 @@ export function AppViewContent({
       )}
       {view === 'settings' && <SettingsPanel />}
       {view === 'events' && <EventCenterPanel {...notificationEvents} />}
+      {view === 'issue-reports' && <IssueReportsPanel />}
     </ErrorBoundary>
   );
 }
