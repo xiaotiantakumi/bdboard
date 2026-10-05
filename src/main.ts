@@ -112,6 +112,7 @@ async function main(): Promise<void> {
   });
 
   const issueReports = wireIssueReports({
+    commandRunner: infra.commandRunner,
     repoRoot,
     env: process.env,
     service: issueDrafts,
@@ -213,6 +214,7 @@ async function main(): Promise<void> {
     cfdSnapshotIntervalTimer: lifecycle.cfdSnapshotIntervalTimer,
     aiQuotaAlertIntervalTimer: features.aiQuotaAlertIntervalTimer,
     reclaimScheduler: lifecycle.reclaimScheduler,
+    externalIssues: issueReports.externalIssues,
   });
 }
 
