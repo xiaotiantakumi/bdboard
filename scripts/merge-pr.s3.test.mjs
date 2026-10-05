@@ -185,6 +185,8 @@ describe('merge-pr S3 pure helpers (bdboard-ulxa.3)', () => {
       'scripts/verify-slot-files.mjs',
       'scripts/verify-slot-queue.mjs',
       'scripts/verify-slot-wait.mjs', // bdboard-xdk8: verify-slot.mjs が import する (待ちの打ち切りの延長と待ちの表示)
+      'scripts/worktree-lock.mjs', // bdboard-wea0.2: merge-pr/worktree-hold.mjs が import する
+      'scripts/worktree-lock-owner.mjs',
     ]);
     for (const file of ['scripts/merge-pr/finish.mjs', 'scripts/merge-pr.mjs', 'scripts/check-drift/git.mjs', 'scripts/check-drift.mjs', 'scripts/process-identity.mjs']) {
       for (const side of ['mainFiles', 'mineFiles']) {
@@ -499,8 +501,9 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     expect(run(['gate', String(PR)]).status).toBe(0);
     const landed = landSquash();
     expect(run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' }).status).toBe(6);
-    // 実行中の印 (verifyingPid) は外れ、class と着地コミットが残り、failure の印が付く。
-    expect(readState()).toMatchObject({ class: 'L', newMain: landed, verifyingPid: null, landedResult: 'failure' });
+    // class と着地コミットが残り、failure の印が付く (実行中の印は bdboard-wea0.2 で worktree lock に置き換えて書かない)。
+    expect(readState()).toMatchObject({ class: 'L', newMain: landed, landedResult: 'failure' });
+    expect(readState()).not.toHaveProperty('verifyingPid');
     const holder = `demo-1 / main-broken ${landed.slice(0, 12)}`;
     expect(readFake().slot.holder).toBe(holder);
     const acquires = calls('bd', 'acquire').length; // gate の枠と、finish が failure で取った main-broken の枠
@@ -666,13 +669,13 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
   });
 
   // レビュー (minor): 手動の再検証が success のとき、フレークと確かめられた failure の記録だけを消す。
-  it('forgetLightFailure: removes only a finish-kept failure record of that SHA whose finish is not still verifying', () => {
+  it('forgetLightFailure: removes only a finish-kept failure record of that SHA', () => {
     setup({ merge: S3 });
     advanceMain({ 'peer.txt': 'peer\n' });
     expect(run(['prepare', String(PR)]).status).toBe(0);
     const record = readState();
     const landed = landSquash();
-    const kept = { ...record, gateAt: 'x', newMain: landed, landedResult: 'failure', verifyingPid: null };
+    const kept = { ...record, gateAt: 'x', newMain: landed, landedResult: 'failure' };
     const attempt = (patch, sha = landed) => {
       writeFileSync(stateFile(), JSON.stringify({ ...kept, ...patch }));
       forgetLightFailure(work, { ...kept, ...patch }, sha);
@@ -682,9 +685,8 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     expect(attempt({ landedResult: undefined })).toBe(true); // error で残した記録 (finish のやり直しの対象) は消さない
     expect(attempt({ class: 'F' })).toBe(true);
     expect(attempt({}, 'd'.repeat(40))).toBe(true); // 別の SHA の再検証では消さない
-    // finish がまだ検証を実行中 (生きている PID・新しい記録) の記録は消さない。
-    expect(attempt({ verifyingPid: process.ppid, verifyingAt: new Date().toISOString() })).toBe(true);
-    expect(attempt({ verifyingPid: 2 ** 22 + 12345, verifyingAt: new Date().toISOString() })).toBe(false); // 居ない PID の古い印は無視
+    // bdboard-wea0.2: 旧コードの実行中の印 (verifyingPid) は見ない。印の付いた記録は finish の検証が終わってから書かれる。
+    expect(attempt({ verifyingPid: process.ppid, verifyingAt: new Date().toISOString() })).toBe(false);
     expect(forgetLightFailure(work, null, landed)).toBeUndefined(); // 記録が無くても投げない
   });
 
@@ -703,7 +705,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     expect(errored.stderr).not.toContain('着地後検証が failure です'); // 結果が無いのですり抜けとはまだ言わない
     expect(auditText()).toMatch(new RegExp(`\tlight-landed\tpr=7\tid=demo-1\tnew=${landed}\tresult=error\tby=finish`));
     // 状態ファイルは error でも残る (class と着地コミット) — verify がこれで L を見分ける。
-    expect(readState()).toMatchObject({ class: 'L', newMain: landed, verifyingPid: null });
+    expect(readState()).toMatchObject({ class: 'L', newMain: landed });
 
     const failed = run(['verify', landed], { FAKE_VERIFY_EXIT: '1' });
     expect(failed.status).toBe(6);
@@ -723,7 +725,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
     setup({ merge: S3, mainDate: '2026-01-01T00:00:00Z' });
     writeFake({ statuses: {} }); // PRED_BASE の着地後検証が LEASE を過ぎても無い = 自己修復の対象
     // PRED_BASE (base) をクラス L で着地させた別の PR の finish が error で終わり、記録だけが残っている。
-    const leftover = { pr: 9, id: 'demo-9', class: 'L', newMain: base, gateAt: 'x', releasedAt: 'x', verifyingPid: null };
+    const leftover = { pr: 9, id: 'demo-9', class: 'L', newMain: base, gateAt: 'x', releasedAt: 'x' };
     expect(run(['prepare', String(PR)]).status).toBe(0);
     writeFileSync(path.join(path.dirname(stateFile()), 'pr-9.json'), JSON.stringify(leftover));
     const gated = run(['gate', String(PR)], { FAKE_VERIFY_EXIT: '1' });
@@ -774,7 +776,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr S3 phases against a temp
       const dir = path.dirname(stateFile());
       writeFileSync(path.join(dir, 'pr-8.json'), content);
       // 壊れた記録と並んだ正しい L の記録は今までどおり見分ける (飛ばすのは壊れた方だけ)。
-      writeFileSync(path.join(dir, 'pr-9.json'), JSON.stringify({ pr: 9, id: 'demo-9', class: 'L', newMain: base, verifyingPid: null }));
+      writeFileSync(path.join(dir, 'pr-9.json'), JSON.stringify({ pr: 9, id: 'demo-9', class: 'L', newMain: base }));
 
       const manual = run(['verify', base], { FAKE_VERIFY_EXIT: '1' });
       expect(manual.stderr).not.toContain('想定外');

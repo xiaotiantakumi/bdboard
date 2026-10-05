@@ -98,9 +98,9 @@ describe.skipIf(realProcessLockTestsSkipped)('worktree lock against a real perl 
     expect(probeLock(lockPath, 'EX')).toBe('busy');
   });
 
-  it('a refused SH->EX conversion is returned, not thrown, and leaves the object holding nothing (E4)', () => {
+  it('a refused SH->EX conversion is returned, not thrown, and leaves the object holding nothing off darwin (E4)', () => {
     const lockPath = tempLockPath();
-    const upgrading = open(lockPath);
+    const upgrading = open(lockPath, { platform: 'linux' }); // 注入: どの OS の上でも UN して揃える側を通す
     const sharer = open(lockPath);
     expect(upgrading.tryLock('SH').ok).toBe(true);
     expect(sharer.tryLock('SH').ok).toBe(true);
@@ -108,6 +108,19 @@ describe.skipIf(realProcessLockTestsSkipped)('worktree lock against a real perl 
     expect(upgrading.mode).toBe(null);
     sharer.release();
     expect(probeLock(lockPath, 'EX')).toBe('free'); // 「何も持っていない」は自己申告ではなく実際にそう
+  });
+
+  it('on darwin a refused SH->EX conversion keeps SH without a gap (XNU keeps it; #876 review 4) — re-asserted, so it also holds where the kernel dropped it', () => {
+    const lockPath = tempLockPath();
+    const upgrading = open(lockPath, { platform: 'darwin' });
+    const sharer = open(lockPath);
+    expect(upgrading.tryLock('SH').ok).toBe(true);
+    expect(sharer.tryLock('SH').ok).toBe(true);
+    expect(upgrading.tryLock('EX')).toEqual({ ok: false, outcome: 'busy', held: 'SH', converted: 'SH->EX' });
+    expect(upgrading.mode).toBe('SH');
+    sharer.release();
+    expect(probeLock(lockPath, 'EX')).toBe('busy'); // 自己申告ではなく実際に SH を持っている
+    expect(upgrading.tryLock('EX')).toMatchObject({ ok: true, held: 'EX', converted: 'SH->EX' });
   });
 
   it('a refused EX->SH conversion (the macOS downgrade gap) is reported and unlocks, not kept silently as EX', () => {

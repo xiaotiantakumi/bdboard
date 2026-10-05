@@ -546,7 +546,8 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
 
 The verify slot limits machine load; it knows nothing about worktrees. The **worktree lock**
 says "a verify is using this checked-out tree", so that an operation that switches the tree
-(merge-pr's detached checkout and branch restore — wired in by bdboard-wea0.2) cannot run
+(merge-pr's detached checkout and branch restore, bdboard-wea0.2 — the merge-pr side is in
+[GIT-WORKFLOW.md "Worktree lock"](GIT-WORKFLOW.md)) cannot run
 under a live verify. It is a kernel `flock(2)` on `$(git rev-parse --absolute-git-dir)/bdboard-worktree.lock`
 (`.git/worktrees/<name>/` for a linked worktree): the kernel releases it when the last holder
 dies, so no PID, start time or age is ever guessed. Design and measurements: `bd show bdboard-wea0`.
@@ -567,18 +568,20 @@ dies, so no PID, start time or age is ever guessed. Design and measurements: `bd
   worktree lock exclusively"; the owner line it quotes is the *last* one written and may be stale
   (the holder may not have written yet), so `lsof -t <lockfile>` on the next line is what names
   the holder.
-- **Refusal (comes with bdboard-wea0.2).** merge-pr does not take the lock yet; once wea0.2 lands
-  it will write the advisory owner line `{by: "merge-pr …", pid, phase, sha, cwd, at}` while it
-  holds the tree. When such a line is present and its `phase` is not `done`, a manual verify exits
+- **Refusal (bdboard-wea0.2).** merge-pr writes the advisory owner line `{by: "merge-pr <command>
+  <target>", pid, phase, sha, cwd, at}` before it detaches the tree and again before every
+  downgrade to shared, and refuses to go on if it cannot write it. When such a line is present and
+  its `phase` is not `done`, a manual verify exits
   **1** at once — without waiting — and prints the owner, one sentence on why merge-pr's tree
   must not be shared (only for such an active merge-pr line) and `lsof -t <lockfile>`, the
   inference-free way to see who holds it now. The owner is re-read after every acquisition, so a
   merge-pr that takes the tree between the read and verify's shared lock is still refused.
-  merge-pr's own contract verify will pass `BDBOARD_WORKTREE_HELD_BY=<merge-pr pid>` and share;
-  that variable is already in `SLOT_IDENTITY_ENV`, so the steps (and the tests that spawn
-  `verify.mjs`) never inherit it.
+  merge-pr's own contract verify gets `BDBOARD_WORKTREE_HELD_BY=<merge-pr pid>` and shares; merge-pr
+  starts it only while it holds the lock shared with its own `phase: verify` line (otherwise exit 1
+  from a refusal could not be told apart from a red verify). That variable is in `SLOT_IDENTITY_ENV`,
+  so the steps (and the tests that spawn `verify.mjs`) never inherit it.
 - **Stale merge-pr line.** The owner line is only overwritten by the next exclusive holder. A
-  merge-pr that crashed (wea0.2, before it wrote `phase: done`) leaves a line that refuses
+  merge-pr that crashed (before it wrote `phase: done`) leaves a line that refuses
   verifies while some other verify keeps the tree shared; once nobody holds the lock, the next
   verify takes it exclusively and overwrites the line. Check with `lsof -t <lockfile>`.
 - **Never delete the lock file.** The content is only advice; the flock is the truth. Deleting the

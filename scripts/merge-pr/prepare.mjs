@@ -16,9 +16,9 @@ import { EXIT, fail, fetchedMain, ticketIdFor } from './context.mjs';
 import { assertExternalRefLinked } from './external-ref.mjs';
 import { getLandedStatus, getPull, requiredChecks } from './github.mjs';
 import { brokenMainSteps, keptLightFailureSteps, rebaseSteps } from './messages.mjs';
-import { guardAgainstOrphanedPredictedVerify } from './predicted-guard.mjs';
 import { verifyPredicted } from './predicted.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
+import { holdForPrepare } from './worktree-hold.mjs';
 
 /** PR が OPEN・draft でない・base が main であることを確かめる (gate でも使う)。 */
 export function assertOpenPull(ctx, pull, pr) {
@@ -122,9 +122,10 @@ function refuseBrokenBase(ctx, pr, predBase) {
 }
 
 export async function prepare(ctx, pr, { dryRun = false } = {}) {
-  // bdboard-h2fk: SIGKILL された前回の prepare が残した着地予定ツリーの verify が生きていれば、HEAD の detach を
-  // 戻す案内 (assertLocalHead) より先に止める。dry-run も同じ案内に行き着くので止める (記録は読むだけ)。
-  guardAgainstOrphanedPredictedVerify(ctx, pr, { readOnly: dryRun });
+  // bdboard-wea0.2: この worktree で verify (SIGKILL された前回の prepare が残した着地予定ツリーの verify、別の prepare、
+  // 手動の verify) が動いていれば worktree lock が塞がっていて 75。HEAD の detach を戻す案内 (assertLocalHead) は、
+  // ここで EX を取れた = 何も動いていないときにしか出ない。--dry-run は試してすぐ離す (手動の verify を待たせない)。
+  holdForPrepare(ctx, pr, dryRun);
   const mergeBase = run('git', ['merge-base', 'HEAD', ctx.mainRef], { cwd: ctx.cwd });
   if (mergeBase.status !== 0) {
     fail(

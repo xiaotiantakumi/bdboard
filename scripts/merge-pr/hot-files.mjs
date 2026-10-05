@@ -52,6 +52,8 @@ export const MERGE_PROCEDURE_FILES = Object.freeze([
   'scripts/verify-slot-files.mjs',
   'scripts/verify-slot-queue.mjs',
   'scripts/verify-slot-wait.mjs',
+  'scripts/worktree-lock.mjs', // bdboard-wea0.2: merge-pr が worktree lock を持つ (merge-pr/worktree-hold.mjs)
+  'scripts/worktree-lock-owner.mjs',
 ]);
 
 const LITERAL = /[.+^$()|[\]\\]/g;
