@@ -854,6 +854,40 @@ function normalizeErrorText(text: string): string {
 `pruneIfDue`・`saveWithinCap`・`now`・`newId`)として渡す。`ReceiveDraftResult` の型は同じファイルへ移し、サービスから再エクスポートする
 (外から見える名前は変わらない)。
 
+### 本体エラーの間引き(bdboard-4y8q.6.2、domain の純粋関数 3 つ)
+
+画面の自動更新(`refreshProjects`)の失敗を種類 C の下書きにするとき、同じエラーが更新のたびに出続けても下書きの元になる報告は
+1 時間に 1 回に絞る。配線(下書きサービスの呼び出し・HTTP)は 4y8q.6.3 で、ここでは IO を持たない部品だけを作った。
+
+| ファイル | 公開するもの | 役割 |
+|---|---|---|
+| `src/domain/self-error-throttle.ts` | `createSelfErrorThrottle({intervalMs?, maxKeys?})` → `shouldReport(key, now)` / `forget(key)` / `size()` | キーごとの最後の報告時刻。既定 1 時間に 1 回、覚えるのは 500 キー(LRU) |
+| `src/domain/self-error-mask.ts` | `maskSelfErrorText(text, projects)` / `createSelfErrorMasker(projects)` | 根・別名のパス → `<project-root>`、接頭辞で始まるチケット ID → `<ticket-id>`、名前 → `<project>` |
+| `src/domain/refresh-error-tracker.ts` | `createRefreshErrorTracker({throttle?})` → `observe(result, projects, now)` → `SelfErrorReport[]` | リフレッシュ結果から「いま報告するもの」を選ぶ |
+
+**追跡の規則**: キーは `(kind, 伏せた detail)` で、プロジェクトをまたいで共有する(別のプロジェクトの同じエラーは伏せたあと同じ文字列になり、
+1 時間に 1 回に数える)。初めて現れたら報告し、続いている間は throttle に従う。`lock-contention` と `timeout` は同じプロジェクトで
+3 回続けて(`errors` に出て)から初めて報告し、閾値に届く前は throttle に聞かない(聞くと 3 回目が間引かれる)。
+`refreshed` に入っているプロジェクトに、前に続いていたキーが今回の `errors` に無ければ解消として状態を消す(次に現れたら「初めて」)。
+`refreshed` に入っていないプロジェクトの状態は、`errors` に出たキーの更新以外では変えない(一部だけのリフレッシュで消えない)。
+`removed` のプロジェクトは状態を捨てる。throttle のキーを忘れるのは、どのプロジェクトにもそのキーが無くなったときだけ。
+
+**設計からずれた点・決めたこと**
+
+| # | 項目 | 実装 |
+|---|---|---|
+| 1 | `observe` の引数 | 仕様の入力(結果とプロジェクト一覧)に **`now: Date`** を足した。throttle が時刻を要るため。時計は domain に持たない |
+| 2 | 名前・チケット ID の語の境界 | 5 節の固有名詞(前後が文字・数字でない)と違い、**前後が ASCII の英数字でないこと**だけを見る。日本語の文は語を空白で区切らないので、`サーバーexample-projectを開けない` の名前も伏せるため。`_` と `-` は境界として扱う(`beads_<名前>`・`<名前>-server` も伏せる。漏らさない側に倒す)。`\b` は使わない。パスだけは別のフォルダ名の一部かを見るので、Unicode の文字・数字と `_`・`-` を「続き」とみなす |
+| 3 | 3 文字未満の名前 | コードポイント数で数え(前後の空白は落としてから)、置き換えない。5 節の 4 コードポイントとは別の値(こちらは検出をせず、公開本文の最後の網は 4y8q.4 が別にかける) |
+| 4 | チケット ID の形 | `<接頭辞>-<英数字(.英数字)*>` を ID 全体として伏せる。接頭辞が `bd` のように短いと、`bd-cli-…` のようなファイル名も `<ticket-id>` になる(過剰に伏せる側) |
+| 5 | 置き換えの順 | 元の文字列の上で一致の範囲を集め、パス > チケット ID > 名前の順で重ならないものだけを 1 回で印に替える。印の中身を探し直さない |
+| 6 | 未知のプロジェクトのエラー | `errors[].projectId` が一覧に無いものは**報告せず、状態にも入れない**(name と path が分からず、伏せる名前も分からないため。fail-closed) |
+| 7 | 状態の上限 | 1 プロジェクトが覚えるキーは 20(超えたら最も古いものを捨て、throttle からも外す)。キーに入れる伏せた文は 1024 コード単位を超えたら先頭・長さ・末尾に畳む(中だけが違う長い文は同じキーになる)。`errorText` 自体は畳まない |
+| 8 | 時計が戻ったとき | 最後の報告時刻を now に置き直して false を返す(戻り幅の分だけ黙り続けない。再開は最大 1 回分の間隔の後)。無効な Date は false で何も変えない |
+
+**この PR ではやらないこと**: `refreshProjects` との配線、下書きサービスの呼び出し、環境変数 `BDBOARD_SELF_ERROR_DRAFTS` による停止(U6)、
+`LocalOnlyKeys` を全プロジェクトの名前・根・接頭辞に広げること(U13、4y8q.4)。後続は 4y8q.6.3。
+
 ## 5. 公開本文の組み立てと置き換え(項目 e、bdboard-4y8q.2)
 
 `domain` 層の純粋関数(`src/domain/issue-public-*.ts`、入口は `issue-public-build.ts` の `buildPublicIssueBody`)。
