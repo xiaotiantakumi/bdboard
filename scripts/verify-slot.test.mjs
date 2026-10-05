@@ -38,6 +38,16 @@ const writeFakeHolder = (dir, pid, joinedAt) => {
   fs.writeFileSync(holderFile(dir, pid), JSON.stringify({ pid, joinedAt, cwd: '/fake' }));
 };
 
+// 現行形式で「走っている」(acquiredAt あり) holder。旧形式 (writeFakeHolder) が走っているかは、待ち手との到着順で
+// 推定される (verify-slot-queue.mjs の legacyRank) ので、待ち手より後に着いたことになる旧形式は、走っている
+// 先客が居ないと見えて枠を取られる。待ち手が走り出した後に差し込む先客は、到着順に左右されないこちらで書く。
+const writeRunningHolder = (dir, pid, joinedAt) => {
+  fs.writeFileSync(
+    holderFile(dir, pid),
+    JSON.stringify({ v: 2, pid, joinedAt, queuedAt: joinedAt, acquiredAt: joinedAt, priority: 'pr', cwd: '/fake' }),
+  );
+};
+
 // 生きた別プロセス (30秒の setTimeout を抱えた node)。テスト末尾で必ず kill する。
 const spawnLiveProcess = () =>
   spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
@@ -161,29 +171,48 @@ describe('acquireVerifySlot', () => {
     }
   });
 
-  it('measures the wait timeout from the last change in who is running, not from joining', async () => {
-    const dir = makeDir();
-    const first = spawnLiveProcess();
-    const second = spawnLiveProcess();
-    try {
-      writeFakeHolder(dir, first.pid, Date.now() - 1_000);
-      const started = Date.now();
-      const pending = acquireVerifySlot(fastOptions(dir, { waitTimeoutMs: 600 }), noLog);
-      let rejectedAt = null;
-      pending.catch(() => {
-        rejectedAt = Date.now();
-      });
-      await sleep(400);
-      // 走っている holder が入れ替わった (列が進んだ) ので、待ちの打ち切りは数え直しになる。
-      fs.unlinkSync(holderFile(dir, first.pid));
-      writeFakeHolder(dir, second.pid, Date.now() - 500);
-      await expect(pending).rejects.toBeInstanceOf(SlotWaitTimeoutError);
-      expect(rejectedAt - started).toBeGreaterThanOrEqual(900);
-    } finally {
-      first.kill('SIGKILL');
-      second.kill('SIGKILL');
-    }
-  });
+  // bdboard-wmm9: 2 人目が待ち手より後に着いた場合 (+100ms) も確かめる。旧テストは 2 人目を旧形式で「入れ替えた時刻
+  // - 500ms」の joinedAt で書いていたので、sleep(400) が 100ms 以上延びる (負荷の高い runner) と 2 人目が待ち手より
+  // 後に着いたことになり、走っている holder が 0 本に見えて待ち手が枠を取った (Windows の CI で 1 回、738ms で
+  // resolve)。2 人目は走っている holder (acquiredAt あり) として、待ち手との前後を固定した joinedAt で書く。
+  // 順序は「2 人目を書いてから 1 人目を消す」(同期で続けて呼ぶので poll は間に入れないが、走っている holder が
+  // 0 本の状態は作らない)。現行形式では到着順は挙動に効かないので、2 ケースは本番コードでは同じ経路を通る。
+  // 'after' は 2 人目を旧形式で書く形に戻されたときに落ちる回帰の番人。
+  it.each([
+    ['before', -500],
+    ['after', 100],
+  ])(
+    'measures the wait timeout from the last change in who is running, not from joining (the second runner arrived %s the waiter)',
+    async (_order, arrivalOffsetMs) => {
+      const dir = makeDir();
+      const first = spawnLiveProcess();
+      const second = spawnLiveProcess();
+      try {
+        // 入れ替え (400ms 後) が待ち手の最初の打ち切り (参加から WAIT_TIMEOUT_MS) より確実に前に来るよう、打ち切りは
+        // 入れ替えより十分長く取る。600ms だと、400ms の前後をまたいで 250ms ほどイベントループが止まる (負荷の高い runner)
+        // と、止まった後の poll が入れ替えより先に走って参加から数えた打ち切りで reject し、下の検査が落ちる。
+        const WAIT_TIMEOUT_MS = 1_500;
+        const started = Date.now();
+        writeRunningHolder(dir, first.pid, started - 1_000);
+        const pending = acquireVerifySlot(fastOptions(dir, { waitTimeoutMs: WAIT_TIMEOUT_MS }), noLog);
+        let rejectedAt = null;
+        pending.catch(() => {
+          rejectedAt = Date.now();
+        });
+        await sleep(400);
+        // 走っている holder が入れ替わった (列が進んだ) ので、待ちの打ち切りは数え直しになる。
+        const swappedAt = Date.now();
+        writeRunningHolder(dir, second.pid, started + arrivalOffsetMs);
+        fs.unlinkSync(holderFile(dir, first.pid));
+        await expect(pending).rejects.toBeInstanceOf(SlotWaitTimeoutError);
+        // 打ち切りは入れ替えの後の poll から数え直される (入れ替えより前に打ち切られていれば負になる)。
+        expect(rejectedAt - swappedAt).toBeGreaterThanOrEqual(WAIT_TIMEOUT_MS);
+      } finally {
+        first.kill('SIGKILL');
+        second.kill('SIGKILL');
+      }
+    },
+  );
 
   // bdboard-wt5c: Windows では、相手が holder を置き換える rename (待ち手が acquiredAt を書いて走り出す瞬間など)
   // と競合した読み取りが EPERM / EBUSY / EACCES で失敗する。それを書きかけと同じに飛ばすと、唯一の枠を使って
