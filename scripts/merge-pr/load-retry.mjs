@@ -1,5 +1,11 @@
 // bdboard-xdk8: 着地後検証の failure が「負荷由来」かを機械的に決め、1 回だけ再実行するための部品。
 //
+// 凍結 (bdboard-xw00): 失敗の形の分類器 (classifyVerifyFailure / TIMEOUT_SHAPES) にはもう形を足さない。環境の失敗の
+// 形は開いた集合 (負荷・スリープ・ネットワーク・ディスク …) で、形を 1 つ教えるたびに次の形で同じ事故が起きた
+// (xdk8 → e8jj → 7qhq → 2bif)。finish の着地後検証は、着地した木が green 済みの木と同一なら形を見ずに 1 回だけ
+// 再実行する (green-tree.mjs、retryLandedFailure の reason=identical-tree)。分類器が残るのは、その証拠を引けない
+// 経路 (手動の merge-pr verify・gate の自己修復・クラス L の着地・S2/S3 の着地予定ツリーの verify) の唯一の判定だから。
+//
 // 2026-10-04、AGENTS.md と docs だけの PR #846 の着地後検証が、verify スロット 2 本 + スロット外の負荷
 // (load average 48〜111、10 コア) で 2 回続けて偽の failure を出し、main-broken の枠で全マージが止まった
 // (同じ sha の GitHub CI は success、負荷が下がってからの再検証も success)。1 回目は web の
@@ -19,7 +25,7 @@
 // 「負荷由来ではない」に倒す。spawnSync の子が時間切れで殺されて status が null になり、それを
 // `expected null to be +0` と比べて落ちる形 (事故の 2 回目) も、メッセージが時間切れと言っていないので対象外。
 //
-// 再実行の手順 (retryLoadInduced) もここに置く。1 回目の verify が抜けてから再実行の verify が verify スロットに
+// 再実行の手順 (retryLandedFailure。bdboard-xw00 で retryLoadInduced から改名し、2 つの理由で共有する) もここに置く。1 回目の verify が抜けてから再実行の verify が verify スロットに
 // 並ぶまでの数秒〜十数秒 (ログの退避・監査・pending の投稿・npm の起動) に、待っていた pr が先に枠を取って再実行を
 // 待たせないよう、1 回目が終わった直後に予約 holder を置き (scripts/verify-slot.mjs の reserveVerifySlot)、
 // 再実行の verify に BDBOARD_VERIFY_SLOT_HANDOFF で渡す。1 回目の verify.mjs が自分の holder を消してから予約を
@@ -34,6 +40,7 @@ import { copyFileSync, readFileSync, renameSync } from 'node:fs';
 import { cpus, loadavg } from 'node:os';
 
 import { envSlotOptions, reserveVerifySlot } from '../verify-slot.mjs';
+import { greenRetryNotice } from './messages.mjs';
 import { watchRetryHolder } from './reservation-watch.mjs';
 import { audit, say } from './state.mjs';
 import { pollMs } from './verify-queue.mjs';
@@ -62,6 +69,8 @@ const CHILD_TIMEOUT = /^spawnSync \S+ ETIMEDOUT\b/;
  * `[birpc] timeout on calling "…"` は入れない: vitest 4 は worker / プール側の birpc に timeout: -1 を渡して
  * いてこのタイマー自体が張られない (docs/VERIFY.md「vitest worker RPC タイムアウト」)。出たら想定外なので
  * 再実行せずに調べる。
+ * 凍結 (bdboard-xw00): ここに形を足さない (`expected null to be <n>` も足さない)。足りない形は、finish なら
+ * 同一ツリーの green (green-tree.mjs) が形を見ずに再実行で拾う。
  */
 export const TIMEOUT_SHAPES = Object.freeze([
   /^(?:Test|Hook) timed out in \d+ms\b/,
@@ -177,43 +186,65 @@ async function reserveQuietly(priority, queueSince) {
   }
 }
 
+/** 台帳の description に足す再実行の印 (再実行しなければ '')。reason=timeouts の文言は bdboard-xdk8 のまま。 */
+export function retryNote(retried) {
+  if (retried === null) {
+    return '';
+  }
+  return retried.reason === 'identical-tree'
+    ? ` (retried: first run failed on a green tree [${retried.green.how}])`
+    : ` (retried after load-induced failure: ${retried.timeouts} timeouts)`;
+}
+
 /**
- * 着地後検証 (ledger) の 1 回目が exit code で落ちた直後に呼ぶ。失敗が全部時間切れの形なら 1 回目のログを
- * 残して 1 回だけ再実行する。戻り値の retried は再実行の verify を起こしたなら { timeouts }、起こしていなければ
- * null。code は記録する終了コード、stopped は記録しない終わり方 ('error' | 'abandoned'、このときは code なし)。
- * attempt は runContractVerify の引数 (queue と running 以外)。
+ * 着地後検証 (ledger) の 1 回目が exit code で落ちた直後に呼ぶ。1 回目のログを残して 1 回だけ再実行する理由は 2 つ:
+ * - identical-tree (bdboard-xw00): green (green-tree.mjs の { how, tree }) が渡された = 着地した木が green 済みの木と同一。
+ *   失敗の形は見ない (分類器は子プロセスの時間切れの件数を出すためだけに読む)。
+ * - timeouts (bdboard-xdk8): green が無く、失敗が全部時間切れの形 (classifyVerifyFailure。凍結)。
+ * どちらでも再実行は 1 回だけで、2 回目の結果をそのまま返す (2 回目が時間切れだけでも 3 回目は無い)。
+ * 戻り値の retried は再実行の verify を起こしたなら { reason, timeouts, green, firstLog }、起こしていなければ null。
+ * code は記録する終了コード、stopped は記録しない終わり方 ('error' | 'abandoned'、このときは code なし)。
+ * attempt は runContractVerify の引数 (queue と running 以外)。sleptS は 1 回目の間に眠っていた秒数 (監査専用、slept.mjs)。
  */
-export async function retryLoadInduced({ attempt, queue, code, by, firstQueuedAt }) {
+export async function retryLandedFailure({ attempt, queue, code, by, firstQueuedAt, green = null, sleptS }) {
   const { ctx, sha, logPath, activeChild } = attempt;
   // 並び直しでも最初に並んだ時刻を引き継ぐ (予約と再実行は 10 分で頭打ちにしない。verify-slot-queue.mjs の holdsRetryPlace)。
   const queueSince = queue.queueSince ?? firstQueuedAt;
   const reservation = await reserveQuietly(queue.priority, queueSince);
   try {
     const verdict = classifyVerifyFailure(readLogQuietly(logPath));
-    const kept = verdict.loadInduced ? keepFirstAttemptLog(logPath) : null;
+    const reason = green !== null ? 'identical-tree' : verdict.loadInduced ? 'timeouts' : null;
+    const kept = reason === null ? null : keepFirstAttemptLog(logPath);
     if (kept === null) {
-      const why = verdict.loadInduced ? `1 回目のログ ${logPath} を退避できなかったので再実行しません` : `負荷由来とは判断できないので再実行しません (${verdict.reason})`;
+      const why = reason !== null ? `1 回目のログ ${logPath} を退避できなかったので再実行しません` : `負荷由来とは判断できないので再実行しません (${verdict.reason})`;
       // 子プロセスの時間切れの件数は、この後 installAndVerify が出す failure の行 (最後のログ) に載るのでここでは出さない。
       say(`verify が失敗しました (exit ${code})。${why}。`);
       return { code, retried: null };
     }
-    // etimedout (bdboard-7qhq) は 0 件なら項目ごと出さない (audit は undefined を飛ばす)。
+    // timeouts / etimedout (bdboard-7qhq) / slept_s は 0 件・閾値以下なら項目ごと出さない (audit は undefined を飛ばす)。
     audit('landed-verify-retry', {
       sha,
       by,
+      reason,
+      green: green?.how,
+      tree: green?.tree.slice(0, 12),
       exit: code,
-      timeouts: verdict.timeouts,
+      timeouts: verdict.timeouts || undefined,
       etimedout: verdict.etimedout || undefined,
+      slept_s: sleptS,
       load1: loadavg()[0].toFixed(1),
       cpus: cpus().length,
       log: kept,
     });
     say(
-      `verify が失敗しました (exit ${code}) が、失敗は ${verdict.timeouts} 件とも時間切れの形なので負荷由来とみなし、1 回だけ再実行します。`,
+      reason === 'identical-tree'
+        ? greenRetryNotice(code, green)
+        : `verify が失敗しました (exit ${code}) が、失敗は ${verdict.timeouts} 件とも時間切れの形なので負荷由来とみなし、1 回だけ再実行します。`,
       ...childTimeoutLines(verdict.etimedout),
       `1 回目のログ: ${kept}`,
     );
-    const running = `npm run verify retrying after load-induced failure (by ${by})`;
+    const why = reason === 'identical-tree' ? `failure on a tree already verified green (${green.how})` : 'load-induced failure';
+    const running = `npm run verify retrying after ${why} (by ${by})`;
     if (!postQuietly(ctx, sha, 'pending', running)) {
       return { stopped: 'error', retried: null };
     }
@@ -224,7 +255,7 @@ export async function retryLoadInduced({ attempt, queue, code, by, firstQueuedAt
     } finally {
       stopWatching();
     }
-    const retried = { timeouts: verdict.timeouts };
+    const retried = { reason, timeouts: verdict.timeouts, green, firstLog: kept };
     const stopped = await stoppedEarly(activeChild, again, logPath);
     return stopped ? { stopped, retried } : { code: again, retried };
   } finally {

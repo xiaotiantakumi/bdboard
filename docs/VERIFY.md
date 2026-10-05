@@ -468,8 +468,10 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   may start beside it (a `landed` beside a slow `pr`, or a third run) for the
   rest of that run. A longer limit would make a really hung run block
   everyone longer, so this worst case is accepted, not handled.
-- **Retry reservation.** When `merge-pr` re-runs a landed verify after a
-  load-induced failure (docs/GIT-WORKFLOW.md, Layer 3 ledger), it writes a
+- **Retry reservation.** When `merge-pr` re-runs a landed verify once after a
+  failure — the landed tree was already verified green (`reason=identical-tree`,
+  bdboard-xw00) or the failure was all timeouts (`reason=timeouts`, bdboard-xdk8;
+  docs/GIT-WORKFLOW.md "One retry for a landed failure") — it writes a
   reservation holder (its own pid, priority `landed`, `reserved: true`,
   `since` = when the first run queued) right after the first run exits, and
   passes its path to the re-run in `BDBOARD_VERIFY_SLOT_HANDOFF`. The re-run's
@@ -648,6 +650,9 @@ birpc の外には固定のタイムアウトが残っている (worker の起�
 エラーの見出しが全部時間切れの形 (`Test timed out in Nms`・`Hook timed out in Nms`・
 `[vitest-pool]: Timeout starting … runner.` 等。`scripts/merge-pr/load-retry.mjs` の `TIMEOUT_SHAPES`) の
 ときに限り 1 回だけ再実行してから台帳に書く (bdboard-xdk8。docs/GIT-WORKFLOW.md の Layer 3 ledger)。
+この形の一覧は凍結した (bdboard-xw00、形を足さない)。merge-pr finish は、着地した木が green 済みの木
+(クラス F の着地予定ツリー・PR head の木) と同一なら、失敗の形を見ずに 1 回だけ再実行する
+(docs/GIT-WORKFLOW.md「One retry for a landed failure」)。
 再実行でも落ちれば failure として記録されるので、そこから先は同じく実失敗として調べる。Vitest を上げて `createRuntimeRpc` / PoolRunner が birpc に
 渡す `timeout: -1` が変わったら、この節の前提を見直す。
 

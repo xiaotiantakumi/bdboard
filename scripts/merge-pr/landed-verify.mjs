@@ -11,12 +11,15 @@
 // bdboard-wea0.2: 木を切り替える 2 つの操作 (detach と restore) は worktree lock の EX の下で行い、verify の間は SH に
 // 降格する (worktree-hold.mjs)。npm ci と契約の verify には lock の記述を fd 3 で渡す (merge-pr が SIGKILL されても、
 // その子が生きている間は lock が残る)。
+// bdboard-xw00: finish が green (着地した木が green 済みの木と同一、green-tree.mjs) を渡したら、1 回目の failure は
+// 失敗の形を見ずに 1 回だけ再実行する (retryLandedFailure の reason=identical-tree)。green が無ければ従来の分類器 (凍結)。
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { git, gitOk, run } from './exec.mjs';
 import { installInterruptHandler } from './interrupt.mjs';
-import { childTimeoutLines, classifyVerifyFailure, readLogQuietly, retryLoadInduced } from './load-retry.mjs';
+import { childTimeoutLines, classifyVerifyFailure, readLogQuietly, retryLandedFailure, retryNote } from './load-retry.mjs';
+import { startSleepClock } from './slept.mjs';
 import { audit, readInstalledFor, say, stateDir, writeInstalledFor } from './state.mjs';
 import { postQuietly, runContractVerify, stoppedEarly, tail } from './verify-run.mjs';
 import { downgradeForVerify, holdWorktree, isLinkedWorktree, lockFds, setPhase } from './worktree-hold.mjs';
@@ -58,12 +61,16 @@ function untrackedFiles(root) {
  * bdboard-wj9m: verify が verify スロット待ちの打ち切り (scripts/verify-slot.mjs の
  * SLOT_WAIT_TIMEOUT_EXIT_CODE) で終わったときも 'error' (verify は走っていない。failure を書くと
  * main は壊れていないのに main-broken と誤記録され、枠の保持 (holdBrokenMain) にまで至る)。
- * bdboard-xdk8: ledger: true の verify が落ち、失敗が全部時間切れの形なら 1 回だけ再実行する。台帳の
+ * bdboard-xdk8: green が無い (下の bdboard-xw00 を参照) とき、ledger: true の verify が落ち、失敗が全部
+ * 時間切れの形なら 1 回だけ再実行する。台帳の
  * description に「retried after load-induced failure」、監査ログに landed-verify-retry と 1 回目のログの
  * パスを残す。再実行が落ちれば failure、スロット待ちの打ち切りなら error (記録しない)。再実行したかは
  * 返り値の retried (呼び出し元が landed-verify の監査行に retried=1 を足す)。
  * bdboard-7qhq: ledger: true の verify が failure で終わったとき、最後のログにある子プロセスの時間切れ
  * (spawnSync ETIMEDOUT) の件数を返り値の etimedout に入れる (呼び出し元が監査行に etimedout=N を足す。0 件は出さない)。
+ * bdboard-xw00: green (finish だけが渡す) があれば、1 回目の failure は形を問わず 1 回だけ再実行する。返り値の retry は
+ * 再実行したならその理由と 1 回目のログ ({ reason, green, firstLog, … }、しなければ null)、sleptS は failure のときに
+ * 検証の間に眠っていた秒数 (30 秒超のときだけ。監査専用)。
  *
  * bdboard-2twf: 未追跡ファイルがあれば (ignore 済みを除く) verify を始めずに 'error' を返す。
  * verify 実行中に SIGINT/SIGTERM を受けたら、子プロセスを終了して restoreTo に戻ってから
@@ -97,7 +104,7 @@ export async function runLandedVerify(
   ctx,
   sha,
   by,
-  { ledger = true, logName, retryHint, priority = 'landed', queueSince, abandonWhen, command = ctx.config.verify } = {},
+  { ledger = true, logName, retryHint, priority = 'landed', queueSince, abandonWhen, command = ctx.config.verify, green = null } = {},
 ) {
   const root = ctx.cwd;
   const label = ledger ? '着地後検証' : '着地予定ツリーの verify';
@@ -150,8 +157,9 @@ export async function runLandedVerify(
   // detach したまま何もできずに終わってしまう (「detach したままになりうるのは SIGKILL/crash
   // だけ」という docs/GIT-WORKFLOW.md の前提が崩れる)。
   let result;
-  let retried = false;
+  let retry = null;
   let etimedout = 0;
+  let sleptS;
   let installedAny = false;
   try {
     // detach した後 (= sha のツリーの .gitignore) で判定する。checkout 前のままだと違う木の
@@ -174,7 +182,8 @@ export async function runLandedVerify(
       };
       const queue = { priority, queueSince, abandonWhen };
       downgradeForVerify(hold); // 持ち主の行 (phase verify) を書いてから SH へ。拒否なら 75 で、木は戻さない
-      ({ result, retried, etimedout } = await installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, hold }));
+      const args = { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, hold, green };
+      ({ result, retry = null, etimedout, sleptS } = await installAndVerify(ctx, args));
     }
   } finally {
     // activeChild.interrupted の間は installAndVerify がここへ戻ってこない (待つだけで
@@ -189,10 +198,10 @@ export async function runLandedVerify(
       say(`注意: この worktree の node_modules は ${sha.slice(0, 12)} 用に入れ直しました。ブランチで作業を続けるなら npm ci し直してください。`);
     }
   }
-  return { result, logPath, retried: retried === true, etimedout: etimedout ?? 0 };
+  return { result, logPath, retried: retry !== null, retry, etimedout: etimedout ?? 0, sleptS };
 }
 
-async function installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, hold }) {
+async function installAndVerify(ctx, { root, sha, by, command, originalHead, logPath, onInstall, ledger, activeChild, queue, hold, green }) {
   const installedFor = readInstalledFor(root) ?? originalHead;
   for (const lock of LOCKFILES) {
     if (lockfileChanged(root, installedFor, sha, lock.file)) {
@@ -215,6 +224,7 @@ async function installAndVerify(ctx, { root, sha, by, command, originalHead, log
   // hold: 契約の verify は lock を SH で持っている間だけ走らせる (再実行の前にも確かめる。verify-run.mjs)。
   const attempt = { ctx, root, sha, command, logPath, activeChild, ledger, hold };
   const firstQueuedAt = Date.now();
+  const slept = startSleepClock(); // bdboard-xw00 (2bif): 監査専用。再実行の判断には使わない
   let code = await runContractVerify({ ...attempt, queue, running });
   const stopped = await stoppedEarly(activeChild, code, logPath);
   if (stopped) {
@@ -222,11 +232,12 @@ async function installAndVerify(ctx, { root, sha, by, command, originalHead, log
   }
   let retried = null;
   if (code !== 0 && ledger) {
-    // bdboard-xdk8: 失敗が全部時間切れの形 (負荷由来) なら 1 回だけ再実行してから記録する (load-retry.mjs)。
-    const again = await retryLoadInduced({ attempt, queue, code, by, firstQueuedAt });
+    // bdboard-xw00: green 済みの同一ツリーなら形を問わず、そうでなければ失敗が全部時間切れの形 (bdboard-xdk8、凍結) の
+    // ときだけ、1 回だけ再実行してから記録する (load-retry.mjs)。
+    const again = await retryLandedFailure({ attempt, queue, code, by, firstQueuedAt, green, sleptS: slept() });
     retried = again.retried;
     if (again.stopped) {
-      return { result: again.stopped, retried: retried !== null };
+      return { result: again.stopped, retry: retried };
     }
     code = again.code;
   }
@@ -242,6 +253,6 @@ async function installAndVerify(ctx, { root, sha, by, command, originalHead, log
     return { result };
   }
   const why = result === 'success' ? 'npm run verify passed' : `npm run verify failed (exit ${code})`;
-  const note = retried === null ? '' : ` (retried after load-induced failure: ${retried.timeouts} timeouts)`;
-  return { result: postQuietly(ctx, sha, result, `${why}${note} (by ${by})`) ? result : 'error', retried: retried !== null, etimedout };
+  const sleptS = result === 'failure' ? slept() : undefined;
+  return { result: postQuietly(ctx, sha, result, `${why}${retryNote(retried)} (by ${by})`) ? result : 'error', retry: retried, etimedout, sleptS };
 }
