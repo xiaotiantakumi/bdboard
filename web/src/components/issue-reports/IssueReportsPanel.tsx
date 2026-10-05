@@ -2,11 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { fetchIssueDrafts, type IssueDraftStatus } from '../../api/issue-reports';
 import { ISSUE_REPORTS_REFETCH_MS } from '../../hooks/useIssueReportPendingCount';
+import { useExternalIssues } from '../../hooks/useIssueReportPendingCount';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { togglePressedProps } from '../toggleGroupA11y';
 import { IssueDraftDetail } from './IssueDraftDetail';
 import { IssueDraftList } from './IssueDraftList';
 import { IssueDraftManualForm } from './IssueDraftManualForm';
+import { ExternalIssueList } from './ExternalIssueList';
 import { DRAFT_STATUS_ORDER, draftStatusLabel } from './issueDraftText';
 import { MANUAL_LOCAL_ONLY_NOTICE, isLoopbackHostname, type ReportProject } from './manualDraftAccess';
 
@@ -37,6 +39,8 @@ export function IssueReportsPanel({ reportProject, hostname = window.location.ho
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 右ペインに「新しく報告」の書く画面を出している間は true (詳細の代わりに出す)。
   const [composing, setComposing] = useState(false);
+  const [showExternal, setShowExternal] = useState(false);
+  const externalQuery = useExternalIssues();
   const localAccess = isLoopbackHostname(hostname);
   const noticeId = useId();
   // 件数のバッジと同じ間隔で読み直す (下書きは bd の外にあり SSE では届かない。バッジと一覧の数を食い違わせない)。
@@ -52,7 +56,7 @@ export function IssueReportsPanel({ reportProject, hostname = window.location.ho
 
   return (
     <section
-      className={`issue-reports-panel${selectedId !== null || composing ? ' has-selection' : ''}`}
+      className={`issue-reports-panel${selectedId !== null || composing ? ' has-selection' : ''}${showExternal ? ' is-external' : ''}`}
       aria-label="不具合報告"
     >
       <div className="issue-reports-list-pane">
@@ -67,6 +71,7 @@ export function IssueReportsPanel({ reportProject, hostname = window.location.ho
               onClick={() => {
                 setSelectedId(null);
                 setComposing(true);
+                setShowExternal(false);
               }}
             >
               新しく報告
@@ -82,26 +87,29 @@ export function IssueReportsPanel({ reportProject, hostname = window.location.ho
               <button
                 key={option}
                 type="button"
-                className={`toggle-btn${status === option ? ' active' : ''}`}
-                {...togglePressedProps(status === option)}
+                className={`toggle-btn${!showExternal && status === option ? ' active' : ''}`}
+                {...togglePressedProps(!showExternal && status === option)}
                 onClick={() => {
                   // 切り替えた先の一覧に無い下書きの中身を右に出し続けない。
                   if (option !== status) setSelectedId(null);
                   setStatus(option);
+                  setShowExternal(false);
+                  setComposing(false);
                 }}
               >
                 {draftStatusLabel(option)} ({countOf(option)})
               </button>
             ))}
+            </div>
+            {externalQuery.data?.enabled === true && <button type="button" className={`toggle-btn${showExternal ? ' active' : ''}`} {...togglePressedProps(showExternal)} onClick={() => { setSelectedId(null); setComposing(false); setShowExternal(true); }}>届いた issue ({externalQuery.data.issues.length})</button>}
           </div>
-        </div>
-        {listQuery.isLoading && <LoadingIndicator />}
-        {listQuery.isError && (
+        {showExternal ? <ExternalIssueList localAccess={localAccess} /> : listQuery.isLoading && <LoadingIndicator />}
+        {!showExternal && listQuery.isError && (
           <p className="error-message" role="alert">
             不具合報告の一覧を読み込めませんでした。{listQuery.error instanceof Error ? listQuery.error.message : ''}
           </p>
         )}
-        {!listQuery.isLoading && !listQuery.isError && (
+        {!showExternal && !listQuery.isLoading && !listQuery.isError && (
           <IssueDraftList
             drafts={drafts}
             selectedId={selectedId}

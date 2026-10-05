@@ -2028,6 +2028,31 @@ reader、メンテナ環境の判定)。一覧の組み立て・写しの保存�
 - **`needsRejudge` の意味は 9.3 のまま**(題名か本文が写しと違うとき。`updatedAt` だけの変化では立たない)。API はそれを変えず、そのまま返す。**既知の穴(bdboard-g2ti、この PR の範囲外)**: 使えない写しを作り直したとき、`needsRejudge` が黙って false に戻る。API の側から区別する手段は無い。
 - 応答の大きさ: 件数は gh の 3 ページ(300 件)で先に頭打ちになる(写しの上限 500 件より小さい)。本文は切った後で 20,000 文字なので、300 件 x 20,000 文字で、UTF-8 と JSON のエスケープ次第では数十 MB になりうる。`GET` は読むたびに一覧を JSON に組み直す。今の規模では遠いが、画面(9.5)が使うときに、本文を一覧から外す・ページ分け・一覧が変わらない間は組んだ JSON を使い回す(ETag)のどれかを検討する。
 
+→ 9.5 の逸脱表 1
+
+### 実装との差分(4y8q.9.5、届いた issue の画面)
+
+| ファイル | 中身 |
+|---|---|
+| `web/src/api/issue-reports-external.ts` | 読み取り・手動確認 API とサーバー DTO の web 側定義 |
+| `web/src/components/issue-reports/externalIssueText.ts` | 見えない文字の印、本文分割、検査数と状態文 |
+| `ExternalIssueCard.tsx` / `ExternalIssueBody.tsx` / `ExternalIssueList.tsx` | 折りたたみカード、生本文と安全なプレビュー、一覧 |
+| `web/src/hooks/useIssueReportPendingCount.ts` / `IssueReportsPanel.tsx` | 外部 issue の定期取得、合計バッジ、タブ切り替え |
+| `web/src/styles/issue-reports-external.css` | 外部 issue 表示のレイアウト |
+| `web/src/api/issue-reports-external.test.ts` / `externalIssueText.test.ts` / `ExternalIssueCard.test.tsx` | API、不可視文字表 parity、本文表示の検証 |
+| `docs/help-content.json` | 利用者向けヘルプ |
+
+| # | 項目 | 実装 |
+|---:|---|---|
+| 1 | 一覧の重さ | API は変えず、ETag もページ送りも入れない。一覧応答の重さは未対策で、画面は本文を最初から描かない（カードの折りたたみ）だけ。 |
+| 2 | 「後で」の 2 種 | 手動確認の 429 は `retryAfterSeconds` を表示する。予算切れの `failed` は「しばらくしてから」と表示し、時刻は出さない。サーバーは再開時刻を返さない。予算切れは `detail` 先頭の `gh call limit reached` で分類し、`detail` は表示しない。 |
+| 3 | `error.detail` | `isLoopbackHostname` によるローカル読み手だけに表示し、トンネル越しには状態ごとの固定文だけを出す。 |
+| 4 | API ファイル | 呼び出しは `issue-reports.ts` ではなく `issue-reports-external.ts` に置いた。並行 PR #925 との競合を避けるためで、チケット本文からの差分。 |
+| 5 | 不可視文字表 | web 側に二重定義する（web から src は import できない）。`externalIssueText.test.ts` がサーバーソースを読み、全コードポイントで集合一致を検証する。 |
+| 6 | 本文表示 | 既定は印付き生本文。プレビューは `SafeMarkdownPreview` でリンクを `<a href>` にせず画像も読み込まない。重い本文では `previewHeavyReason` により選べない。描画 throw 時の既存 fallback は印の無い生文字になる。`⟦ ⟧` が本文にあれば偽の印にもなるため検査数も見る。 |
+| 7 | バッジの数 | 未処理下書き + 届いた issue。片方が読めなければ読めた側だけ、両方読めなければ不明。`updatedAtChanged` だけの変化は画面に出さない（U9）。 |
+| 8 | 切り替え | `enabled: false`（メンテナ環境でない）では表示しない。 |
+
 #### main.ts の変更
 
 `src/main.ts` は 2 行だけ(`wireIssueReports` に `commandRunner` を渡す、`wireShutdown` に `externalIssues` を渡す)。配線の本体は `wire-external-issues.ts`(max-lines の 200 行に収めるため。並行の 4y8q.6.4 も `main.ts` / `mount-routes.ts` を触るので、差を小さくした)。
