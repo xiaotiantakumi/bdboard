@@ -30,7 +30,7 @@ const INVISIBLE_ONLY: ReadonlyArray<readonly [string, string]> = [
   ['a lone tag character (U+E0061)', '\u{E0061}'],
   ['a lone control character (U+0001)', '\u0001'],
   ['a lone combining acute accent (U+0301)', '́'],
-  ['a lone VARIATION SELECTOR-16 (U+FE0F)', '️'],
+  ['a lone VARIATION SELECTOR-16 (U+FE0F)', '\uFE0F'],
   ['zero-width characters between newlines', '\u200B\n\u200B\n⠀'],
 ];
 

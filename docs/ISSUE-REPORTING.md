@@ -314,7 +314,7 @@ head/tail が置き換え後の文章から作られるようになったら、�
 | 種別・出どころ | 種別 C、`source: 'manual'`。「大量発生」の下書きへ丸めない(自動の 1 時間 20 件の枠が使い切られていても、手書きは自分の下書きを作る) |
 | 説明 | `localOnly.agentNoteRaw` に入れる(手元だけ。トンネルには見せない)。**暫定の公開本文には入らない**。公開本文の組み立て(5 節)に入れるかは、投稿(4y8q.4)が置き換えを通してから決める |
 | 題名 | 「直した題名」として保存する(`titleEditedByUser: true`)ので、直した欄にかかる置き換え漏れの検出(`withRescannedLeaks`)を作成時に通り、`suspectedLeaks` が付く(置き換えはしない。人が直す)。本文は自動の暫定の本文(`bodyEditedByUser: false`) |
-| `envInfo` | サーバーが埋める(画面からは受けない): `bdboardVersion`(package.json の version)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。`bdVersion`・`ghVersion`・`harnessVersion` は埋めない |
+| `envInfo` | サーバーが埋める(画面からは受けない): `bdboardVersion`(package.json の version)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。`bdVersion`(bdboard-424g。起動時に 1 回読んだ bd の版。読めない・まだ読み終わっていないときは `unknown`。本体エラーの下書きと同じ元で、`bd version` は追加で起動しない)。`ghVersion`・`harnessVersion` は埋めない |
 | 件数の上限 | 自動の 1 時間 20 件とは**別の枠**で、既定 1 時間 20 件。一覧(`storage.scan()`)から「指紋が `C:manual:` で始まり、`firstOccurredAt` が今から 60 分以内」の下書きを数える(UTC の暦時間ではなく走っている 60 分。見送り済みも数える。時計が戻って今より後の時刻になった下書きは数えない: 数えると、時計が追い付くまで手書きを断り続ける)。索引の形式は変えない。超えたら 429 `{ error, code: 'manual-rate-limited' }`、容量切れは 507 `{ code: 'storage-full' }`(自動と同じ) |
 | 画像 | 既存の画像の追加(`POST drafts/:id/images`)でそのまま付けられる(pending の下書きなので) |
 
@@ -365,6 +365,32 @@ head/tail が置き換え後の文章から作られるようになったら、�
   ④ 複数選択のときに 1 つへ決め打ちすると、別のプロジェクトの名前を鍵にして題名の疑いを取りこぼす(または無関係な名前で疑いを付ける)ので、送らない。
 - 送ると、題名にそのプロジェクトの名前やパスを書いたときに置き換え漏れの疑いが付く。送ったかどうかは、書く画面に「対象プロジェクト: 〇〇」と出して分かるようにする。
 - **設計(1 節)からのずれ**: なし。5 節の `occurredProjects` に 1 件入るだけで、新しい欄・新しい API は増えない。
+
+#### 画像を付ける(「新しく報告」、bdboard-4y8q.6.9)
+
+書く画面に画像の欄(`IssueDraftImagePicker`、状態は `useIssueDraftImages`)を足した。入れ方は 3 つ: クリップボードからの貼り付け
+(書く画面のどの欄にカーソルがあっても。`<form>` の `onPaste`)、ドロップ、「画像を選ぶ」。縮小表示を出し、1 枚ずつ「外す」で外せる。
+送るのは**下書きを作ったあと**で、既存の `POST drafts/:id/images`(3 節の表の「画像の追加」)へ 1 枚ずつ送る(`uploadIssueDraftImage`、
+`web/src/api/issue-reports.ts`)。新しい API は増えない。
+
+| 項目 | 内容 |
+|---|---|
+| 画面で先に断るもの | サーバーと同じ一覧と上限: 形式は PNG・JPEG・WebP・GIF(`ATTACHMENT_ALLOWED_MIME_TYPES`。`extensionForMimeType` が拡張子に直せる 4 つ)、1 枚 10 MiB(`ATTACHMENT_MAX_BYTES` = 10 * 1024 * 1024 バイト。ちょうどは通す)、0 バイトは断る(サーバーも 400)、1 下書き 20 枚(`ISSUE_DRAFT_MAX_IMAGES`)。断ったものだけを外して理由を出し、残りは付ける。20 枚を超える分は 1 件の理由にまとめる。画面ではマジックバイトを見ない(宣言した形式と中身が合わなければ、送ったときにサーバーが 400 にする) |
+| 値をサーバーと同じにする方法 | **web/ から src/ は import できない**(依存境界 `web-no-server-src` / `server-no-web`)ので、画面側の `issueDraftImageLimits.ts`(定数だけ・他を import しない)に同じ値を二重に持つ。一致は `src/interface/http/issue-report-image-limits.test.ts` が固定する: 画面側のファイルを `typescript` の `transpileModule` で変換して評価し(import ではなく読み込みなので境界は破れない)、枚数・バイト数・MIME の一覧(順序も)をサーバーの 3 定数と比べ、`extensionForMimeType` で 4 つの拡張子に直せることも見る。どちらかの値だけを変えるとこのテストが落ちる(上限を変えるときは両方を同じ PR で変える) |
+| 送る順序 | ① 題名・説明の検査(画像は欄に足した時点で検査済み)→ ② `POST manual-drafts`(失敗したら理由を出して入力と画像を残し、画像は 1 枚も送らない)→ ③ 画像を**1 枚ずつ、前の応答を待ってから**送る(送る直前に `readFileAsDataUrl`(`chat/attachments.ts` から流用)で 1 枚だけ読み、送ったら捨てる。20 枚ぶんの base64 を同時に持たない。サーバーも 1 枚ごとに枚数と容量を確かめる)→ ④ `['issue-reports']` の読み直しを待つ → ⑤ 失敗が無ければ新しい下書きを選ぶ。作成が先なので、詳細を開いたときは画像の一覧が揃っている |
+| 一部が付かなかったとき | **下書きは作れているので、画像の失敗で下書きを消さない・作り直さない。**書く画面の代わりに「下書きを作りました」の画面を出し、付かなかった画像を `n 枚目「名前」` と理由つきで並べる(同じ名前の貼り付け `image.png` を見分けるため位置も付ける)。ボタンは「付かなかった画像をもう一度送る」(失敗した分だけを同じ下書きへ送り直す。全部付けば下書きを選ぶ)と「下書きを開く」。**この画面には「送る」も入力欄も出さない**(もう一度「送る」を押して同じ報告を重ねて作る事故を防ぐ) |
+| 失敗の理由 | `describeIssueDraftImageError`(`issueDraftErrors.ts`)。**409 は 2 種類**: `code: 'draft-not-pending'`(見送り・投稿済み)は既存の「未処理ではない」の説明、それ以外の 409 は「この下書きに付けられる画像は 20 枚までです」(サーバーは枚数超過の 409 に `code` を付けない。下の「既知の限界」)。507 は容量の説明(`STORAGE_FULL_HELP`)、403 `local access only` は「ローカルで開いたときだけ画像を付けられます」、400 は「画像として受け付けられませんでした」、413 は「大きすぎます」 |
+| 送るのをやめる失敗 | 403・404・409・507 は下書き全体に当たる原因なので、残りの画像は送らず「送っていません」として一覧に出す(送っても同じ理由で落ち、14 MiB 級の本文を無駄に送るだけ)。400・413・読み込みの失敗・通信の失敗は 1 枚の事情なので、次の画像へ進む |
+| トンネル | **画像の入力を出さない。**書く画面そのものがローカルでしか開けない(6.8。ボタンが無効)うえ、書く画面の `localAccess`(パネルが `isLoopbackHostname` で決めた値を渡す。判定は 1 か所)が false なら、画像の欄・注記・貼り付けの処理をすべて出さない。サーバーは画像の追加を `localOnlyGuard` で 403 にする(正はサーバー) |
+| 注記 | 「画像は手元にだけ保存され、公開 issue には自動では載りません」を欄に出し、`aria-describedby` で欄と結ぶ。スクリーンショットは生ログと同じ種類の秘密が写りうるので、トンネルには見せない(3 節)のと同じ理由でこの文を置く。**本当に「自動では載らない」ことの根拠**: 公開本文の組み立て(5 節。`src/domain/` の下書きの本文の組み立て)は画像を入力に取らず、画像のファイル名・URL も本文に載らない。投稿(4y8q.4)で画像を載せるかどうかは、そちらで決める |
+
+**設計(1 節)からのずれ**(4y8q.11 の規則):
+- **「付かなかった画像をもう一度送る」を足した**: チケットは「どれが付かなかったかを出す」までだった。書く画面から画像を付ける道は、作成の直後のこの 1 回しか無い(あとから下書きへ画像を足す画面は無い)ので、通信の一時的な失敗で画像が失われないようにした。再送は失敗した分だけで、下書きは作り直さない。
+- **画像が付かなかったときは下書きを選ばない**: 6.8 は「作れたら必ず新しい下書きを選ぶ」だったが、画像が付かなかったときは、選ぶ前に失敗を読ませる(選ぶと書く画面が閉じ、失敗の表示が消える)。「下書きを開く」で選ぶ。画像が全部付いた(または 0 枚の)ときは 6.8 と同じ。
+- **10MB は 10 MiB**: チケットの「10MB」は、サーバーの `ATTACHMENT_MAX_BYTES`(10 * 1024 * 1024 バイト)のこと。画面の文言は、既存の添付(`formatImageSize`)に合わせて MiB で書く。
+- **縮小表示は object URL**: 貼り付けた時点で data URL にすると、20 枚 × 最大 10 MiB(base64 で約 13 MiB)をメモリに持つ。縮小表示は `URL.createObjectURL`(外す・閉じるで `revokeObjectURL`)で出し、`readFileAsDataUrl` は送る直前に 1 枚ずつだけ使う。CSP は `frame-ancestors 'none'` だけ(`app-security.ts`)で `blob:` の画像を妨げない。
+
+**既知の限界**: 画面は、枚数超過の 409 を「`code` が `draft-not-pending` でない 409」として判定する(サーバーの `issue-report-routes.ts` は枚数超過の 409 に `code` を付けない)。サーバーが 409 の理由を増やしたら、この判定の見直しが要る(`code` を付ける変更は、4y8q.6.9 の範囲外のサーバー変更なので入れていない)。
 
 ### 閲覧・編集(PATCH)側のフィールド範囲
 
@@ -1092,8 +1118,24 @@ reporter の中で握って**ログに code だけ**出す: `self error draft fa
 なお、起動時の初回リフレッシュが以前から出している `Refresh error [kind] project=…: detail`(`console.error`)はこの取り込みとは別で、今回は変えていない。
 
 **envInfo はサーバーが埋める**: `bdboardVersion`(既存の `ApplicationVersionProvider`)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。元は共有の `serverEnvInfo`(`wire-issue-draft-service.ts`)で、
-手書きの下書き(4y8q.6.7)も本体エラーも同じもの。`bdVersion` は入れない
-(bd の版は起動時に 1 回読んで捨てるだけで、リフレッシュの失敗のたびに `bd version` を起動するのは安価でなく、bd が壊れているときこそ読めない)。
+手書きの下書き(4y8q.6.7)も本体エラーも同じもの。`bdVersion` も入れる(bdboard-424g。6.3 では入れていなかった)。値は**起動時に 1 回読んだ結果**で、
+`wireCoreInfra`(`wire-core-infra.ts`)が `readBdVersion` を 1 回だけ起動し、同じ Promise を起動時の診断(`runBdVersionStartupCheck`)と
+`createBdVersionSnapshot`(`src/application/bd/bd-version-snapshot.ts`)に渡す。`bd version` を追加で起動することはなく、リフレッシュの失敗のたびに読み直すこともない。
+`main.ts` が `infra.bdVersion` を `wireIssueDraftService` と `wireSelfErrorReporter` の両方へ渡す(application 層は infrastructure を import せず、wiring が関数で渡す)。
+
+**まだ読めていない・読めなかったとき**: `createBdVersionSnapshot` は**同期の getter** で、読み終わるまでは `'unknown'`、読めた(空でない)ら前後の空白を除いたその版を返す。
+bd が無い・壊れている・出力が読めない・timeout(`readBdVersion` は `null` を返す)ときは `'unknown'` のまま。版は外のコマンドの出力なので、HTTP の受け取りの `envInfo` と同じく
+1 行(`isSingleLineText`)・100 文字までのものだけ受け、ほかは `'unknown'` にする(サーバーが埋める `envInfo` は入口の schema を通らず、暫定の本文の `- bd: …` の行にそのまま入る)。Promise を `await` する形にしなかったのは、
+`envInfo` が同期の関数で(async にすると `IssueDraftService` と `createSelfErrorReporter` の型が変わる)、読み取りを待つとリフレッシュの失敗の報告や起動が最大 3 秒(timeout)遅れるため。
+その代わり、読み取りが終わる前に作った下書きの `bdVersion` は `unknown` になる。ただし実際に起きるのはまれ: 初回リフレッシュの結果は discovery と(変わったプロジェクトの)`bd list` が
+全部終わってから届き、`bd version` はそれより前に起動していて DB を開かない。API の 5xx と手書きの下書きは、初回リフレッシュの後に listen してから来る。
+`bd version` が初回リフレッシュ全体より遅いときだけ、その結果の下書きが `unknown` になる(timeout で `null` になったときは、その後もずっと `unknown`)。同じ **pending の** 下書きが再発したときは `envInfo` が
+最後の発生の値に置き換わる(`issue-draft-build.ts` の `latestEnvironment`)ので、次の報告(同じ文は 1 時間に 1 回しか報告しないので、続いていれば 1 時間後。再起動すれば throttle は空になる)で読めた版に直る。
+見送り(`dismissed`)の下書きは回数だけ足すので置き換わらず、「大量発生」の下書きは最初の報告の `envInfo` のまま。bd が壊れているときに読めないのは変わらない(`unknown` が出る = 切り分けの手がかりの 1 つ)。
+**既知の限界(起動後の bd の入れ替え)**: 版は起動時の 1 回分なので、bdboard を動かしたまま bd を更新すると(`brew upgrade` など)、再起動までの下書きには**更新前の版**が入る。
+schema-mismatch はまさに bd の更新の直後に起きやすいので、この間の下書きの `bdVersion` は失敗した bd の版ではないことがある(再起動の後の再発で直る)。
+受け入れは `wire-core-infra.test.ts`(偽の bd の呼び出しが 1 回・読めるまで `unknown`・起動できないと `unknown`)、`bd-version-snapshot.test.ts`、`wire-self-error-reporter.test.ts`
+(読み終わる前は `unknown`・後は版)、`wire-issue-draft-service.test.ts`(手書きの下書き)。
 
 **止め方(U6)**: 環境変数 `BDBOARD_SELF_ERROR_DRAFTS` が `off` / `0` / `false`(前後の空白・大小は無視)のとき、取り込み全体が何もしない(`receive` を呼ばない)。起動時にログを 1 回出す。
 止めているときは `wireSelfErrorReporter` が `reporter` も `onRefreshResult` も **`undefined`** で返し、`wireBoardRefresh` は結果の observer を作らない(止めた分の空の関数や、結果ごとの
@@ -1111,12 +1153,12 @@ README の環境変数の表にも載せた。
 | 2 | `onRefreshResult` の形 | `(result, projects) => void`。`refreshRunner` の `onResult` の末尾と、起動時の初回リフレッシュの後の両方で呼ぶ。呼ぶ側は投げない |
 | 3 | `report` / `observeRefresh` の戻り値 | 仕様の「`receive` を待たずに呼ぶ」に合わせ、呼び出し側は待たない。戻りは `Promise<void>` で決して reject しない(テストが完了を待てるようにするため) |
 | 4 | deps の `now` | 足した(`() => new Date()` が既定)。tracker と `report()` の throttle が時刻を要る |
-| 5 | `bdVersion` | 入れなかった(上の「envInfo」) |
+| 5 | `bdVersion` | 6.3 では入れなかった(起動時に 1 回読んで捨てていた)。**bdboard-424g で入れた**: 起動時の読み取りの結果を保持し(読めない・まだなら `unknown`)、手書きの下書きと本体エラーの両方の `envInfo` に渡す(上の「envInfo」) |
 | 6 | Dolt のデータベース名(`.beads/metadata.json` の `dolt_database`) | **4y8q.4 に回した**。この PR では公開本文を作らず(題名・本文の暫定版は `errorText` を含まない。3節の暫定版の説明)、`errorText` が入るのは手元限定の `errorTextRaw` だけ。読み取りは全プロジェクトの `metadata.json` を読む IO で、公開本文の鍵 `LocalOnlyKeys` を全プロジェクトの名前・根・接頭辞に広げる U13(4y8q.4)と同じ場所で一度に足すほうが自然で、ここで足すと 6.2 の `SelfErrorMaskProject` と port の追加が要る。**4y8q.4 の申し送り**: `LocalOnlyKeys` に `dolt_database` も足す |
 | 7 | 一度もキャッシュされないプロジェクトの接頭辞 | 接頭辞が分からないので、接頭辞から作られる Dolt のデータベース名(#432 の文 `database "epic_haslett_00ae14" not found …`)は伏せられず、手元の `errorTextRaw` に残る。名前とパスは discovery の一覧で伏せる。下書きの指紋はこの文から作るので、別のプロジェクトの同じ種類のエラーは別の下書きになる(漏らさない側に倒した)。6 の読み取りを足せば解消する |
 | 8 | 環境変数による停止(U6) | 6.2 が「後続は 4y8q.6.3」としたものを、この PR で入れた(6.3 の本文には無かったが、ほかに担当のチケットが無い) |
 | 9 | 6.2 の domain への変更 | `selfErrorKey(kind, errorText)` を公開した(tracker の内部のキー関数。`report()` が同じ畳み方でキーを作る)。ほかは触っていない |
-| 10 | `wireIssueDraftService` / `wireIssueReports` と envInfo(#911=4y8q.6.7 との意味の衝突) | `wireIssueReports` の `service` を省略可能な引数にした(渡さなければ自分で作る)。#911 は手書きの下書きの `envInfo` を `wireIssueReports` が作るサービスに入れていたが、この PR で `main.ts` が**サービスを先に作って渡す**ので、そのままだと手書きの下書きの版が黙って `unknown` になる(文面の衝突ではなく意味の衝突。git は検出しない)。そこで envInfo の元を **`wireIssueDraftService` の必須の引数 `applicationVersion`** に移し、共有の `serverEnvInfo(applicationVersion)`(`bdboardVersion`・`os`・`nodeVersion`)を手書きの下書きと本体エラーの両方に使う。`wireIssueReports` の `applicationVersion` は、サービスを渡さないとき(テスト)に自分で作るサービスにだけ使う。受け入れは `wire-issue-draft-service.test.ts`(main.ts と同じ組み立てで、手書きの下書きの envInfo に渡した版が入る) |
+| 10 | `wireIssueDraftService` / `wireIssueReports` と envInfo(#911=4y8q.6.7 との意味の衝突) | `wireIssueReports` の `service` を省略可能な引数にした(渡さなければ自分で作る)。#911 は手書きの下書きの `envInfo` を `wireIssueReports` が作るサービスに入れていたが、この PR で `main.ts` が**サービスを先に作って渡す**ので、そのままだと手書きの下書きの版が黙って `unknown` になる(文面の衝突ではなく意味の衝突。git は検出しない)。そこで envInfo の元を **`wireIssueDraftService` の必須の引数 `applicationVersion`** に移し、共有の `serverEnvInfo(applicationVersion)`(`bdboardVersion`・`os`・`nodeVersion`。bdboard-424g で第 2 引数に bd の版の getter を足した。逸脱表 5)を手書きの下書きと本体エラーの両方に使う。`wireIssueReports` の `applicationVersion` は、サービスを渡さないとき(テスト)に自分で作るサービスにだけ使う。受け入れは `wire-issue-draft-service.test.ts`(main.ts と同じ組み立てで、手書きの下書きの envInfo に渡した版が入る) |
 | 11 | 既知の限界: `occurredProjects` | (**4y8q.6.2 の逸脱表 12 の再掲**)下書きの `occurredProjects` には、**1 時間に 1 プロジェクトしか載らない**。間引きのキーをプロジェクトで共有するので、同じ文の 2 つ目以降のプロジェクトは 1 時間のあいだ報告されない。ふつう `occurredProjects` は「どのプロジェクトで起きたか」の一覧だが、本体エラーでは当てにしない(回数も「プロジェクトの数」ではない) |
 
 ### 本体エラーの取り込み(bdboard-4y8q.6.4、API の 5xx と処理されなかった例外)
