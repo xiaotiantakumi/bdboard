@@ -121,8 +121,18 @@ export interface IssueDraftImageDto {
   readonly createdAt: string;
 }
 
-export interface IssueDraftImageUploadInput { readonly mimeType: string; readonly data: string }
-export interface IssueDraftImageUploadResponseDto { readonly image: IssueDraftImageDto }
+/**
+ * 下書きへ画像を 1 枚足す本文 (POST drafts/:id/images)。`data` は base64 だけ (data URL の前置きは付けない)。
+ * `mimeType` を string にしているのは、api が components の定数を import しないため。形式の検査は呼び出し側 (画面) とサーバーがする。
+ */
+export interface IssueDraftImageUploadInput {
+  readonly mimeType: string;
+  readonly data: string;
+}
+
+export interface IssueDraftImageUploadResponseDto {
+  readonly image: IssueDraftImageDto;
+}
 
 export interface IssueDraftDetailResponseDto {
   readonly draft: IssueDraftDetailDto;
@@ -162,12 +172,18 @@ export function fetchIssueReportPendingCount(): Promise<{ pendingCount: number }
   return fetchJson<{ pendingCount: number }>(ISSUE_REPORTS_PENDING_COUNT_API_PATH);
 }
 
-/** 下書きへ画像を 1 枚追加する。 */
-export function uploadIssueDraftImage(id: string, input: IssueDraftImageUploadInput): Promise<IssueDraftImageUploadResponseDto> {
+/**
+ * 下書きへ画像を 1 枚足す (bdboard-4y8q.6.9)。サーバーはローカル直アクセスだけ受け、pending の下書きにだけ付ける。
+ * 失敗は ApiError: 400 (形式・大きさ・中身)、403、404、409 (枚数の上限は code 無し、未処理でない下書きは code: draft-not-pending)、413、507。
+ */
+export function uploadIssueDraftImage(
+  id: string,
+  input: IssueDraftImageUploadInput,
+): Promise<IssueDraftImageUploadResponseDto> {
   return fetchJson<IssueDraftImageUploadResponseDto>(`${draftPath(id)}/images`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ mimeType: input.mimeType, data: input.data }),
   });
 }
 
