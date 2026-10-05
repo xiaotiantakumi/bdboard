@@ -16,6 +16,12 @@ export interface ExternalIssueSnapshotStoragePort {
    * 新しい内容で書き換えてしまわないため。
    */
   list(): Promise<readonly StoredExternalIssueSnapshot[]>;
+  /**
+   * ファイルはあるが使えない (JSON でない・形が合わない・番号がファイル名と食い違う・ディレクトリ) 写しの番号。昇順。
+   * `list` が飛ばしたものと同じ。サービスが「初めて見た issue」(ファイルが無い) と区別して、作り直す写しに再判定の印を立てるために使う。
+   * ファイルが無いのは含めない。読み取りの I/O の失敗は `list` と同じく投げる。
+   */
+  listUnusable(): Promise<readonly number[]>;
   /** 1 件取得。無い・使えないときは undefined (使えないときは警告)。I/O の失敗は投げる。 */
   get(number: number): Promise<StoredExternalIssueSnapshot | undefined>;
   /** 新規作成または上書き。原子的に書く。失敗したら一時ファイルを残さず投げる。 */

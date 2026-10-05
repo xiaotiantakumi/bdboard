@@ -44,6 +44,7 @@ export interface InMemorySnapshotStorage extends ExternalIssueSnapshotStoragePor
   readonly files: Map<number, StoredExternalIssueSnapshot>;
   readonly saves: number[];
   readonly removes: number[];
+  readonly unusable: Set<number>;
   failList: Error | undefined;
   failSave: ((snapshot: StoredExternalIssueSnapshot) => Error | undefined) | undefined;
   failRemove: Error | undefined;
@@ -56,11 +57,13 @@ export interface InMemorySnapshotStorage extends ExternalIssueSnapshotStoragePor
 
 export function createInMemorySnapshotStorage(): InMemorySnapshotStorage {
   const files = new Map<number, StoredExternalIssueSnapshot>();
+  const unusable = new Set<number>();
   let gate: { readonly wait: Promise<void>; readonly enter: () => void } | undefined;
   const storage: InMemorySnapshotStorage = {
     files,
     saves: [],
     removes: [],
+    unusable,
     failList: undefined,
     failSave: undefined,
     failRemove: undefined,
@@ -86,6 +89,10 @@ export function createInMemorySnapshotStorage(): InMemorySnapshotStorage {
       if (storage.failList) throw storage.failList;
       return [...files.values()].sort((a, b) => a.number - b.number).map((record) => structuredClone(record));
     },
+    listUnusable() {
+      if (storage.failList) return Promise.reject(storage.failList);
+      return Promise.resolve([...unusable].sort((a, b) => a - b));
+    },
     get(number) {
       const record = files.get(number);
       return Promise.resolve(record === undefined ? undefined : structuredClone(record));
@@ -94,12 +101,14 @@ export function createInMemorySnapshotStorage(): InMemorySnapshotStorage {
       const failure = storage.failSave?.(snapshot);
       if (failure) return Promise.reject(failure);
       files.set(snapshot.number, structuredClone(snapshot));
+      unusable.delete(snapshot.number);
       storage.saves.push(snapshot.number);
       return Promise.resolve();
     },
     remove(number) {
       if (storage.failRemove) return Promise.reject(storage.failRemove);
       files.delete(number);
+      unusable.delete(number);
       storage.removes.push(number);
       return Promise.resolve();
     },
