@@ -15,7 +15,7 @@ import {
   createDraftIndexCache,
   syncStatuses,
 } from './issue-draft-index.js';
-import { createMutex } from './issue-draft-mutex.js';
+import { createMutex } from '../concurrency.js';
 import { createDraftRetention, type DraftRetentionOptions } from './issue-draft-retention.js';
 import {
   createManualLocked,
