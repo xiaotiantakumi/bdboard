@@ -137,6 +137,25 @@ export function greenRetryFailedSteps(how, load1, logs) {
   ];
 }
 
+/**
+ * bdboard-bsc3: 必須チェックが CANCELLED (gh pr checks の bucket が cancel) のときの案内。cancelled は { name, link }
+ * の配列。GitHub 側で runner を取れず取り消されたジョブは失敗でも成功でもなく、そのままでは ruleset の必須チェックを
+ * 満たさない (gate の後の gh pr merge が base branch policy で拒否される)。link (…/actions/runs/<run>/job/<job>) から
+ * run の ID が取れれば gh run rerun の行まで出し、取れなければ一般的な文にする。cancel が無ければ何も足さない。
+ */
+export function cancelledChecksSteps(cancelled) {
+  if (cancelled.length === 0) {
+    return [];
+  }
+  const runIds = [...new Set(cancelled.map((check) => /\/actions\/runs\/(\d+)/.exec(check.link ?? '')?.[1]).filter((id) => id !== undefined))];
+  const rerun = runIds.length > 0 ? runIds.map((id) => `gh run rerun ${id} --failed`).join(' / ') : 'gh run rerun <run> --failed (<run> は gh run list --branch <PR のブランチ> で確かめる)';
+  return [
+    `取り消された (CANCELLED) 必須チェック: ${cancelled.map((check) => check.name).join(' / ')}。GitHub 側で runner を取れず取り消された可能性があります。`,
+    '  cancelled は ruleset の必須チェックを満たさないので、このまま進むと gate の後の gh pr merge が base branch policy で拒否されます。',
+    `  ${rerun} で流し直し、必須チェックが green になってから prepare し直してください。`,
+  ];
+}
+
 export function rebaseSteps(mainRef, reason = 'S1 では main が動いたら rebase') {
   return [
     `main が PR のベース以降に進んでいます (クラス R: ${reason})。枠の外で取り込んでから並び直してください:`,

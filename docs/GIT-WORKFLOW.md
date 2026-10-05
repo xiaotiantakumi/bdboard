@@ -320,6 +320,21 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: 
   worktree, run from the main checkout, `npm ci` failed, untracked files not `.gitignore`d by the
   tree about to be verified, the verify slot wait timed out, …) — the message says what to fix; for a
   landed verify that could not run, fix it and run `BDBOARD_MERGER=chair npm run merge-pr -- verify <sha>`.
+- **`prepare` reads the required checks row by row, not from `gh pr checks`'s exit code**
+  (bdboard-bsc3). gh sorts each check into a bucket (`pass` / `fail` / `pending` / `skipping` /
+  `cancel`) and exits 1 only if some check is `fail`, else 8 only if some is `pending`: a `cancel`
+  counts for neither, so a required `e2e` that GitHub cancelled (typically no runner could be
+  obtained, steps 0) left the exit code at 0 — `prepare` said "必須チェック=pass", ran the predicted
+  tree's verify (≈14 minutes and a verify slot) and `gate`'s `gh pr merge` was then refused by the base
+  branch policy (PR #921, 2026-10-06). And with `--json` gh exits 0 whatever the buckets are. So
+  `prepare` runs `gh pr checks <N> --required --json name,state,bucket,link` and judges the rows:
+  `pass` / `skipping` (SKIPPED, NEUTRAL) are green, `pending` is exit 75, **everything else —
+  `fail`, `cancel`, an unknown or missing bucket, no rows at all — is exit 2**. A `cancel` row also
+  prints the rerun line (`gh run rerun <run> --failed`, the run id read from the row's link); rerun,
+  wait for green, then `prepare` again. A GraphQL quota / network error is still exit 75. A gh that
+  has no `pr checks --json` falls back to the old exit-code judgement and says so (it cannot tell a
+  cancel from a pass). A required check that never reported at all is not in gh's list either; that
+  case is not covered here.
 - **The merge line is printed, not run by the script** (decision 4 of bdboard-ulxa §6): if the
   permission classifier refuses `gh pr merge`, running it from inside a script would be a
   bypass. Refused → do not retry, run `finish` (it returns the slot), then the human gate
