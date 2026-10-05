@@ -312,7 +312,7 @@ head/tail が置き換え後の文章から作られるようになったら、�
 | 種別・出どころ | 種別 C、`source: 'manual'`。「大量発生」の下書きへ丸めない(自動の 1 時間 20 件の枠が使い切られていても、手書きは自分の下書きを作る) |
 | 説明 | `localOnly.agentNoteRaw` に入れる(手元だけ。トンネルには見せない)。**暫定の公開本文には入らない**。公開本文の組み立て(5 節)に入れるかは、投稿(4y8q.4)が置き換えを通してから決める |
 | 題名 | 「直した題名」として保存する(`titleEditedByUser: true`)ので、直した欄にかかる置き換え漏れの検出(`withRescannedLeaks`)を作成時に通り、`suspectedLeaks` が付く(置き換えはしない。人が直す)。本文は自動の暫定の本文(`bodyEditedByUser: false`) |
-| `envInfo` | サーバーが埋める(画面からは受けない): `bdboardVersion`(package.json の version)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。`bdVersion`・`ghVersion`・`harnessVersion` は埋めない |
+| `envInfo` | サーバーが埋める(画面からは受けない): `bdboardVersion`(package.json の version)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。`bdVersion`(bdboard-424g。起動時に 1 回読んだ bd の版。読めない・まだ読み終わっていないときは `unknown`。本体エラーの下書きと同じ元で、`bd version` は追加で起動しない)。`ghVersion`・`harnessVersion` は埋めない |
 | 件数の上限 | 自動の 1 時間 20 件とは**別の枠**で、既定 1 時間 20 件。一覧(`storage.scan()`)から「指紋が `C:manual:` で始まり、`firstOccurredAt` が今から 60 分以内」の下書きを数える(UTC の暦時間ではなく走っている 60 分。見送り済みも数える。時計が戻って今より後の時刻になった下書きは数えない: 数えると、時計が追い付くまで手書きを断り続ける)。索引の形式は変えない。超えたら 429 `{ error, code: 'manual-rate-limited' }`、容量切れは 507 `{ code: 'storage-full' }`(自動と同じ) |
 | 画像 | 既存の画像の追加(`POST drafts/:id/images`)でそのまま付けられる(pending の下書きなので) |
 
@@ -1030,8 +1030,18 @@ reporter の中で握って**ログに code だけ**出す: `self error draft fa
 なお、起動時の初回リフレッシュが以前から出している `Refresh error [kind] project=…: detail`(`console.error`)はこの取り込みとは別で、今回は変えていない。
 
 **envInfo はサーバーが埋める**: `bdboardVersion`(既存の `ApplicationVersionProvider`)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。元は共有の `serverEnvInfo`(`wire-issue-draft-service.ts`)で、
-手書きの下書き(4y8q.6.7)も本体エラーも同じもの。`bdVersion` は入れない
-(bd の版は起動時に 1 回読んで捨てるだけで、リフレッシュの失敗のたびに `bd version` を起動するのは安価でなく、bd が壊れているときこそ読めない)。
+手書きの下書き(4y8q.6.7)も本体エラーも同じもの。`bdVersion` も入れる(bdboard-424g。6.3 では入れていなかった)。値は**起動時に 1 回読んだ結果**で、
+`wireCoreInfra`(`wire-core-infra.ts`)が `readBdVersion` を 1 回だけ起動し、同じ Promise を起動時の診断(`runBdVersionStartupCheck`)と
+`createBdVersionSnapshot`(`src/application/bd/bd-version-snapshot.ts`)に渡す。`bd version` を追加で起動することはなく、リフレッシュの失敗のたびに読み直すこともない。
+`main.ts` が `infra.bdVersion` を `wireIssueDraftService` と `wireSelfErrorReporter` の両方へ渡す(application 層は infrastructure を import せず、wiring が関数で渡す)。
+
+**まだ読めていない・読めなかったとき**: `createBdVersionSnapshot` は**同期の getter** で、読み終わるまでは `'unknown'`、読めた(空でない)ら前後の空白を除いたその版を返す。
+bd が無い・壊れている・出力が読めない・timeout(`readBdVersion` は `null` を返す)ときは `'unknown'` のまま。Promise を `await` する形にしなかったのは、
+`envInfo` が同期の関数で(async にすると `IssueDraftService` と `createSelfErrorReporter` の型が変わる)、読み取りを待つとリフレッシュの失敗の報告や起動が最大 3 秒(timeout)遅れるため。
+その代わり、読み取りが終わる前(起動直後の初回リフレッシュの失敗など)に作った下書きの `bdVersion` は `unknown` になる。同じ下書きが再発したときは `envInfo` が
+最後の発生の値に置き換わる(`issue-draft-build.ts` の版の扱い)ので、次の報告(同じ文は 1 時間に 1 回しか報告しないので、続いていれば 1 時間後)で読めた版に直る。bd が壊れているときに読めないのは変わらない(`unknown` が出る = 切り分けの手がかりの 1 つ)。
+受け入れは `wire-core-infra.test.ts`(偽の bd の呼び出しが 1 回・読めるまで `unknown`・起動できないと `unknown`)、`bd-version-snapshot.test.ts`、`wire-self-error-reporter.test.ts`
+(読み終わる前は `unknown`・後は版)、`wire-issue-draft-service.test.ts`(手書きの下書き)。
 
 **止め方(U6)**: 環境変数 `BDBOARD_SELF_ERROR_DRAFTS` が `off` / `0` / `false`(前後の空白・大小は無視)のとき、取り込み全体が何もしない(`receive` を呼ばない)。起動時にログを 1 回出す。
 止めているときは `wireSelfErrorReporter` が `reporter` も `onRefreshResult` も **`undefined`** で返し、`wireBoardRefresh` は結果の observer を作らない(止めた分の空の関数や、結果ごとの
@@ -1049,12 +1059,12 @@ README の環境変数の表にも載せた。
 | 2 | `onRefreshResult` の形 | `(result, projects) => void`。`refreshRunner` の `onResult` の末尾と、起動時の初回リフレッシュの後の両方で呼ぶ。呼ぶ側は投げない |
 | 3 | `report` / `observeRefresh` の戻り値 | 仕様の「`receive` を待たずに呼ぶ」に合わせ、呼び出し側は待たない。戻りは `Promise<void>` で決して reject しない(テストが完了を待てるようにするため) |
 | 4 | deps の `now` | 足した(`() => new Date()` が既定)。tracker と `report()` の throttle が時刻を要る |
-| 5 | `bdVersion` | 入れなかった(上の「envInfo」) |
+| 5 | `bdVersion` | 6.3 では入れなかった(起動時に 1 回読んで捨てていた)。**bdboard-424g で入れた**: 起動時の読み取りの結果を保持し(読めない・まだなら `unknown`)、手書きの下書きと本体エラーの両方の `envInfo` に渡す(上の「envInfo」) |
 | 6 | Dolt のデータベース名(`.beads/metadata.json` の `dolt_database`) | **4y8q.4 に回した**。この PR では公開本文を作らず(題名・本文の暫定版は `errorText` を含まない。3節の暫定版の説明)、`errorText` が入るのは手元限定の `errorTextRaw` だけ。読み取りは全プロジェクトの `metadata.json` を読む IO で、公開本文の鍵 `LocalOnlyKeys` を全プロジェクトの名前・根・接頭辞に広げる U13(4y8q.4)と同じ場所で一度に足すほうが自然で、ここで足すと 6.2 の `SelfErrorMaskProject` と port の追加が要る。**4y8q.4 の申し送り**: `LocalOnlyKeys` に `dolt_database` も足す |
 | 7 | 一度もキャッシュされないプロジェクトの接頭辞 | 接頭辞が分からないので、接頭辞から作られる Dolt のデータベース名(#432 の文 `database "epic_haslett_00ae14" not found …`)は伏せられず、手元の `errorTextRaw` に残る。名前とパスは discovery の一覧で伏せる。下書きの指紋はこの文から作るので、別のプロジェクトの同じ種類のエラーは別の下書きになる(漏らさない側に倒した)。6 の読み取りを足せば解消する |
 | 8 | 環境変数による停止(U6) | 6.2 が「後続は 4y8q.6.3」としたものを、この PR で入れた(6.3 の本文には無かったが、ほかに担当のチケットが無い) |
 | 9 | 6.2 の domain への変更 | `selfErrorKey(kind, errorText)` を公開した(tracker の内部のキー関数。`report()` が同じ畳み方でキーを作る)。ほかは触っていない |
-| 10 | `wireIssueDraftService` / `wireIssueReports` と envInfo(#911=4y8q.6.7 との意味の衝突) | `wireIssueReports` の `service` を省略可能な引数にした(渡さなければ自分で作る)。#911 は手書きの下書きの `envInfo` を `wireIssueReports` が作るサービスに入れていたが、この PR で `main.ts` が**サービスを先に作って渡す**ので、そのままだと手書きの下書きの版が黙って `unknown` になる(文面の衝突ではなく意味の衝突。git は検出しない)。そこで envInfo の元を **`wireIssueDraftService` の必須の引数 `applicationVersion`** に移し、共有の `serverEnvInfo(applicationVersion)`(`bdboardVersion`・`os`・`nodeVersion`)を手書きの下書きと本体エラーの両方に使う。`wireIssueReports` の `applicationVersion` は、サービスを渡さないとき(テスト)に自分で作るサービスにだけ使う。受け入れは `wire-issue-draft-service.test.ts`(main.ts と同じ組み立てで、手書きの下書きの envInfo に渡した版が入る) |
+| 10 | `wireIssueDraftService` / `wireIssueReports` と envInfo(#911=4y8q.6.7 との意味の衝突) | `wireIssueReports` の `service` を省略可能な引数にした(渡さなければ自分で作る)。#911 は手書きの下書きの `envInfo` を `wireIssueReports` が作るサービスに入れていたが、この PR で `main.ts` が**サービスを先に作って渡す**ので、そのままだと手書きの下書きの版が黙って `unknown` になる(文面の衝突ではなく意味の衝突。git は検出しない)。そこで envInfo の元を **`wireIssueDraftService` の必須の引数 `applicationVersion`** に移し、共有の `serverEnvInfo(applicationVersion)`(`bdboardVersion`・`os`・`nodeVersion`。bdboard-424g で第 2 引数に bd の版の getter を足した。逸脱表 5)を手書きの下書きと本体エラーの両方に使う。`wireIssueReports` の `applicationVersion` は、サービスを渡さないとき(テスト)に自分で作るサービスにだけ使う。受け入れは `wire-issue-draft-service.test.ts`(main.ts と同じ組み立てで、手書きの下書きの envInfo に渡した版が入る) |
 | 11 | 既知の限界: `occurredProjects` | (**4y8q.6.2 の逸脱表 12 の再掲**)下書きの `occurredProjects` には、**1 時間に 1 プロジェクトしか載らない**。間引きのキーをプロジェクトで共有するので、同じ文の 2 つ目以降のプロジェクトは 1 時間のあいだ報告されない。ふつう `occurredProjects` は「どのプロジェクトで起きたか」の一覧だが、本体エラーでは当てにしない(回数も「プロジェクトの数」ではない) |
 
 ### 本体エラーの取り込み(bdboard-4y8q.6.4、API の 5xx と処理されなかった例外)
