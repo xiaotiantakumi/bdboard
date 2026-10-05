@@ -69,6 +69,9 @@ export type EditableDraftFields = Pick<
  * 入れると、利用者が何も直していなくても読んだあとの発生で偽の 412 になる (bdboard-q5pj)。回数・画像・pack の版・疑い
  * (直した欄と鍵から決まる) も入れない。PATCH は排他の中で今の下書きに題名・本文を当てるので、それらは上書きで失われない。
  * 文は応答の draft の値 (トンネルでは foldHomePaths で畳んだ値) から作るので、トンネルの読み手へ畳む前の文の指紋を渡さない。
+ *
+ * 保守: PATCH が書き換えられる欄 (issue-report-edit-routes.ts の editBodySchema と EditableDraftFields) を足すときは、ここ (editDigestOf) にも
+ * 入れる。入れ忘れると、その欄を別の場所で直された編集が If-Match を通り、同時の上書きが黙って成功する (412 にならない)。
  */
 export function editDigestOf(draft: EditableDraftFields): string {
   return etagDigestOf(
