@@ -57,11 +57,6 @@ export interface PreparedKeys {
   readonly replaceableNouns: readonly LiteralNoun[];
   /** SHORT (2〜3 コードポイント。置き換えず報告だけ) の固有名詞。 */
   readonly shortNouns: readonly PreparedNoun[];
-  /**
-   * 根と LONG の名前の一致が、印から離れていられる最大の距離 (UTF-16 のコード単位)。どの鍵の一致も (コードポイント数 × 2) 単位以下で、
-   * 根は直後の 1 コードポイント (2 単位以下) も見る。2 回目の置き換えを印の周りの窓に絞るときの幅 (issue-public-redact.ts)。
-   */
-  readonly keyReach: number;
   /** 欄の端の断片を探す鍵 (根と LONG の固有名詞の変種。issue-public-fragments.ts、bdboard-4y8q.13)。 */
   readonly fragmentKeys: readonly FragmentKey[];
   /** 上限・長さの制限で、一部の鍵を探していない。 */
@@ -110,7 +105,6 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
 
   const rootKeys: CaseInsensitiveLiteral[] = [];
   const seenRootKeys = new Set<string>();
-  let keyCodePoints = 0;
   // 端の検査の鍵: たたんだ後で同じになる変種は 1 つにし、合計のコードポイント数に上限を置く (記憶量。5節「欄の端の断片」)。
   const fragments = fragmentKeyCollector();
   const addFragmentKey = (variant: string): void => {
@@ -133,7 +127,6 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
       if (!seenRootKeys.has(literal.folded)) {
         seenRootKeys.add(literal.folded);
         rootKeys.push(literal);
-        keyCodePoints = Math.max(keyCodePoints, literal.codePoints);
       }
       addFragmentKey(variant);
     }
@@ -162,13 +155,11 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
       if (seenPatterns.has(key)) continue;
       seenPatterns.add(key);
       replaceableNouns.push({ kind: category, literal });
-      keyCodePoints = Math.max(keyCodePoints, literal.codePoints);
       addFragmentKey(variant);
     }
   }
   const fragmentKeys: readonly FragmentKey[] = fragments.keys;
-  const keyReach = keyCodePoints * 2 + 2;
-  return { projectRoots: rootKeys, replaceableNouns, shortNouns, keyReach, fragmentKeys, truncated };
+  return { projectRoots: rootKeys, replaceableNouns, shortNouns, fragmentKeys, truncated };
 }
 
 function spansOf(text: string, pattern: RegExp): KeySpan[] {
