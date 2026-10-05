@@ -23,7 +23,7 @@ async function setup() {
   return { storage, id, automatic, patch };
 }
 
-const INVISIBLE_ONLY = ['​', '⠀', '‌', '⁠', '﻿', 'ㅤ', '‮', '́', '​\n⠀\n'];
+const INVISIBLE_ONLY = ['\u200B', '⠀', '\u200C', '\u2060', '\uFEFF', 'ㅤ', '\u202E', '́', '\u200B\n⠀\n'];
 
 describe('PATCH draft: a title or body that shows nothing goes back to the automatic text (bdboard-ov0t)', () => {
   it.each(INVISIBLE_ONLY)('resets an edited body to the automatic text for %j', async (value) => {
@@ -46,12 +46,12 @@ describe('PATCH draft: a title or body that shows nothing goes back to the autom
 
   it('still keeps a body that has something to see, with its invisible characters as written', async () => {
     const { storage, id, patch } = await setup();
-    expect((await patch({ body: '​note⠀' })).status).toBe(200);
-    expect(storage.drafts.get(id)).toMatchObject({ bodyEditedByUser: true, body: '​note⠀' });
+    expect((await patch({ body: '\u200Bnote⠀' })).status).toBe(200);
+    expect(storage.drafts.get(id)).toMatchObject({ bodyEditedByUser: true, body: '\u200Bnote⠀' });
   });
 
   // 見える文字があるのに改行・制御文字・不可視の書式文字を含む題名は 400 (見える文字が無いものを自動へ戻すのとは別)。
-  it.each(['abc\n', '\tdef', 'ab‮c', 'a⁠b'])('still rejects a title that has visible text and a line break or a format character: %j', async (title) => {
+  it.each(['abc\n', '\tdef', 'ab\u202Ec', 'a\u2060b'])('still rejects a title that has visible text and a line break or a format character: %j', async (title) => {
     const { storage, id, automatic, patch } = await setup();
     expect((await patch({ title })).status).toBe(400);
     expect(storage.drafts.get(id)?.title).toBe(automatic.title);
