@@ -219,14 +219,18 @@ export interface ErrorTextSummary {
  * 長いエラー文は先頭と末尾だけ残す。短ければそのまま head に入れ、tail は空。先頭は行の終わりで、末尾は行の始まりで切り
  * (issue-draft-cut.ts。改行が近くに無ければコードポイントの境目)、サロゲートの対を割らない。そのため head・tail は
  * それぞれ ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS 以下で、omittedChars はその残り。
+ * 行の境目へ戻る距離は上限の半分まで (bdboard-uudb の NIT-10): 保存の上限と同じ 4096 まで戻すと、上限 1000 のうち先頭の数文字だけの
+ * 行しか残らないことがある ("x\n" + 長い 1 行)。半分より遠ければコードポイントの境目で切るので、head・tail は上限の半分以上を残す
+ * (手元の表示専用。公開本文はこの切り出しではなく全文から作る)。
  */
 export function summarizeErrorText(text: string): ErrorTextSummary {
   const edge = ISSUE_DRAFT_ERROR_TEXT_EDGE_CHARS;
   if (text.length <= edge * 2) {
     return { head: text, tail: '', truncated: false, omittedChars: 0 };
   }
-  const head = cutKeepingHead(text, edge);
-  const tail = cutKeepingTail(text, edge);
+  const backoff = Math.floor(edge / 2);
+  const head = cutKeepingHead(text, edge, backoff);
+  const tail = cutKeepingTail(text, edge, backoff);
   return { head, tail, truncated: true, omittedChars: text.length - head.length - tail.length };
 }
 

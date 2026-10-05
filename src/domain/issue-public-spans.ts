@@ -60,16 +60,30 @@ function common(text: string, prepared: PreparedKeys): KindSpan[] {
 }
 
 /**
+ * 置き換える一致のうち、手元の鍵 (プロジェクトの根と LONG の固有名詞) の一致。どれも長さの決まった文字列の一致で、根が直後の
+ * 1 文字を見るほかは前後を見ない (2 回目の置き換えを印の周りの窓に絞れる理由。issue-public-redact.ts)。
+ */
+export function findKeyRedactionSpans(text: string, prepared: PreparedKeys): KindSpan[] {
+  return [...tagged('project-path', findProjectRootSpans(text, prepared)), ...findReplaceableNounSpans(text, prepared)];
+}
+
+/** 置き換える一致のうち、鍵を使わない分 (形の一致と、欄の端の断片)。どれも本文の長さに線形か、端だけを読む。 */
+export function findShapeRedactionSpans(text: string, prepared: PreparedKeys, edges: FieldEdges = NO_EDGES): KindSpan[] {
+  return [
+    ...tagged('home-path', findPublicHomeRanges(text)),
+    ...tagged('key-block', findKeyBlockSpans(text)),
+    ...tagged('email', findEmailSpans(text)),
+    ...tagged('token', findTokenSpans(text)),
+    ...findEdgeFragmentSpans(text, prepared.fragmentKeys, edges),
+  ];
+}
+
+/**
  * 置き換える一致 (統合は mergeSpans)。edges は欄の端の断片を探す端 (issue-public-fragments.ts。1 行の値は保存で切られないので
  * 既定は探さない)。
  */
 export function findRedactionSpans(text: string, prepared: PreparedKeys, edges: FieldEdges = NO_EDGES): KindSpan[] {
-  return [
-    ...common(text, prepared),
-    ...findReplaceableNounSpans(text, prepared),
-    ...tagged('token', findTokenSpans(text)),
-    ...findEdgeFragmentSpans(text, prepared.fragmentKeys, edges),
-  ];
+  return [...findKeyRedactionSpans(text, prepared), ...findShapeRedactionSpans(text, prepared, edges)];
 }
 
 /** 最後の網が報告する一致 (置き換えの一致の上位集合。印の内側の分は呼び出し側が除く)。 */

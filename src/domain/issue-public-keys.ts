@@ -18,8 +18,12 @@
  * (呼び出し側は結果の keysTruncated と、suspectedLeaks の 'key-overflow' で知らせる)。
  * 上限そのものは性能のため: 敵対的な 512 コードポイントの名前 200 件で 64k 文字の全欄を処理しても数秒で終わる。
  *
- * RegExp オブジェクトは `g` フラグで lastIndex を持つので、使うたびに lastIndex = 0 に戻す (別の呼び出しの状態を引きずらない)。
+ * 根と LONG の名前は、正規表現ではなく、大文字小文字をたたんだ文字列の indexOf で探す (issue-public-casefold.ts。以前の `/…/giu` と
+ * 同じ一致。長い鍵の正規表現のコンパイルが 1 回の組み立てを 117〜233 秒にしていた、bdboard-uudb)。SHORT の名前は前後の条件つきの
+ * 正規表現のまま (短いのでコンパイルは軽い)。RegExp オブジェクトは `g` フラグで lastIndex を持つので、使うたびに lastIndex = 0 に戻す
+ * (別の呼び出しの状態を引きずらない)。
  */
+import { caseInsensitiveLiteral, escapeRegExp, literalSearcher, type CaseInsensitiveLiteral } from './issue-public-casefold.js';
 import { fragmentKeyCollector, type FragmentKey } from './issue-public-fragments.js';
 import { codePointLength, normalizeInline } from './issue-public-text.js';
 import { nounVariants, prepareRoot } from './issue-public-key-variants.js';
@@ -34,17 +38,30 @@ export interface NounSpan extends KeySpan {
   readonly kind: ProperNounCategory;
 }
 
+/** SHORT の固有名詞 (前後が文字・数字でない単語として探す正規表現)。 */
 interface PreparedNoun {
   readonly kind: ProperNounCategory;
   readonly pattern: RegExp;
 }
 
+/** LONG の固有名詞 (大文字小文字を区別しない部分一致)。 */
+interface LiteralNoun {
+  readonly kind: ProperNounCategory;
+  readonly literal: CaseInsensitiveLiteral;
+}
+
 export interface PreparedKeys {
-  readonly projectRoots: readonly RegExp[];
-  readonly replaceableNouns: readonly PreparedNoun[];
-  readonly detectableNouns: readonly PreparedNoun[];
-  /** detectableNouns のうち SHORT (2〜3 コードポイント。置き換えず報告だけ) のもの。 */
+  /** プロジェクトの根の変種 (直後が [文字・数字・_ -] でないものだけ一致)。 */
+  readonly projectRoots: readonly CaseInsensitiveLiteral[];
+  /** 置き換えも検出もする LONG の固有名詞 (変種を含む)。 */
+  readonly replaceableNouns: readonly LiteralNoun[];
+  /** SHORT (2〜3 コードポイント。置き換えず報告だけ) の固有名詞。 */
   readonly shortNouns: readonly PreparedNoun[];
+  /**
+   * 根と LONG の名前の一致が、印から離れていられる最大の距離 (UTF-16 のコード単位)。どの鍵の一致も (コードポイント数 × 2) 単位以下で、
+   * 根は直後の 1 コードポイント (2 単位以下) も見る。2 回目の置き換えを印の周りの窓に絞るときの幅 (issue-public-redact.ts)。
+   */
+  readonly keyReach: number;
   /** 欄の端の断片を探す鍵 (根と LONG の固有名詞の変種。issue-public-fragments.ts、bdboard-4y8q.13)。 */
   readonly fragmentKeys: readonly FragmentKey[];
   /** 上限・長さの制限で、一部の鍵を探していない。 */
@@ -58,15 +75,6 @@ export const MAX_ROOTS = 200;
 const MAX_NOUN_CODE_POINTS = 512;
 const LONG_NOUN_CODE_POINTS = 4;
 const MIN_NOUN_CODE_POINTS = 2;
-
-/** 標準の escapeRegExp。`-` は escape しない (`u` フラグでは範囲外の `\-` は構文エラー)。 */
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function literalPattern(value: string, suffix = ''): RegExp {
-  return new RegExp(`${escapeRegExp(value)}${suffix}`, 'giu');
-}
 
 interface Candidate {
   readonly category: ProperNounCategory;
@@ -100,7 +108,9 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
   };
   for (const noun of keys.properNouns) addNoun(noun.category, noun.value);
 
-  const rootPatterns: RegExp[] = [];
+  const rootKeys: CaseInsensitiveLiteral[] = [];
+  const seenRootKeys = new Set<string>();
+  let keyCodePoints = 0;
   // 端の検査の鍵: たたんだ後で同じになる変種は 1 つにし、合計のコードポイント数に上限を置く (記憶量。5節「欄の端の断片」)。
   const fragments = fragmentKeyCollector();
   const addFragmentKey = (variant: string): void => {
@@ -118,7 +128,13 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
       break;
     }
     for (const variant of root.variants) {
-      rootPatterns.push(literalPattern(variant, '(?![\\p{L}\\p{N}_-])'));
+      const literal = caseInsensitiveLiteral(variant, true);
+      // たたんだ後で同じ変種 (パーセント表記の 16 進の大小文字など) は、同じ位置にしか一致しないので 1 つにする。
+      if (!seenRootKeys.has(literal.folded)) {
+        seenRootKeys.add(literal.folded);
+        rootKeys.push(literal);
+        keyCodePoints = Math.max(keyCodePoints, literal.codePoints);
+      }
       addFragmentKey(variant);
     }
     if (root.basename !== undefined) addNoun('project', root.basename);
@@ -126,31 +142,33 @@ export function prepareKeys(keys: LocalOnlyKeys): PreparedKeys {
 
   const ordered = [...candidates].sort((left, right) => left.tier - right.tier);
   if (ordered.length > MAX_NOUNS) truncated = true;
-  const replaceableNouns: PreparedNoun[] = [];
-  const detectableNouns: PreparedNoun[] = [];
+  const replaceableNouns: LiteralNoun[] = [];
   const shortNouns: PreparedNoun[] = [];
   const seenPatterns = new Set<string>();
   for (const { category, value, length } of ordered.slice(0, MAX_NOUNS)) {
     for (const variant of nounVariants(value)) {
-      const key = `${category}\0${variant.toLowerCase()}`;
+      if (length < LONG_NOUN_CODE_POINTS) {
+        const key = `${category}\0${variant.toLowerCase()}`;
+        if (seenPatterns.has(key)) continue;
+        seenPatterns.add(key);
+        shortNouns.push({
+          kind: category,
+          pattern: new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(variant)}(?![\\p{L}\\p{N}])`, 'giu'),
+        });
+        continue;
+      }
+      const literal = caseInsensitiveLiteral(variant, false);
+      const key = `${category}\0${literal.folded}`;
       if (seenPatterns.has(key)) continue;
       seenPatterns.add(key);
-      const entry: PreparedNoun =
-        length < LONG_NOUN_CODE_POINTS
-          ? {
-              kind: category,
-              pattern: new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(variant)}(?![\\p{L}\\p{N}])`, 'giu'),
-            }
-          : { kind: category, pattern: literalPattern(variant) };
-      detectableNouns.push(entry);
-      if (length >= LONG_NOUN_CODE_POINTS) {
-        replaceableNouns.push(entry);
-        addFragmentKey(variant);
-      } else shortNouns.push(entry);
+      replaceableNouns.push({ kind: category, literal });
+      keyCodePoints = Math.max(keyCodePoints, literal.codePoints);
+      addFragmentKey(variant);
     }
   }
   const fragmentKeys: readonly FragmentKey[] = fragments.keys;
-  return { projectRoots: rootPatterns, replaceableNouns, detectableNouns, shortNouns, fragmentKeys, truncated };
+  const keyReach = keyCodePoints * 2 + 2;
+  return { projectRoots: rootKeys, replaceableNouns, shortNouns, keyReach, fragmentKeys, truncated };
 }
 
 function spansOf(text: string, pattern: RegExp): KeySpan[] {
@@ -158,26 +176,27 @@ function spansOf(text: string, pattern: RegExp): KeySpan[] {
   return [...text.matchAll(pattern)].map((match) => ({ start: match.index, end: match.index + match[0].length }));
 }
 
-function nounMatches(text: string, nouns: readonly PreparedNoun[]): NounSpan[] {
+function shortNounMatches(text: string, nouns: readonly PreparedNoun[]): NounSpan[] {
   return nouns.flatMap(({ kind, pattern }) => spansOf(text, pattern).map((span) => ({ kind, ...span })));
 }
 
 /** プロジェクトの根のパスの出現位置 (置き換えも検出も同じ)。 */
 export function findProjectRootSpans(text: string, prepared: PreparedKeys): KeySpan[] {
-  return prepared.projectRoots.flatMap((pattern) => spansOf(text, pattern));
+  return prepared.projectRoots.flatMap(literalSearcher(text));
 }
 
 /** 置き換える固有名詞 (LONG のみ) の出現位置。kind は固有名詞の種別。 */
 export function findReplaceableNounSpans(text: string, prepared: PreparedKeys): NounSpan[] {
-  return nounMatches(text, prepared.replaceableNouns);
+  const search = literalSearcher(text);
+  return prepared.replaceableNouns.flatMap(({ kind, literal }) => search(literal).map((span) => ({ kind, ...span })));
 }
 
 /** 検出する固有名詞 (LONG と SHORT。SHORT は単語として現れたときだけ) の出現位置。 */
 export function findDetectableNounSpans(text: string, prepared: PreparedKeys): NounSpan[] {
-  return nounMatches(text, prepared.detectableNouns);
+  return [...findReplaceableNounSpans(text, prepared), ...shortNounMatches(text, prepared.shortNouns)];
 }
 
 /** 報告だけの固有名詞 (SHORT のみ。単語として現れたときだけ) の出現位置。LONG の名前と根は探さない (その分の O(n·m) を払わない)。 */
 export function findShortNounSpans(text: string, prepared: PreparedKeys): NounSpan[] {
-  return nounMatches(text, prepared.shortNouns);
+  return shortNounMatches(text, prepared.shortNouns);
 }

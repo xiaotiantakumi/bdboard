@@ -6,7 +6,14 @@
  */
 import { NO_EDGES, type FieldEdges } from './issue-public-fragments.js';
 import type { PreparedKeys } from './issue-public-keys.js';
-import { coverage, findRedactionSpans, mergeSpans, type KindSpan } from './issue-public-spans.js';
+import {
+  coverage,
+  findKeyRedactionSpans,
+  findRedactionSpans,
+  findShapeRedactionSpans,
+  mergeSpans,
+  type KindSpan,
+} from './issue-public-spans.js';
 import {
   codePointLength,
   codeUnitIndexAfterCodePoints,
@@ -69,14 +76,71 @@ function applySpans(text: string, spans: readonly KindSpan[]): RedactedText {
  *
  * edges: 欄の端の断片 (保存の上限などで途中まで切れた名前・根・トークン。issue-public-fragments.ts) を探す端。1 回目と 2 回目の
  * どちらでも探す (名前が印に替わって直前が `>` になり、端の途中までの "sk-…" が開始の条件を満たすことがある)。
+ *
+ * 2 回目の、手元の鍵 (根と LONG の名前) の探索は、1 回目の印の周りの窓だけにかける (bdboard-uudb。鍵の探索は本文の長さ × 鍵の長さの
+ * 合計に比例し、欄の端の断片だけで 2 回目が走ると全体が約 2 倍になっていた)。形の一致と端の断片は、線形なので全体にかける。
+ * secondPass = 'full' は窓に絞らない版で、テストが同じ結果になることを確かめるためだけにある。
  */
-export function redactText(text: string, prepared: PreparedKeys, edges: FieldEdges = NO_EDGES): RedactedText {
+export function redactText(
+  text: string,
+  prepared: PreparedKeys,
+  edges: FieldEdges = NO_EDGES,
+  secondPass: 'window' | 'full' = 'window',
+): RedactedText {
   const first = applySpans(text, findRedactionSpans(text, prepared, edges));
   if (first.marks.length === 0) return first;
   const insideMark = coverage(first.marks);
-  const fresh = findRedactionSpans(first.text, prepared, edges).filter((span) => !insideMark(span.start, span.end));
+  const keySpans =
+    secondPass === 'full' ? findKeyRedactionSpans(first.text, prepared) : findKeySpansNearMarks(first.text, first.marks, prepared.keyReach, prepared);
+  const fresh = [...keySpans, ...findShapeRedactionSpans(first.text, prepared, edges)].filter(
+    (span) => !insideMark(span.start, span.end),
+  );
   if (fresh.length === 0) return first;
   return applySpans(first.text, [...first.marks, ...fresh]);
+}
+
+/**
+ * 2 回目の鍵の探索を、1 回目の印の周りの窓に絞る。窓に絞っても、全体を探したときと同じ一致の集合になる (論証):
+ *
+ *   記号: 1 回目の結果を T1、元の文字列を T0、鍵の一致の長さの上限を K (= 最長の鍵のコードポイント数 × 2 単位)、根が見る直後の文字を
+ *   2 単位以下とし、R = K + 2 (PreparedKeys.keyReach) とする。鍵の一致 [s, e) が成り立つかは T[s, e) と、根なら直後の 1 文字
+ *   (末尾ならその事実) だけで決まる (前は見ない)。
+ *   (1) T1 での 2 回目の鍵の一致 c = [s, e) は、[s, e + 直後の文字) が 1 回目のどれかの印と重なる。重ならないとすると、その範囲は
+ *       T0 のどこにも置き換えのなかった区間の写しなので、T0 の対応する位置でも同じ鍵が一致する。g の探索は左から重ならずに進むので、
+ *       1 回目の同じ鍵の一致のどれかが c の写しと重なる (c の写しより前で終わる一致の次の探索は c の写し以前から始まり、c の写しか
+ *       それより左の一致を見つける)。1 回目の一致はすべて印に置き換わるので、c の写しの中の文字が置き換わっていることになり、
+ *       「置き換えのなかった区間の写し」と矛盾する。
+ *   (2) よって c は、ある印 M について [M.start - R, M.end + R) (芯) の中にある (c の長さは K 以下、直後の文字は 2 単位以下)。
+ *   (3) 窓 = 芯を左右に R ずつ広げたもの。重なる・接する窓はまとめる (芯も合わせて持つ)。窓の中で探すと、窓の外を見られないのは
+ *       窓の右端の直後の文字だけ (前は見ないので左端は影響しない)。窓の右端で終わる一致は、窓の中の最後の芯の終わりより R - K > 0 だけ
+ *       右から始まり、どの芯とも重ならない。T1 の本当の一致はどれも芯の中にあるので、窓の中の探索の「最後の芯の終わりより前から始まる
+ *       一致」は、全体の探索のその窓の中の一致とちょうど同じになる (左から重ならずに進む順序も、本当の一致より前・間に偽の一致が入らないので変わらない。
+ *       窓をまたぐ一致は (2) から無い)。
+ *   全体の探索の一致は (2) からどれかの窓の中にあるので、窓ごとの一致を集めたものは全体の探索と同じ。形の一致 (トークン・メールなど) は
+ *   長さに上限が無いものがあり、この論証が使えないので、窓に絞らず全体にかける (線形なので軽い)。
+ */
+function findKeySpansNearMarks(
+  text: string,
+  marks: readonly TextMark[],
+  reach: number,
+  prepared: PreparedKeys,
+): KindSpan[] {
+  const windows: { start: number; end: number; coreEnd: number }[] = [];
+  for (const mark of marks) {
+    const coreEnd = Math.min(text.length, mark.end + reach);
+    const start = Math.max(0, mark.start - 2 * reach);
+    const end = Math.min(text.length, mark.end + 2 * reach);
+    const previous = windows.at(-1);
+    if (previous !== undefined && start <= previous.end) {
+      previous.end = Math.max(previous.end, end);
+      previous.coreEnd = Math.max(previous.coreEnd, coreEnd);
+    } else windows.push({ start, end, coreEnd });
+  }
+  return windows.flatMap((window) =>
+    findKeyRedactionSpans(text.slice(window.start, window.end), prepared)
+      .map((span) => ({ kind: span.kind, start: span.start + window.start, end: span.end + window.start }))
+      .filter((span) => span.start < window.coreEnd),
+  );
 }
 
 /** 範囲を開始位置の順に並べ、重なるもの (接しているだけは別) を和集合にする。切れ目を 1 回の走査で境界へ動かすため。 */
