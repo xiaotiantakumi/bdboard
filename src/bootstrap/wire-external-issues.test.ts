@@ -77,6 +77,47 @@ describe('wireExternalIssues', () => {
     });
   });
 
+  describe('with BDBOARD_EXTERNAL_ISSUES_DISABLED (bdboard-em45)', () => {
+    it.each(['1', 'true', 'TRUE'])('creates nothing in the maintainer environment when it is %j', async (value) => {
+      const { result, timers, fake, log } = setup({ env: { BDBOARD_EXTERNAL_ISSUES_DISABLED: value } });
+
+      expect(result.enabled).toBe(false);
+      expect(result.service).toBeUndefined();
+      expect(timers.created).toHaveLength(0);
+      await timers.advanceTo(2 * HOUR);
+      expect(fake.run).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+      await expect(fs.access(path.join(root, 'data'))).rejects.toThrow();
+      expect(() => {
+        result.stop();
+        result.stop();
+      }).not.toThrow();
+    });
+
+    it('does not even look at the maintainer check, and does not call the injected ports', () => {
+      const isMaintainerEnvironment = vi.fn<(repoRoot: string) => boolean>(() => true);
+      const harness = createHarness();
+      const { result, timers } = setup({
+        env: { BDBOARD_EXTERNAL_ISSUES_DISABLED: '1' },
+        isMaintainerEnvironment,
+        commandRunner: undefined,
+        ports: { source: harness.source, refReader: harness.refReader, storage: harness.storage },
+      });
+
+      expect(result.enabled).toBe(false);
+      expect(isMaintainerEnvironment).not.toHaveBeenCalled();
+      expect(timers.created).toHaveLength(0);
+      expect(harness.source.listOpenIssues).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, '', '0', 'false', 'no'])('does not disable the check when it is %j', (value) => {
+      const { result, timers } = setup({ env: value === undefined ? {} : { BDBOARD_EXTERNAL_ISSUES_DISABLED: value } });
+
+      expect(result.enabled).toBe(true);
+      expect(timers.created).toHaveLength(1);
+    });
+  });
+
   describe('without a command runner', () => {
     it('stays disabled even in the maintainer environment', () => {
       const { result, timers } = setup({ commandRunner: undefined });

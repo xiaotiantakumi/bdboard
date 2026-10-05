@@ -2,7 +2,8 @@
  * bdboard-4y8q.9.4: 届いた issue (ほかの人が出した公開 issue) を定期的に確かめる配線。
  *
  * メンテナ環境 (bdboard 自身の `.beads` がある main checkout) のときだけ、サービスとタイマーを作る。そうでなければ何も作らず、
- * gh も bd も呼ばない (`enabled: false`)。ルートへの載せ方は wire-issue-reports.ts、終了時の停止は wire-shutdown.ts。
+ * gh も bd も呼ばない (`enabled: false`)。メンテナ環境でも `BDBOARD_EXTERNAL_ISSUES_DISABLED=1` なら同じく何も作らない (bdboard-em45。
+ * メインチェックアウトから回す e2e のサーバー用)。ルートへの載せ方は wire-issue-reports.ts、終了時の停止は wire-shutdown.ts。
  *
  * gh を起動する道は、1 時間に 12 回までの関所 (`createBudgetedCommandRunner`) を通る 1 つだけ。定期の確認・手動の refresh・
  * ページ送りのどの組み合わせでも、この関所が上限を保つ (docs/ISSUE-REPORTING.md 8節)。
@@ -25,7 +26,7 @@ import {
   resolveExternalIssuePollIntervalMs,
 } from '../domain/external-issue-poll-policy.js';
 import { createBdCliExternalRefReader } from '../infrastructure/bd/bd-cli-external-ref-reader.js';
-import { envInt, envString } from '../infrastructure/env.js';
+import { envBool, envInt, envString } from '../infrastructure/env.js';
 import { createFsExternalIssueSnapshotStorage } from '../infrastructure/fs/fs-external-issue-snapshot-storage.js';
 import { isMaintainerEnvironment } from '../infrastructure/fs/is-maintainer-environment.js';
 import { resolveExternalIssuesDir } from '../infrastructure/fs/resolve-external-issues-dir.js';
@@ -109,8 +110,12 @@ export function wireExternalIssues(deps: WireExternalIssuesDeps): WiredExternalI
   const log = deps.log ?? console.log;
   const maintainer = deps.isMaintainerEnvironment ?? isMaintainerEnvironment;
 
-  // メンテナ環境でなければ何も作らない (タイマーも、写しの置き場も、gh・bd の呼び出しも)。
-  if (!maintainer(deps.repoRoot)) {
+  // 環境変数で止められているか、メンテナ環境でなければ何も作らない (タイマーも、写しの置き場も、gh・bd の呼び出しも)。
+  // BDBOARD_EXTERNAL_ISSUES_DISABLED が `1` または `true` (大小無視) のときは、メンテナ環境でも作らない (bdboard-em45)。
+  // メンテナ環境の判定 (`.beads` の有無) の手前で見るので、止まっているときは `.beads` も見ない。e2e のサーバー
+  // (test/e2e/global-setup.ts) が、メインチェックアウトから起動されたときに本物の gh を呼ばないために立てる。
+  // env 名はリテラルで書く (src/readme-env-vars.test.ts が env の読み取りをリテラルから拾い、README の表と突き合わせる)。
+  if (envBool(deps.env, 'BDBOARD_EXTERNAL_ISSUES_DISABLED') || !maintainer(deps.repoRoot)) {
     return { enabled: false, service: undefined, now, stop: () => undefined };
   }
   const ports = deps.ports ?? (deps.commandRunner === undefined ? undefined : createPortsFromRunner(deps, deps.commandRunner, now));
