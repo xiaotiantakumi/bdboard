@@ -265,6 +265,80 @@ describe('observeRefresh(): a save that failed leaves no throttle record either'
   });
 });
 
+// 文が更新ごとにずれ、normalizeErrorText でも寄らない失敗 (単語が違う)。unknown は「同じ kind の失敗が 3 回続いたちょうどその回」だけが due で、
+// その 1 回の保存が失敗してキーを忘れるだけだと、この連続が続く間は二度と報告されない (PR #926 レビュー F1)。tracker に release を返して再び due にする。
+describe('observeRefresh(): a failed save of the report that the kind run issued (the text shifts on every refresh)', () => {
+  const WORDS = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'];
+  const shifting = (round: number) => refresh('unknown', `database ${WORDS[round] ?? 'zulu'} is not reachable`);
+  const clean = { refreshed: ['p'], removed: [], errors: [] };
+
+  it('reaches receive again on the next refresh when the save of the third sighting failed (a)', async () => {
+    const receive = vi.fn().mockResolvedValueOnce(unsaved).mockResolvedValue({ ok: true });
+    const { reporter } = setup(receive);
+    await reporter.observeRefresh(shifting(0), [project]);
+    await reporter.observeRefresh(shifting(1), [project]);
+    expect(receive).not.toHaveBeenCalled();
+    await reporter.observeRefresh(shifting(2), [project]);
+    expect(receive).toHaveBeenCalledTimes(1);
+    await reporter.observeRefresh(shifting(3), [project]);
+    expect(receive).toHaveBeenCalledTimes(2);
+    expect(receive.mock.calls.map(([call]) => call.errorText)).toEqual(['database charlie is not reachable', 'database delta is not reachable']);
+  });
+
+  it('stops at one draft after the retry was saved, however long the failure lasts (b)', async () => {
+    const receive = vi.fn().mockResolvedValueOnce(unsaved).mockResolvedValue({ ok: true });
+    const { reporter } = setup(receive);
+    for (let round = 0; round < WORDS.length; round += 1) await reporter.observeRefresh(shifting(round), [project]);
+    // 3 回目 (失敗) と 4 回目 (成功) だけが届き、あとは何回続いても届かない。
+    expect(receive).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps retrying on every refresh while the saves keep failing, then settles on the first success', async () => {
+    const receive = vi.fn().mockResolvedValueOnce(unsaved).mockResolvedValueOnce(unsaved).mockRejectedValueOnce(Object.assign(new Error('disk'), { code: 'EIO' })).mockResolvedValue({ ok: true });
+    const { reporter } = setup(receive);
+    for (let round = 0; round < WORDS.length; round += 1) await reporter.observeRefresh(shifting(round), [project]);
+    expect(receive).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not re-arm when a refresh that succeeded came in while the save was pending (c)', async () => {
+    const gate = deferred<typeof unsaved>();
+    const receive = vi.fn().mockReturnValueOnce(gate.promise).mockResolvedValue({ ok: true });
+    const { reporter } = setup(receive);
+    await reporter.observeRefresh(shifting(0), [project]);
+    await reporter.observeRefresh(shifting(1), [project]);
+    const pending = reporter.observeRefresh(shifting(2), [project]);
+    await reporter.observeRefresh(clean, [project]);
+    gate.resolve(unsaved);
+    await pending;
+    // 連続は数え直し: 成功のあとの 2 回では届かず、3 回目で届く。
+    await reporter.observeRefresh(shifting(3), [project]);
+    await reporter.observeRefresh(shifting(4), [project]);
+    expect(receive).toHaveBeenCalledTimes(1);
+    await reporter.observeRefresh(shifting(5), [project]);
+    expect(receive).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not re-arm when a refresh that succeeded came in after the failed save (c)', async () => {
+    const receive = vi.fn().mockResolvedValueOnce(unsaved).mockResolvedValue({ ok: true });
+    const { reporter } = setup(receive);
+    for (let round = 0; round < 3; round += 1) await reporter.observeRefresh(shifting(round), [project]);
+    await reporter.observeRefresh(clean, [project]);
+    await reporter.observeRefresh(shifting(3), [project]);
+    await reporter.observeRefresh(shifting(4), [project]);
+    expect(receive).toHaveBeenCalledTimes(1);
+    await reporter.observeRefresh(shifting(5), [project]);
+    expect(receive).toHaveBeenCalledTimes(2);
+  });
+
+  it('a throttle that throws on release does not break observeRefresh and logs only the code', async () => {
+    const throttle = createSelfErrorThrottle();
+    vi.spyOn(throttle, 'forget').mockImplementation(() => { throw Object.assign(new Error('/private/example-project secret'), { code: 'EBOOM' }); });
+    const { reporter, log } = setup(vi.fn().mockResolvedValue(unsaved), { throttle });
+    for (let round = 0; round < 3; round += 1) await expect(reporter.observeRefresh(shifting(round), [project])).resolves.toBeUndefined();
+    expect(log.mock.calls.map(([line]) => line)).toContain('self error draft failed (EBOOM)');
+  });
+});
+
 describe('a throttle that throws while forgetting does not break the never-reject contract', () => {
   it('contains it in report() and observeRefresh() and logs only the code', async () => {
     const throttle = createSelfErrorThrottle();

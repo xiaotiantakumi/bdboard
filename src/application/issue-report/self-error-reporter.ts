@@ -4,7 +4,8 @@
  * bdboard-4y8q.6.10: 間引きの記録は「保存の前に取る」(同じキーが同時に来ても二重の下書きにしないため) が、保存に失敗したら**取り消す**。
  * 失敗した報告が 1 時間 `throttled` (= 報告済み) に見えて、下書きが 1 件もできないままになるのを避ける。
  * - `report()`: 同じキーの保存が終わらないうちにもう一度来たら、保存を重ねず 1 回目の結果を待つ (成功なら `throttled`、失敗なら `skipped`)。
- * - `observeRefresh()`: 記録は tracker (6.2) が聞いた時点で取る。保存に失敗した報告のキーを、ここで忘れさせる。
+ * - `observeRefresh()`: 記録は tracker (6.2) が聞いた時点で取る。保存に失敗した報告は `tracker.release(report)` で返す (キーを忘れさせ、
+ *   kind の連続だけで出した報告なら、次にその kind が見えた結果を再び due にする。レビュー F1)。
  */
 import type { DraftEnvInfo } from '../../domain/issue-draft.js';
 import { createRefreshErrorTracker, selfErrorKey } from '../../domain/refresh-error-tracker.js';
@@ -51,16 +52,6 @@ function safeCode(error: unknown): string {
 /** tracker の報告 (`bd-refresh:<kind>`) と `report()` の入力 (`api:…`) の両方を受ける内部の形。 */
 type ReceiveInput = Omit<SelfErrorReportInput, 'source'> & { readonly source: string };
 
-/**
- * tracker (6.2) が throttle に聞いたキー。tracker の報告の source は `bd-refresh:<kind>` だが、キーに入るのは `<kind>` (refresh-error-tracker.ts の
- * `selfErrorKey(error.kind, 伏せた文)`)。`report()` のキー (`api:…`) とは名前の空間が分かれる。ずれると失敗の取り消しが空振りするので、
- * テスト (self-error-reporter-receive-failure.test.ts) が本物の tracker で「失敗したら次の更新が再び receive に届く」ことを固定している。
- */
-const REFRESH_SOURCE_PREFIX = 'bd-refresh:';
-function refreshKeyOf(item: { readonly source: string; readonly errorText: string }): string {
-  return selfErrorKey(item.source.startsWith(REFRESH_SOURCE_PREFIX) ? item.source.slice(REFRESH_SOURCE_PREFIX.length) : item.source, item.errorText);
-}
-
 export function createSelfErrorReporter(deps: SelfErrorReporterDeps): SelfErrorReporter {
   const now = deps.now ?? (() => new Date());
   const tracker = createRefreshErrorTracker({ throttle: deps.throttle });
@@ -69,10 +60,14 @@ export function createSelfErrorReporter(deps: SelfErrorReporterDeps): SelfErrorR
   // 保存中の report() のキー → その結果。同じキーが保存の終わらないうちにもう一度来ても、保存を重ねない。終わったらすぐ消える (残らない)。
   const pendingByKey = new Map<string, Promise<SelfErrorReportOutcome>>();
 
-  /** 保存に失敗した報告のキーの throttle の記録を取り消す (次の同じ報告がもう一度 receive に届くように)。throw しない (キーの組み立ても守る)。 */
-  function release(keyOf: () => string): void {
+  /**
+   * 保存に失敗した報告の巻き戻し (次の同じ報告がもう一度 receive に届くように)。throw しない (巻き戻しの失敗はログに code だけ出す)。
+   * `report()` の報告は throttle のキーを忘れる。リフレッシュの報告は tracker に返す (tracker が聞いたキーを忘れ、kind の連続で出した報告なら次の更新を再び due にする。
+   * キーをここで作り直さない: tracker のキーの作り方と、due の理由は tracker だけが知っている)。
+   */
+  function undo(rewind: () => void): void {
     try {
-      deps.throttle.forget(keyOf());
+      rewind();
     } catch (error) {
       deps.log(`self error draft failed (${safeCode(error)})`);
     }
@@ -111,7 +106,8 @@ export function createSelfErrorReporter(deps: SelfErrorReporterDeps): SelfErrorR
         // 同じキーの保存が終わっていない: 二重の下書きにしない。1 回目の結果を待つ (成功ならもう保存できている = throttled。失敗なら何も保存していない = skipped で、
         // この呼び出しは保存を重ねない。同時に来た全員が失敗のたびに再試行して、壊れた保存先を押しつぶさないため。再試行は次の report())。
         const inFlight = pendingByKey.get(key);
-        if (inFlight !== undefined) return (await inFlight) === 'recorded' ? 'throttled' : 'skipped';
+        // await ではなく then で返す: 保存が終わらない間、合流した呼び出しが入力 (errorText は最大十数 KB) を抱えたこの関数の frame ごと待ち続けない。
+        if (inFlight !== undefined) return inFlight.then((outcome) => (outcome === 'recorded' ? 'throttled' : 'skipped'), () => 'skipped');
         // 記録は保存の前に取る (同じキーが同時に来ても、2 回目以降は上の待ちか、ここの false になる)。保存に失敗したら取り消す。
         if (!deps.throttle.shouldReport(key, now())) return 'throttled';
         // この async 関数は、最初の await (receive) より前に終わらないこと: 先に終わると finally の delete が下の set より先に走り、
@@ -119,7 +115,7 @@ export function createSelfErrorReporter(deps: SelfErrorReporterDeps): SelfErrorR
         const attempt = (async (): Promise<SelfErrorReportOutcome> => {
           try {
             const saved = await receive({ ...input, errorText, ...(agentNote !== undefined ? { agentNote } : {}) }, currentEnv);
-            if (!saved) release(() => key);
+            if (!saved) undo(() => { deps.throttle.forget(key); });
             return saved ? 'recorded' : 'skipped';
           } finally {
             // 結果を出す前に消す: 結果を見た呼び出しが、終わった保存にもう一度合流しない。
@@ -138,9 +134,9 @@ export function createSelfErrorReporter(deps: SelfErrorReporterDeps): SelfErrorR
       try {
         observedProjects = projects;
         reports = tracker.observe(result, projects, now());
-        // tracker は聞いた時点で throttle に記録している。保存に失敗した報告は記録を取り消し、次の更新がもう一度 receive に届くようにする。
+        // tracker は聞いた時点で throttle に記録している。保存に失敗した報告は tracker に返し、次の更新がもう一度 receive に届くようにする。
         const tasks = reports.map(async (item) => {
-          if (!(await receive(item))) release(() => refreshKeyOf(item));
+          if (!(await receive(item))) undo(() => { tracker.release(item); });
         });
         return Promise.all(tasks).then(() => undefined);
       } catch (error) {
