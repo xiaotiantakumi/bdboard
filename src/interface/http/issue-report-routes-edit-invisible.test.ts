@@ -23,7 +23,7 @@ async function setup() {
   return { storage, id, automatic, patch };
 }
 
-const INVISIBLE_ONLY = ['\u200B', '⠀', '\u200C', '\u2060', '\uFEFF', 'ㅤ', '\u202E', '́', '\u200B\n⠀\n'];
+const INVISIBLE_ONLY = ['\u200B', '⠀', '\u200C', '\u2060', '\uFEFF', '\u3164', '\u202E', '́', '\u200B\n⠀\n'];
 
 describe('PATCH draft: a title or body that shows nothing goes back to the automatic text (bdboard-ov0t)', () => {
   it.each(INVISIBLE_ONLY)('resets an edited body to the automatic text for %j', async (value) => {
