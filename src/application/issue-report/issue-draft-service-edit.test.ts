@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ISSUE_DRAFT_MAX_JSON_BYTES } from '../../domain/issue-draft.js';
+import { ISSUE_DRAFT_EDIT_HEADROOM_BYTES } from '../../domain/issue-draft-edit.js';
 import { draftJsonBytes } from '../../domain/issue-draft-size.js';
 import { createIssueDraftService, type ReceiveDraftInput } from './issue-draft-service.js';
 import { createInMemoryIssueDraftStorage, type InMemoryIssueDraftStorage } from './issue-draft-test-support.js';
@@ -101,6 +102,81 @@ describe('IssueDraftService.edit', () => {
     expect(fits.ok).toBe(true);
     const saved = storage.drafts.get(id);
     expect(saved === undefined ? Infinity : draftJsonBytes(saved)).toBeLessThanOrEqual(ISSUE_DRAFT_MAX_JSON_BYTES);
+  });
+
+  describe('leaves headroom for the next receive and dismiss (re-review m-B)', () => {
+    const EDIT_LIMIT = ISSUE_DRAFT_MAX_JSON_BYTES - ISSUE_DRAFT_EDIT_HEADROOM_BYTES;
+    const SYMPTOM = 's'.repeat(3000);
+
+    function bigReport(project: { name: string; path: string }): ReceiveDraftInput {
+      return {
+        kind: 'A',
+        catalogSlug: 'slug-big',
+        symptom: SYMPTOM,
+        errorText: 'e'.repeat(60_000),
+        envInfo: { bdboardVersion: '0.1.2', harnessVersion: '1.0.0', os: 'darwin', nodeVersion: 'v22.14.0' },
+        project,
+      };
+    }
+
+    /** 生ログを削って編集の上限ぎりぎりまで膨らませた下書き (制御文字は JSON で 6 バイト)。 */
+    async function editedToTheLimit() {
+      const { service, storage } = setup();
+      const created = await service.receive(bigReport({ name: 'proj-one', path: '/opt/proj-one' }));
+      if (!created.ok) throw new Error('receive failed');
+      const id = created.draft.id;
+      const edited = await service.edit(id, { body: '\u0001'.repeat(25_000) });
+      expect(edited).toMatchObject({ ok: true, errorTextTrimmed: true });
+      const bytes = draftJsonBytes(storage.drafts.get(id)!);
+      expect(bytes).toBeLessThanOrEqual(EDIT_LIMIT);
+      expect(bytes).toBeGreaterThan(EDIT_LIMIT - 64);
+      return { service, storage, id };
+    }
+
+    it('a receive from another project (long path, new versions) keeps the old project and the written fields', async () => {
+      const { service, storage, id } = await editedToTheLimit();
+      const errorTextAfterEdit = storage.drafts.get(id)!.localOnly.errorTextRaw;
+      const merged = await service.receive({
+        ...bigReport({ name: 'proj-two', path: `/opt/proj-two-${'x'.repeat(980)}` }),
+        envInfo: { bdboardVersion: 'v'.repeat(100), harnessVersion: 'h'.repeat(100), os: 'o'.repeat(100) },
+      });
+      expect(merged).toMatchObject({ ok: true, outcome: 'merged' });
+      const after = storage.drafts.get(id)!;
+      expect(after.occurredProjects.map((project) => project.name)).toEqual(['proj-one', 'proj-two']);
+      expect(after.localOnly.symptomRaw).toBe(SYMPTOM);
+      expect(after.localOnly.errorTextRaw).toBe(errorTextAfterEdit);
+      expect(after.occurrenceCount).toBe(2);
+    });
+
+    it('a dismiss with a 500-character reason keeps the projects and the symptom', async () => {
+      const { service, storage, id } = await editedToTheLimit();
+      expect(await service.dismiss(id, 'r'.repeat(500))).toMatchObject({ ok: true });
+      const after = storage.drafts.get(id)!;
+      expect(after.status).toBe('dismissed');
+      expect(after.occurredProjects.map((project) => project.name)).toEqual(['proj-one']);
+      expect(after.localOnly.symptomRaw).toBe(SYMPTOM);
+    });
+
+    it('a draft already past the edit limit (grown by receives) takes an edit that does not grow it, and refuses one that does', async () => {
+      const { service, storage } = setup();
+      const wide = '\u0001'.repeat(8000);
+      const created = await service.receive({
+        kind: 'A',
+        catalogSlug: 'slug-wide',
+        symptom: wide,
+        cause: wide,
+        prevention: wide,
+        agentNote: wide,
+      });
+      if (!created.ok) throw new Error('receive failed');
+      const before = draftJsonBytes(storage.drafts.get(created.draft.id)!);
+      expect(before).toBeGreaterThan(EDIT_LIMIT);
+      // 作った本文 (版・回数・時刻の並び) より短い本文にする。疑いの欄 (空でも数十バイト) が足されても小さくなる。
+      expect(created.draft.body.length).toBeGreaterThan(200);
+      expect(await service.edit(created.draft.id, { body: 'Short body' })).toMatchObject({ ok: true, errorTextTrimmed: false });
+      expect(draftJsonBytes(storage.drafts.get(created.draft.id)!)).toBeLessThanOrEqual(before);
+      expect(await service.edit(created.draft.id, { body: 'b'.repeat(20_000) })).toEqual({ ok: false, reason: 'too-large' });
+    });
   });
 });
 

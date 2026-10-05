@@ -147,6 +147,18 @@ describe('createFsIssueDraftStorage', () => {
       await fs.writeFile(path.join(baseDir, BROKEN_ID, 'draft.json'), content);
     };
 
+    it('a suspected leak that starts after it ends (start > end) is skipped; start === end still reads (bdboard-4y8q.3.1 n-B)', async () => {
+      const leak = (start: number, end: number) => ({ field: 'body' as const, kind: 'key-overflow', start, end });
+      const storage = createFsIssueDraftStorage(baseDir);
+      const empty = makeDraft(ID_1, { bodyEditedByUser: true, suspectedLeaks: [leak(0, 0)] });
+      await storage.save(empty);
+      expect(await storage.get(ID_1)).toEqual(empty);
+      await expectSkippedWithOneWarning(
+        () => writeBroken(JSON.stringify(makeDraft(BROKEN_ID, { bodyEditedByUser: true, suspectedLeaks: [leak(5, 4)] }))),
+        'does not match the draft format',
+      );
+    });
+
     // Windows は「ディレクトリでないものの下」を ENOENT と報告する (ENOTDIR にならない) ので、
     // 「飛ばして警告」ではなく「無い下書き」として扱われる。この行は POSIX だけで確かめる。
     it.skipIf(process.platform === 'win32')('a draft id that is a plain file (ENOTDIR)', async () => {

@@ -1,4 +1,5 @@
 import { ISSUE_DRAFT_MAX_JSON_BYTES, type DraftSuspectedLeak, type IssueDraft, type OccurredProject } from './issue-draft.js';
+import { foldHomePaths } from './issue-draft-identifier.js';
 import { draftJsonBytes } from './issue-draft-size.js';
 import { prepareKeys } from './issue-public-keys.js';
 import { detectSuspectedLeaks } from './issue-public-leaks.js';
@@ -22,6 +23,17 @@ export const ISSUE_DRAFT_BODY_MAX_CHARS = 65_536;
  * draft.json の 200KB を食い潰すため。1 件は 60 バイト前後なので、上限いっぱいでも 12KB 程度。
  */
 export const ISSUE_DRAFT_MAX_SUSPECTED_LEAKS = 200;
+/**
+ * 編集のあとに残す draft.json の余白 (bdboard-4y8q.3.1 の再レビュー m-B)。編集で 200KB ちょうどまで膨らませると、次の受け取り・
+ * 見送りが従来の縮め (fitDraftToByteLimit) で古いプロジェクトや人が書いた欄を削るので、編集は 200KB からこの余白を引いた
+ * 大きさまでにする。根拠 (JSON のバイト数。入口の上限は interface/http/issue-report-routes.ts の受け取り・見送りの schema):
+ * - 受け取り 1 回: 新しいプロジェクト 1 件 (path 1000 文字 × エスケープで最大 6 バイト + name 200 文字 × 3 バイト ≈ 6.8KB)、
+ *   版の入れ替え (envInfo 6 欄と harnessVersionAtOccurrence、各 100 文字 × 3 バイト ≈ 2.1KB) と自動の本文に載る版 (≈ 2KB)、
+ *   直した欄の疑いのかけ直し (最大 200 件 × 約 66 バイト ≈ 13.2KB)、回数と時刻 (数十バイト)。合わせて約 24KB。
+ * - 見送り: 理由 200 文字 × 3 バイトと状態・時刻 (≈ 0.7KB)。
+ * 足して約 25KB。切りのよい 32KiB にする。
+ */
+export const ISSUE_DRAFT_EDIT_HEADROOM_BYTES = 32 * 1024;
 
 /** PATCH drafts/:id で書き換える欄。渡した欄だけを替える。 */
 export interface DraftTextEdit {
@@ -53,7 +65,9 @@ export interface DraftTextToScan {
 export function displayedKeysOf(projects: readonly OccurredProject[]): LocalOnlyKeys {
   return {
     projectRoots: [],
-    properNouns: projects.map((project) => ({ category: 'project' as const, value: project.name })),
+    // トンネルが見る名前は foldHomePaths で畳んだもの (issue-report-dto.ts)。保存先へ直接書かれた生の名前
+    // (/Users/alice/tool) でも、見えている ~/tool と同じ鍵にする (再レビュー n-A)。
+    properNouns: projects.map((project) => ({ category: 'project' as const, value: foldHomePaths(project.name) })),
   };
 }
 
@@ -100,16 +114,16 @@ export function withRescannedLeaks(draft: IssueDraft): IssueDraft {
 }
 
 /**
- * 編集で 200KB を超えた分を、手元の生ログ (errorTextRaw) の末尾からだけ削る (レビュー M-2)。発生プロジェクト (漏れ検出の鍵と
+ * 編集で limit を超えた分を、手元の生ログ (errorTextRaw) の末尾からだけ削る (レビュー M-2)。発生プロジェクト (漏れ検出の鍵と
  * パス)・丸め込んだ指紋・人が書いた欄 (症状・原因・対策・メモ) は、編集では削らない: 手元の外 (トンネル) の書き手が
  * 本文の大きさだけで、見られない手元のデータを消せてしまうため。先頭・末尾の切り出し (errorTextHead / Tail) は残す。
  * 削ったら errorTextTruncated を立てる。生ログを削り切っても超えるなら、そのまま返す (呼び出し側が 413 にする)。
  */
-function trimErrorTextToFit(draft: IssueDraft): { readonly draft: IssueDraft; readonly trimmed: boolean } {
+function trimErrorTextToFit(draft: IssueDraft, limit: number): { readonly draft: IssueDraft; readonly trimmed: boolean } {
   let current = draft;
   let trimmed = false;
   for (;;) {
-    const excess = draftJsonBytes(current) - ISSUE_DRAFT_MAX_JSON_BYTES;
+    const excess = draftJsonBytes(current) - limit;
     const raw = current.localOnly.errorTextRaw;
     if (excess <= 0 || raw === undefined || raw.length === 0) return { draft: current, trimmed };
     // fitDraftToByteLimit の cutTextFrom と同じく、1 文字は最大 3 バイトとして一度に落とす (足りなければもう一周)。
@@ -124,14 +138,16 @@ function trimErrorTextToFit(draft: IssueDraft): { readonly draft: IssueDraft; re
 
 export interface DraftEditOutcome {
   readonly draft: IssueDraft;
-  /** 200KB に収めるために生ログの末尾を削った。 */
+  /** 編集の上限に収めるために生ログの末尾を削った。 */
   readonly errorTextTrimmed: boolean;
+  /** 編集の上限に収まった。false なら保存しない (413)。 */
+  readonly fits: boolean;
 }
 
 /**
  * 題名・本文を替え、渡した欄の「直した」印を立て、置き換え漏れの検出をかけ直す。状態の確認 (pending だけ) と長さの
- * 上限は呼び出し側。大きくなった分は生ログの末尾からだけ削り (trimErrorTextToFit)、それでも 200KB を超えるなら、呼び出し側が
- * draftJsonBytes で見て断る。検出の入力 (題名・本文・発生プロジェクト) は削る前と後で変わらない (削るのは生ログだけ) ので、
+ * 上限は呼び出し側。大きくなった分は生ログの末尾からだけ削り (trimErrorTextToFit)、それでも編集の上限 (200KB から
+ * ISSUE_DRAFT_EDIT_HEADROOM_BYTES を引いた大きさ) を超えるなら fits を false にし、呼び出し側が断る。検出の入力 (題名・本文・発生プロジェクト) は削る前と後で変わらない (削るのは生ログだけ) ので、
  * 疑いは保存する下書きの鍵と食い違わない。疑いの分 (最大 200 件) も大きさに入れて削る。
  */
 export function applyDraftEdit(draft: IssueDraft, edit: DraftTextEdit): DraftEditOutcome {
@@ -142,6 +158,9 @@ export function applyDraftEdit(draft: IssueDraft, edit: DraftTextEdit): DraftEdi
     titleEditedByUser: draft.titleEditedByUser || edit.title !== undefined,
     bodyEditedByUser: draft.bodyEditedByUser || edit.body !== undefined,
   });
-  const fitted = trimErrorTextToFit(edited);
-  return { draft: fitted.draft, errorTextTrimmed: fitted.trimmed };
+  // 編集の上限は 200KB から余白を引いた大きさ。受け取りで既にそれを超えている下書きは、今より大きくしなければ通す
+  // (題名の一字の直しまで断らない。余白を割ったのは編集ではないので、編集が余白を食うことにはならない)。
+  const limit = Math.max(ISSUE_DRAFT_MAX_JSON_BYTES - ISSUE_DRAFT_EDIT_HEADROOM_BYTES, draftJsonBytes(draft));
+  const fitted = trimErrorTextToFit(edited, limit);
+  return { draft: fitted.draft, errorTextTrimmed: fitted.trimmed, fits: draftJsonBytes(fitted.draft) <= limit };
 }

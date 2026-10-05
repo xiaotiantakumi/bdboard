@@ -193,6 +193,11 @@ describe('the keys used for the tunnel and for the merge rescan (review M-1, m-1
     expect(displayedKeysOf([PROJECT])).toEqual({ projectRoots: [], properNouns: [{ category: 'project', value: PROJECT.name }] });
   });
 
+  it('folds a raw home path in a stored name the way the tunnel sees it (re-review n-A)', () => {
+    const raw = { ...PROJECT, name: '/Users/example-user/tool', path: '/Users/example-user/tool' };
+    expect(displayedKeysOf([raw]).properNouns).toEqual([{ category: 'project', value: '~/tool' }]);
+  });
+
   it('rescans the edited body when a merge adds a new project', () => {
     const edited = editDraft(draft(), { body: 'see /opt/two-proj/x' });
     expect(edited.suspectedLeaks).toEqual([]);
