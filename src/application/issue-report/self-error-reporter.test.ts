@@ -48,9 +48,9 @@ describe('createSelfErrorReporter', () => {
 
   it('masks report text and notes, and keeps source and normalized text in the key', async () => {
     const { reporter, receive } = setup();
-    await reporter.report({ source: 'one', errorText: 'ex-abc1 failed at /private/example-project:3307', agentNote: 'example-project /private/example-project', project: { name: project.name, path: project.rootPath } });
-    await reporter.report({ source: 'one', errorText: 'ex-def2 failed at /private/example-project:3308' });
-    await reporter.report({ source: 'two', errorText: 'ex-xyz3 failed at /private/example-project:3309' });
+    await reporter.report({ source: 'api:GET /one', errorText: 'ex-abc1 failed at /private/example-project:3307', agentNote: 'example-project /private/example-project', project: { name: project.name, path: project.rootPath } });
+    await reporter.report({ source: 'api:GET /one', errorText: 'ex-def2 failed at /private/example-project:3308' });
+    await reporter.report({ source: 'api:GET /two', errorText: 'ex-xyz3 failed at /private/example-project:3309' });
     expect(receive).toHaveBeenCalledTimes(2);
     expect(receive.mock.calls[0]?.[0]).toMatchObject({ errorText: '<ticket-id> failed at <project-root>:3307', agentNote: '<project> <project-root>', project: { name: project.name, path: project.rootPath } });
   });
@@ -58,10 +58,10 @@ describe('createSelfErrorReporter', () => {
   it('logs fixed safe messages for failed, rejected and unsaved receives', async () => {
     const rejected = vi.fn().mockRejectedValue(Object.assign(new Error('/private/body secret'), { code: 'EACCES' }));
     const failed = setup(rejected);
-    await expect(failed.reporter.report({ source: 'manual', errorText: 'failure' })).resolves.toBeUndefined();
+    await expect(failed.reporter.report({ source: 'api:GET /manual', errorText: 'failure' })).resolves.toBe('skipped');
     expect(failed.log).toHaveBeenCalledWith('self error draft failed (EACCES)');
     const unsaved = setup(vi.fn().mockResolvedValue({ ok: false, reason: 'storage-full' }));
-    await unsaved.reporter.report({ source: 'manual', errorText: 'failure' });
+    await unsaved.reporter.report({ source: 'api:GET /manual', errorText: 'failure' });
     expect(unsaved.log).toHaveBeenCalledWith('self error draft not saved (storage-full)');
   });
 

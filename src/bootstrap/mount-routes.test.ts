@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { SelfErrorReportOutcome, SelfErrorReporter } from '../application/issue-report/self-error-reporter.js';
 import { unrestrictedPlatformSupport } from '../domain/platform-support.js';
+import { ERROR_DRAFT_HEADER } from '../interface/http/server-error-capture.js';
 import { mountRoutes, type MountRoutesDeps } from './mount-routes.js';
 
 /**
@@ -155,5 +157,95 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
     // 登録しない)。API-only モードでは GET '/*' 自体が現れないことを見る。
     expect(apiOnlyGetPaths).not.toContain('/*');
     expect(apiOnlyGetPaths).toContain('/__sentinel/tunnel');
+  });
+});
+
+describe('mountRoutes 5xx capture (bdboard-4y8q.6.4)', () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  function reporterStub(outcome: SelfErrorReportOutcome = 'recorded') {
+    const report = vi.fn<SelfErrorReporter['report']>().mockResolvedValue(outcome);
+    return { report };
+  }
+
+  /** 認証を明示的に外した設定 (未設定のままだと、セキュリティの middleware が全要求を 503 で止める)。 */
+  function open(): Partial<MountRoutesDeps> {
+    return { security: { authMode: { kind: 'disabled-explicitly' } } };
+  }
+
+  function failingInner(): Hono {
+    return new Hono()
+      .get('/api/fail/:id', (c) => c.json({ error: 'failed to read ticket', detail: `detail ${'x'.repeat(2_000)}` }, 502))
+      .get('/api/throw/:id', () => {
+        throw new Error('boom from a handler');
+      });
+  }
+
+  it('mounts the capture right after the compression and before every route when a reporter is given', () => {
+    const app = new Hono();
+    mountRoutes(app, buildDeps({ selfErrorReporter: reporterStub() }));
+
+    const paths = app.routes.map((route) => route.path);
+    const platformSupportIndex = paths.indexOf('/api/platform-support');
+    const leadingWildcardIndexes = app.routes
+      .slice(0, platformSupportIndex)
+      .map((route, index) => ({ route, index }))
+      .filter(({ route }) => route.method === 'ALL' && route.path === '/*')
+      .map(({ index }) => index);
+
+    // security headers + basic auth + compression + capture。
+    expect(leadingWildcardIndexes).toEqual([0, 1, 2, 3]);
+  });
+
+  it('reads the response body before the compression (the capture sits inside it) and still delivers a compressed response', async () => {
+    const reporter = reporterStub();
+    const app = new Hono();
+    mountRoutes(app, buildDeps({ ...open(), inner: failingInner(), staticSpa: undefined, selfErrorReporter: reporter }));
+
+    const res = await app.request('/api/fail/bdboard-xyz9', { headers: { 'accept-encoding': 'gzip' } });
+
+    expect(res.status).toBe(502);
+    expect(res.headers.get('content-encoding')).toBe('gzip');
+    expect(res.headers.get(ERROR_DRAFT_HEADER)).toBe('recorded');
+    const input = reporter.report.mock.calls[0]?.[0];
+    expect(input?.source).toBe('api:GET /api/fail/:id');
+    expect(input?.errorText).toContain('error: failed to read ticket');
+    expect(input?.errorText).toContain('detail xxxxxxxx');
+  });
+
+  it('without a reporter (BDBOARD_SELF_ERROR_DRAFTS=off) mounts no capture and adds no header, but a handler error is still a 500 JSON', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const app = new Hono();
+    mountRoutes(app, buildDeps({ ...open(), inner: failingInner(), staticSpa: undefined, selfErrorReporter: undefined }));
+
+    const wildcardCount = app.routes.filter((route) => route.method === 'ALL' && route.path === '/*').length;
+    expect(wildcardCount).toBe(3);
+
+    const failed = await app.request('/api/fail/bdboard-xyz9');
+    expect(failed.status).toBe(502);
+    expect(failed.headers.get(ERROR_DRAFT_HEADER)).toBeNull();
+
+    const thrown = await app.request('/api/throw/bdboard-xyz9');
+    expect(thrown.status).toBe(500);
+    expect(thrown.headers.get(ERROR_DRAFT_HEADER)).toBeNull();
+    expect(await thrown.json()).toEqual({ error: 'internal error' });
+  });
+
+  it('answers an error thrown inside a mounted sub-app with the app-level 500 JSON (no stack in the response) and reports it', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const reporter = reporterStub();
+    const app = new Hono();
+    mountRoutes(app, buildDeps({ ...open(), inner: failingInner(), staticSpa: undefined, selfErrorReporter: reporter }));
+
+    const res = await app.request('/api/throw/bdboard-xyz9');
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'internal error' });
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(reporter.report.mock.calls[0]?.[0].source).toBe('api:GET /api/throw/:id');
+    expect(reporter.report.mock.calls[0]?.[0].errorText).toContain('Error: boom from a handler');
   });
 });
