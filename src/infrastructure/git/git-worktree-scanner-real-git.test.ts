@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { RM_OPTIONS, useQuietGitProcessEnv } from '../../../scripts/test-support/quiet-git.mjs';
 import { NodeCommandRunner } from '../process/node-command-runner.js';
 import { createGitWorktreeScanner } from './git-worktree-scanner.js';
 
@@ -14,6 +15,10 @@ import { createGitWorktreeScanner } from './git-worktree-scanner.js';
 
 const runner = new NodeCommandRunner();
 const tmpDirs: string[] = [];
+
+// bdboard-5py8: runner.run に env を渡さず process.env を継ぐので、process.env 側を静かにする。commit / push / fetch の後の
+// `git maintenance run --auto --detach` が afterEach の rmSync と競合して ENOTEMPTY になるのを防ぐ。
+useQuietGitProcessEnv();
 
 /**
  * テスト用の git 実行。利用者の設定に引きずられないようにする:
@@ -35,7 +40,7 @@ afterEach(() => {
   while (tmpDirs.length > 0) {
     const dir = tmpDirs.pop()!;
     // 走り終えた git のプロセスがまだファイルを掴んでいることがある
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    fs.rmSync(dir, RM_OPTIONS);
   }
 });
 

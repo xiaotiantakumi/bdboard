@@ -16,7 +16,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { beforeAll } from 'vitest';
+import { afterAll, beforeAll } from 'vitest';
 
 /**
  * 一時ディレクトリの後始末 (rmSync) に渡す共通オプション。主対策は上の「保守を止める」ことで、これは補助。
@@ -51,11 +51,15 @@ export function quietGitEnv(dir) {
  * describe の中 (またはファイルのトップレベル) で呼ぶ。そのスコープの間だけ process.env.GIT_CONFIG_GLOBAL を
  * 一時の quiet gitconfig に向け、終わったら元の値 (未設定なら未設定) に戻す。env を明示せず `...process.env` を渡す /
  * 何も渡さない spawn・execFileSync と、そこから起こされるスクリプトの git、テストのプロセス内で呼ぶモジュールの git を
- * 静かにするための道具。復元は beforeAll が返す cleanup で行うので、beforeAll が途中で失敗したときは何も書き換えず、
- * 成功したときだけ元に戻す (vi.stubEnv + vi.unstubAllEnvs にしないのは、テスト自身が unstubAllEnvs を呼ぶと
- * スコープの途中で静かさが外れるため)。
+ * 静かにするための道具。復元は beforeAll の戻り値 (cleanup) ではなく、変数に持った復元処理を afterAll で呼ぶ
+ * (bdboard-5py8)。戻り値の cleanup は、同じ suite の後から登録された別の beforeAll が失敗すると cleanup ごと捨てられ、
+ * 静かな設定のまま一時 dir が残る。afterAll は自分や兄弟の beforeAll が失敗しても走るので、どちらの失敗でも元に戻る。
+ * 自分の beforeAll が途中で失敗したときは何も書き換えていない (復元処理が無い) ので afterAll は何もしない。
+ * (vi.stubEnv + vi.unstubAllEnvs にしないのは、テスト自身が unstubAllEnvs を呼ぶとスコープの途中で静かさが外れるため)。
+ * src/ の TypeScript テストは scripts/test-support/quiet-git.d.mts の型宣言経由で同じ補助を import する。
  */
 export function useQuietGitProcessEnv() {
+  let restore;
   beforeAll(() => {
     const previous = process.env.GIT_CONFIG_GLOBAL;
     const dir = mkdtempSync(path.join(tmpdir(), 'bdboard-quiet-git-env-'));
@@ -65,7 +69,7 @@ export function useQuietGitProcessEnv() {
       rmSync(dir, RM_OPTIONS);
       throw error;
     }
-    return () => {
+    restore = () => {
       if (previous === undefined) {
         delete process.env.GIT_CONFIG_GLOBAL;
       } else {
@@ -73,5 +77,10 @@ export function useQuietGitProcessEnv() {
       }
       rmSync(dir, RM_OPTIONS);
     };
+  });
+  afterAll(() => {
+    const run = restore;
+    restore = undefined;
+    run?.();
   });
 }

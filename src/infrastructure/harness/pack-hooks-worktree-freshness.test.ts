@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { RM_OPTIONS, quietGitEnv } from '../../../scripts/test-support/quiet-git.mjs';
 import type { CommandResult } from '../../application/ports/command-runner.js';
 import { NodeCommandRunner } from '../process/node-command-runner.js';
 
@@ -67,11 +68,14 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
     tmpRoot = realpathSync(mkdtempSync(path.join(tmpdir(), 'bdboard-freshness-')));
     mkdirSync(path.join(tmpRoot, 'home'), { recursive: true });
     mkdirSync(path.join(tmpRoot, 'tmp'), { recursive: true });
+    // env を一から組み立てるので、git の自動保守を止める一時の gitconfig を quietGitEnv で足す (bdboard-5py8)。
+    // 1 ケースで push/fetch を何度も繰り返すので、止めないと detach した保守が afterEach の rmSync と競合しうる。
     env = {
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: path.join(tmpRoot, 'home'),
       TMPDIR: path.join(tmpRoot, 'tmp'),
       GIT_CONFIG_NOSYSTEM: '1',
+      ...quietGitEnv(path.join(tmpRoot, 'home')),
     };
 
     const bare = path.join(tmpRoot, 'origin.git');
@@ -91,7 +95,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
   });
 
   afterEach(() => {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(tmpRoot, RM_OPTIONS);
   });
 
   /** origin/main を 1 コミット進める (main の clone で書いて push → fetch)。 */
