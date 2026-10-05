@@ -123,6 +123,23 @@ describe('createManual: the manual limit (default 20 per hour, rolling)', () => 
     expect((await manual(h.service)).ok).toBe(true);
   });
 
+  it('is not locked out after the clock goes back (drafts dated in the future are outside the window)', async () => {
+    const h = createHarness();
+    for (let n = 0; n < ISSUE_DRAFT_MANUAL_PER_HOUR; n += 1) await manualOk(h.service, `title ${n}`);
+    h.advance(-2 * 24 * HOUR_MS);
+    expect((await manual(h.service)).ok).toBe(true);
+  });
+
+  it('counts inside the mutex: concurrent requests never create more than the limit', async () => {
+    const { service, storage } = createHarness();
+    const results = await Promise.all(
+      Array.from({ length: ISSUE_DRAFT_MANUAL_PER_HOUR + 5 }, (_, n) => manual(service, `title ${n}`)),
+    );
+    expect(results.filter((result) => result.ok)).toHaveLength(ISSUE_DRAFT_MANUAL_PER_HOUR);
+    expect(results.filter((result) => !result.ok && result.reason === 'rate-limited')).toHaveLength(5);
+    expect(storage.drafts.size).toBe(ISSUE_DRAFT_MANUAL_PER_HOUR);
+  });
+
   it('counts dismissed manual drafts too (the limit is on how many were created)', async () => {
     const { service } = createHarness();
     const drafts = [];

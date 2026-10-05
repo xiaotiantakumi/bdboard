@@ -313,7 +313,7 @@ head/tail が置き換え後の文章から作られるようになったら、�
 | 説明 | `localOnly.agentNoteRaw` に入れる(手元だけ。トンネルには見せない)。**暫定の公開本文には入らない**。公開本文の組み立て(5 節)に入れるかは、投稿(4y8q.4)が置き換えを通してから決める |
 | 題名 | 「直した題名」として保存する(`titleEditedByUser: true`)ので、直した欄にかかる置き換え漏れの検出(`withRescannedLeaks`)を作成時に通り、`suspectedLeaks` が付く(置き換えはしない。人が直す)。本文は自動の暫定の本文(`bodyEditedByUser: false`) |
 | `envInfo` | サーバーが埋める(画面からは受けない): `bdboardVersion`(package.json の version)・`os`(`process.platform`)・`nodeVersion`(`process.version`)。`bdVersion`・`ghVersion`・`harnessVersion` は埋めない |
-| 件数の上限 | 自動の 1 時間 20 件とは**別の枠**で、既定 1 時間 20 件。一覧(`storage.scan()`)から「指紋が `C:manual:` で始まり、`firstOccurredAt` が今から 60 分以内」の下書きを数える(UTC の暦時間ではなく走っている 60 分。見送り済みも数える)。索引の形式は変えない。超えたら 429 `{ error, code: 'manual-rate-limited' }`、容量切れは 507 `{ code: 'storage-full' }`(自動と同じ) |
+| 件数の上限 | 自動の 1 時間 20 件とは**別の枠**で、既定 1 時間 20 件。一覧(`storage.scan()`)から「指紋が `C:manual:` で始まり、`firstOccurredAt` が今から 60 分以内」の下書きを数える(UTC の暦時間ではなく走っている 60 分。見送り済みも数える。時計が戻って今より後の時刻になった下書きは数えない: 数えると、時計が追い付くまで手書きを断り続ける)。索引の形式は変えない。超えたら 429 `{ error, code: 'manual-rate-limited' }`、容量切れは 507 `{ code: 'storage-full' }`(自動と同じ) |
 | 画像 | 既存の画像の追加(`POST drafts/:id/images`)でそのまま付けられる(pending の下書きなので) |
 
 **自動の枠との分け方**: 受け取りの索引(`issue-draft-index.ts`)の `newDraftsByHour`(自動の 20 件/時)は、起動後や一覧が欠けたあとの

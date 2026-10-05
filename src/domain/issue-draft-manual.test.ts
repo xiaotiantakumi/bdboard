@@ -122,9 +122,19 @@ describe('countManualDraftsSince', () => {
     { fingerprint: 'mass-occurrence:C:2026-10-04T11', firstOccurredAt: '2026-10-04T11:45:00.000Z' },
   ];
 
+  const until = at('2026-10-04T12:00:00.000Z');
+
   it('counts only manual fingerprints created at or after the cut-off', () => {
-    expect(countManualDraftsSince(drafts, at('2026-10-04T11:00:00.000Z'))).toBe(2);
-    expect(countManualDraftsSince(drafts, at('2026-10-04T11:00:00.001Z'))).toBe(1);
-    expect(countManualDraftsSince(drafts, at('2026-10-04T12:00:00.000Z'))).toBe(0);
+    expect(countManualDraftsSince(drafts, at('2026-10-04T11:00:00.000Z'), until)).toBe(2);
+    expect(countManualDraftsSince(drafts, at('2026-10-04T11:00:00.001Z'), until)).toBe(1);
+    expect(countManualDraftsSince(drafts, at('2026-10-04T12:00:00.000Z'), until)).toBe(0);
+  });
+
+  it('does not count drafts dated after now (the clock went back), but counts one created exactly now', () => {
+    const future = [
+      { fingerprint: 'C:manual:eeeeeeeeeeeeeeee', firstOccurredAt: '2026-10-06T12:00:00.000Z' },
+      { fingerprint: 'C:manual:ffffffffffffffff', firstOccurredAt: '2026-10-04T12:00:00.000Z' },
+    ];
+    expect(countManualDraftsSince(future, at('2026-10-04T11:00:00.000Z'), until)).toBe(1);
   });
 });

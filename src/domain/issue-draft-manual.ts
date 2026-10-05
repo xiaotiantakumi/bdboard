@@ -44,14 +44,21 @@ export function manualFingerprint(randomHex: string): string {
   return `${MANUAL_FINGERPRINT_PREFIX}${randomHex}`;
 }
 
-/** `sinceMs` (エポックミリ秒) 以降に作られた手書きの下書きの数。作った時刻は firstOccurredAt。 */
+/**
+ * `sinceMs` 以上 `untilMs` 以下 (エポックミリ秒) に作られた手書きの下書きの数。作った時刻は firstOccurredAt。
+ * `untilMs` (今) より後の時刻は数えない: 時計が戻ると、戻る前に作った下書きが「未来」になり、上限なしに数え続けて
+ * 時計が追い付くまで (戻った幅 + 1 時間) 手書きを断り続けるため。自動の枠 (今の暦時間のバケツだけを見る) と同じく、未来の分は窓の外。
+ */
 export function countManualDraftsSince(
   drafts: readonly Pick<IssueDraft, 'fingerprint' | 'firstOccurredAt'>[],
   sinceMs: number,
+  untilMs: number,
 ): number {
   let count = 0;
   for (const draft of drafts) {
-    if (isManualFingerprint(draft.fingerprint) && Date.parse(draft.firstOccurredAt) >= sinceMs) count += 1;
+    if (!isManualFingerprint(draft.fingerprint)) continue;
+    const createdMs = Date.parse(draft.firstOccurredAt);
+    if (createdMs >= sinceMs && createdMs <= untilMs) count += 1;
   }
   return count;
 }

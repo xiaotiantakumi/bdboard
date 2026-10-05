@@ -35,10 +35,6 @@ export interface DraftManualContext extends DraftReceiveContext {
   readonly indexCache: Pick<DraftIndexCache, 'get' | 'noteStatus'>;
   /** サーバーの版 (bdboard・OS・Node)。省略時は 'unknown'。 */
   readonly envInfo?: (() => DraftEnvInfo) | undefined;
-  /** 指紋の 16 桁 hex の乱数 (既定は randomBytes(8))。テストが差し替える。 */
-  readonly randomHex?: (() => string) | undefined;
-  /** 1 時間あたりの上限 (既定は ISSUE_DRAFT_MANUAL_PER_HOUR)。 */
-  readonly perHour?: number | undefined;
 }
 
 const UNKNOWN_ENV: DraftEnvInfo = { bdboardVersion: 'unknown', os: 'unknown', nodeVersion: 'unknown' };
@@ -53,14 +49,14 @@ export async function createManualLocked(
   const nowIso = now.toISOString();
 
   // 走っている 1 時間 (UTC の暦時間ではない) に作られた手書きの下書きを一覧から数える。自動の枠 (newDraftsByHour) は見ない・増やさない。
+  // 今より後 (時計が戻った) の下書きは数えない (countManualDraftsSince)。
   const listing = await ctx.storage.scan();
-  const recent = countManualDraftsSince(listing.drafts, now.getTime() - ISSUE_DRAFT_MANUAL_WINDOW_MS);
-  if (recent >= (ctx.perHour ?? ISSUE_DRAFT_MANUAL_PER_HOUR)) return { ok: false, reason: 'rate-limited' };
+  const recent = countManualDraftsSince(listing.drafts, now.getTime() - ISSUE_DRAFT_MANUAL_WINDOW_MS, now.getTime());
+  if (recent >= ISSUE_DRAFT_MANUAL_PER_HOUR) return { ok: false, reason: 'rate-limited' };
 
-  const randomHex = ctx.randomHex?.() ?? randomBytes(8).toString('hex');
   const draft = createManualDraft(
     { ...input, envInfo: ctx.envInfo?.() ?? UNKNOWN_ENV },
-    { id: ctx.newId(), fingerprint: manualFingerprint(randomHex), nowIso },
+    { id: ctx.newId(), fingerprint: manualFingerprint(randomBytes(8).toString('hex')), nowIso },
   );
   if (!(await ctx.saveWithinCap(draft, undefined))) return { ok: false, reason: 'storage-full' };
   // 索引へは状態だけ反映する。指紋は毎回ランダムで引き当てに使わず、自動の枠 (newDraftsByHour) には数えない。
