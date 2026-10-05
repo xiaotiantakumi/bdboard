@@ -4,6 +4,7 @@
  * 順序の理由 (docs/ISSUE-REPORTING.md 4節・5節): エラー文はこの置換を全文にかけてから先頭・末尾へ切る。
  * 先に切ると、トークンが切れ目で半分になり (正規表現は 20 文字以上などを求める)、断片が残る。
  */
+import { NO_EDGES, type FieldEdges } from './issue-public-fragments.js';
 import type { PreparedKeys } from './issue-public-keys.js';
 import { coverage, findRedactionSpans, mergeSpans, type KindSpan } from './issue-public-spans.js';
 import {
@@ -36,6 +37,7 @@ const PLACEHOLDER: Readonly<Record<RedactionKind, string>> = {
   'key-block': '<redacted-key-block>',
   token: '<redacted-token>',
   email: '<email>',
+  fragment: '<redacted-fragment>',
 };
 
 /** 一致を統合し、左から 1 回の走査で印に置き換える。返す marks は出力 (text) の上での印の位置。 */
@@ -64,12 +66,15 @@ function applySpans(text: string, spans: readonly KindSpan[]): RedactedText {
  * 残りは 1 回目の印と一緒に統合し直す (印にまたがる一致は和集合になる)。印の位置は、統合し直した結果の位置。
  * 1 回目で何も見つからなければ文字列は変わっていないので、2 回目はしない。3 回目以降は、最後の網が報告する。
  * 返す marks は出力 (text) の上での印の位置で、開始位置の順・重なりなし。
+ *
+ * edges: 欄の端の断片 (保存の上限などで途中まで切れた名前・根・トークン。issue-public-fragments.ts) を探す端。1 回目と 2 回目の
+ * どちらでも探す (名前が印に替わって直前が `>` になり、端の途中までの "sk-…" が開始の条件を満たすことがある)。
  */
-export function redactText(text: string, prepared: PreparedKeys): RedactedText {
-  const first = applySpans(text, findRedactionSpans(text, prepared));
+export function redactText(text: string, prepared: PreparedKeys, edges: FieldEdges = NO_EDGES): RedactedText {
+  const first = applySpans(text, findRedactionSpans(text, prepared, edges));
   if (first.marks.length === 0) return first;
   const insideMark = coverage(first.marks);
-  const fresh = findRedactionSpans(first.text, prepared).filter((span) => !insideMark(span.start, span.end));
+  const fresh = findRedactionSpans(first.text, prepared, edges).filter((span) => !insideMark(span.start, span.end));
   if (fresh.length === 0) return first;
   return applySpans(first.text, [...first.marks, ...fresh]);
 }

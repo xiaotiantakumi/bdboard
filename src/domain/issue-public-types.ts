@@ -45,7 +45,11 @@ export interface LocalOnlyKeys {
   readonly properNouns: readonly LocalProperNoun[];
 }
 
-export type RedactionKind = 'project-path' | 'home-path' | ProperNounCategory | 'token' | 'key-block' | 'email';
+/**
+ * 'fragment': 欄の端で途中まで切れた名前・根・トークン・メール (保存の上限や末尾だけを取る送り手の切れ目。
+ * issue-public-fragments.ts)。完全な形には一致しないので、端の検査だけが拾う。
+ */
+export type RedactionKind = 'project-path' | 'home-path' | ProperNounCategory | 'token' | 'key-block' | 'email' | 'fragment';
 export type PublicField = 'title' | 'body';
 
 /**
