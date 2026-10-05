@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useId, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
 import { createManualIssueDraft, type IssueDraftSummaryDto } from '../../api/issue-reports';
 import { IssueDraftImageFailures } from './IssueDraftImageFailures';
 import { IssueDraftImagePicker } from './IssueDraftImagePicker';
@@ -8,6 +8,7 @@ import {
   ISSUE_DRAFT_TITLE_MAX_CHARS,
   describeIssueDraftManualError,
 } from './issueDraftErrors';
+import { findImagesAlreadyStored } from './issueDraftImageResend';
 import { uploadIssueDraftImages, type ImageUploadFailure, type PickedImage } from './issueDraftImageUpload';
 import { useMountedRef } from '../../hooks/useMountedRef';
 import { type ReportProject } from './manualDraftAccess';
@@ -24,12 +25,19 @@ export interface IssueDraftManualFormProps {
   /** 作れた (一覧は読み直し済み)。呼び出し側が新しい下書きを選ぶ。画像が付かなかったときは、利用者が「下書きを開く」を押したときに呼ぶ。 */
   readonly onCreated: (draft: IssueDraftSummaryDto) => void;
   readonly onCancel: () => void;
+  /**
+   * 失敗の画面 (画像が付かなかった結果) を出しているかが変わったときに呼ぶ (閉じるときは false)。パネルが、この画面を出している間に
+   * 「新しく報告」を押されたら書く画面を作り直す (key を替える) ために使う。書きかけの画面は、押されても作り直さない (入力を消さない)。bdboard-8zwi。
+   */
+  readonly onResultShownChange?: (shown: boolean) => void;
 }
 
 /** 下書きは作れたが、画像が付かなかったもの。ここにある間は、書く画面の代わりに失敗の画面を出す。 */
 interface PartialOutcome {
   readonly draft: IssueDraftSummaryDto;
   readonly failures: readonly ImageUploadFailure[];
+  /** サーバーに付いたと分かっている画像の、サーバー側の file 名。送り直しで同じ画像を二重に付けない目印 (issueDraftImageResend.ts)。 */
+  readonly storedFileNames: ReadonlySet<string>;
 }
 
 /**
@@ -42,7 +50,13 @@ interface PartialOutcome {
  * 下書きは作れた時点で成功しているので、画像の失敗で消さず・作り直さない: 失敗の画面 (IssueDraftImageFailures) に付かなかった画像を出し、
  * その画像だけ送り直すか、下書きを開く。成功したら ['issue-reports'] を読み直してから onCreated を呼ぶ。
  */
-export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel }: IssueDraftManualFormProps) {
+export function IssueDraftManualForm({
+  project,
+  localAccess,
+  onCreated,
+  onCancel,
+  onResultShownChange,
+}: IssueDraftManualFormProps) {
   const queryClient = useQueryClient();
   const titleId = useId();
   const descriptionId = useId();
@@ -57,6 +71,12 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
   const [partial, setPartial] = useState<PartialOutcome | null>(null);
   const mounted = useMountedRef();
 
+  const resultShown = partial !== null;
+  useEffect(() => {
+    onResultShownChange?.(resultShown);
+    return () => onResultShownChange?.(false);
+  }, [resultShown, onResultShownChange]);
+
   // 失敗の一覧に出す名前。同じ名前の画像を見分けるため、送る前の一覧での位置を付ける。
   const failureItems = useMemo(
     () =>
@@ -70,11 +90,22 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
   /**
    * 画像を送り、一覧を読み直して、全部付いたら下書きを選ばせる。付かなかった分があれば失敗の画面を (新しく) 出す。
    * 送る画像が無ければ (画像なし・トンネル) 送信も進み具合も出さず、読み直しと onCreated だけ。
+   * `knownFileNames` は、前の回までに付いたと分かっている画像のサーバー側の file 名 (送り直しのとき)。
    */
-  const finishCreated = async (draft: IssueDraftSummaryDto, targets: readonly PickedImage[]) => {
+  const finishCreated = async (
+    draft: IssueDraftSummaryDto,
+    targets: readonly PickedImage[],
+    knownFileNames: ReadonlySet<string> = new Set(),
+  ) => {
     let failures: readonly ImageUploadFailure[] = [];
+    const storedFileNames = new Set(knownFileNames);
     if (targets.length > 0) {
-      failures = await uploadIssueDraftImages(draft.id, targets, (sent, total) => setProgress({ sent, total }));
+      failures = await uploadIssueDraftImages(
+        draft.id,
+        targets,
+        (sent, total) => setProgress({ sent, total }),
+        (_image, fileName) => storedFileNames.add(fileName),
+      );
       setProgress(null);
     }
     await queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
@@ -84,7 +115,7 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
     if (failures.length === 0) {
       onCreated(draft);
     } else {
-      setPartial({ draft, failures });
+      setPartial({ draft, failures, storedFileNames });
     }
   };
 
@@ -134,9 +165,22 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
 
   const retryFailedImages = async (outcome: PartialOutcome) => {
     const failedIds = new Set(outcome.failures.map((failure) => failure.id));
+    const maybeStoredIds = new Set(outcome.failures.filter((failure) => failure.mayBeStored === true).map((failure) => failure.id));
+    const failed = imageDraft.images.filter((image) => failedIds.has(image.id));
     setSending(true);
     try {
-      await finishCreated(outcome.draft, imageDraft.images.filter((image) => failedIds.has(image.id)));
+      // 送ったのに応答が届かなかった画像は、サーバーに保存できているかもしれない。同じ画像を二重に付けないよう、送る前に下書きの画像を
+      // 取り直して、もう付いているものは送らない (サーバーが断った失敗は付いていないので、確かめない)。bdboard-8zwi。
+      const alreadyStored = await findImagesAlreadyStored(
+        outcome.draft.id,
+        failed.filter((image) => maybeStoredIds.has(image.id)),
+        outcome.storedFileNames,
+      );
+      await finishCreated(
+        outcome.draft,
+        failed.filter((image) => !alreadyStored.has(image.id)),
+        new Set([...outcome.storedFileNames, ...alreadyStored.values()]),
+      );
     } finally {
       setSending(false);
     }
@@ -206,15 +250,21 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
         <IssueDraftImagePicker
           images={imageDraft.images}
           problems={imageDraft.problems}
+          notice={imageDraft.notice}
           disabled={sending}
           onAddFiles={imageDraft.addFiles}
           onRemove={imageDraft.remove}
         />
       )}
-      {progress !== null && (
-        <p className="issue-draft-editor-hint" role="status">
-          画像を送っています ({progress.sent} / {progress.total})
-        </p>
+      {/* 進み具合の読み上げ。入れ物は常に置き、中身だけ替える (中身と一緒にあとから現れる status は、読み上げられないことがある。bdboard-8zwi)。 */}
+      {localAccess && (
+        <div role="status" aria-label="画像の送信の進み具合">
+          {progress !== null && (
+            <p className="issue-draft-editor-hint">
+              画像を送っています ({progress.sent} / {progress.total})
+            </p>
+          )}
+        </div>
       )}
       {error !== null && (
         <p className="error-message" role="alert">

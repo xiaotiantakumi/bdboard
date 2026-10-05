@@ -132,6 +132,57 @@ describe('useIssueDraftImages (bdboard-4y8q.6.9)', () => {
     expect(result.current.problems).toEqual([]);
   });
 
+  // bdboard-8zwi: 付けた・外したを読み上げに届ける文。
+  describe('notice (for the screen reader)', () => {
+    it('starts empty', () => {
+      const { result } = renderHook(() => useIssueDraftImages());
+      expect(result.current.notice).toBe('');
+    });
+
+    it('says how many images were attached and how many there are now', () => {
+      const { result } = renderHook(() => useIssueDraftImages());
+      act(() => result.current.addFiles([file('a.png'), file('b.png')]));
+      expect(result.current.notice).toBe('2 枚の画像を付けました (全部で 2 枚)。');
+      act(() => result.current.addFiles([file('c.png')]));
+      expect(result.current.notice).toBe('1 枚の画像を付けました (全部で 3 枚)。');
+    });
+
+    it('counts only the images that were really attached, not the refused ones', () => {
+      const { result } = renderHook(() => useIssueDraftImages());
+      act(() => result.current.addFiles([file('ok.png'), file('vector.svg', 'image/svg+xml')]));
+      expect(result.current.notice).toBe('1 枚の画像を付けました (全部で 1 枚)。');
+    });
+
+    it('is empty when nothing was attached (the refusal is read out by the alert instead)', () => {
+      const { result } = renderHook(() => useIssueDraftImages());
+      act(() => result.current.addFiles([file('a.png')]));
+      act(() => result.current.addFiles([file('vector.svg', 'image/svg+xml')]));
+      expect(result.current.notice).toBe('');
+      expect(result.current.problems).toHaveLength(1);
+    });
+
+    it('names the image that was taken off and how many are left', () => {
+      const { result } = renderHook(() => useIssueDraftImages());
+      act(() => result.current.addFiles([file('a.png'), file('b.png')]));
+      act(() => result.current.remove(result.current.images[0]?.id ?? ''));
+      expect(result.current.notice).toBe('「a.png」を外しました (全部で 1 枚)。');
+    });
+
+    it('is empty when the image to take off is not there', () => {
+      const { result } = renderHook(() => useIssueDraftImages());
+      act(() => result.current.addFiles([file('a.png')]));
+      act(() => result.current.remove('no-such-id'));
+      expect(result.current.notice).toBe('');
+    });
+
+    it('announces an image attached by a paste too', () => {
+      const { result } = renderHook(() => useIssueDraftImages());
+      const { event } = pasteEvent([file('paste.png')]);
+      act(() => result.current.handlePaste(event));
+      expect(result.current.notice).toBe('1 枚の画像を付けました (全部で 1 枚)。');
+    });
+  });
+
   describe('handlePaste', () => {
     it('takes the image files from the clipboard and stops the browser default', () => {
       const { result } = renderHook(() => useIssueDraftImages());

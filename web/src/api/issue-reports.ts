@@ -1,4 +1,4 @@
-import { fetchJson, fetchJsonWithEtag } from './http';
+import { fetchArrayBuffer, fetchJson, fetchJsonWithEtag } from './http';
 
 /**
  * 不具合報告の下書き API (bdboard-4y8q.1 / 4y8q.3.1、docs/ISSUE-REPORTING.md 3節) の web 側の型と呼び出し。
@@ -185,6 +185,14 @@ export function uploadIssueDraftImage(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ mimeType: input.mimeType, data: input.data }),
   });
+}
+
+/**
+ * 下書きに付いている画像の中身 (`url` は IssueDraftImageDto.url。ローカル直アクセスだけ読める)。
+ * 画像の再送の前に、送ったのに応答が届かなかった画像がもう付いているかを、中身で見比べるのに使う (bdboard-8zwi)。
+ */
+export function fetchIssueDraftImageBytes(url: string): Promise<ArrayBuffer> {
+  return fetchArrayBuffer(url);
 }
 
 /**

@@ -13,6 +13,8 @@ export interface UseIssueDraftImages {
   readonly images: readonly PickedImage[];
   /** 直近の追加で断った理由。次の追加で置き換わり、外すと消える。 */
   readonly problems: readonly string[];
+  /** 直近の「付けた」「外した」を伝える文 (読み上げ用。bdboard-8zwi)。次の操作で置き換わり、何も付かなかった追加では空になる。 */
+  readonly notice: string;
   readonly addFiles: (files: readonly File[]) => void;
   readonly remove: (id: string) => void;
   /** 書く画面の onPaste へ渡す。画像を含む貼り付けだけを引き受ける (文字の欄へ文字と画像が一緒に来たときは、文字を優先して引き受けない)。 */
@@ -28,6 +30,7 @@ export interface UseIssueDraftImages {
 export function useIssueDraftImages(): UseIssueDraftImages {
   const [images, setImages] = useState<PickedImage[]>([]);
   const [problems, setProblems] = useState<string[]>([]);
+  const [notice, setNotice] = useState('');
   // 枚数の検査は state ではなくこの ref の最新値で行う。同じイベントの中で続けて追加されても (貼り付けと選択が重なるなど)、
   // 描画を待たずに前の追加ぶんを数えて、上限を超えさせない。
   const imagesRef = useRef<PickedImage[]>([]);
@@ -46,12 +49,16 @@ export function useIssueDraftImages(): UseIssueDraftImages {
     imagesRef.current = [...imagesRef.current, ...added];
     setImages(imagesRef.current);
     setProblems(screened.problems);
+    // 画面の変化は見えるが読み上げには届かないので、付いた枚数を polite な status で伝える (断った理由は alert の側が読む)。
+    setNotice(added.length === 0 ? '' : `${added.length} 枚の画像を付けました (全部で ${imagesRef.current.length} 枚)。`);
   };
 
   const remove = (id: string) => {
+    const removed = imagesRef.current.find((image) => image.id === id);
     imagesRef.current = imagesRef.current.filter((image) => image.id !== id);
     setImages(imagesRef.current);
     setProblems([]);
+    setNotice(removed === undefined ? '' : `「${removed.name}」を外しました (全部で ${imagesRef.current.length} 枚)。`);
   };
 
   const handlePaste = (event: ClipboardEvent<HTMLElement>) => {
@@ -87,5 +94,5 @@ export function useIssueDraftImages(): UseIssueDraftImages {
     },
   });
 
-  return { images, problems, addFiles, remove, handlePaste, formHandlers };
+  return { images, problems, notice, addFiles, remove, handlePaste, formHandlers };
 }
