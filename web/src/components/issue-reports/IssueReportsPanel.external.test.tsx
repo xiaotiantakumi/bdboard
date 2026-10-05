@@ -182,12 +182,12 @@ describe('IssueReportsPanel: "check now"', () => {
 
     await user.click(screen.getByRole('button', { name: '今すぐ確認' }));
 
-    expect(screen.getByRole('button', { name: '今すぐ確認' }).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: '今すぐ確認' }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByText('確認しています…')).toBeTruthy();
     finish(makeExternalList({ issues: [makeExternalIssue({ number: 99, title: 'fresh issue' })] }));
     expect(await screen.findByRole('heading', { name: '#99 fresh issue' })).toBeTruthy();
     expect(refreshExternalIssues).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('button', { name: '今すぐ確認' }).disabled).toBe(false);
+    expect(screen.getByRole('button', { name: '今すぐ確認' }).hasAttribute('disabled')).toBe(false);
     // バッジと同じ問い合わせなので、切り替えの件数も新しい一覧に変わる (バッジとの食い違いが出ない)。
     expect(screen.getByRole('button', { name: '届いた issue (1)' })).toBeTruthy();
   });

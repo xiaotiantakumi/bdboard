@@ -238,7 +238,7 @@ describe('ExternalIssueCard: the preview is only for a person who asks', () => {
     await renderOpened({ body: heavy });
 
     const preview = screen.getByRole('button', { name: 'プレビュー' });
-    expect(preview.disabled).toBe(true);
+    expect(preview.hasAttribute('disabled')).toBe(true);
     expect(screen.getByText(/強調やリンクの記号が多いので、プレビューは省きました。生の本文のままにします。/)).toBeTruthy();
     expect(screen.getByTestId('external-issue-invisible-mark').textContent).toBe('⟦U+200B⟧');
   });
