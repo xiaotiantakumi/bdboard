@@ -30,6 +30,7 @@ function build(receive: SelfErrorReporterDeps['service']['receive']) {
 }
 
 afterEach(() => {
+  vi.resetAllMocks();
   vi.restoreAllMocks();
 });
 
