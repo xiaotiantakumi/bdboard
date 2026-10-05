@@ -13,6 +13,12 @@
  * コードブロックの中は読まない (コードの中の `[x](y)` も数える。数えすぎは安全な側のずれ)。
  * どの走査も線形: 正規表現は文字クラスの繰り返しだけ (開きの括弧ごとに先を探し直す形は使わない)、`)` と改行の探索は
  * 前に進むだけのキャッシュで、同じ範囲を二度読まない。
+ *
+ * 時間だけでなく確保も小さく保つ (bdboard-clym)。見つけた範囲を 1 件ずつオブジェクトにすると、リンクが 10 万件ある本文では
+ * 生きたままのオブジェクトが数 MB になって GC が生き残りをコピーし、種類ごとに「配列の複製・並べ替え・まとめ直し」で
+ * 大きな配列を何本も作る。小さい入力ではこの GC や大きな確保が入らないので、大きい入力の時間だけが線形より速く伸びる
+ * (「大 / 小」が 10 を超え、Windows の CI で 25 を超えた)。そこで範囲は `RangeList` (開始と終了を並べた `Int32Array`) に
+ * 入れ、並べ替えもまとめ直しもしない。
  */
 
 export interface LinkCheck {
@@ -24,9 +30,60 @@ export interface LinkCheck {
   readonly rawUrls: number;
 }
 
-interface Range {
-  readonly start: number;
-  readonly end: number;
+/**
+ * 範囲 `[start, end)` の並び。範囲ごとにオブジェクトを作らず、開始と終了を交互に 1 本の `Int32Array` (`[s0, e0, s1, e1, …]`) に
+ * 入れる (足りなくなったら 2 倍にする)。文字列の長さは V8 では 2^29 未満なので、位置は `Int32Array` に収まる。
+ * `covers` は、並びが重ならず開始の昇順であることを前提にする (どの種類もそうなるように作る)。
+ * 配列でなく `Int32Array` にしたのは、`number[]` の `push` でも、大きくなるたびの作り直しの確保が測れる差になるため。
+ */
+class RangeList {
+  // 初期の 16 個 (64 バイト) は V8 が GC のヒープ内に置くので、範囲の無い (多くの) 本文では外部メモリを確保しない。
+  private buffer = new Int32Array(16);
+  /** 入っている数の個数 (範囲の数の 2 倍)。 */
+  private used = 0;
+
+  /** 範囲の数。 */
+  get count(): number {
+    return this.used / 2;
+  }
+
+  /** 末尾の範囲の終了。空なら -1。 */
+  lastEnd(): number {
+    return this.used === 0 ? -1 : (this.buffer[this.used - 1] ?? -1);
+  }
+
+  /** 末尾の範囲を取り除いて、その開始を返す (空なら呼ばない)。 */
+  popStart(): number {
+    this.used -= 2;
+    return this.buffer[this.used] ?? 0;
+  }
+
+  push(start: number, end: number): void {
+    if (this.used + 2 > this.buffer.length) {
+      const grown = new Int32Array(this.buffer.length * 2);
+      grown.set(this.buffer);
+      this.buffer = grown;
+    }
+    this.buffer[this.used] = start;
+    this.buffer[this.used + 1] = end;
+    this.used += 2;
+  }
+
+  /** 並びの中に位置があるか。二分探索。 */
+  covers(position: number): boolean {
+    let low = 0;
+    let high = this.used / 2 - 1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const start = this.buffer[2 * mid];
+      const end = this.buffer[2 * mid + 1];
+      if (start === undefined || end === undefined) return false;
+      if (position < start) high = mid - 1;
+      else if (position >= end) low = mid + 1;
+      else return true;
+    }
+    return false;
+  }
 }
 
 const BACKSLASH = 0x5c;
@@ -52,13 +109,18 @@ const RAW_URL = /(?<![A-Za-z0-9])(?:https?:\/\/|www\.)[^\s<>]+/gi;
  * 同じ行の最初の `)` までを宛先とする。宛先は読み飛ばす (その中の `[` `]` では何も始めない)。
  * 宛先の終わりは「最初の `)`」: `Foo_(bar)` のように括弧を含む宛先は途中で終わるが、リンクの数は変わらない。
  *
- * 返す範囲は、ほかの種類と重ねて見る範囲 (数はリンク 1 件)。文 (`[` から `]` まで) が改行かバッククォートをまたぐときは
+ * 件数 (`count`) と、ほかの種類と重ねて見る範囲 (`covered`) を返す。範囲は 1 件ごとに数えず、重なるものを 1 つにまとめた
+ * 並び (入れ子の `[![img](a)](b)` は外側の 1 つに含まれる)。文 (`[` から `]` まで) が改行かバッククォートをまたぐときは
  * `](宛先)` だけにする。`[` は Markdown の文脈を読まずに積むので、段落・見出し・コードスパンの向こうの `[` と組んだ
  * 偽のリンク 1 件が、間にある生の URL・参照定義・autolink を何件でも覆って消してしまう (GitHub ではどれも別のリンクとして
  * 描画される。4y8q.9.1 のレビュー)。縮めた結果のずれは偽のリンクの 1 件ぶんの数えすぎで、安全な側。
+ *
+ * まとめ方: 見つかる順は終了 (`)` の次) が昇順なので、並べ替えずに済む。新しい範囲の開始より後ろまで届いている末尾の範囲を
+ * 取り除いて 1 つにし (償却で 1 回ずつ)、末尾に足す。
  */
-function findInlineLinks(text: string): Range[] {
-  const found: Range[] = [];
+function findInlineLinks(text: string): { readonly count: number; readonly covered: RangeList } {
+  const covered = new RangeList();
+  let count = 0;
   const open: number[] = [];
   // 最初の `)` または改行の位置のキャッシュ。問い合わせの位置は単調に増えるので、キャッシュより先ならそのまま使える。
   let stop = -1;
@@ -89,63 +151,50 @@ function findInlineLinks(text: string): Range[] {
       if (start === undefined || text.charCodeAt(index + 1) !== OPEN_PAREN) continue;
       const end = stopAtOrAfter(index + 2);
       if (end >= text.length || text.charCodeAt(end) !== CLOSE_PAREN) continue;
-      found.push({ start: lastBreak > start ? index : start, end: end + 1 });
+      let rangeStart = lastBreak > start ? index : start;
+      // 末尾の範囲が新しい範囲の開始より後ろまで届いているなら (重なるなら) 取り除いて、新しい範囲に含める。
+      // 接するだけ (末尾の終了 === 新しい開始) ではまとめない。
+      while (covered.lastEnd() > rangeStart) rangeStart = Math.min(rangeStart, covered.popStart());
+      covered.push(rangeStart, end + 1);
+      count += 1;
       index = end;
     }
   }
-  return found;
+  return { count, covered };
 }
 
-/** 重なる範囲をまとめて、開始の昇順に並べる。 */
-function mergeRanges(ranges: readonly Range[]): Range[] {
-  const sorted = [...ranges].sort((a, b) => a.start - b.start);
-  const merged: Range[] = [];
-  for (const range of sorted) {
-    const last = merged.at(-1);
-    if (last !== undefined && range.start < last.end) {
-      if (range.end > last.end) merged[merged.length - 1] = { start: last.start, end: range.end };
-    } else {
-      merged.push(range);
-    }
-  }
-  return merged;
-}
-
-/** まとめた範囲 (昇順・重ならない) の中に位置があるか。二分探索。 */
-function isCovered(merged: readonly Range[], position: number): boolean {
-  let low = 0;
-  let high = merged.length - 1;
-  while (low <= high) {
-    const mid = (low + high) >> 1;
-    const range = merged[mid];
-    if (range === undefined) return false;
-    if (position < range.start) high = mid - 1;
-    else if (position >= range.end) low = mid + 1;
-    else return true;
+/** どれかの並びの中に位置があるか。 */
+function isCoveredByAny(lists: readonly RangeList[], position: number): boolean {
+  for (const ranges of lists) {
+    if (ranges.covers(position)) return true;
   }
   return false;
 }
 
-/** 正規表現の一致のうち、すでに数えた範囲の外で始まるものの範囲。 */
-function matchesOutside(text: string, pattern: RegExp, covered: readonly Range[]): Range[] {
-  const kept: Range[] = [];
+/**
+ * 正規表現の一致のうち、すでに数えた範囲 (`covered` のどれか) の外で始まるものの範囲。`matchAll` は文字列の前から
+ * 重ならない一致を順に返すので、返す並びは開始の昇順で重ならない (そのまま `covers` に使える)。
+ */
+function matchesOutside(text: string, pattern: RegExp, covered: readonly RangeList[]): RangeList {
+  const kept = new RangeList();
   for (const match of text.matchAll(pattern)) {
-    if (isCovered(covered, match.index)) continue;
-    kept.push({ start: match.index, end: match.index + match[0].length });
+    if (isCoveredByAny(covered, match.index)) continue;
+    kept.push(match.index, match.index + match[0].length);
   }
   return kept;
 }
 
 export function countLinks(text: string): LinkCheck {
   const inline = findInlineLinks(text);
-  const definitions = matchesOutside(text, REFERENCE_DEFINITION, mergeRanges(inline));
-  const autolinks = matchesOutside(text, AUTOLINK, mergeRanges([...inline, ...definitions]));
-  const rawUrls = matchesOutside(text, RAW_URL, mergeRanges([...inline, ...definitions, ...autolinks]));
+  // 後ろの種類は、前の種類の範囲の中で始まるものを数えない。種類ごとの並びを別々に見る (1 本にまとめ直さない)。
+  const definitions = matchesOutside(text, REFERENCE_DEFINITION, [inline.covered]);
+  const autolinks = matchesOutside(text, AUTOLINK, [inline.covered, definitions]);
+  const rawUrls = matchesOutside(text, RAW_URL, [inline.covered, definitions, autolinks]);
   return {
-    total: inline.length + autolinks.length + definitions.length + rawUrls.length,
-    markdownLinks: inline.length,
-    autolinks: autolinks.length,
-    referenceDefinitions: definitions.length,
-    rawUrls: rawUrls.length,
+    total: inline.count + autolinks.count + definitions.count + rawUrls.count,
+    markdownLinks: inline.count,
+    autolinks: autolinks.count,
+    referenceDefinitions: definitions.count,
+    rawUrls: rawUrls.count,
   };
 }
