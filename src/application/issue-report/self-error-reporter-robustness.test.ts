@@ -50,7 +50,7 @@ describe('createSelfErrorReporter robustness', () => {
     });
     const { reporter, log } = setup({ service: { receive } });
     await expect(reporter.observeRefresh(failure(), [project])).resolves.toBeUndefined();
-    await expect(reporter.report({ source: 'manual', errorText: 'x' })).resolves.toBeUndefined();
+    await expect(reporter.report({ source: 'api:GET /manual', errorText: 'x' })).resolves.toBe('skipped');
     expect(receive).toHaveBeenCalledTimes(2);
     expect(log.mock.calls.map(([line]) => line)).toEqual([
       'self error draft failed (EPERM)',
@@ -66,16 +66,16 @@ describe('createSelfErrorReporter robustness', () => {
 
     const env = setup({ service: { receive }, envInfo: boom });
     await expect(env.reporter.observeRefresh(failure(), [project])).resolves.toBeUndefined();
-    await expect(env.reporter.report({ source: 'manual', errorText: 'x' })).resolves.toBeUndefined();
+    await expect(env.reporter.report({ source: 'api:GET /manual', errorText: 'x' })).resolves.toBe('skipped');
 
     const list = setup({ service: { receive }, listProjects: boom });
-    await expect(list.reporter.report({ source: 'manual', errorText: 'x' })).resolves.toBeUndefined();
+    await expect(list.reporter.report({ source: 'api:GET /manual', errorText: 'x' })).resolves.toBe('skipped');
 
     const throttle = createSelfErrorThrottle();
     vi.spyOn(throttle, 'shouldReport').mockImplementation(boom);
     const thr = setup({ service: { receive }, throttle });
     await expect(thr.reporter.observeRefresh(failure(), [project])).resolves.toBeUndefined();
-    await expect(thr.reporter.report({ source: 'manual', errorText: 'x' })).resolves.toBeUndefined();
+    await expect(thr.reporter.report({ source: 'api:GET /manual', errorText: 'x' })).resolves.toBe('skipped');
 
     expect(receive).not.toHaveBeenCalled();
     const lines = [env, list, thr].flatMap(({ log }) => log.mock.calls.map(([line]) => line));

@@ -175,6 +175,7 @@ async function main(): Promise<void> {
     aiQuotaRouter: features.aiQuotaRouter,
     chatRouter: features.chatRouter,
     staticSpa: features.staticSpa,
+    selfErrorReporter: selfErrors.reporter,
   });
 
   const server = serve({

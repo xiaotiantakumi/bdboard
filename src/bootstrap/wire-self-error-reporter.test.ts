@@ -56,7 +56,7 @@ describe('wireSelfErrorReporter', () => {
     const receive = vi.fn().mockResolvedValue({ ok: true });
     const wired = wireSelfErrorReporter({ env: { ...(value === undefined ? {} : { BDBOARD_SELF_ERROR_DRAFTS: value }) }, service: { receive }, cache: { listProjects: () => [] }, applicationVersion: { getVersion: () => '1' }, log: vi.fn() });
     expect(wired.onRefreshResult).toBeDefined();
-    await wired.reporter?.report({ source: 'manual', errorText: 'issue' });
+    await wired.reporter?.report({ source: 'api:GET /manual', errorText: 'issue' });
     expect(receive).toHaveBeenCalledTimes(1);
   });
 });
