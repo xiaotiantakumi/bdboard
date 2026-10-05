@@ -359,6 +359,9 @@ describe.skipIf(process.platform === 'win32')('merge-pr finish: one retry after 
     expect(run(['gate', String(PR)]).status).toBe(0);
     simulateMerge();
     expect(run(['finish', String(PR)], { ...loadRetryEnv('1,0'), ...probeEnv() }).status).toBe(0);
+    // bdboard-twtn: 失敗が時間切れだけでも、着地木が green 済みの木 (simulateMerge の着地木 = PR head の木 = ci-head) なら
+    // reason は identical-tree (load-retry.mjs の reason は green を先に見る。分類器を先に見る変異をここで落とす)。
+    expect(auditText()).toMatch(/\tlanded-verify-retry\t.*\treason=identical-tree\tgreen=ci-head\t.*\ttimeouts=3\t/);
     const [first, second] = probes();
     expect(first).toMatchObject({ attempt: 1, holders: [], handoff: null });
     // 1 回目が抜けた直後に merge-pr (= 再実行の verify の祖先) が置いた予約。landed の待ち手として並び、
