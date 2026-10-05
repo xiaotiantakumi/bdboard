@@ -34,6 +34,8 @@ import {
 import type { CommandRunner } from '../application/ports/command-runner.js';
 import type { ScanRootsConfigPort } from '../application/ports/scan-roots-config.js';
 import { readProjectRefs } from '../application/board/read-cached-projects.js';
+import { createRefreshResultObserver } from '../application/board/refresh-result-observer.js';
+import type { Project } from '../domain/project.js';
 
 function updateStatusFromResult(
   cache: BoardCache,
@@ -65,6 +67,7 @@ export interface WireBoardRefreshDeps {
   readonly cfdSnapshotRetentionDays: number;
   readonly log?: (message: string) => void;
   readonly logError?: (message: string) => void;
+  readonly onRefreshResult?: (result: RefreshResult, projects: readonly Project[]) => void;
 }
 
 /**
@@ -84,7 +87,7 @@ export async function wireBoardRefresh(deps: WireBoardRefreshDeps) {
     .split(',')
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
-  const discovery = isScanRootsEnvOverridden
+  const scannedDiscovery = isScanRootsEnvOverridden
     ? createFsProjectDiscovery(
         { scanRoots: envScanRootsList },
         { fs: deps.fsPort, commandRunner: deps.commandRunner },
@@ -94,6 +97,10 @@ export async function wireBoardRefresh(deps: WireBoardRefreshDeps) {
         commandRunner: deps.commandRunner,
         scanRootsConfigStore: deps.scanRootsConfigStore,
       });
+  const refreshObserver = createRefreshResultObserver({
+    discovery: scannedDiscovery, cache: deps.cache, onResult: deps.onRefreshResult, logError,
+  });
+  const discovery = refreshObserver.discovery;
 
   const fingerprinter = createBeadsFingerprinter(deps.fsPort);
   const boardNotificationPublisher = createBoardNotificationPublisher();
@@ -122,6 +129,7 @@ export async function wireBoardRefresh(deps: WireBoardRefreshDeps) {
     getWatchedProjectsSync: () => watchedProjectsSync,
     onResult: (result, refreshedAt) => {
       status = updateStatusFromResult(deps.cache, result, refreshedAt);
+      refreshObserver.observe(result);
     },
   });
   const runRefresh = (force = false, onlyProjectIds?: readonly string[]): Promise<void> =>
@@ -143,6 +151,7 @@ export async function wireBoardRefresh(deps: WireBoardRefreshDeps) {
     logError(`Refresh error [${error.kind}] project=${error.projectId}: ${error.detail}`);
   }
   status = updateStatusFromResult(deps.cache, initialResult, new Date());
+  refreshObserver.observe(initialResult);
 
   return {
     discovery,

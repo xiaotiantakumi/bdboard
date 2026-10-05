@@ -51,7 +51,7 @@ export interface RefreshErrorTracker {
  * 同じエラーが別々に報告され、実行ごとに変わる値 (時刻・経過時間・pid) を含む文は更新のたびに「初めて」になって間引きも 3 回の閾値も効かない。
  * 報告の errorText は寄せる前の伏せた文のまま (読み手に見せる文を変えない)。
  */
-function keyOf(kind: string, errorText: string): string {
+export function selfErrorKey(kind: string, errorText: string): string {
   const normalized = normalizeErrorText(errorText);
   const text =
     normalized.length > MAX_KEY_TEXT_LENGTH
@@ -85,7 +85,8 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
   return {
     observe(result, projects, now) {
       const projectById = new Map(projects.map((project) => [project.id, project]));
-      const mask = createSelfErrorMasker(projects);
+      // 伏せる正規表現は一覧の大きさに比例して作るので、エラーがあるときだけ作る (更新のたびに走る。エラーの無い更新が大半)。
+      let mask: ((text: string) => string) | undefined;
       // removed と、一覧に無くなったプロジェクト (一度もキャッシュされないまま探索から消えたものは removed に出ない) の状態を捨てる。
       // throttle の記録 (1 時間に 1 回) は消さない: 消えたり出たりするエラーが、そのたびに報告されないようにするため。
       for (const id of result.removed) active.delete(id);
@@ -98,8 +99,9 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
         // 名前もパスも分からない (伏せられない) プロジェクトのエラーは、報告しない・覚えない。
         const project = projectById.get(error.projectId);
         if (project === undefined) continue;
+        mask ??= createSelfErrorMasker(projects);
         const errorText = mask(error.detail);
-        const key = keyOf(error.kind, errorText);
+        const key = selfErrorKey(error.kind, errorText);
         const seen = seenByProject.get(project.id) ?? new Set<string>();
         seenByProject.set(project.id, seen);
         // 1 回の結果の中の同じキーは 1 回と数える。

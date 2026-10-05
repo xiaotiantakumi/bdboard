@@ -29,6 +29,8 @@ import {
 } from './wire-board-sessions.js';
 import { wireBoardRefresh } from './wire-board-refresh.js';
 import { wireBoardReclaim } from './wire-board-reclaim.js';
+import type { RefreshResult } from '../application/board/refresh-projects.js';
+import type { Project } from '../domain/project.js';
 
 export interface WireBoardLifecycleDeps {
   readonly env: NodeJS.ProcessEnv;
@@ -51,6 +53,7 @@ export interface WireBoardLifecycleDeps {
   readonly reclaimEnabled: boolean;
   readonly reclaimIntervalMs: number;
   readonly reclaimOlderThan: string;
+  readonly onRefreshResult?: (result: RefreshResult, projects: readonly Project[]) => void;
 }
 
 export async function wireBoardLifecycle(deps: WireBoardLifecycleDeps) {
@@ -75,6 +78,7 @@ export async function wireBoardLifecycle(deps: WireBoardLifecycleDeps) {
     refreshIntervalMs: deps.refreshIntervalMs,
     cfdSnapshotIntervalMs: deps.cfdSnapshotIntervalMs,
     cfdSnapshotRetentionDays: deps.cfdSnapshotRetentionDays,
+    ...(deps.onRefreshResult !== undefined ? { onRefreshResult: deps.onRefreshResult } : {}),
   });
 
   await runInitialSessionsFetch(
