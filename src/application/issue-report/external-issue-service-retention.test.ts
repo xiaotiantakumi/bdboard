@@ -198,6 +198,32 @@ describe('poll runs one at a time', () => {
     expect(h.source.listOpenIssues).toHaveBeenCalledTimes(3);
   });
 
+  it('resnapshot keeps an error that a poll reported while the snapshot was being saved (it does not put back the earlier state)', async () => {
+    const h = createHarness([makeIssue(5)]);
+    await h.service.poll();
+    h.setIssues([withBody(5, 'edited')]);
+    await h.service.poll();
+    let releaseSave: () => void = () => undefined;
+    const saveHeld = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const save = h.storage.save.bind(h.storage);
+    h.storage.save = async (snapshot) => {
+      await saveHeld;
+      return save(snapshot);
+    };
+
+    const resnapshotting = h.service.resnapshot(5);
+    // 保存を待つあいだに、gh の失敗で poll が error を付ける (排他の外で一覧を差し替える)。
+    h.setListing({ ok: false, kind: 'rate-limited', detail: 'limit' });
+    await h.service.poll();
+    releaseSave();
+
+    expect(await resnapshotting).toMatchObject({ ok: true });
+    expect(h.service.getList()).toMatchObject({ state: 'error', error: { kind: 'rate-limited' } });
+    expect(h.service.getList().issues[0]?.snapshot.needsRejudge).toBe(false);
+  });
+
   it('resnapshot waits for the poll that is saving, so the two do not overwrite each other with a stale read', async () => {
     const h = createHarness([makeIssue(5)]);
     await h.service.poll();

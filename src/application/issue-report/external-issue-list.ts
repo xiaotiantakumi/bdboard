@@ -64,6 +64,12 @@ export function storageDetail(action: string, error: unknown): string {
   return typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,19}$/.test(code) ? `${action} (${code})` : action;
 }
 
+/** ログに残す例外の種類。`name` が識別子の形のときだけ使い、それ以外は `unknown` (message や stack は渡さない)。 */
+export function errorName(error: unknown): string {
+  const name = (error as { name?: unknown } | null)?.name;
+  return typeof name === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(name) ? name : 'unknown';
+}
+
 export function summaryOf(record: StoredExternalIssueSnapshot, currentUpdatedAt: string): ExternalIssueSnapshotSummary {
   return {
     snapshotAt: record.snapshotAt,

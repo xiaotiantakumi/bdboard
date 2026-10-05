@@ -8,6 +8,7 @@ import { compareWithSnapshot } from '../../domain/external-issue-snapshot.js';
 import {
   EXTERNAL_ISSUE_SNAPSHOT_MAX_COUNT,
   createSnapshotRecord,
+  isExternalIssueNumber,
   prepareExternalIssue,
   selectSnapshotsToRemove,
   type PreparedExternalIssue,
@@ -17,6 +18,7 @@ import { findUnlinkedIssues, linkedIssueNumbers, parseRepoSlug } from '../../dom
 import {
   EMPTY_LIST,
   entryOf,
+  errorName,
   storageDetail,
   summaryOf,
   type ExternalIssueEntry,
@@ -183,12 +185,18 @@ export function createExternalIssueService(options: ExternalIssueServiceOptions)
         // 紐付いたものを除けないので、一覧は作らない (紐付いた issue が並んでしまう)。
         return failWith('bd-failed', 'could not read the external refs from bd');
       }
+      // 写しのファイル名にできない番号 (`^[1-9][0-9]{0,9}$` の外) は、1 件のために一覧全体を storage-failed で止めないよう、
+      // 読めなかった行として数えて除く。
+      const numbered = listed.issues.filter((issue) => isExternalIssueNumber(issue.number));
+      const skippedLines = listed.skippedLines + (listed.issues.length - numbered.length);
       // PR は gh の読み取りの段階で除かれている (`ExternalIssue` は PR を含まない)。ここでは bd に紐付いたものを除く。
-      const unlinked = findUnlinkedIssues(listed.issues, linkedIssueNumbers(refs, repoSlug));
+      const unlinked = findUnlinkedIssues(numbered, linkedIssueNumbers(refs, repoSlug));
       const capped = unlinked.length > EXTERNAL_ISSUE_SNAPSHOT_MAX_COUNT;
       const open = capped ? unlinked.slice(0, EXTERNAL_ISSUE_SNAPSHOT_MAX_COUNT) : unlinked;
-      return await lock(() => commit(open, listed.truncatedByPageLimit || capped, listed.skippedLines));
-    } catch {
+      return await lock(() => commit(open, listed.truncatedByPageLimit || capped, skippedLines));
+    } catch (error) {
+      // 黙って捨てず、ログには例外の種類 (name) だけを残す。message・stack には第三者の文章やパスが入りうるので出さない。
+      warn(`external issue poll failed unexpectedly: ${errorName(error)}`);
       return failWith('unexpected', 'unexpected error while checking for incoming issues');
     }
   }

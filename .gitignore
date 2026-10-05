@@ -24,6 +24,9 @@ logs/
 # Override with BDBOARD_ISSUE_DRAFTS_DIR.
 /data/issue-drafts/
 
+# Incoming external issue snapshots (bdboard-4y8q.9.3). Hold third-party issue text; never commit.
+/data/external-issues/
+
 # Local environment (contains auth credentials)
 .env
 .env.local

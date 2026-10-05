@@ -49,6 +49,14 @@ describe('poll: the list', () => {
     expect([...h.storage.files.keys()].sort((a, b) => a - b)).toEqual([1, 4]);
   });
 
+  it('leaves out a number that cannot name a snapshot file, counts it as a skipped line, and still lists the rest', async () => {
+    const h = createHarness([makeIssue(5), makeIssue(10_000_000_000)]);
+    const list = await h.service.poll();
+    expect(list).toMatchObject({ state: 'ok', skippedLines: 1 });
+    expect(list.issues.map((entry) => entry.number)).toEqual([5]);
+    expect([...h.storage.files.keys()]).toEqual([5]);
+  });
+
   it('turns an empty answer into an ok list with no issues', async () => {
     const h = createHarness([]);
     expect(await h.service.poll()).toMatchObject({ state: 'ok', issues: [] });
@@ -391,5 +399,35 @@ describe('poll: failures are a state, not an exception', () => {
     const list = await h.service.poll();
     expect(list).toMatchObject({ state: 'error', error: { kind: 'unexpected' } });
     expect(list.error?.detail).not.toContain(SECRET_ERROR_TEXT);
+  });
+
+  it('logs only the kind of an unexpected exception (its name), never its message', async () => {
+    const h = createHarness([makeIssue(5)]);
+    h.source.listOpenIssues.mockRejectedValueOnce(new TypeError(`bad ${SECRET_ERROR_TEXT}`));
+    await h.service.poll();
+    expect(h.warn).toHaveBeenCalledTimes(1);
+    expect(h.warn).toHaveBeenCalledWith('external issue poll failed unexpectedly: TypeError');
+    expect(h.warn.mock.calls[0]?.[0]).not.toContain(SECRET_ERROR_TEXT);
+  });
+
+  it.each([
+    ['a name that is not an identifier', Object.assign(new Error('x'), { name: 'Evil\nname: leaked' })],
+    ['a value that is not an Error', 'just a string'],
+    ['null', null],
+  ])('logs "unknown" for %s', async (_label, thrown) => {
+    const h = createHarness([makeIssue(5)]);
+    h.source.listOpenIssues.mockRejectedValueOnce(thrown);
+    await h.service.poll();
+    expect(h.warn).toHaveBeenCalledWith('external issue poll failed unexpectedly: unknown');
+  });
+
+  it('does not log for the failures that are an ordinary state (gh failure, bd failure)', async () => {
+    const h = createHarness([makeIssue(5)]);
+    h.setListing({ ok: false, kind: 'gh-missing', detail: 'gh is not installed' });
+    await h.service.poll();
+    h.setIssues([makeIssue(5)]);
+    h.refReader.listExternalRefs.mockRejectedValueOnce(new Error('bd failed'));
+    await h.service.poll();
+    expect(h.warn).not.toHaveBeenCalled();
   });
 });
