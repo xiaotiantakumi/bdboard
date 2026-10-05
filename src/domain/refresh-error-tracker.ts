@@ -2,8 +2,9 @@
  * リフレッシュ (画面の自動更新) の失敗を、下書きにする価値のある報告へ絞る (bdboard-4y8q.6.2)。
  *
  * 入力は `refreshProjects` の結果と同じ形 (application 層の型は domain から import できないので、構造的な型を自分で宣言する)。
- * 同じエラーが更新のたびに出続けても報告は 1 時間に 1 回 (間引きは self-error-throttle.ts)。lock-contention と timeout は
- * 一時的なことが多いので 3 回続けて見えたら初めて報告する。配線 (下書きサービスの呼び出し) は 4y8q.6.3。
+ * 同じエラーが更新のたびに出続けても報告は 1 時間に 1 回 (間引きは self-error-throttle.ts)。決定的な種類 (REFRESH_ERROR_IMMEDIATE_KINDS)
+ * 以外は、一時的なことがあるので 3 回続けて見えたら初めて報告する (bdboard-f2ob。以前は lock-contention と timeout だけだった)。
+ * 配線 (下書きサービスの呼び出し) は 4y8q.6.3。
  */
 import { normalizeErrorText } from './issue-draft.js';
 import type { Project } from './project.js';
@@ -28,7 +29,26 @@ export interface SelfErrorReport {
   readonly project: { readonly name: string; readonly path: string };
 }
 
-export const REFRESH_ERROR_TRANSIENT_KINDS: readonly string[] = ['lock-contention', 'timeout'];
+/**
+ * 1 回見えただけで報告する種類 (決定的な種類)。ここに無い kind (未知の文字列も) は、同じプロジェクトで同じキーが
+ * 連続 REFRESH_ERROR_TRANSIENT_THRESHOLD 回見えてから初めて報告する。
+ *
+ * 入れるのは、原因がファイルやデータの状態で、誰かが直すまで何度読んでも同じ結果になる種類だけ。
+ * - schema-mismatch: bd の出力 (JSON・日付・各欄) が期待の形でない。同じ出力は何度読んでも同じ形でない。
+ * - not-a-beads-project: プロジェクトのフォルダが beads のプロジェクトとして読めない (`.beads` が無い・読めない)。
+ *   ファイルの置き場所の状態で、リフレッシュの間隔では変わらない。
+ * 入れないもの (3 回続けて見えてから):
+ * - lock-contention / timeout: 負荷や排他による一時的な失敗 (6.2 から)。
+ * - bd-not-found: bd を起動できなかった。本当に bd が無いときは決定的だが、classifyBdError は exitCode -1 (シグナルでの終了や
+ *   spawn の E2BIG など、起動後に起きたことも -1 に潰れる) もこの種類にするので、決定的とは言い切れない。
+ * - unknown: どの種類にも当たらなかった残り。形の開いた集合で、起動直後の Dolt サーバーに繋がらない (connection refused) のように
+ *   一時的な失敗が混ざる (bdboard-f2ob)。その形を 1 つずつ分類器に教えるのではなく、続いたかどうかで判定する
+ *   (形を教えるたびに次の形で同じ誤報が出る — bdboard-xw00)。
+ * 迷うなら入れない側に倒す: 決定的な失敗は 3 回続けて見えるのを待つだけ (既定の 5 分間隔で約 10 分、docs/ISSUE-REPORTING.md) で
+ * 下書きは遅れるだけだが、一時的な失敗を 1 回で報告すると、利用者が見送る下書きが残る。
+ */
+export const REFRESH_ERROR_IMMEDIATE_KINDS: readonly string[] = ['schema-mismatch', 'not-a-beads-project'];
+/** 即時でない種類を報告するのに要る、同じキーの連続回数。成功 (refreshed に入って errors に無い) を挟むと 0 に戻る。 */
 export const REFRESH_ERROR_TRANSIENT_THRESHOLD = 3;
 /** 1 プロジェクトが覚えるキーの数。詳細に変わる値 (一時ファイル名など) が混ざっても、状態が増え続けないようにする。 */
 export const REFRESH_ERROR_MAX_KEYS_PER_PROJECT = 20;
@@ -110,7 +130,7 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
 
         // refreshed に入っていなくても (fingerprint の失敗・listAll の失敗)、errors に出たものは「見えた」。
         const streak = see(project.id, key);
-        const threshold = REFRESH_ERROR_TRANSIENT_KINDS.includes(error.kind) ? REFRESH_ERROR_TRANSIENT_THRESHOLD : 1;
+        const threshold = REFRESH_ERROR_IMMEDIATE_KINDS.includes(error.kind) ? 1 : REFRESH_ERROR_TRANSIENT_THRESHOLD;
         // 閾値に届かない間は throttle に聞かない (聞くと報告済みになり、3 回目の報告が間引かれる)。
         if (streak < threshold || reportedKeys.has(key) || !throttle.shouldReport(key, now)) continue;
         reportedKeys.add(key);

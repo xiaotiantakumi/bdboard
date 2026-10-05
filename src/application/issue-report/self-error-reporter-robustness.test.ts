@@ -18,7 +18,7 @@ const project: RefreshErrorProject = {
 const failure = (detail = 'failed at /private/example-project') => ({
   refreshed: [],
   removed: [],
-  errors: [{ kind: 'unknown', projectId: 'p', detail }],
+  errors: [{ kind: 'schema-mismatch', projectId: 'p', detail }],
 });
 
 function setup(overrides: Partial<SelfErrorReporterDeps> = {}) {
