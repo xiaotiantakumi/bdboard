@@ -83,7 +83,7 @@ export async function readErrorPayload(res: Response): Promise<{
   return { body };
 }
 
-export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function fetchOk(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, init);
   if (!res.ok) {
     const { body, errorMessage, detail, code, reason, details } =
@@ -94,8 +94,25 @@ export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T>
       { body, errorMessage, detail, code, reason, details },
     );
   }
+  return res;
+}
+
+export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetchOk(path, init);
   if (res.status === 204) {
     return undefined as T;
   }
   return (await res.json()) as T;
+}
+
+/**
+ * fetchJson と同じだが、応答の ETag ヘッダも返す (bdboard-mqoa)。条件付きの書き込みの If-Match に、読んだときの ETag を付けるため。
+ * ブラウザの HTTP キャッシュが 304 を処理した応答でも、保存済みの本文と一緒に ETag が読める。ヘッダが無ければ undefined。
+ */
+export async function fetchJsonWithEtag<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<{ readonly data: T; readonly etag: string | undefined }> {
+  const res = await fetchOk(path, init);
+  return { data: (await res.json()) as T, etag: res.headers.get('ETag') ?? undefined };
 }

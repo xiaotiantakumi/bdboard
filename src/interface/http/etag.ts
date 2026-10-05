@@ -2,13 +2,25 @@ import { createHash } from 'node:crypto';
 
 const ETAG_HASH_HEX_LENGTH = 32;
 
-/** SHA-256 over uncompressed bytes, truncated hex, formatted as a weak ETag. */
-export function computeWeakEtag(input: string | Buffer): string {
-  const hash = createHash('sha256')
+function truncatedDigest(input: string | Buffer): string {
+  return createHash('sha256')
     .update(input)
     .digest('hex')
     .slice(0, ETAG_HASH_HEX_LENGTH);
-  return `W/"${hash}"`;
+}
+
+/** SHA-256 over uncompressed bytes, truncated hex, formatted as a weak ETag. */
+export function computeWeakEtag(input: string | Buffer): string {
+  return `W/"${truncatedDigest(input)}"`;
+}
+
+/**
+ * Same digest as computeWeakEtag, formatted as a strong ETag (`"<hex>"`). For resources
+ * a client sends back in If-Match (issue report drafts, bdboard-mqoa). hono/compress
+ * rewrites it to W/"…" on a gzip'd response; ifMatchMatches tolerates that.
+ */
+export function computeStrongEtag(input: string | Buffer): string {
+  return `"${truncatedDigest(input)}"`;
 }
 
 /** Strip weak prefix and surrounding quotes so validators compare by digest alone. */
@@ -48,6 +60,19 @@ export function ifNoneMatchMatches(
   }
 
   return false;
+}
+
+/**
+ * Compare If-Match against the current ETag of a resource that exists (the caller
+ * answers 404 first when it does not). `*` matches; a list matches when any entry does.
+ *
+ * RFC 9110 asks for strong comparison, but this server's own gzip middleware (hono/compress)
+ * turns a strong ETag into W/"…" on a compressed response, a tunnel may do the same, and a
+ * client sends back whatever it received. Rejecting every such request would make If-Match
+ * unusable, so the W/ prefix is ignored: the digests are compared (same as ifNoneMatchMatches).
+ */
+export function ifMatchMatches(ifMatch: string, etag: string): boolean {
+  return ifNoneMatchMatches(ifMatch, etag);
 }
 
 /**

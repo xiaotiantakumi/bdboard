@@ -55,7 +55,18 @@ export type EditDraftResult =
   /** too-large: 生ログを削り切っても編集の上限 (200KB から受け取り・見送りの余白を引いた大きさ) を超える。 */
   | { readonly ok: false; readonly reason: 'not-found' | 'too-large' | 'storage-full' }
   /** 直せるのは pending の下書きだけ。 */
-  | { readonly ok: false; readonly reason: 'not-pending'; readonly status: DraftStatus };
+  | { readonly ok: false; readonly reason: 'not-pending'; readonly status: DraftStatus }
+  /** options.precondition が false を返した (読んだあとに別の書き込みがあった)。何も書いていない。 */
+  | { readonly ok: false; readonly reason: 'precondition-failed' };
+
+export interface EditDraftOptions {
+  /**
+   * 書く直前に、排他の中で今の下書きに対して確かめる条件 (bdboard-mqoa)。false なら何も書かずに precondition-failed。
+   * 排他の外で確かめると、確かめてから書くまでのあいだに別の PATCH が書いて、読んだ版に基づく編集が後勝ちで上書きしうる。
+   * HTTP の If-Match の判定 (どの版を同じと見るか) は interface 層が持ち、ここへは判定そのものを渡す。
+   */
+  readonly precondition?: (current: IssueDraft) => Promise<boolean>;
+}
 
 export type AddDraftImageResult =
   | { readonly ok: true; readonly image: StoredDraftImage }
@@ -74,7 +85,7 @@ export interface IssueDraftService {
   get(id: string): Promise<IssueDraft | undefined>;
   dismiss(id: string, reason: string): Promise<DismissDraftResult>;
   /** 題名・本文を直す (bdboard-4y8q.3.1)。長さの上限は入口 (HTTP) で掛けてある前提。 */
-  edit(id: string, edit: DraftTextEdit): Promise<EditDraftResult>;
+  edit(id: string, edit: DraftTextEdit, options?: EditDraftOptions): Promise<EditDraftResult>;
   /**
    * 未処理 (pending) の件数。索引から数える (呼ぶたびに全件を読まない)。サーバーの外の変更は、listWithPendingCount() が一覧を読んだときに
    * 合う。一覧が欠けているあいだは、直近の欠けた索引を 30 秒使い回す (bdboard-vsuc)。
@@ -226,11 +237,14 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
         return { ok: true, draft: dismissed };
       }),
 
-    edit: (id, edit) =>
+    edit: (id, edit, options) =>
       exclusive(async (): Promise<EditDraftResult> => {
         const draft = isDraftId(id) ? await deps.storage.get(id) : undefined;
         if (draft === undefined) return { ok: false, reason: 'not-found' };
         if (draft.status !== 'pending') return { ok: false, reason: 'not-pending', status: draft.status };
+        if (options?.precondition !== undefined && !(await options.precondition(draft))) {
+          return { ok: false, reason: 'precondition-failed' };
+        }
         const { draft: edited, errorTextTrimmed, fits } = applyDraftEdit(draft, edit);
         // 編集の上限 (200KB から次の受け取り・見送りの余白を引いた大きさ) を超えるなら保存しない (413)。
         if (!fits) return { ok: false, reason: 'too-large' };

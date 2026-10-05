@@ -10,6 +10,8 @@ type PublicMode = 'preview' | 'raw' | 'edit';
 
 export interface IssueDraftPublicSectionProps {
   readonly draft: IssueDraftDetailDto;
+  /** 表示中の下書きの ETag。編集の PATCH の If-Match に付ける (IssueDraftEditor)。 */
+  readonly etag?: string;
   readonly onSaved: (response: IssueDraftEditResponseDto) => void;
 }
 
@@ -65,7 +67,7 @@ function LeakWarnings({ draft }: { readonly draft: IssueDraftDetailDto }) {
  * 1) 投稿される内容: GitHub での見え方 (画像・リンクを読み込まないプレビュー)、置き換えた印と疑いに印を付けた生の本文、
  * その場の編集。見送り・投稿済みの下書きは直せない (サーバーも 409 にする)。
  */
-export function IssueDraftPublicSection({ draft, onSaved }: IssueDraftPublicSectionProps) {
+export function IssueDraftPublicSection({ draft, etag, onSaved }: IssueDraftPublicSectionProps) {
   const [selectedMode, setSelectedMode] = useState<PublicMode>('preview');
   // 編集中の入力 (編集を始めたときの値のままなら null)。編集が外から閉じられたときに見せる。
   const [unsavedInput, setUnsavedInput] = useState<IssueDraftTextInput | null>(null);
@@ -129,6 +131,7 @@ export function IssueDraftPublicSection({ draft, onSaved }: IssueDraftPublicSect
         <IssueDraftEditor
           key={draft.id}
           draft={draft}
+          {...(etag !== undefined ? { etag } : {})}
           onCancel={() => setMode('preview')}
           onInputChange={setUnsavedInput}
           onSaved={(response) => {

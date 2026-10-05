@@ -6,7 +6,9 @@ import type { RestrictedLeakCache } from './issue-report-leak-cache.js';
 import { isDraftId } from '../../domain/issue-draft.js';
 import { ISSUE_DRAFT_BODY_MAX_CHARS, ISSUE_DRAFT_TITLE_MAX_CHARS } from '../../domain/issue-draft-edit.js';
 import { hasVisibleText, isSingleLineDisplayText, stripPasteArtifacts } from '../../domain/issue-draft-identifier.js';
+import { ifMatchMatches } from './etag.js';
 import { ISSUE_DRAFTS_PATH, toDetailDto } from './issue-report-dto.js';
+import { buildDetailBody, detailEtagOf } from './issue-report-etag.js';
 import { isLocalBasicAuthRequest } from './local-request.js';
 import { parseJsonBody } from './request-body.js';
 
@@ -16,6 +18,7 @@ import { parseJsonBody } from './request-body.js';
  * - PATCH drafts/:id: 書き換えられるのは title / body だけ (どちらか一方でもよい)。ほかのキーは 400 (`.strict()`)。
  *   titleEditedByUser / bodyEditedByUser はサーバーが立てる (送っても 400)。pending 以外は 409。認可は見送りと同じ
  *   通常の write-guard (createIssueReportRoutes が /api/issue-reports/* の全メソッドに掛ける)。
+ *   If-Match があり、読んだときの版と今の版が違えば 412 (bdboard-mqoa)。無ければ従来どおり通す。成功の応答には新しい ETag を付ける。
  * - GET pending-count: タブのバッジとデイリーダイジェスト用の未処理件数。サービスの索引から数える。
  */
 
@@ -45,6 +48,12 @@ const editBodySchema = z
   .strict()
   .refine((edit) => edit.title !== undefined || edit.body !== undefined);
 
+/** If-Match が今の版と合わない (412)。`code` は機械が読む固定の値。何も書いていない。 */
+const PRECONDITION_FAILED_BODY = {
+  error: 'draft was changed since it was read',
+  code: 'precondition-failed',
+} as const;
+
 const TOO_LONG_BODY = {
   error: 'title or body is too long',
   code: 'too-long',
@@ -55,10 +64,12 @@ const TOO_LONG_BODY = {
 export interface IssueDraftEditRoutesDeps {
   readonly service: IssueDraftService;
   readonly leakCache: RestrictedLeakCache;
+  /** 1 件の取得の応答に載る最新の harness pack の版 (読めなければ null)。ETag の入力なので、GET と同じ読み方で渡す。 */
+  readonly readLatestHarnessVersion: () => Promise<string | null>;
 }
 
 export function registerIssueDraftEditRoutes(app: Hono, deps: IssueDraftEditRoutesDeps): void {
-  const { service, leakCache } = deps;
+  const { service } = deps;
 
   app.get(ISSUE_REPORTS_PENDING_COUNT_PATH, async (c) => c.json({ pendingCount: await service.pendingCount() }));
 
@@ -79,23 +90,39 @@ export function registerIssueDraftEditRoutes(app: Hono, deps: IssueDraftEditRout
         return c.json(TOO_LONG_BODY, 413);
       }
 
-      const result = await service.edit(id, {
-        ...(edit.title !== undefined ? { title: edit.title } : {}),
-        ...(edit.body !== undefined ? { body: edit.body } : {}),
-      });
+      // 1 件の取得と同じ入力から ETag を作る (If-Match の判定にも、応答の ETag にも使う)。pack の版は排他の外で先に読む。
+      const access = { local: isLocalBasicAuthRequest(c), latestHarnessVersion: await deps.readLatestHarnessVersion() };
+      const ifMatch = c.req.header('If-Match');
+      const result = await service.edit(
+        id,
+        {
+          ...(edit.title !== undefined ? { title: edit.title } : {}),
+          ...(edit.body !== undefined ? { body: edit.body } : {}),
+        },
+        ifMatch === undefined
+          ? {}
+          : { precondition: async (current) => ifMatchMatches(ifMatch, detailEtagOf(await buildDetailBody(deps, current, access))) },
+      );
       if (result.ok) {
         // 応答は GET drafts/:id の draft と同じ形 (images・latestHarnessVersion は載せない)。errorTextTrimmed は、200KB に収めるため
-        // 手元の生ログの末尾を削ったか (削ったら draft.localOnly.errorTextTruncated も true)。
-        return c.json({
-          draft: toDetailDto(result.draft, { local: isLocalBasicAuthRequest(c), leakCache }),
-          errorTextTrimmed: result.errorTextTrimmed,
-        });
+        // 手元の生ログの末尾を削ったか (削ったら draft.localOnly.errorTextTruncated も true)。ETag は GET drafts/:id の今の ETag と同じ値
+        // (画像の一覧と pack の版は応答に載せないが、版には入っている)。次の PATCH の If-Match にそのまま使える。
+        // 画像の一覧 (ETag の入力) が読めなくても、保存は済んでいるので 500 にしない: ETag を付けずに 200 を返す (web は ETag が無ければ
+        // 古い ETag を捨てて読み直す)。
+        const detail = await buildDetailBody(deps, result.draft, access).catch(() => undefined);
+        if (detail === undefined) {
+          return c.json({ draft: toDetailDto(result.draft, { local: access.local, leakCache: deps.leakCache }), errorTextTrimmed: result.errorTextTrimmed });
+        }
+        c.header('ETag', detailEtagOf(detail));
+        return c.json({ draft: detail.draft, errorTextTrimmed: result.errorTextTrimmed });
       }
       switch (result.reason) {
         case 'not-found':
           return c.json({ error: 'draft not found', id }, 404);
         case 'not-pending':
           return c.json({ error: 'draft is not pending', status: result.status }, 409);
+        case 'precondition-failed':
+          return c.json(PRECONDITION_FAILED_BODY, 412);
         case 'too-large':
           return c.json({ error: 'draft would exceed the size limit', code: 'draft-too-large' }, 413);
         case 'storage-full':

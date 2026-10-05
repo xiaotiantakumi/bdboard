@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from '../../api';
 import { TUNNEL_WRITE_HELP } from '../../writeAccessMessage';
 import {
+  DRAFT_CHANGED_ELSEWHERE_HELP,
   DRAFT_TOO_LARGE_HELP,
   REQUEST_TOO_LARGE_HELP,
   STORAGE_FULL_HELP,
@@ -54,6 +55,15 @@ describe('describeIssueDraftEditError (bdboard-4y8q.3.2)', () => {
 
   it('reuses the tunnel write help for a 403', () => {
     expect(describeIssueDraftEditError(apiError(403, { error: 'local access only' }))).toBe(TUNNEL_WRITE_HELP);
+  });
+
+  // bdboard-mqoa: If-Match が合わない (読んだあとにほかの場所で変わった)。最新を読み直したことと入力が残ることを伝える。
+  it('explains a 412 as a change somewhere else, that the latest was reloaded, and that the input is kept', () => {
+    const message = describeIssueDraftEditError(apiError(412, { error: 'draft was changed since it was read', code: 'precondition-failed' }));
+    expect(message).toBe(DRAFT_CHANGED_ELSEWHERE_HELP);
+    expect(message).toContain('ほかの場所で変更されました');
+    expect(message).toContain('読み込み直しました');
+    expect(message).toContain('入力はそのまま残しています');
   });
 });
 

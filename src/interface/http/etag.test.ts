@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   boardViewDtoStableJson,
+  computeStrongEtag,
   computeWeakEtag,
+  ifMatchMatches,
   ifNoneMatchMatches,
   normalizeEtagToken,
 } from './etag.js';
@@ -51,6 +53,40 @@ describe('ifNoneMatchMatches', () => {
     const other = computeWeakEtag('other');
     expect(ifNoneMatchMatches(other, etag)).toBe(false);
     expect(ifNoneMatchMatches('W/"deadbeef"', etag)).toBe(false);
+  });
+});
+
+describe('computeStrongEtag', () => {
+  it('returns a strong ETag with the same truncated digest as the weak one', () => {
+    const strong = computeStrongEtag('hello');
+    expect(strong).toMatch(/^"[0-9a-f]{32}"$/);
+    expect(strong).toBe(computeStrongEtag('hello'));
+    expect(strong).not.toBe(computeStrongEtag('hello!'));
+    expect(`W/${strong}`).toBe(computeWeakEtag('hello'));
+  });
+});
+
+describe('ifMatchMatches', () => {
+  const etag = computeStrongEtag('current');
+  const other = computeStrongEtag('other');
+
+  it('matches the exact ETag, a list that contains it, and *', () => {
+    expect(ifMatchMatches(etag, etag)).toBe(true);
+    expect(ifMatchMatches(` ${other} ,  ${etag}  `, etag)).toBe(true);
+    expect(ifMatchMatches('*', etag)).toBe(true);
+  });
+
+  it('ignores a W/ prefix, which the gzip middleware or a tunnel puts on a strong ETag', () => {
+    expect(ifMatchMatches(`W/${etag}`, etag)).toBe(true);
+    expect(ifMatchMatches(etag, `W/${etag}`)).toBe(true);
+  });
+
+  it('does not match another ETag, garbage or an empty value', () => {
+    expect(ifMatchMatches(other, etag)).toBe(false);
+    expect(ifMatchMatches('W/"deadbeef"', etag)).toBe(false);
+    expect(ifMatchMatches('garbage', etag)).toBe(false);
+    expect(ifMatchMatches('', etag)).toBe(false);
+    expect(ifMatchMatches(' , ', etag)).toBe(false);
   });
 });
 

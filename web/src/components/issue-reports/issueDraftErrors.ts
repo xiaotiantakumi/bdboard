@@ -23,6 +23,12 @@ export const STORAGE_FULL_HELP =
 export const DRAFT_TOO_LARGE_HELP =
   '下書き全体が保存できる大きさを超えます (手元のエラー本文を詰めても収まりませんでした)。本文を短くしてから保存してください。';
 export const REQUEST_TOO_LARGE_HELP = '送った内容が大きすぎます。本文を短くしてから保存してください。';
+/**
+ * 412 (bdboard-mqoa): 読んだあとに、ほかの画面・端末・新しい発生で下書きが変わっていた。画面は最新を読み直し (入力は残す)、
+ * 利用者には内容を確かめてからやり直してもらう。保存と「自動の文に戻す」の両方で出す。
+ */
+export const DRAFT_CHANGED_ELSEWHERE_HELP =
+  'この下書きは、ほかの場所で変更されました。最新の内容を読み込み直しました。入力はそのまま残しています。内容を確かめてから、もう一度やり直してください。';
 /** 保存の上限に収めるため手元のエラー本文の末尾を詰めたときの説明 (保存と、自動の文へ戻す操作の両方で出す)。 */
 export const ERROR_TEXT_TRIMMED_NOTE = '保存の上限に収めるため、手元のエラー本文の末尾を詰めました (投稿される内容は変わりません)。';
 
@@ -70,6 +76,7 @@ export function describeIssueDraftEditError(error: unknown): string {
   const common = commonMessage(error);
   if (common !== null) return common;
   if (error instanceof ApiError) {
+    if (error.status === 412) return DRAFT_CHANGED_ELSEWHERE_HELP;
     if (error.status === 413) {
       if (error.code === CODE_TOO_LONG) return tooLongMessage(error);
       if (error.code === CODE_DRAFT_TOO_LARGE) return DRAFT_TOO_LARGE_HELP;
