@@ -6,9 +6,8 @@ import type { RestrictedLeakCache } from './issue-report-leak-cache.js';
 import { isDraftId } from '../../domain/issue-draft.js';
 import { ISSUE_DRAFT_BODY_MAX_CHARS, ISSUE_DRAFT_TITLE_MAX_CHARS } from '../../domain/issue-draft-edit.js';
 import { hasVisibleText, isSingleLineDisplayText, stripPasteArtifacts } from '../../domain/issue-draft-identifier.js';
-import { ifMatchMatches } from './etag.js';
 import { ISSUE_DRAFTS_PATH, toDetailDto } from './issue-report-dto.js';
-import { buildDetailBody, detailEtagOf } from './issue-report-etag.js';
+import { buildDetailBody, detailEtagOf, ifMatchMatchesEdit } from './issue-report-etag.js';
 import { isLocalBasicAuthRequest } from './local-request.js';
 import { parseJsonBody } from './request-body.js';
 
@@ -18,7 +17,8 @@ import { parseJsonBody } from './request-body.js';
  * - PATCH drafts/:id: 書き換えられるのは title / body だけ (どちらか一方でもよい)。ほかのキーは 400 (`.strict()`)。
  *   titleEditedByUser / bodyEditedByUser はサーバーが立てる (送っても 400)。pending 以外は 409。認可は見送りと同じ
  *   通常の write-guard (createIssueReportRoutes が /api/issue-reports/* の全メソッドに掛ける)。
- *   If-Match があり、読んだときの版と今の版が違えば 412 (bdboard-mqoa)。無ければ従来どおり通す。成功の応答には新しい ETag を付ける。
+ *   If-Match があり、読んだときの「直せる欄の版」と今の版が違えば 412 (bdboard-mqoa・bdboard-q5pj。回数・画像・pack の版の変化では 412 にしない)。
+ *   無ければ従来どおり通す。成功の応答には新しい ETag を付ける。
  * - GET pending-count: タブのバッジとデイリーダイジェスト用の未処理件数。サービスの索引から数える。
  */
 
@@ -90,9 +90,12 @@ export function registerIssueDraftEditRoutes(app: Hono, deps: IssueDraftEditRout
         return c.json(TOO_LONG_BODY, 413);
       }
 
-      // 1 件の取得と同じ入力から ETag を作る (If-Match の判定にも、応答の ETag にも使う)。pack の版は排他の外で先に読む。
+      // 1 件の取得と同じ入力から ETag を作る (応答の ETag に使う)。pack の版は排他の外で先に読む。
       const access = { local: isLocalBasicAuthRequest(c), latestHarnessVersion: await deps.readLatestHarnessVersion() };
       const ifMatch = c.req.header('If-Match');
+      // If-Match は ETag の前半 (利用者が直せる欄だけの版) だけで、排他の中で今の下書きと比べる (issue-report-etag.ts の ifMatchMatchesEdit)。
+      // 新しい発生・画像・pack の版が変わっただけなら通る: 書くのは今の下書きへの題名・本文の上書きだけで、それらは失われない。
+      // 比べるのは画面に出す形 (GET と同じ DTO) の題名・本文なので、画像の一覧も pack の版も読まない。
       const result = await service.edit(
         id,
         {
@@ -101,7 +104,7 @@ export function registerIssueDraftEditRoutes(app: Hono, deps: IssueDraftEditRout
         },
         ifMatch === undefined
           ? {}
-          : { precondition: async (current) => ifMatchMatches(ifMatch, detailEtagOf(await buildDetailBody(deps, current, access))) },
+          : { precondition: (current) => Promise.resolve(ifMatchMatchesEdit(ifMatch, toDetailDto(current, { local: access.local, leakCache: deps.leakCache }))) },
       );
       if (result.ok) {
         // 応答は GET drafts/:id の draft と同じ形 (images・latestHarnessVersion は載せない)。errorTextTrimmed は、200KB に収めるため

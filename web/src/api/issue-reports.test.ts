@@ -60,6 +60,18 @@ describe('issue report draft API client (bdboard-mqoa)', () => {
       });
     });
 
+    // bdboard-q5pj: サーバーの ETag は "<editDigest>-<bodyDigest>" の形になった。web は中身を見ず、読んだ値をそのまま If-Match に付け、
+    // 応答の ETag をそのまま持つ (形が変わっても web の変更は要らない)。
+    it('treats the ETag as an opaque string: the "<editDigest>-<bodyDigest>" form is read, sent and kept as it is', async () => {
+      const read = `"${'a'.repeat(32)}-${'b'.repeat(32)}"`;
+      const saved = `"${'c'.repeat(32)}-${'d'.repeat(32)}"`;
+      const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ draft: draftBody, errorTextTrimmed: false }, { etag: saved })));
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await patchIssueDraft(ID, { title: 'New' }, { ifMatch: read });
+      expect(result.etag).toBe(saved);
+      expect(initOf(fetchMock).headers).toEqual({ 'content-type': 'application/json', 'if-match': read });
+    });
+
     it('sends no If-Match header when none is given (the request is the same as before)', async () => {
       const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ draft: draftBody, errorTextTrimmed: false })));
       vi.stubGlobal('fetch', fetchMock);
