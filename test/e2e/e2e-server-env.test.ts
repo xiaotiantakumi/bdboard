@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createVirtualTimers } from '../../src/application/issue-report/external-issue-poll-test-support.js';
 import { createFakeGhAndBd, createTempMaintainerRoot } from '../../src/bootstrap/external-issues-wiring-test-support.js';
@@ -118,6 +120,22 @@ describe('buildE2eServerEnv', () => {
     it('keeps unrelated parent variables', () => {
       const env = buildE2eServerEnv(inputs({ HOME: '/home/example' }));
       expect(env.HOME).toBe('/home/example');
+    });
+  });
+
+  describe('global-setup.ts', () => {
+    // 上の検査は buildE2eServerEnv の性質しか見ない。global-setup がその結果を spawn にそのまま渡していること
+    // (後ろで別の値を足したり、親の env を重ねたりしないこと) は、ここでソースを読んで固定する。global-setup は
+    // web/dist の写しやサーバーの起動まで行うので、vitest からは呼べない。
+    const source = readFileSync(fileURLToPath(new URL('./global-setup.ts', import.meta.url)), 'utf8');
+
+    it('passes the result of buildE2eServerEnv to spawn as the whole env', () => {
+      expect(source.match(/buildE2eServerEnv\(/g)).toHaveLength(1);
+      expect(source).toMatch(/\benv: buildE2eServerEnv\(\{/);
+    });
+
+    it('does not set the incoming-issue switch on its own', () => {
+      expect(source).not.toContain('BDBOARD_EXTERNAL_ISSUES_DISABLED');
     });
   });
 });

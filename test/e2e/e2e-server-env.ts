@@ -52,8 +52,9 @@ export function buildE2eServerEnv(inputs: E2eServerEnvInputs): NodeJS.ProcessEnv
     // (`gh api --method GET`) を呼び、その checkout の data/external-issues に写しを書く。e2e を main checkout から
     // 回すとこれに当たり、常時稼働のサーバーとは別の lock・別の枠 (1 時間 12 回) で動いてしまう。worktree と CI には
     // .beads が無いので元から動かない。止めておけば、どの場所から回しても同じ条件になる (いまの e2e の画面は、この確認の
-    // 結果を使わない。使う画面の e2e を足すときは、ここで止めたまま、その spec 用に別の手立てを考える)。BDBOARD_GH_PATH を失敗する stub に向ける手もあるが、それは PR の状態の読み取りなど他の
-    // gh も巻き込み、確認の timer と写しの置き場は残る。
+    // 結果を使わない。使う画面の e2e を足すときは、ここで止めたまま、その spec 用に別の手立てを考える)。
+    // BDBOARD_GH_PATH を失敗する stub に向ける手もあるが、それは PR の状態の読み取りなど他の gh も巻き込み、
+    // 確認の timer と写しの置き場は残る。
     // 親の env に BDBOARD_EXTERNAL_ISSUES_DISABLED=0 などが入っていても、ここで '1' に上書きする。
     BDBOARD_EXTERNAL_ISSUES_DISABLED: '1',
     // src/bootstrap/resolve-main-config.ts の envBoolDefaultTrue('BDBOARD_RECLAIM_ENABLED') を

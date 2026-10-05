@@ -288,7 +288,7 @@ focus / ドラッグ中 / WIP 超過といった状態と、モバイル media q
   push する。CI の `e2e` が落ちたときに、原因を見ないまま flake 扱いで rerun に流さないこと
   (bdboard-97ib.1 の赤は flake ではなく実バグだった)。
 
-### 6. e2e のサーバーは「届いた issue」の確認を止めてある。どこから回しても gh は起動しない (bdboard-em45)
+### 6. e2e のサーバーは「届いた issue」の確認を止めてある。どこから回しても、この確認で gh は起動しない (bdboard-em45)
 
 - **症状 (直す前)**: e2e をメインチェックアウトから回すと、起動の 60 秒後に本物の `gh`
   (`gh api --method GET`) が呼ばれ、そのチェックアウトの `data/external-issues` に写しが書かれた。
@@ -300,7 +300,9 @@ focus / ドラッグ中 / WIP 超過といった状態と、モバイル media q
   `BDBOARD_EXTERNAL_ISSUES_DISABLED=1` を必ず立てる (親の env の値は上書き)。確認の
   timer・写しの置き場・gh・bd の呼び出しはどれも作られない。`e2e-server-env.test.ts` が、
   `.beads` のある一時の checkout で本物の配線 (`wireExternalIssues`) へこの env を通して、
-  何も起動しないことを `npm run test:server` (vitest) で固定している。
+  何も起動しないことを `npm run test:server` (vitest) で固定している。global-setup が
+  `buildE2eServerEnv` の結果をそのまま spawn の env に渡していること (後ろで上書きしないこと) も、
+  同じテストがソースを読んで確かめる。
 - **どう書く・どう回す**: e2e を足すときに「届いた issue」の確認の結果を使いたくなったら、
   global-setup の env は止めたままにして、その spec 専用の手立て (偽の gh を向ける、など) を
   別に考える。本物の gh を呼ぶ道は作らない。e2e 自体も、まず worktree から回す
