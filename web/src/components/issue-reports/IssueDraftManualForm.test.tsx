@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../../api';
@@ -85,14 +85,34 @@ describe('IssueDraftManualForm (bdboard-4y8q.6.8)', () => {
     });
   });
 
-  it('invalidates the issue-reports queries and then hands the new draft to onCreated', async () => {
+  it('waits for the issue-reports reload to finish before handing the new draft to onCreated', async () => {
     vi.mocked(createManualIssueDraft).mockResolvedValue({ outcome: 'created', draft: created });
     const { user, invalidate, onCreated } = setup();
+    // 読み直しが終わる前に選ぶと、一覧にまだ無い下書きを選ぶことになる。読み直しを止めておき、終わるまで onCreated が呼ばれないことを見る。
+    let finishReload: () => void = () => {};
+    invalidate.mockImplementation(
+      () =>
+        new Promise<void>((done) => {
+          finishReload = done;
+        }),
+    );
     await fillAndSend(user);
-    expect(await screen.findByRole('button', { name: '送る' })).toBeInTheDocument();
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['issue-reports'] });
-    expect(onCreated).toHaveBeenCalledWith(created);
-    expect(invalidate.mock.invocationCallOrder[0]).toBeLessThan(onCreated.mock.invocationCallOrder[0] ?? 0);
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['issue-reports'] }));
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '送信中…' })).toBeDisabled();
+    finishReload();
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created));
+  });
+
+  it('moves the focus to the title when the form opens', () => {
+    setup();
+    expect(screen.getByRole('textbox', { name: /題名/ })).toHaveFocus();
+  });
+
+  it('ties the hints to the fields they explain', () => {
+    setup({ name: 'example-project', path: '/Users/example-user/work/example-project' });
+    expect(screen.getByRole('textbox', { name: /説明/ })).toHaveAccessibleDescription(/公開される本文にはまだ入りません/);
+    expect(screen.getByRole('textbox', { name: /題名/ })).toHaveAccessibleDescription(/対象プロジェクト: example-project/);
   });
 
   it.each([

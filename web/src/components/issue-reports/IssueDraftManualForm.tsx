@@ -26,6 +26,8 @@ export function IssueDraftManualForm({ project, onCreated, onCancel }: IssueDraf
   const queryClient = useQueryClient();
   const titleId = useId();
   const descriptionId = useId();
+  const descriptionHintId = useId();
+  const projectHintId = useId();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [sending, setSending] = useState(false);
@@ -73,11 +75,14 @@ export function IssueDraftManualForm({ project, onCreated, onCancel }: IssueDraf
           {title.length} / {ISSUE_DRAFT_TITLE_MAX_CHARS}
         </span>
       </label>
+      {/* 押した「新しく報告」から書く欄へ移す (書く画面は一覧の後ろにあり、狭い幅では押したボタンごと一覧が隠れてフォーカスが body へ落ちる)。 */}
       <input
         id={titleId}
         className="issue-draft-editor-title"
         type="text"
         value={title}
+        autoFocus
+        aria-describedby={project !== undefined ? projectHintId : undefined}
         onChange={(event) => setTitle(event.target.value)}
       />
       <label htmlFor={descriptionId} className="issue-draft-editor-label">
@@ -91,13 +96,14 @@ export function IssueDraftManualForm({ project, onCreated, onCancel }: IssueDraf
         className="issue-draft-editor-body"
         rows={10}
         value={description}
+        aria-describedby={descriptionHintId}
         onChange={(event) => setDescription(event.target.value)}
       />
-      <p className="issue-draft-editor-hint">
+      <p className="issue-draft-editor-hint" id={descriptionHintId}>
         説明は手元に保存するだけで、公開される本文にはまだ入りません (投稿の前に置き換えを通してから公開本文に入れる仕組みは、今後入ります)。公開する本文は、下書きを作ったあとに「直す」で書けます。
       </p>
       {project !== undefined && (
-        <p className="issue-draft-editor-hint">
+        <p className="issue-draft-editor-hint" id={projectHintId}>
           対象プロジェクト: {project.name}。題名にこのプロジェクトの名前やパスを書くと、置き換え漏れの疑いが付きます。
         </p>
       )}

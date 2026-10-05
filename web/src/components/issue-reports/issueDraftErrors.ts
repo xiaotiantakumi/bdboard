@@ -31,6 +31,12 @@ export const MANUAL_LOCAL_ONLY_HELP = 'ローカルで開いたときだけ書�
 export const MANUAL_REQUEST_TOO_LARGE_HELP = '送った内容が大きすぎます。説明を短くしてから、もう一度送ってください。';
 export const MANUAL_BAD_REQUEST_HELP = '題名は 1 行で、改行・タブなどの制御文字や見えない書式文字を含めないでください。題名と説明には、それぞれ見える文字が必要です。';
 /**
+ * 404: 受け口 (POST manual-drafts) が無い。web/dist はディスクから配るので、画面だけ新しく、動いているサーバーが受け口を足す前 (#911 より前) のままのときに出る。
+ * 既存の下書きを指す DRAFT_NOT_FOUND_HELP (「この下書きは見つかりませんでした」) は、作る操作には当てはまらない。
+ */
+export const MANUAL_ENDPOINT_MISSING_HELP =
+  '作れませんでした (HTTP 404)。動いている bdboard のサーバーが、この画面より古い可能性があります。サーバーを再起動してから、もう一度送ってください。入力はそのまま残しています。';
+/**
  * 412 (bdboard-mqoa・bdboard-q5pj): 読んだあとに、ほかの画面・端末で題名・本文 (直した文と「直した」印) が変わっていた (新しい発生・画像・pack の版の変化では出ない)。画面は最新を読み直し (入力は残す)、
  * 利用者には内容を確かめてからやり直してもらう。保存と「自動の文に戻す」の両方で出す。
  */
@@ -115,6 +121,7 @@ export function describeIssueDraftManualError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 429 && error.code === CODE_MANUAL_RATE_LIMITED) return MANUAL_RATE_LIMITED_HELP;
     if (error.status === 403 && error.errorMessage === 'local access only') return MANUAL_LOCAL_ONLY_HELP;
+    if (error.status === 404) return MANUAL_ENDPOINT_MISSING_HELP;
   }
   const common = commonMessage(error);
   if (common !== null) return common;
