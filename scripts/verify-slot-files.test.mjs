@@ -80,6 +80,55 @@ describe('readOthers', () => {
     expect(others).toEqual([{ v: 2, pid: livePid, joinedAt: 1_000, queuedAt: 1_000, acquiredAt: 1_000, priority: 'pr' }]);
   });
 
+  // bdboard-bwys: readdir に載っていたのに読む前に消えた holder があったら一覧を読み直し、その後で置かれた holder
+  // (予約を引き継いだ再実行) を読み足す。引き継ぎは「新しい holder を置いてから古い方を消す」順。
+  it('reads the directory again when a listed holder is gone by the time it is read, and picks up the holder that took its place', () => {
+    const dir = makeDir();
+    try {
+      const reservation = writeRunningHolder(dir, livePid);
+      const successor = { v: 2, pid: process.ppid, joinedAt: 2_000, queuedAt: 2_000, priority: 'landed', retry: true };
+      const reads = [];
+      const io = {
+        ...fs,
+        readFileSync: (target, ...rest) => {
+          reads.push(path.basename(target));
+          if (target === reservation && fs.existsSync(reservation)) {
+            fs.writeFileSync(holderPath(dir, process.ppid), JSON.stringify(successor)); // readdir の後に引き継ぎ先が置かれ
+            fs.rmSync(reservation); // 読む前に予約が消えた
+          }
+          return fs.readFileSync(target, ...rest);
+        },
+      };
+      expect(readOthers(dir, selfPathIn(dir), { io })).toEqual({ others: [successor], sawSelf: false });
+      expect(reads).toEqual([path.basename(reservation), `holder-${process.ppid}.json`]); // 読み足したのは新しい名前だけ
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not go round again for a name that stays listed but cannot be found (e.g. a dangling link)', () => {
+    const dir = makeDir();
+    try {
+      const listedButMissing = holderPath(dir, livePid);
+      fs.writeFileSync(listedButMissing, '{}');
+      const reads = [];
+      const io = {
+        ...fs,
+        readFileSync: (target, ...rest) => {
+          reads.push(path.basename(target));
+          if (target === listedButMissing) {
+            throw errnoError('ENOENT');
+          }
+          return fs.readFileSync(target, ...rest);
+        },
+      };
+      expect(readOthers(dir, selfPathIn(dir), { io })).toEqual({ others: [], sawSelf: false });
+      expect(reads).toEqual([path.basename(listedButMissing)]); // 2 回目の一覧にも載るが、読み直さずに終わる
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each(['EPERM', 'EBUSY', 'EACCES'])(
     'counts a live holder it cannot read (%s, e.g. mid-rename on Windows) as running, and keeps its file',
     (code) => {

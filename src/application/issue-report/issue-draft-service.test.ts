@@ -415,6 +415,12 @@ describe('receive: at most 20 new drafts per hour', () => {
 describe('draft.json stays within 200KB however hostile the input', () => {
   // JSON で 1 文字が 2〜6 バイトに膨らむ文字 (引用符・バックスラッシュ・制御文字) と 3 バイト文字。
   const NASTY = '"\\\u0001あ';
+  // bdboard-jh6g: 下の 2 本は 100〜220 回の receive を回し、毎回 200KB 近い draft.json を組んでバイト数を
+  // 数え直す。素の実行は 200〜500ms (load average 7) だが、prepare 中の verify (load average 80) では
+  // 既定の 5000ms を超えて落ちた (krvf #874 で入った 220 回の方)。重い hostile 入力のテストと同じ水準
+  // (stats-routes-sqlite-cache.mkkx.test.ts / pack-heartbeat.test.ts の 30_000) に揃える。ループ回数は
+  // 上限判定 (200 件の畳み込み fingerprint・100 件超のプロジェクト) に必要な数なので縮めない。
+  const HOSTILE_LOOP_TIMEOUT_MS = 30_000;
   const bytesOf = (storage: InMemoryIssueDraftStorage, id: string) =>
     draftJsonBytes(storage.drafts.get(id) as IssueDraft);
 
@@ -442,7 +448,7 @@ describe('draft.json stays within 200KB however hostile the input', () => {
     expect(stored.occurredProjects.length).toBeLessThan(100);
     expect(stored.occurredProjects.at(-1)?.name.startsWith('99-')).toBe(true);
     expect(stored.occurredProjects.some((entry) => entry.name.startsWith('0-'))).toBe(false);
-  });
+  }, HOSTILE_LOOP_TIMEOUT_MS);
 
   it('keeps a 大量発生 draft within the cap with 200 long folded fingerprints plus hostile projects', async () => {
     const { service, storage } = createHarness();
@@ -467,7 +473,7 @@ describe('draft.json stays within 200KB however hostile the input', () => {
     const stored = storage.drafts.get(massId) as IssueDraft;
     expect(stored.occurrenceCount).toBe(220);
     expect(stored.localOnly.foldedFingerprints).toHaveLength(200);
-  });
+  }, HOSTILE_LOOP_TIMEOUT_MS);
 
   it('keeps the cap when a reason is added by dismiss or a count digit is added to a dismissed draft', async () => {
     const { service, storage } = createHarness();

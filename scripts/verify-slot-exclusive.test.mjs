@@ -333,6 +333,87 @@ describe('reserveVerifySlot: merge-pr holds the place of its landed retry (bdboa
     }
   });
 
+  // bdboard-bwys: 上のテストが CI で 1 回 ['pr', 'landed'] になった競合を、io の差し替えで毎回起こす。再実行は「自分の holder を
+  // 書いてから予約を消す」順だが、pr の待ち手の readdir がその間に挟まると、readdir には予約だけが載り、読みに行くと予約は
+  // もう無い。その一覧だけで決めると landed が 1 本も見えず、修正前はそこで走り出していた (負荷をかけた再現で 700 回中
+  // 24 回)。今は readOthers が一覧を読み直して再実行の holder を拾う (verify-slot-files.mjs)。
+  it('a pr waiter that reads the reservation just as the retry takes it over does not start in that round; it reads again and waits behind the retry', async () => {
+    const dir = makeDir();
+    const mergePr = spawnLiveProcess();
+    const retry = spawnLiveProcess();
+    try {
+      const now = Date.now();
+      const since = now - 60_000;
+      const reservationPath = holderFile(dir, mergePr.pid);
+      fs.writeFileSync(reservationPath, JSON.stringify({ v: HOLDER_FORMAT, pid: mergePr.pid, priority: 'landed', joinedAt: now, queuedAt: now, since, reserved: true }));
+      let handedOver = false;
+      const io = {
+        ...fs,
+        readFileSync: (filePath, ...rest) => {
+          if (!handedOver && path.resolve(filePath) === path.resolve(reservationPath)) {
+            // 待ち手の readdir の後、予約を読む前に引き継ぎが起きる (再実行の holder を置いてから予約を消す。verify-slot.mjs と同じ順)。
+            handedOver = true;
+            const at = Date.now();
+            fs.writeFileSync(holderFile(dir, retry.pid), JSON.stringify({ v: HOLDER_FORMAT, pid: retry.pid, priority: 'landed', joinedAt: at, queuedAt: at, since, retry: true }));
+            fs.unlinkSync(reservationPath);
+          }
+          return fs.readFileSync(filePath, ...rest);
+        },
+      };
+      const lines = [];
+      const error = await acquireVerifySlot(fast(dir, { priority: 'pr', waitTimeoutMs: 300, waitTimeoutFromEnv: true, io }), (line) => lines.push(line)).then(
+        (slot) => {
+          slot.release();
+          return null;
+        },
+        (caught) => caught,
+      );
+      expect(handedOver).toBe(true);
+      expect(error).toBeInstanceOf(SlotWaitTimeoutError); // 修正前は予約が消えた周に走り出していた (error が null)
+      expect(lines.join('\n')).toContain(`does not run beside landed verify pid ${retry.pid}`); // 読み直して再実行の後ろで待った
+    } finally {
+      mergePr.kill('SIGKILL');
+      retry.kill('SIGKILL');
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // 上の読み直しが効くのは、再実行が「自分の holder を置いてから予約を消す」順を守るときだけ (逆順だと、予約が消えた後の
+  // 一覧にも再実行の holder がまだ載っていないことがある)。その順を固定する (PR #877 のレビュー m1)。
+  it('the retry renames its own holder in before it deletes the reservation it takes over', async () => {
+    const dir = makeDir();
+    const mergePr = spawnLiveProcess();
+    try {
+      const now = Date.now();
+      const reservation = holderFile(dir, mergePr.pid);
+      fs.writeFileSync(reservation, JSON.stringify({ v: HOLDER_FORMAT, pid: mergePr.pid, priority: 'landed', joinedAt: now, queuedAt: now, since: now - 60_000, reserved: true }));
+      const own = holderFile(dir, process.pid);
+      const events = [];
+      const io = {
+        ...fs,
+        renameSync: (from, to) => {
+          fs.renameSync(from, to);
+          if (path.resolve(to) === path.resolve(own)) {
+            events.push('own holder in');
+          }
+        },
+        unlinkSync: (file) => {
+          if (path.resolve(file) === path.resolve(reservation)) {
+            events.push('reservation deleted');
+          }
+          return fs.unlinkSync(file);
+        },
+      };
+      const slot = await acquireVerifySlot(fast(dir, { priority: 'landed', queueSince: now - 60_000, handoffPath: reservation, waitTimeoutMs: 2_000, io }), () => {});
+      slot.release();
+      expect(events.slice(0, 2)).toEqual(['own holder in', 'reservation deleted']);
+      expect(fs.existsSync(reservation)).toBe(false);
+    } finally {
+      mergePr.kill('SIGKILL');
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('a reservation left by a merge-pr that died is reaped like any dead holder', async () => {
     const dir = makeDir();
     try {

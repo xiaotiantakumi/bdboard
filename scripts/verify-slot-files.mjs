@@ -146,6 +146,16 @@ export async function writeHolderAtomically(filePath, holder, options = {}) {
  * 読み取り自体が失敗した相手は、pid (ファイル名から) が生きていれば「走っている」として数える
  * (unreadableHolder)。options.io はテストの失敗注入用 (既定は node:fs)。options.unreadableSince は
  * 呼び出し元が周をまたいで持つ Map (stat も失敗した相手の年齢を数えるため)。
+ *
+ * bdboard-bwys: readdir に載っていたのに読む前に消えた holder があったら、readdir をやり直し、前の一覧に無かった
+ * 名前だけを読み足す (消えるものが無くなるまで)。merge-pr の予約から再実行の verify への引き継ぎは「再実行の holder を
+ * 置いてから予約を消す」順 (verify-slot.mjs の acquireVerifySlot と merge-pr/reservation-watch.mjs) だが、readdir が
+ * その間に挟まると、一覧には予約だけが載り、読みに行くと予約はもう無い。その一覧だけで返すと landed が 1 本も
+ * 見えず、pr の待ち手が隙間で走り出していた (CI で 1 回、負荷をかけた再現で 700 回中 24 回)。予約の読み取りが
+ * 「無い」(ENOENT) と答えたなら、やり直しの readdir は予約が消えた後なので、再実行の holder は (再実行がもう
+ * 抜けていなければ) 必ず載る。Windows で削除待ち (delete-pending) の予約は ENOENT ではなく EPERM 等で読めないことがあり、
+ * そのときは読み直さず、上の「読めない相手は pr とみなして 1 周だけ数える」扱い (bdboard-e8jj) に落ちる。読み足すのは
+ * 新しい名前だけなので、載り続けるのに読めない名前 (壊れたシンボリックリンク等) でも回り続けない。
  */
 export function readOthers(dir, selfPath, options = {}) {
   const io = options.io || fs;
@@ -153,48 +163,61 @@ export function readOthers(dir, selfPath, options = {}) {
   const unreadableSince = options.unreadableSince || new Map();
   const others = [];
   let sawSelf = false;
-  const names = io.readdirSync(dir);
+  let names = io.readdirSync(dir);
   for (const filePath of [...unreadableSince.keys()]) {
     if (!names.includes(path.basename(filePath))) {
       unreadableSince.delete(filePath); // 消えた相手の記録を持ち越さない
     }
   }
-  for (const name of names) {
-    const match = HOLDER_NAME.exec(name);
-    if (match === null) {
-      // bdboard-l3dh: 書いた pid が死んでいる一時ファイル (書き込み中に SIGKILL された verify 等) は
-      // 誰も消さないので、死んだ holder と同じ判定で回収する。生きていれば書き込み途中かもしれないので触らない。
-      const temporaryMatch = HOLDER_TEMPORARY_NAME.exec(name);
-      if (temporaryMatch !== null && !isProcessAlive(Number(temporaryMatch[1]))) {
-        unlinkQuietly(path.join(dir, name));
+  const listed = new Set();
+  for (;;) {
+    let vanished = false;
+    for (const name of names) {
+      if (listed.has(name)) {
+        continue; // 前の一覧で読んだ
       }
-      continue;
-    }
-    const filePath = path.join(dir, name);
-    if (filePath === selfPath) {
-      sawSelf = true;
-      continue;
-    }
-    const entry = readHolder(io, filePath);
-    if (entry !== UNREADABLE) {
-      unreadableSince.delete(filePath);
-    }
-    if (entry === GONE) {
-      continue; // readdir の後に release された
-    }
-    if (entry === CORRUPT) {
-      if (isOlderThan(io, filePath, CORRUPT_GRACE_MS, now)) {
-        unlinkQuietly(filePath); // 壊れたファイル
+      listed.add(name);
+      const match = HOLDER_NAME.exec(name);
+      if (match === null) {
+        // bdboard-l3dh: 書いた pid が死んでいる一時ファイル (書き込み中に SIGKILL された verify 等) は
+        // 誰も消さないので、死んだ holder と同じ判定で回収する。生きていれば書き込み途中かもしれないので触らない。
+        const temporaryMatch = HOLDER_TEMPORARY_NAME.exec(name);
+        if (temporaryMatch !== null && !isProcessAlive(Number(temporaryMatch[1]))) {
+          unlinkQuietly(path.join(dir, name));
+        }
+        continue;
       }
-      continue;
+      const filePath = path.join(dir, name);
+      if (filePath === selfPath) {
+        sawSelf = true;
+        continue;
+      }
+      const entry = readHolder(io, filePath);
+      if (entry !== UNREADABLE) {
+        unreadableSince.delete(filePath);
+      }
+      if (entry === GONE) {
+        vanished = true; // readdir の後に release された (または予約が再実行に引き継がれた)
+        continue;
+      }
+      if (entry === CORRUPT) {
+        if (isOlderThan(io, filePath, CORRUPT_GRACE_MS, now)) {
+          unlinkQuietly(filePath); // 壊れたファイル
+        }
+        continue;
+      }
+      const pid = entry === UNREADABLE ? Number(match[1]) : entry.pid;
+      if (!isProcessAlive(pid)) {
+        unlinkQuietly(filePath); // 死んだ保持者 (SIGKILL された verify 等) を回収。読めない残骸も同じ
+        continue;
+      }
+      // 読めない相手は消さない (生きている holder の置き換え途中でありうる)。
+      others.push(entry === UNREADABLE ? unreadableHolder(io, filePath, pid, now, unreadableSince) : entry);
     }
-    const pid = entry === UNREADABLE ? Number(match[1]) : entry.pid;
-    if (!isProcessAlive(pid)) {
-      unlinkQuietly(filePath); // 死んだ保持者 (SIGKILL された verify 等) を回収。読めない残骸も同じ
-      continue;
+    if (!vanished) {
+      break;
     }
-    // 読めない相手は消さない (生きている holder の置き換え途中でありうる)。
-    others.push(entry === UNREADABLE ? unreadableHolder(io, filePath, pid, now, unreadableSince) : entry);
+    names = io.readdirSync(dir); // 消えた holder の後で置かれた holder (引き継ぎ先) を読み足す (上の bdboard-bwys)
   }
   return { others, sawSelf };
 }
