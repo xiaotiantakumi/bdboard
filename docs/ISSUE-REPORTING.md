@@ -862,11 +862,12 @@ function normalizeErrorText(text: string): string {
 | ファイル | 公開するもの | 役割 |
 |---|---|---|
 | `src/domain/self-error-throttle.ts` | `createSelfErrorThrottle({intervalMs?, maxKeys?})` → `shouldReport(key, now)` / `forget(key)` / `size()` | キーごとの最後の報告時刻。既定 1 時間に 1 回、覚えるのは 500 キー(LRU) |
-| `src/domain/self-error-mask.ts` | `maskSelfErrorText(text, projects)` / `createSelfErrorMasker(projects)` | 根・別名のパス → `<project-root>`、接頭辞で始まるチケット ID → `<ticket-id>`、名前 → `<project>` |
+| `src/domain/self-error-mask.ts` | `maskSelfErrorText(text, projects)` / `createSelfErrorMasker(projects)` | 根・別名のパス → `<project-root>`、接頭辞で始まるチケット ID → `<ticket-id>`、名前と接頭辞そのもの(と、その Dolt のデータベース名の形)→ `<project>` |
 | `src/domain/refresh-error-tracker.ts` | `createRefreshErrorTracker({throttle?})` → `observe(result, projects, now)` → `SelfErrorReport[]` | リフレッシュ結果から「いま報告するもの」を選ぶ |
 
-**追跡の規則**: キーは `(kind, 伏せた detail)` で、プロジェクトをまたいで共有する(別のプロジェクトの同じエラーは伏せたあと同じ文字列になり、
-1 時間に 1 回に数える)。初めて現れたら報告し、続いている間は throttle に従う。`lock-contention` と `timeout` は同じプロジェクトで
+**追跡の規則**: キーは `(kind, 伏せた detail を normalizeErrorText で寄せたもの)` で、プロジェクトをまたいで共有する(別のプロジェクトの同じエラーは
+伏せて寄せたあと同じ文字列になり、1 時間に 1 回に数える)。寄せ方は下書きの指紋(4節)と同じなので、間引きの粒度と下書きのまとまり方が揃う。
+報告の `errorText` は寄せる前の伏せた文のまま。初めて現れたら報告し、続いている間は throttle に従う。`lock-contention` と `timeout` は同じプロジェクトで
 3 回続けて(`errors` に出て)から初めて報告し、閾値に届く前は throttle に聞かない(聞くと 3 回目が間引かれる)。
 `refreshed` に入っているプロジェクトに、前に続いていたキーが今回の `errors` に無ければ解消として状態を消す(次に現れたら「初めて」)。
 `refreshed` に入っていないプロジェクトの状態は、`errors` に出たキーの更新以外では変えない(一部だけのリフレッシュで消えない)。
@@ -884,6 +885,8 @@ function normalizeErrorText(text: string): string {
 | 6 | 未知のプロジェクトのエラー | `errors[].projectId` が一覧に無いものは**報告せず、状態にも入れない**(name と path が分からず、伏せる名前も分からないため。fail-closed) |
 | 7 | 状態の上限 | 1 プロジェクトが覚えるキーは 20(超えたら最も古いものを捨て、throttle からも外す)。キーに入れる伏せた文は 1024 コード単位を超えたら先頭・長さ・末尾に畳む(中だけが違う長い文は同じキーになる)。`errorText` 自体は畳まない |
 | 8 | 時計が戻ったとき | 最後の報告時刻を now に置き直して false を返す(戻り幅の分だけ黙り続けない。再開は最大 1 回分の間隔の後)。無効な Date は false で何も変えない |
+| 9 | キーの寄せ方 | 仕様の「伏せた detail」に、さらに `normalizeErrorText`(4節の指紋と同じ)をかけてキーにした。bd の Dolt サーバーのポートはプロジェクトごとに違い(実データ: `dolt server unreachable at 127.0.0.1:60995` と `…:61292`)、寄せないと別のプロジェクトの同じエラーが別々に報告される。時刻・経過時間・pid のように実行ごとに変わる値を含む文では、更新のたびに「初めて」になって間引きも 3 回の閾値も効かない |
+| 10 | Dolt のデータベース名 | 名前と同じ規則で、接頭辞そのもの(ID の形でない `personal`)と、名前・接頭辞の `-` `.` を `_` にした形も `<project>` にする。bd のデータベース名の既定は接頭辞で、#432 の文に出るのはこの名前(実データ: フォルダ `MoguExercise`・接頭辞 `epic-haslett-00ae14` → `database "epic_haslett_00ae14"`)。接頭辞を後から変えたプロジェクトのデータベース名(`.beads/metadata.json` の `dolt_database`)は Project に無いので伏せられない(4y8q.6.3 / 4y8q.4 への申し送り) |
 
 **この PR ではやらないこと**: `refreshProjects` との配線、下書きサービスの呼び出し、環境変数 `BDBOARD_SELF_ERROR_DRAFTS` による停止(U6)、
 `LocalOnlyKeys` を全プロジェクトの名前・根・接頭辞に広げること(U13、4y8q.4)。後続は 4y8q.6.3。

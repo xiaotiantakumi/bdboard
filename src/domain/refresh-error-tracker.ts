@@ -5,6 +5,7 @@
  * 同じエラーが更新のたびに出続けても報告は 1 時間に 1 回 (間引きは self-error-throttle.ts)。lock-contention と timeout は
  * 一時的なことが多いので 3 回続けて見えたら初めて報告する。配線 (下書きサービスの呼び出し) は 4y8q.6.3。
  */
+import { normalizeErrorText } from './issue-draft.js';
 import type { Project } from './project.js';
 import { createSelfErrorMasker } from './self-error-mask.js';
 import { createSelfErrorThrottle } from './self-error-throttle.js';
@@ -44,12 +45,18 @@ export interface RefreshErrorTracker {
   observe(result: RefreshErrorInput, projects: readonly RefreshErrorProject[], now: Date): readonly SelfErrorReport[];
 }
 
-/** (kind, 伏せた detail)。別のプロジェクトの同じエラーは同じキーになる。 */
+/**
+ * (kind, 伏せた detail を下書きの指紋と同じ normalizeErrorText で寄せたもの)。数字・時刻・16 進の断片だけが違う同じエラーは同じキーになる
+ * (bd の Dolt サーバーのポートはプロジェクトごとに違う: `dolt server unreachable at 127.0.0.1:60995`)。寄せないと、別のプロジェクトの
+ * 同じエラーが別々に報告され、実行ごとに変わる値 (時刻・経過時間・pid) を含む文は更新のたびに「初めて」になって間引きも 3 回の閾値も効かない。
+ * 報告の errorText は寄せる前の伏せた文のまま (読み手に見せる文を変えない)。
+ */
 function keyOf(kind: string, errorText: string): string {
+  const normalized = normalizeErrorText(errorText);
   const text =
-    errorText.length > MAX_KEY_TEXT_LENGTH
-      ? `${errorText.slice(0, 768)}…[${errorText.length}]…${errorText.slice(-256)}`
-      : errorText;
+    normalized.length > MAX_KEY_TEXT_LENGTH
+      ? `${normalized.slice(0, 768)}…[${normalized.length}]…${normalized.slice(-256)}`
+      : normalized;
   return `${kind}\n${text}`;
 }
 
@@ -57,19 +64,6 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
   const throttle = options.throttle ?? createSelfErrorThrottle();
   // プロジェクト → いま続いているキー → 連続して見えた回数。Map の挿入順を LRU に使う。
   const active = new Map<string, Map<string, number>>();
-
-  /** throttle のキーは全プロジェクトで共有するので、どのプロジェクトにも無くなったときだけ忘れる (まだ続いている側を再報告で荒らさない)。 */
-  function releaseKey(key: string): void {
-    for (const keys of active.values()) if (keys.has(key)) return;
-    throttle.forget(key);
-  }
-
-  function dropProject(projectId: string): void {
-    const keys = active.get(projectId);
-    if (keys === undefined) return;
-    active.delete(projectId);
-    for (const key of keys.keys()) releaseKey(key);
-  }
 
   /** 見えた回数を 1 増やして返す (閾値で頭打ち)。 */
   function see(projectId: string, key: string): number {
@@ -83,10 +77,7 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
     keys.set(key, streak);
     if (keys.size > REFRESH_ERROR_MAX_KEYS_PER_PROJECT) {
       const oldest = keys.keys().next().value;
-      if (oldest !== undefined) {
-        keys.delete(oldest);
-        releaseKey(oldest);
-      }
+      if (oldest !== undefined) keys.delete(oldest);
     }
     return streak;
   }
@@ -95,7 +86,10 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
     observe(result, projects, now) {
       const projectById = new Map(projects.map((project) => [project.id, project]));
       const mask = createSelfErrorMasker(projects);
-      for (const id of result.removed) dropProject(id);
+      // removed と、一覧に無くなったプロジェクト (一度もキャッシュされないまま探索から消えたものは removed に出ない) の状態を捨てる。
+      // throttle の記録 (1 時間に 1 回) は消さない: 消えたり出たりするエラーが、そのたびに報告されないようにするため。
+      for (const id of result.removed) active.delete(id);
+      for (const id of [...active.keys()]) if (!projectById.has(id)) active.delete(id);
 
       const reports: SelfErrorReport[] = [];
       const seenByProject = new Map<string, Set<string>>();
@@ -125,7 +119,8 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
         });
       }
 
-      // 解消: refreshed に入っているのに errors に無いキーだけ。refreshed に入っていないプロジェクトの状態は変えない。
+      // 解消: refreshed に入っているのに errors に無いキーだけ、「続けて見えた回数」を 0 に戻す (throttle の記録は残す)。
+      // refreshed に入っていないプロジェクトの状態は変えない。
       for (const id of result.refreshed) {
         const keys = active.get(id);
         if (keys === undefined) continue;
@@ -133,7 +128,6 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
         for (const key of [...keys.keys()]) {
           if (current?.has(key) === true) continue;
           keys.delete(key);
-          releaseKey(key);
         }
         if (keys.size === 0) active.delete(id);
       }

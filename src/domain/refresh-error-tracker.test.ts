@@ -143,6 +143,35 @@ describe('the same error in different projects', () => {
   });
 });
 
+describe('details that differ only in numbers (ports, times, counts)', () => {
+  const unreachable = (port: number): string =>
+    `error: failed to open database: dolt server unreachable at 127.0.0.1:${port}: dial tcp 127.0.0.1:${port}: connect: connection refused`;
+
+  it('reports the same error once even when each project has its own Dolt port', () => {
+    const tracker = createRefreshErrorTracker();
+    const reports = tracker.observe(result([err('alpha', 'unknown', unreachable(60995)), err('beta', 'unknown', unreachable(61292))]), projects, at(0));
+    expect(reports).toHaveLength(1);
+    // 報告する文は寄せない (ポートは読み手に見せる文に残る)。
+    expect(reports[0]?.errorText).toBe(unreachable(60995));
+  });
+
+  it('keeps throttling an error whose text carries a value that changes on every run', () => {
+    const tracker = createRefreshErrorTracker();
+    const counts = [0, 1, 2, 3].map(
+      (round) => tracker.observe(result([err('alpha', 'unknown', `failed at 2026-10-05T00:0${round}:00Z after ${1000 + round}ms`)]), projects, at(round * MINUTE)).length,
+    );
+    expect(counts).toEqual([1, 0, 0, 0]);
+  });
+
+  it('lets a transient kind reach its threshold although the elapsed time differs each time', () => {
+    const tracker = createRefreshErrorTracker();
+    const counts = [0, 1, 2].map(
+      (round) => tracker.observe(result([err('alpha', 'timeout', `timed out after ${30_000 + round}ms`)]), projects, at(round * MINUTE)).length,
+    );
+    expect(counts).toEqual([0, 0, 1]);
+  });
+});
+
 describe('transient kinds (lock-contention and timeout)', () => {
   for (const kind of ['lock-contention', 'timeout']) {
     it(`reports ${kind} on the third sighting, not before, then follows the throttle`, () => {
@@ -224,23 +253,47 @@ describe('a partial refresh', () => {
 });
 
 describe('resolution', () => {
-  it('reports a returning error at once, without waiting for the hour', () => {
+  it('does not report a returning error again within the hour (an error that comes and goes is still one per hour)', () => {
     const tracker = createRefreshErrorTracker();
     expect(tracker.observe(result([err('alpha')]), projects, at(0))).toHaveLength(1);
     tracker.observe(result([], ['alpha']), projects, at(MINUTE));
-    expect(tracker.observe(result([err('alpha')]), projects, at(2 * MINUTE))).toHaveLength(1);
+    expect(tracker.observe(result([err('alpha')]), projects, at(2 * MINUTE))).toHaveLength(0);
+    tracker.observe(result([], ['alpha']), projects, at(3 * MINUTE));
+    expect(tracker.observe(result([err('alpha')]), projects, at(4 * MINUTE))).toHaveLength(0);
+    expect(tracker.observe(result([err('alpha')]), projects, at(HOUR))).toHaveLength(1);
   });
 
-  it('resolves only the keys that are gone, and keeps the others throttled', () => {
+  it('resolves only the keys that are gone, and keeps every key throttled for the hour', () => {
     const tracker = createRefreshErrorTracker();
     expect(tracker.observe(result([err('alpha', 'unknown', 'one'), err('alpha', 'unknown', 'two')]), projects, at(0))).toHaveLength(2);
     tracker.observe(result([err('alpha', 'unknown', 'one')], ['alpha']), projects, at(MINUTE));
-    const again = tracker.observe(
+    const within = tracker.observe(
       result([err('alpha', 'unknown', 'one'), err('alpha', 'unknown', 'two')]),
       projects,
       at(2 * MINUTE),
     );
-    expect(again.map((report) => report.errorText)).toEqual(['two']);
+    expect(within).toEqual([]);
+    const after = tracker.observe(
+      result([err('alpha', 'unknown', 'one'), err('alpha', 'unknown', 'two')]),
+      projects,
+      at(HOUR),
+    );
+    expect(after.map((report) => report.errorText)).toEqual(['one', 'two']);
+  });
+
+  it('resets only the run of consecutive sightings of a transient kind, not its hourly throttle', () => {
+    const tracker = createRefreshErrorTracker();
+    const seen = result([err('alpha', 'timeout')]);
+    for (const offset of [0, 1]) tracker.observe(seen, projects, at(offset));
+    expect(tracker.observe(seen, projects, at(2))).toHaveLength(1);
+    // 解消のあと、また 3 回続けて見えても、前の報告から 1 時間たつまでは報告しない。
+    tracker.observe(result([], ['alpha']), projects, at(3));
+    for (const offset of [4, 5, 6]) expect(tracker.observe(seen, projects, at(offset))).toHaveLength(0);
+    // 数え直しは効いている: 1 時間後でも 3 回続けて見えるまでは報告しない。
+    tracker.observe(result([], ['alpha']), projects, at(HOUR));
+    expect(tracker.observe(seen, projects, at(HOUR + 1))).toHaveLength(0);
+    expect(tracker.observe(seen, projects, at(HOUR + 2))).toHaveLength(0);
+    expect(tracker.observe(seen, projects, at(HOUR + 3))).toHaveLength(1);
   });
 
   it('does not re-report when another project still has the same masked error', () => {
@@ -252,16 +305,15 @@ describe('resolution', () => {
     expect(tracker.observe(result([err('alpha', 'unknown', 'in alpha-project')]), projects, at(2 * MINUTE))).toHaveLength(0);
   });
 
-  it('forgets the error of a removed project', () => {
+  it('forgets the run of sightings of a removed project, but not its hourly throttle', () => {
     const tracker = createRefreshErrorTracker();
     tracker.observe(result([err('alpha', 'timeout')]), projects, at(0));
     tracker.observe(result([err('alpha', 'timeout')]), projects, at(1));
     tracker.observe(result([], [], ['alpha']), projects, at(2));
     expect(tracker.observe(result([err('alpha', 'timeout')]), projects, at(3))).toHaveLength(0);
-    // 外れた後の報告済みの記憶も捨てるので、即時の kind は再び「初めて」になる。
     expect(tracker.observe(result([err('alpha', 'unknown')]), projects, at(4))).toHaveLength(1);
     tracker.observe(result([], [], ['alpha']), projects, at(5));
-    expect(tracker.observe(result([err('alpha', 'unknown')]), projects, at(6))).toHaveLength(1);
+    expect(tracker.observe(result([err('alpha', 'unknown')]), projects, at(6))).toHaveLength(0);
   });
 
   it('keeps the state of other projects when one is removed', () => {
@@ -283,6 +335,17 @@ describe('unknown projects', () => {
     expect(tracker.observe(result([err('ghost', 'timeout')]), withGhost, at(2))).toHaveLength(0);
     expect(tracker.observe(result([err('ghost')]), withGhost, at(3))).toHaveLength(1);
   });
+
+  it('drops the state of a project that has left the list without ever being cached (it is not in removed)', () => {
+    const tracker = createRefreshErrorTracker();
+    const withGhost = [...projects, { ...alpha, id: 'ghost', name: 'ghost-project', rootPath: '/work/ghost' }];
+    tracker.observe(result([err('ghost', 'timeout')]), withGhost, at(0));
+    tracker.observe(result([err('ghost', 'timeout')]), withGhost, at(1));
+    // ghost は探索から消えた。キャッシュに入ったことが無いので removed には出ない。
+    tracker.observe(result([err('alpha')]), projects, at(2));
+    // 戻ってきても、前の 2 回は数えない (残っていれば、この 1 回が 3 回目になって報告される)。
+    expect(tracker.observe(result([err('ghost', 'timeout')]), withGhost, at(3))).toHaveLength(0);
+  });
 });
 
 describe('options and limits', () => {
@@ -295,13 +358,18 @@ describe('options and limits', () => {
     expect(second.observe(result([err('alpha')]), projects, at(HOUR))).toHaveLength(1);
   });
 
-  it('remembers at most twenty keys per project, and forgets the oldest', () => {
+  it('remembers at most twenty keys per project: the oldest one loses its run of sightings', () => {
     const tracker = createRefreshErrorTracker();
-    const many = Array.from({ length: 21 }, (_, index) => err('alpha', 'unknown', `detail-${index}`));
-    expect(tracker.observe(result(many), projects, at(0))).toHaveLength(21);
-    // detail-0 は捨てられて throttle からも外れたので、続いて現れたら初めてのものとして報告される。detail-1 はまだ覚えている。
-    expect(tracker.observe(result([err('alpha', 'unknown', 'detail-1')]), projects, at(1))).toHaveLength(0);
-    expect(tracker.observe(result([err('alpha', 'unknown', 'detail-0')]), projects, at(2))).toHaveLength(1);
+    // キーは数字を寄せるので、数字ではなく英字で別々の文にする (detail-a … detail-u)。
+    const timeout = (index: number): Err => err('alpha', 'timeout', `detail-${String.fromCharCode(0x61 + index)}`);
+    const reports = (round: readonly Err[], offset: number): number =>
+      tracker.observe(result(round), projects, at(offset)).length;
+    // 1 回目: a … u の 21 個。u を足したところで最も古い a が捨てられる。
+    expect(reports(Array.from({ length: 21 }, (_, index) => timeout(index)), 0)).toBe(0);
+    // 2 回目: b は 2 回目、a は数え直しの 1 回目 (足したところで c が捨てられる)。
+    expect(reports([timeout(1), timeout(0)], 1)).toBe(0);
+    // 3 回目: b は 3 回目で報告、a は 2 回目。捨てられていなければ a も 3 回目になって 2 件になる。
+    expect(reports([timeout(1), timeout(0)], 2)).toBe(1);
   });
 
   it('handles a very long detail without shortening the reported text', () => {
@@ -318,6 +386,24 @@ describe('options and limits', () => {
     const second = `${'a'.repeat(2000)}Y${'b'.repeat(2001)}`;
     expect(tracker.observe(result([err('alpha', 'unknown', first)]), projects, at(0))).toHaveLength(1);
     expect(tracker.observe(result([err('alpha', 'unknown', second)]), projects, at(1))).toHaveLength(1);
+  });
+
+  it('folds a key longer than 1024 characters into its head (768), its length and its tail (256)', () => {
+    const long = (head: string, middle: string, tail: string): string => `${head}${'h'.repeat(800)}${middle}${'t'.repeat(300)}${tail}`;
+    const tracker = createRefreshErrorTracker();
+    const original = long('', 'x'.repeat(500), '');
+    expect(tracker.observe(result([err('alpha', 'unknown', original)]), projects, at(0))).toHaveLength(1);
+    // 先頭 768 と末尾 256 の外 (中) だけが違い、長さが同じなら、同じキーになる (既知の限界)。
+    const middleOnly = long('', `${'x'.repeat(250)}${'y'.repeat(5)}${'x'.repeat(245)}`, '');
+    expect(tracker.observe(result([err('alpha', 'unknown', middleOnly)]), projects, at(1))).toHaveLength(0);
+    // 先頭・末尾・長さのどれかが違えば別のキー。
+    expect(tracker.observe(result([err('alpha', 'unknown', long('g', 'x'.repeat(499), ''))]), projects, at(2))).toHaveLength(1);
+    expect(tracker.observe(result([err('alpha', 'unknown', long('', 'x'.repeat(500), 'q'))]), projects, at(3))).toHaveLength(1);
+    expect(tracker.observe(result([err('alpha', 'unknown', long('', 'x'.repeat(501), ''))]), projects, at(4))).toHaveLength(1);
+    // 報告する文は畳まない。
+    expect(tracker.observe(result([err('beta', 'unknown', long('k', 'x'.repeat(499), ''))]), projects, at(5))[0]?.errorText).toBe(
+      long('k', 'x'.repeat(499), ''),
+    );
   });
 
   it('returns nothing for an empty result', () => {

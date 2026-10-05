@@ -5,11 +5,15 @@
  * 軽い正規化と、下書きに入れる前の最初の網。置き換えの種類は 3 つ (重なったときは上から勝つ):
  *   1. プロジェクトの根と別名のパス → <project-root>
  *   2. 接頭辞で始まるチケット ID → <ticket-id>
- *   3. プロジェクトの名前 (3 文字以上、語の境界で一致) → <project>
+ *   3. プロジェクトの名前と接頭辞そのもの (3 文字以上、語の境界で一致) → <project>。どちらも Dolt のデータベース名の形
+ *      (`-` と `.` を `_` に替えたもの) も探す。bd のデータベース名の既定は接頭辞で (`bd init --database` の説明
+ *      「default: issue prefix」)、#432 の文 `database "<名前>" not found on dolt server` に出るのはこの名前
+ *      (接頭辞 `epic-haslett-00ae14` → `epic_haslett_00ae14`、接頭辞 `personal` とフォルダ名 `personal-todo`)。
  *
  * 置き換えは元の文字列の上で一致の範囲をまとめて集め、重ならないものだけを左から 1 回で印に替える。印を入れた後の文字列は探し直さない
  * (名前が `project` のとき、入れたばかりの `<project-root>` の中に一致して印が壊れるため)。
  */
+import { nounVariants } from './issue-public-key-variants.js';
 import type { Project } from './project.js';
 import { isProjectPrefix } from './project.js';
 
@@ -37,11 +41,14 @@ function escapeRegex(value: string): string {
   return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
 }
 
-/** 大小文字を無視して重複を 1 つにまとめ、NFC と NFD の変種 (macOS のファイル名は分解形のことがある) を足す。長い順に返す。 */
+/**
+ * 大小文字を無視して重複を 1 つにまとめ、公開本文の置き換え (issue-public-key-variants.ts) と同じ変種を足す: NFC と NFD (macOS のファイル名は
+ * 分解形のことがある) と、それぞれの URL のパーセント表記 (`file:///work/my%20proj`)。長い順に返す。
+ */
 function withUnicodeVariants(values: readonly string[]): string[] {
   const unique = new Map<string, string>();
   for (const value of values) {
-    for (const form of [value, value.normalize('NFC'), value.normalize('NFD')]) {
+    for (const form of nounVariants(value)) {
       const folded = form.toLowerCase();
       if (!unique.has(folded)) unique.set(folded, form);
     }
@@ -71,6 +78,11 @@ function candidatesOf(literals: readonly string[], build: (escaped: string) => s
   return literals.map((literal) => ({ regex: new RegExp(build(escapeRegex(literal)), 'giu'), mark }));
 }
 
+/** Dolt のデータベース名に使えない `-` と `.` を `_` にした形 (bd が接頭辞からデータベース名を作るときの書き換え)。 */
+function doltDatabaseForm(value: string): string {
+  return value.replace(/[-.]/g, '_');
+}
+
 function buildGroups(projects: readonly SelfErrorMaskProject[]): Candidate[][] {
   const paths = projects
     .flatMap((project) => [project.rootPath, ...project.aliasPaths])
@@ -78,14 +90,16 @@ function buildGroups(projects: readonly SelfErrorMaskProject[]): Candidate[][] {
     .filter((path) => path.length > 0)
     .flatMap(separatorForms);
   const prefixes = projects.flatMap((project) => project.prefixes).filter(isProjectPrefix);
-  const names = projects
-    .map((project) => project.name.trim())
+  // 接頭辞そのもの (ID の形でない `personal`) も名前と同じ規則で伏せる。2 文字の `bd` はコマンド名と区別できないので残る。
+  const names = [...projects.map((project) => project.name.trim()), ...prefixes]
+    .flatMap((value) => [value, doltDatabaseForm(value)])
     .filter((name) => [...name].length >= SELF_ERROR_MIN_NAME_LENGTH);
   return [
-    // 直後が語・`_`・`-` なら別のパス (`/work/app` に対する `/work/app2`)。直前が語なら別の途中から始まるパス (`/srv/work/app`)。
+    // 直後が語・`_`・`-` なら別のパス (`/work/app` に対する `/work/app2`)。直前は見ない (公開本文の置き換えと同じ): `-C/work/app` のような
+    // 区切りの無いフラグや、実体パスの前置き (`/System/Volumes/Data/work/app`) の中でも伏せる。`/srv/work/app` も `/srv<project-root>` になる (伏せすぎる側)。
     candidatesOf(
       withUnicodeVariants(paths),
-      (escaped) => `(?<![${PATH_WORD}_-])${escaped}(?![${PATH_WORD}_-])`,
+      (escaped) => `${escaped}(?![${PATH_WORD}_-])`,
       SELF_ERROR_PROJECT_ROOT_MARK,
     ),
     // 短い ID は `4y8q`・`3tw.74` のような英数字と `.` の連なり。後ろは貪欲に読み (部分的に残して漏らさない)、文末の `.` は含めない。

@@ -5,6 +5,7 @@ import {
   maskSelfErrorText,
 } from './self-error-mask.js';
 import type { SelfErrorMaskProject } from './self-error-mask.js';
+import { LINEAR_TIME_TEST_TIMEOUT_MS, expectLinearTime } from './linear-time-test-support.js';
 
 function project(overrides: Partial<SelfErrorMaskProject> = {}): SelfErrorMaskProject {
   return {
@@ -37,9 +38,21 @@ describe('project paths', () => {
     expect(mask('see /work/example-root.')).toBe('see <project-root>.');
   });
 
-  it('does not match a longer name, nor the tail of a longer path', () => {
-    const text = '/work/example-root2 /work/example-root_old /work/example-root-x /srv/work/example-root /work/example-rootÉ';
+  it('does not match a longer name', () => {
+    const text = '/work/example-root2 /work/example-root_old /work/example-root-x /work/example-rootÉ';
     expect(mask(text)).toBe(text);
+  });
+
+  it('matches whatever comes before the path (glued flags, real-path prefixes)', () => {
+    expect(mask('bd -C/work/example-root list')).toBe('bd -C<project-root> list');
+    expect(mask('open /System/Volumes/Data/work/example-root/x')).toBe('open /System/Volumes/Data<project-root>/x');
+    expect(mask('/srv/work/example-root')).toBe('/srv<project-root>');
+  });
+
+  it('matches the percent-encoded form of a path and a name', () => {
+    const spaced = project({ name: '業務アプリ', rootPath: '/work/my proj', aliasPaths: [] });
+    expect(mask('see file:///work/my%20proj/x', spaced)).toBe('see file://<project-root>/x');
+    expect(mask(`see ${encodeURIComponent('業務アプリ')}.db`, spaced)).toBe('see <project>.db');
   });
 
   it('matches without regard to case', () => {
@@ -77,6 +90,24 @@ describe('project names', () => {
     expect(mask('database "example-project" not found on dolt server at 127.0.0.1:3307')).toBe(
       'database "<project>" not found on dolt server at 127.0.0.1:3307',
     );
+  });
+
+  it('masks the Dolt database name, which bd makes from the prefix (`-` and `.` become `_`)', () => {
+    // 実データの形: フォルダ名と接頭辞が違うプロジェクトでは、#432 の文に出るのは接頭辞から作ったデータベース名。
+    const mogu = project({ name: 'MoguExercise', rootPath: '/work/MoguExercise', aliasPaths: [], prefixes: ['epic-haslett-00ae14'] });
+    expect(mask('database "epic_haslett_00ae14" not found on dolt server at 127.0.0.1:60813', mogu)).toBe(
+      'database "<project>" not found on dolt server at 127.0.0.1:60813',
+    );
+    const personal = project({ name: 'personal-todo', rootPath: '/work/personal-todo', aliasPaths: [], prefixes: ['personal'] });
+    expect(mask('database "personal" not found', personal)).toBe('database "<project>" not found');
+    expect(mask('database "personal_todo" and beads_my_app.x', personal, project({ name: 'my.app', prefixes: [] }))).toBe(
+      'database "<project>" and beads_<project>.x',
+    );
+  });
+
+  it('leaves a bare prefix shorter than three code points alone (the bd command stays readable)', () => {
+    const short = project({ name: 'unrelated-name', prefixes: ['bd'] });
+    expect(mask('run bd doctor; bd-abc failed', short)).toBe('run bd doctor; <ticket-id> failed');
   });
 
   it('matches only at a word boundary', () => {
@@ -135,8 +166,8 @@ describe('ticket ids', () => {
     expect(mask('xbdboard-abc 9bdboard-abc', tickets)).toBe('xbdboard-abc 9bdboard-abc');
   });
 
-  it('does not mask a prefix without an id', () => {
-    expect(mask('bdboard- bdboard', tickets)).toBe('bdboard- bdboard');
+  it('masks a prefix without an id as the project, not as a ticket id', () => {
+    expect(mask('bdboard- bdboard', tickets)).toBe('<project>- <project>');
   });
 
   it('matches without regard to case', () => {
@@ -213,26 +244,35 @@ describe('createSelfErrorMasker', () => {
 
 describe('long input', () => {
   const adversarial = project({ name: 'aaa', rootPath: '/nowhere', aliasPaths: [], prefixes: ['aa'] });
-  const limitMs = 2000;
 
-  it('handles a hundred thousand characters that almost match', () => {
-    const started = Date.now();
-    const result = mask('a'.repeat(100_000), adversarial);
-    expect(result).toBe('a'.repeat(100_000));
-    expect(Date.now() - started).toBeLessThan(limitMs);
-  });
+  // 壁時計の絶対値ではなく、同じ形を 1/10 の長さと元の長さで測った CPU 時間の比で線形を見る (bdboard-0101)。
+  it('handles a hundred thousand characters that almost match in time linear in their length', () => {
+    expectLinearTime('self-error-mask: almost-matching 100k input', (n) => {
+      const text = 'a'.repeat(n(100_000));
+      return () => {
+        expect(mask(text, adversarial)).toBe(text);
+      };
+    });
+  }, LINEAR_TIME_TEST_TIMEOUT_MS);
 
-  it('handles tens of thousands of matches', () => {
-    const started = Date.now();
-    const result = mask('aaa '.repeat(30_000), adversarial);
-    expect(result).toBe('<project> '.repeat(30_000));
-    expect(Date.now() - started).toBeLessThan(limitMs);
-  });
+  it('handles tens of thousands of matches in time linear in their number', () => {
+    expectLinearTime('self-error-mask: 30k matches', (n) => {
+      const text = 'aaa '.repeat(n(30_000));
+      const expected = '<project> '.repeat(n(30_000));
+      return () => {
+        expect(mask(text, adversarial)).toBe(expected);
+      };
+    });
+  }, LINEAR_TIME_TEST_TIMEOUT_MS);
 
-  it('handles a path whose separators repeat', () => {
-    const slashes = project({ rootPath: `/w${'/'.repeat(50_000)}`, aliasPaths: [], name: 'zz', prefixes: [] });
-    const started = Date.now();
-    expect(mask(`/w/${'/'.repeat(50_000)}x`, slashes)).toBe(`/w/${'/'.repeat(50_000)}x`.replace('/w', '<project-root>'));
-    expect(Date.now() - started).toBeLessThan(limitMs);
-  });
+  it('handles a path whose separators repeat in time linear in their number', () => {
+    expectLinearTime('self-error-mask: repeated separators', (n) => {
+      const slashes = '/'.repeat(n(50_000));
+      const root = project({ rootPath: `/w${slashes}`, aliasPaths: [], name: 'zz', prefixes: [] });
+      const text = `/w/${slashes}x`;
+      return () => {
+        expect(mask(text, root)).toBe(`<project-root>/${slashes}x`);
+      };
+    });
+  }, LINEAR_TIME_TEST_TIMEOUT_MS);
 });
