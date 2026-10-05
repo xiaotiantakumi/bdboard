@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createBdVersionSnapshot } from '../application/bd/bd-version-snapshot.js';
 import { createIssueDraftService } from '../application/issue-report/issue-draft-service.js';
 import { createFsIssueDraftStorage } from '../infrastructure/fs/fs-issue-draft-storage.js';
 import { wireSelfErrorReporter } from './wire-self-error-reporter.js';
@@ -62,5 +63,57 @@ describe('wireSelfErrorReporter', () => {
     expect(wired.onRefreshResult).toBeDefined();
     await wired.reporter?.report({ source: 'api:GET /manual', errorText: 'issue' });
     expect(receive).toHaveBeenCalledTimes(1);
+  });
+
+  describe('envInfo.bdVersion (bdboard-424g)', () => {
+    const cache = { listProjects: () => [], listProjectRefs: () => [] };
+    const applicationVersion = { getVersion: () => '1.2.3' };
+
+    it('puts the version read at startup into a self-error draft', async () => {
+      const { service } = await makeStorage();
+      const wired = wireSelfErrorReporter({ env: {}, service, cache, applicationVersion, bdVersion: () => '0.9.1', log: vi.fn() });
+      await wired.reporter?.report({ source: 'api:GET /x', errorText: 'boom' });
+      const drafts = (await service.listWithPendingCount()).drafts;
+      expect(drafts[0]?.localOnly.envInfo).toEqual({ bdboardVersion: '1.2.3', os: process.platform, nodeVersion: process.version, bdVersion: '0.9.1' });
+    });
+
+    it('puts unknown when the version could not be read', async () => {
+      const { service } = await makeStorage();
+      const bdVersion = createBdVersionSnapshot(Promise.resolve(null));
+      const wired = wireSelfErrorReporter({ env: {}, service, cache, applicationVersion, bdVersion, log: vi.fn() });
+      await wired.reporter?.report({ source: 'api:GET /x', errorText: 'boom' });
+      const drafts = (await service.listWithPendingCount()).drafts;
+      expect(drafts[0]?.localOnly.envInfo).toMatchObject({ bdVersion: 'unknown' });
+    });
+
+    it('leaves bdVersion out when no source is wired', async () => {
+      const { service } = await makeStorage();
+      const wired = wireSelfErrorReporter({ env: {}, service, cache, applicationVersion, log: vi.fn() });
+      await wired.reporter?.report({ source: 'api:GET /x', errorText: 'boom' });
+      const drafts = (await service.listWithPendingCount()).drafts;
+      expect(drafts[0]?.localOnly.envInfo).toEqual({ bdboardVersion: '1.2.3', os: process.platform, nodeVersion: process.version });
+    });
+
+    it('says unknown before the startup read finishes and the version after, without waiting for the read', async () => {
+      const { service } = await makeStorage();
+      let resolve!: (value: string | null) => void;
+      const read = new Promise<string | null>((done) => {
+        resolve = done;
+      });
+      const bdVersion = createBdVersionSnapshot(read);
+      const wired = wireSelfErrorReporter({ env: {}, service, cache, applicationVersion, bdVersion, log: vi.fn() });
+
+      // 読み取りがまだ終わっていなくても、報告は待たされずに保存される ('unknown')。
+      await wired.reporter?.report({ source: 'api:GET /before', errorText: 'boom' });
+      resolve('0.9.1');
+      await vi.waitFor(() => expect(bdVersion()).toBe('0.9.1'));
+      // throttle のキーが違えば別の下書き。読み終わったあとの下書きには版が入る。
+      await wired.reporter?.report({ source: 'api:GET /after', errorText: 'boom' });
+
+      const drafts = (await service.listWithPendingCount()).drafts;
+      expect(drafts).toHaveLength(2);
+      expect(drafts.find((draft) => draft.source === 'api:GET /before')?.localOnly.envInfo.bdVersion).toBe('unknown');
+      expect(drafts.find((draft) => draft.source === 'api:GET /after')?.localOnly.envInfo.bdVersion).toBe('0.9.1');
+    });
   });
 });
