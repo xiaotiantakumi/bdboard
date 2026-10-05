@@ -762,7 +762,6 @@ describe('check-file-size CLI', () => {
 
 // ---- listGitFiles: 未追跡ファイルと無視ファイルの扱い ----
 describe('listGitFiles', () => {
-  useQuietGitProcessEnv();
   let tmpRoot;
 
   beforeEach(() => {

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { RM_OPTIONS, quietGitEnv } from './test-support/quiet-git.mjs';
+
 const SCRIPT = fileURLToPath(new URL('./deploy-changed.sh', import.meta.url));
 
 function hasGit() {

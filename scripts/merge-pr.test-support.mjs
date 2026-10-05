@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach } from 'vitest';
 
 import { VERIFY_JS } from './merge-pr.test-support-verify-js.mjs';
-import { RM_OPTIONS, quietGitEnv } from './test-support/quiet-git.mjs';
+import { RM_OPTIONS, quietGitEnv, useQuietGitProcessEnv } from './test-support/quiet-git.mjs';
 
 export const SCRIPT = fileURLToPath(new URL('./merge-pr.mjs', import.meta.url));
 const FAKE = fileURLToPath(new URL('./merge-pr/fake-tools.mjs', import.meta.url));
@@ -218,6 +218,9 @@ export const readState = () => JSON.parse(readFileSync(stateFile(), 'utf8'));
 
 /** describe の中で呼び、テストごとに一時ディレクトリを後始末する。 */
 export function registerTempRepoHooks() {
+  // setup() の env は子プロセス用。テストのプロセス内で merge-pr のモジュール (refetchMain など) が起こす git は
+  // process.env を使うので、そちらも静かにする (#887 の per-repo 設定はこれも止めていた)。
+  useQuietGitProcessEnv();
   afterEach(() => {
     if (tmp) {
       rmSync(tmp, RM_OPTIONS);

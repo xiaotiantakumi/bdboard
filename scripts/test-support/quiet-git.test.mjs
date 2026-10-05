@@ -1,7 +1,7 @@
 // bdboard-w8hr: scripts/test-support/quiet-git.mjs の確認。一時 repo の git が自動保守 (`git maintenance` / `git gc`) を
 // 起こさないことを、設定と、実際に起きる git の子プロセス (GIT_TRACE2_EVENT の cmd_name) の両方で確かめる。
 // scripts/merge-pr.test-support.test.mjs (bdboard-myla) の形にならう。repo 側には何も設定せず、global の gitconfig
-// だけで効くことを見る。対照 (空の gitconfig) では保守が起きる = 計測が本当に働いている、も同じテストで見る。
+// だけで効くことを見る。対照 (保守は起きるが前景で走る gitconfig) では保守が起きる = 計測が本当に働いている、も同じテストで見る。
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -22,7 +22,8 @@ const envFor = (dir, extra = {}) => ({
   ...quietGitEnv(dir),
   ...extra,
 });
-const git = (cwd, args, env) => execFileSync('git', args, { cwd, env, encoding: 'utf8' }).trim();
+// stderr は握る (空の bare を clone すると "You appear to have cloned an empty repository." が出てテスト出力が汚れる)。
+const git = (cwd, args, env) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const initRepo = (repo, env, bare = false) => {
   mkdirSync(repo, { recursive: true });
   git(repo, ['init', '-q', '-b', 'main', ...(bare ? ['--bare'] : [])], env);
@@ -64,7 +65,7 @@ describe('quiet git config (bdboard-w8hr)', { timeout: 15_000 }, () => {
     }
   });
 
-  it('applies all three settings globally to fresh, bare and cloned repositories with no per-repo config', () => {
+  it('applies every setting globally to fresh, bare and cloned repositories with no per-repo config', () => {
     tmp = mkdtempSync(path.join(os.tmpdir(), 'bdboard-quiet-git-'));
     const env = envFor(tmp);
     expect(readFileSync(env.GIT_CONFIG_GLOBAL, 'utf8')).toBe(QUIET_GIT_CONFIG);
@@ -76,7 +77,9 @@ describe('quiet git config (bdboard-w8hr)', { timeout: 15_000 }, () => {
     git(tmp, ['clone', '-q', bare, clone], env);
     for (const repo of [fresh, bare, clone]) {
       expect(git(repo, ['config', '--get', 'maintenance.auto'], env), repo).toBe('false');
+      expect(git(repo, ['config', '--get', 'maintenance.autoDetach'], env), repo).toBe('false');
       expect(git(repo, ['config', '--get', 'gc.auto'], env), repo).toBe('0');
+      expect(git(repo, ['config', '--get', 'gc.autoDetach'], env), repo).toBe('false');
       expect(git(repo, ['config', '--get', 'receive.autogc'], env), repo).toBe('false');
     }
   });
@@ -90,18 +93,24 @@ describe('quiet git config (bdboard-w8hr)', { timeout: 15_000 }, () => {
     expect(execFileSync('git', ['config', '--get', 'maintenance.auto'], { cwd: repo, encoding: 'utf8' }).trim()).toBe('false');
   });
 
-  it('spawns no `git maintenance` / `git gc` while committing, pushing, receiving and fetching, and an empty gitconfig does', () => {
+  it('spawns no `git maintenance` / `git gc` while committing, pushing, receiving and fetching, and a foreground-only gitconfig does', () => {
     tmp = mkdtempSync(path.join(os.tmpdir(), 'bdboard-quiet-git-'));
     const quietNames = traceSequence(tmp, envFor(tmp), path.join(tmp, 'quiet-trace.jsonl'));
     expect(quietNames).toEqual(expect.arrayContaining(['commit', 'push', 'receive-pack', 'fetch'])); // 計測自体が働いている
     expect(maintenanceNames(quietNames)).toEqual([]);
 
-    // 対照: 同じ手順で global を空にすると保守が起きる。git の保守の起こし方が変わって計測が何も測らなくなったら、ここで落ちて気づける。
+    // 対照: auto は止めず、前景で走らせるだけの設定 (autoDetach=false) にすると保守が起きる。git の保守の起こし方が変わって
+    // 計測が何も測らなくなったら、ここで落ちて気づける。前景で走るので親の git が戻った時点で終わっており、この一時 repo の
+    // 後始末とは競合しない (detach する既定のままだと、このテスト自身が同じ ENOTEMPTY の競合を持ち込む)。
     const controlRoot = path.join(tmp, 'control');
     mkdirSync(controlRoot);
-    const emptyConfig = path.join(controlRoot, 'empty.gitconfig');
-    writeFileSync(emptyConfig, '');
-    const controlNames = traceSequence(controlRoot, envFor(controlRoot, { GIT_CONFIG_GLOBAL: emptyConfig }), path.join(controlRoot, 'control-trace.jsonl'));
+    const foregroundConfig = path.join(controlRoot, 'foreground.gitconfig');
+    writeFileSync(foregroundConfig, '[maintenance]\n\tautoDetach = false\n[gc]\n\tautoDetach = false\n');
+    const controlNames = traceSequence(
+      controlRoot,
+      envFor(controlRoot, { GIT_CONFIG_GLOBAL: foregroundConfig }),
+      path.join(controlRoot, 'control-trace.jsonl'),
+    );
     expect(controlNames).toEqual(expect.arrayContaining(['commit', 'push', 'receive-pack', 'fetch']));
     expect(maintenanceNames(controlNames).length).toBeGreaterThan(0);
   });

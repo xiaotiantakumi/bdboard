@@ -94,7 +94,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     writeFileSync(path.join(repo, 'server.js'), FAKE_SERVER);
     port = await findFreePort();
     env = {
-    ...quietGitEnv(tmpRoot),
+      ...quietGitEnv(tmpRoot),
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: path.join(tmpRoot, 'home'),
       BDBOARD_SERVER_LOG: path.join(tmpRoot, 'server.log'),
@@ -293,7 +293,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     const origin = path.join(tmpRoot, 'origin.git');
     port = await findFreePort();
     env = {
-    ...quietGitEnv(tmpRoot),
+      ...quietGitEnv(tmpRoot),
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: path.join(tmpRoot, 'home'),
       BDBOARD_SERVER_LOG: path.join(tmpRoot, 'server.log'),
@@ -586,7 +586,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     const origin = path.join(tmpRoot, 'origin.git');
     port = await findFreePort();
     env = {
-    ...quietGitEnv(tmpRoot),
+      ...quietGitEnv(tmpRoot),
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: path.join(tmpRoot, 'home'),
       BDBOARD_SERVER_LOG: path.join(tmpRoot, 'server.log'),
@@ -825,7 +825,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
     const origin = path.join(tmpRoot, 'origin.git');
     port = await findFreePort();
     env = {
-    ...quietGitEnv(tmpRoot),
+      ...quietGitEnv(tmpRoot),
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: path.join(tmpRoot, 'home'),
       BDBOARD_SERVER_LOG: path.join(tmpRoot, 'server.log'),

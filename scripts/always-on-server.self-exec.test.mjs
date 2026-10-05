@@ -79,7 +79,7 @@ describe.skipIf(process.platform === 'win32')('always-on-server.sh self-exec gua
   beforeAll(() => {
     tmpRoot = mkdtempSync(path.join(tmpdir(), 'bdboard-self-exec-'));
     env = {
-    ...quietGitEnv(tmpRoot),
+      ...quietGitEnv(tmpRoot),
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: path.join(tmpRoot, 'home'),
     };
