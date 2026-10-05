@@ -27,6 +27,17 @@ function createDeps(overrides: Partial<WireShutdownDeps> = {}): WireShutdownDeps
 }
 
 describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal を切り出したもの)', () => {
+  it('stops external issue polling when provided', () => {
+    const stop = vi.fn();
+    const deps = createDeps({ externalIssues: { stop } });
+    wireShutdown(deps).shutdownForSignal();
+    expect(stop).toHaveBeenCalledTimes(1);
+    clearInterval(deps.refreshIntervalTimer);
+    if (deps.sessionIntervalTimer !== null) clearInterval(deps.sessionIntervalTimer);
+    if (deps.transcriptIntervalTimer !== undefined) clearInterval(deps.transcriptIntervalTimer);
+    if (deps.cfdSnapshotIntervalTimer !== undefined) clearInterval(deps.cfdSnapshotIntervalTimer);
+    if (deps.aiQuotaAlertIntervalTimer !== undefined) clearInterval(deps.aiQuotaAlertIntervalTimer);
+  });
   it('clears every interval timer, stops the reclaim scheduler, then drains runStore/tunnel/watch/cache/chat before exiting', async () => {
     vi.useFakeTimers();
     try {

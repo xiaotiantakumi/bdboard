@@ -47,6 +47,7 @@ export interface WireShutdownDeps extends Omit<ShutdownDrainDeps, 'runStore' | '
   readonly cfdSnapshotIntervalTimer: ReturnType<typeof setInterval> | undefined;
   readonly aiQuotaAlertIntervalTimer: ReturnType<typeof setInterval> | undefined;
   readonly reclaimScheduler: Pick<ReclaimScheduler, 'stop'>;
+  readonly externalIssues?: { readonly stop: () => void };
   readonly exit?: (code: number) => void;
   readonly log?: Pick<typeof console, 'error'>;
   /** 既定 true。テストで実シグナルを張らずに shutdownForSignal を直接呼ぶ場合は false。 */
@@ -97,6 +98,7 @@ export function wireShutdown(deps: WireShutdownDeps): WireShutdownResult {
       clearInterval(deps.aiQuotaAlertIntervalTimer);
     }
     deps.reclaimScheduler.stop();
+    deps.externalIssues?.stop();
     shutdown();
   };
 

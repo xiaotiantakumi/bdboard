@@ -4,7 +4,6 @@
  * 保存先ディレクトリの解決 (BDBOARD_ISSUE_DRAFTS_DIR での上書きを含む) とルーターの
  * 組み立てだけを行う。mount 順は mount-routes.ts 側の責務。
  */
-import type { Hono } from 'hono';
 import type { IssueDraftService } from '../application/issue-report/issue-draft-service.js';
 import { memoizeAsyncWithTtl } from '../application/issue-report/memoize-with-ttl.js';
 import type { ApplicationVersionProvider } from '../application/ports/application-version.js';
@@ -15,12 +14,17 @@ import { createIssueReportManualRoutes } from '../interface/http/issue-report-ma
 import { createIssueReportRoutes } from '../interface/http/issue-report-routes.js';
 import type { WriteGuardDeps } from '../interface/http/write-guard.js';
 import { wireIssueDraftService } from './wire-issue-draft-service.js';
+import type { CommandRunner } from '../application/ports/command-runner.js';
+import { wireExternalIssues } from './wire-external-issues.js';
+import { createExternalIssueRoutes } from '../interface/http/external-issue-routes.js';
 
 export interface WireIssueReportsDeps {
   readonly repoRoot: string;
   /** 下書きの時刻と、最新の pack の版の使い回しの時計 (既定は現在時刻。テストが差し替える)。 */
   readonly now?: () => Date;
   readonly env: NodeJS.ProcessEnv;
+  /** 届いた issue の gh と bd の呼び出しに使う。無いとき (テスト) は届いた issue を無効にする。 */
+  readonly commandRunner?: CommandRunner;
   readonly writeAccess: WriteGuardDeps;
   /** 最新の harness pack の版を読む (1 件の取得の「版の比較」、bdboard-4y8q.3.1)。 */
   readonly packRegistry: Pick<PackRegistryPort, 'listPacks'>;
@@ -44,7 +48,7 @@ export const LATEST_HARNESS_VERSION_TTL_MS = 30_000;
  */
 const COMPARED_PACK_NAME = 'bdboard-harness';
 
-export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRouter: Hono } {
+export function wireIssueReports(deps: WireIssueReportsDeps) {
   const log = deps.log ?? console.log;
   const now = deps.now ?? (() => new Date());
   // main.ts は作ったサービスを渡す (版はそちらで埋める)。渡さないとき (テスト) だけここで作る。
@@ -70,6 +74,8 @@ export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRout
   });
   // 人が手で書く下書きの受け取り口 (ローカル直アクセスのみ。bdboard-4y8q.6.7)。
   issueReportsRouter.route('/', createIssueReportManualRoutes({ service }));
+  const externalIssues = wireExternalIssues({ repoRoot: deps.repoRoot, env: deps.env, commandRunner: deps.commandRunner, log });
+  issueReportsRouter.route('/', createExternalIssueRoutes({ service: externalIssues.service, now: externalIssues.now }));
 
   // 公開本文の大文字小文字の表 (bdboard-uudb)。エンジンの自己検査に落ちると、以前の正規表現の探し方に黙って戻る (結果は同じだが、
   // 大きい鍵で組み立てが数分かかる)。起動の後に 1 回だけ確かめ (表は 0.1〜0.3 秒で作られ、以後の組み立てが使う)、落ちたら code だけ出す。
@@ -85,5 +91,5 @@ export function wireIssueReports(deps: WireIssueReportsDeps): { issueReportsRout
     }
   });
 
-  return { issueReportsRouter };
+  return { issueReportsRouter, externalIssues };
 }
