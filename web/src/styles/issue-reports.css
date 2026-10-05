@@ -258,6 +258,23 @@ summary.issue-draft-section-title {
   gap: 8px;
 }
 
+.issue-draft-image-picker {
+  min-width: 0;
+  margin: 1rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.issue-draft-image-picker legend { padding: 0 0.35rem; }
+.issue-draft-image-picker legend span { margin-left: 0.5rem; color: var(--color-muted); }
+.issue-draft-image-drop { padding: 0.75rem; border: 1px dashed var(--color-border); border-radius: var(--radius-md); }
+.issue-draft-image-drop.is-dragging { border-color: var(--color-primary); background: var(--color-surface-alt); }
+.issue-draft-image-list { display: flex; flex-wrap: wrap; gap: 0.75rem; padding: 0; list-style: none; }
+.issue-draft-image-list li { display: grid; gap: 0.35rem; justify-items: start; max-width: 12rem; }
+.issue-draft-image-thumb { width: 64px; height: 64px; object-fit: cover; }
+.issue-draft-image-name { overflow-wrap: anywhere; }
+
 /* 「自動の文に戻す」(bdboard-494n)。欄の下に置き、確認が出るときは同じ行に折り返して並べる。 */
 .issue-draft-editor-reset,
 .issue-draft-editor-reset-confirm {

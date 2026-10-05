@@ -121,6 +121,9 @@ export interface IssueDraftImageDto {
   readonly createdAt: string;
 }
 
+export interface IssueDraftImageUploadInput { readonly mimeType: string; readonly data: string }
+export interface IssueDraftImageUploadResponseDto { readonly image: IssueDraftImageDto }
+
 export interface IssueDraftDetailResponseDto {
   readonly draft: IssueDraftDetailDto;
   readonly images?: readonly IssueDraftImageDto[];
@@ -157,6 +160,15 @@ export function fetchIssueDrafts(): Promise<IssueDraftListDto> {
 
 export function fetchIssueReportPendingCount(): Promise<{ pendingCount: number }> {
   return fetchJson<{ pendingCount: number }>(ISSUE_REPORTS_PENDING_COUNT_API_PATH);
+}
+
+/** 下書きへ画像を 1 枚追加する。 */
+export function uploadIssueDraftImage(id: string, input: IssueDraftImageUploadInput): Promise<IssueDraftImageUploadResponseDto> {
+  return fetchJson<IssueDraftImageUploadResponseDto>(`${draftPath(id)}/images`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
 }
 
 /**

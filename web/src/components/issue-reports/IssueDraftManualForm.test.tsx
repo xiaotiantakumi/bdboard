@@ -15,10 +15,10 @@ import {
 
 vi.mock('../../api/issue-reports', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/issue-reports')>();
-  return { ...actual, createManualIssueDraft: vi.fn() };
+  return { ...actual, createManualIssueDraft: vi.fn(), uploadIssueDraftImage: vi.fn() };
 });
 
-import { createManualIssueDraft } from '../../api/issue-reports';
+import { createManualIssueDraft, uploadIssueDraftImage } from '../../api/issue-reports';
 
 const created: IssueDraftSummaryDto = {
   id: '1758812345678-a1b2c3d4e5f6a7b8',
@@ -47,7 +47,7 @@ function setup(project?: { readonly name: string; readonly path: string }) {
   const onCancel = vi.fn();
   render(
     <QueryClientProvider client={client}>
-      <IssueDraftManualForm project={project} onCreated={onCreated} onCancel={onCancel} />
+      <IssueDraftManualForm project={project} localAccess onCreated={onCreated} onCancel={onCancel} />
     </QueryClientProvider>,
   );
   return { user: userEvent.setup(), invalidate, onCreated, onCancel };
@@ -62,6 +62,7 @@ async function fillAndSend(user: ReturnType<typeof userEvent.setup>) {
 describe('IssueDraftManualForm (bdboard-4y8q.6.8)', () => {
   beforeEach(() => {
     vi.mocked(createManualIssueDraft).mockReset();
+    vi.mocked(uploadIssueDraftImage).mockReset();
   });
 
   it('posts the title and description as typed (not trimmed) with no project key when none is given', async () => {
@@ -195,5 +196,75 @@ describe('IssueDraftManualForm (bdboard-4y8q.6.8)', () => {
     setup({ name: 'example-project', path: '/Users/example-user/work/example-project' });
     expect(screen.getByText(/対象プロジェクト: example-project/)).toBeInTheDocument();
     expect(screen.queryByRole('combobox')).toBeNull();
+  });
+
+  it('hides image controls and the privacy note when local access is false', () => {
+    const client = new QueryClient();
+    render(<QueryClientProvider client={client}><IssueDraftManualForm localAccess={false} onCreated={vi.fn()} onCancel={vi.fn()} /></QueryClientProvider>);
+    expect(screen.queryByRole('group', { name: /画像 \(任意\)/ })).toBeNull();
+    expect(screen.queryByLabelText('画像のファイルを選ぶ')).toBeNull();
+    expect(screen.queryByText('画像は手元にだけ保存され、公開 issue には自動では載りません。')).toBeNull();
+  });
+
+  it('pastes image files from the form and leaves plain text paste to the browser', () => {
+    setup();
+    const description = screen.getByRole('textbox', { name: /説明/ });
+    const image = new File(['x'], 'paste.png', { type: 'image/png' });
+    const imagePaste = fireEvent.paste(description, { clipboardData: { files: [image], types: ['Files'] } });
+    expect(imagePaste).toBe(false);
+    expect(screen.getByText('paste.png')).toBeInTheDocument();
+    const textPaste = fireEvent.paste(description, { clipboardData: { files: [], types: ['text/plain'] } });
+    expect(textPaste).toBe(true);
+  });
+
+  it('rejects oversized or unsupported images without creating a draft', () => {
+    setup();
+    const input = screen.getByLabelText('画像のファイルを選ぶ');
+    fireEvent.change(input, { target: { files: [new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' })] } });
+    expect(screen.getByRole('alert')).toHaveTextContent('large.png');
+    expect(screen.getByRole('alert')).toHaveTextContent('10 MiB');
+    expect(screen.queryByText('large.png')).toBeNull();
+    fireEvent.change(input, { target: { files: [new File(['x'], 'vector.svg', { type: 'image/svg+xml' })] } });
+    expect(screen.getByRole('alert')).toHaveTextContent('vector.svg');
+    expect(createManualIssueDraft).not.toHaveBeenCalled();
+  });
+
+  it('creates the draft before uploading images in order and opens only after all uploads finish', async () => {
+    vi.mocked(createManualIssueDraft).mockResolvedValue({ outcome: 'created', draft: created });
+    vi.mocked(uploadIssueDraftImage).mockResolvedValue({ image: { fileName: 'x.png', url: '/x', byteLength: 1, createdAt: 'now' } });
+    const { user, invalidate, onCreated } = setup();
+    await user.type(screen.getByRole('textbox', { name: /題名/ }), 'Board freezes');
+    await user.type(screen.getByRole('textbox', { name: /説明/ }), 'It freezes');
+    const input = screen.getByLabelText('画像のファイルを選ぶ');
+    fireEvent.change(input, { target: { files: [1, 2, 3].map((number) => new File([String(number)], `${number}.png`, { type: 'image/png' })) } });
+    await user.click(screen.getByRole('button', { name: '送る' }));
+    await waitFor(() => expect(uploadIssueDraftImage).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(createManualIssueDraft).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(uploadIssueDraftImage).mock.invocationCallOrder[0]!);
+    expect(vi.mocked(uploadIssueDraftImage).mock.calls.map((call) => call[1].data)).toEqual(['MQ==', 'Mg==', 'Mw==']);
+    expect(invalidate.mock.invocationCallOrder[0]).toBeGreaterThan(vi.mocked(uploadIssueDraftImage).mock.invocationCallOrder[2]!);
+    expect(onCreated).toHaveBeenCalledWith(created);
+  });
+
+  it('keeps the completed draft on image failure and retries only the failed image', async () => {
+    vi.mocked(createManualIssueDraft).mockResolvedValue({ outcome: 'created', draft: created });
+    vi.mocked(uploadIssueDraftImage)
+      .mockResolvedValueOnce({ image: { fileName: 'first.png', url: '/first', byteLength: 1, createdAt: 'now' } })
+      .mockRejectedValueOnce(apiError(400, { error: 'invalid image' }))
+      .mockResolvedValueOnce({ image: { fileName: 'second.png', url: '/second', byteLength: 1, createdAt: 'now' } });
+    const { user, onCreated } = setup();
+    await user.type(screen.getByRole('textbox', { name: /題名/ }), 'Board freezes');
+    await user.type(screen.getByRole('textbox', { name: /説明/ }), 'It freezes');
+    const input = screen.getByLabelText('画像のファイルを選ぶ');
+    fireEvent.change(input, { target: { files: ['first.png', 'second.png'].map((name) => new File(['x'], name, { type: 'image/png' })) } });
+    await user.click(screen.getByRole('button', { name: '送る' }));
+    expect(await screen.findByRole('heading', { name: '下書きを作りました' })).toHaveFocus();
+    expect(screen.getByText(/2 枚目「second\.png」/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '送る' })).toBeNull();
+    expect(createManualIssueDraft).toHaveBeenCalledTimes(1);
+    expect(onCreated).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: '付かなかった画像をもう一度送る' }));
+    await waitFor(() => expect(uploadIssueDraftImage).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(uploadIssueDraftImage).mock.calls.map((call) => call[1].data)).toEqual(['eA==', 'eA==', 'eA==']);
+    expect(onCreated).toHaveBeenCalledWith(created);
   });
 });
