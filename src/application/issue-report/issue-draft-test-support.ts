@@ -44,9 +44,6 @@ export function createInMemoryIssueDraftStorage(
     images,
     updatedAtMs,
     unreadable,
-    async list() {
-      return [...drafts.values()].map((draft) => structuredClone(draft));
-    },
     async scan() {
       return { drafts: [...drafts.values()].map((draft) => structuredClone(draft)), complete: true };
     },

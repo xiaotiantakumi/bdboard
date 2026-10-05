@@ -505,15 +505,15 @@ describe('draft.json stays within 200KB however hostile the input', () => {
   });
 });
 
-describe('list / get', () => {
+describe('listWithPendingCount / get', () => {
   it('lists the newest activity first and gets one by id', async () => {
     const { service, setNow } = createHarness();
     const older = await expectOk(service.receive(catalogInput('older')));
     setNow('2026-10-04T12:10:00.000Z');
     const newer = await expectOk(service.receive(catalogInput('newer')));
 
-    const listed = await service.list();
-    expect(listed.map((draft) => draft.id)).toEqual([newer.draft.id, older.draft.id]);
+    const listed = await service.listWithPendingCount();
+    expect(listed.drafts.map((draft) => draft.id)).toEqual([newer.draft.id, older.draft.id]);
     expect(await service.get(older.draft.id)).toEqual(older.draft);
     expect(await service.get('1758812345678-ffffffffffffffff')).toBeUndefined();
   });

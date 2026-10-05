@@ -103,12 +103,10 @@ describe('startup: the first receive waits for one walk of the directory, not tw
     const h = createHarness({}, base);
     const survey = vi.spyOn(h.storage, 'survey');
     const scan = vi.spyOn(h.storage, 'scan');
-    const list = vi.spyOn(h.storage, 'list');
     await Promise.all([h.service.pruneOnStart(), receive(h.service, 'new')]);
     // 修正前は survey 1 + scan 1 = 2。
     expect(survey).toHaveBeenCalledTimes(1);
     expect(scan).toHaveBeenCalledTimes(0);
-    expect(list).toHaveBeenCalledTimes(0);
     expect(await h.service.pendingCount()).toBe(3);
     expect(await receive(h.service, 'a')).toMatchObject({ outcome: 'merged' });
     expect(scan).toHaveBeenCalledTimes(0);
@@ -120,11 +118,9 @@ describe('startup: the first receive waits for one walk of the directory, not tw
     await h.service.pruneOnStart();
     const survey = vi.spyOn(h.storage, 'survey');
     const scan = vi.spyOn(h.storage, 'scan');
-    const list = vi.spyOn(h.storage, 'list');
     await receive(h.service, 'first');
     expect(survey).not.toHaveBeenCalled();
     expect(scan).not.toHaveBeenCalled();
-    expect(list).not.toHaveBeenCalled();
   });
 
   it('does not retain an expired draft fingerprint in the seeded index', async () => {

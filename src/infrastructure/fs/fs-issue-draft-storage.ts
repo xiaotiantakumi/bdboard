@@ -122,7 +122,7 @@ export function createFsIssueDraftStorage(
     return { kind: 'ok', draft: parsed.data };
   }
 
-  /** 読んで、使えなければ警告 (同じ下書きの同じ理由は 1 回) を出す。list/scan と get の共通の入口。 */
+  /** 読んで、使えなければ警告 (同じ下書きの同じ理由は 1 回) を出す。scan と get の共通の入口。 */
   async function readAndReport(id: string): Promise<DraftRead> {
     const result = await readDraftFile(id);
     if (result.kind === 'unusable') warnUnusable(id, result.reason);
@@ -184,10 +184,6 @@ export function createFsIssueDraftStorage(
   const footprints = createFsDraftFootprints({ baseDir: resolvedBaseDir, draftDir, readDraft: readAndReport, platform: options.platform ?? process.platform });
 
   return {
-    async list() {
-      return (await scan()).drafts;
-    },
-
     scan,
 
     ...footprints,

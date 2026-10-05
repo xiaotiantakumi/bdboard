@@ -66,13 +66,9 @@ export type AddDraftImageResult =
 export interface IssueDraftService {
   receive(input: ReceiveDraftInput): Promise<ReceiveDraftResult>;
   /**
-   * 最後に起きた時刻の新しい順。全件を読む (storage.scan)。索引を読み込み済みなら、完全な一覧に索引の状態を突き合わせる
-   * (サーバーの外で消された・足された下書きを件数に反映する。bdboard-vsuc)。
-   */
-  list(): Promise<readonly IssueDraft[]>;
-  /**
-   * list() と同じ一覧に、その一覧そのものから (pendingCount() と同じ countPendingStatuses で) 数えた未処理件数を添える。
-   * GET drafts の応答の元。画面の一覧と件数が食い違わない。
+   * 最後に起きた時刻の新しい順の全件 (storage.scan) に、その一覧そのものから (pendingCount() と同じ countPendingStatuses で)
+   * 数えた未処理件数を添える。GET drafts の応答の元。画面の一覧と件数が食い違わない。索引を読み込み済みなら、完全な一覧に
+   * 索引の状態を突き合わせる (サーバーの外で消された・足された下書きを件数に反映する。bdboard-vsuc)。
    */
   listWithPendingCount(): Promise<{ readonly drafts: readonly IssueDraft[]; readonly pendingCount: number }>;
   get(id: string): Promise<IssueDraft | undefined>;
@@ -80,7 +76,7 @@ export interface IssueDraftService {
   /** 題名・本文を直す (bdboard-4y8q.3.1)。長さの上限は入口 (HTTP) で掛けてある前提。 */
   edit(id: string, edit: DraftTextEdit): Promise<EditDraftResult>;
   /**
-   * 未処理 (pending) の件数。索引から数える (呼ぶたびに全件を読まない)。サーバーの外の変更は、list() が一覧を読んだときに
+   * 未処理 (pending) の件数。索引から数える (呼ぶたびに全件を読まない)。サーバーの外の変更は、listWithPendingCount() が一覧を読んだときに
    * 合う。一覧が欠けているあいだは、直近の欠けた索引を 30 秒使い回す (bdboard-vsuc)。
    */
   pendingCount(): Promise<number>;
@@ -204,10 +200,6 @@ export function createIssueDraftService(deps: IssueDraftServiceDeps): IssueDraft
 
   return {
     receive: (input) => exclusive(() => receiveLocked(input)),
-
-    async list() {
-      return [...(await readListing()).drafts].sort(compareNewestFirst);
-    },
 
     async listWithPendingCount() {
       const drafts = [...(await readListing()).drafts].sort(compareNewestFirst);

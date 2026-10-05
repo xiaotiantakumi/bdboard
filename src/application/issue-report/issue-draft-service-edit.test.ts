@@ -40,20 +40,15 @@ async function receive(service: ReturnType<typeof setup>['service'], letter: str
   return result.draft.id;
 }
 
-/** 全件読み (scan と list) の回数を数える。 */
+/** 全件読み (scan) の回数を数える。 */
 function countingScans(storage: InMemoryIssueDraftStorage): { storage: InMemoryIssueDraftStorage; scans: () => number } {
   let scans = 0;
   const scan = storage.scan.bind(storage);
-  const list = storage.list.bind(storage);
   const counted: InMemoryIssueDraftStorage = {
     ...storage,
     scan: async () => {
       scans += 1;
       return scan();
-    },
-    list: async () => {
-      scans += 1;
-      return list();
     },
   };
   return { storage: counted, scans: () => scans };
