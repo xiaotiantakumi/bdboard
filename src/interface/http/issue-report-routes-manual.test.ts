@@ -101,7 +101,7 @@ describe('POST /api/issue-reports/manual-drafts — create', () => {
 
   it('trims the title and drops pasted zero-width spaces and a BOM', async () => {
     const { app, storage } = setup();
-    const created = await createManual(app, { ...BODY, title: '  ﻿The​ board hangs  ' });
+    const created = await createManual(app, { ...BODY, title: '  \ufeffThe\u200b board hangs  ' });
     expect(storage.drafts.get(created.draft.id)?.title).toBe('The board hangs');
   });
 
@@ -218,11 +218,11 @@ describe('POST /api/issue-reports/manual-drafts — input validation (400 with a
     ['a non-string title', { title: 1, description: 'd' }],
     ['an empty title', { title: '', description: 'd' }],
     ['a whitespace-only title', { title: '   ', description: 'd' }],
-    ['a title of only invisible characters', { title: '​⠀', description: 'd' }],
+    ['a title of only invisible characters', { title: '\u200b⠀', description: 'd' }],
     ['a two-line title', { title: 'a\nb', description: 'd' }],
     ['a title with a trailing newline', { title: 'abc\n', description: 'd' }],
     ['a title with a control character', { title: 'a\u0007b', description: 'd' }],
-    ['a title with a bidi control character', { title: 'a‮b', description: 'd' }],
+    ['a title with a bidi control character', { title: 'a\u202eb', description: 'd' }],
     ['a 257-character title', { title: 'a'.repeat(ISSUE_DRAFT_TITLE_MAX_CHARS + 1), description: 'd' }],
     ['an empty description', { title: 't', description: '' }],
     ['a whitespace-only description', { title: 't', description: ' \n\t ' }],
