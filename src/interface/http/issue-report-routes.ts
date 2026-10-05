@@ -22,8 +22,9 @@ import {
   decodeAttachmentImage,
   extensionForMimeType,
 } from './attachment-validation.js';
-import { ISSUE_DRAFTS_PATH, toDetailDto, toImageDto, toSummaryDto } from './issue-report-dto.js';
+import { ISSUE_DRAFTS_PATH, toImageDto, toSummaryDto } from './issue-report-dto.js';
 import { registerIssueDraftEditRoutes } from './issue-report-edit-routes.js';
+import { buildDetailBody, detailEtagOf, jsonWithEtag, listEtagOf } from './issue-report-etag.js';
 import { isLocalBasicAuthRequest } from './local-request.js';
 import { parseJsonBody } from './request-body.js';
 import {
@@ -40,11 +41,12 @@ import {
  *     createPrivilegedApiGuardMiddleware にトンネル用の依存を渡さないことで、
  *     「強パスワード + セッション Cookie のトンネル」でも通さない (設計 3節の1行)。
  *   - 一覧の取得 (GET): ほかの読み取り API と同じ。トンネルではトンネルの認証 (Basic 認証) を通れば読める。
+ *     一覧と 1 件の取得は ETag を付け、If-None-Match が一致すれば 304 (bdboard-mqoa。issue-report-etag.ts)。
  *   - 画像の取得 (GET drafts/:id/images/:fileName): ローカル直アクセスのみ (bdboard-4y8q.3.2。生ログと同じ扱い)。
  *   - 1 件の取得 (GET drafts/:id): 全部を返すのはローカル直アクセスだけ。トンネル経由は
  *     生ログ・自由記述の生の文・絶対パスを除いた形 (`restricted: true`、toDetailDto)。
  *   - 見送り (PATCH dismiss) と題名・本文の編集 (PATCH drafts/:id、issue-report-edit-routes.ts): 通常の write-guard
- *     (ローカル直、または強パスワード + セッション)。
+ *     (ローカル直、または強パスワード + セッション)。編集は If-Match で、読んだ版と今の版が違えば 412 (bdboard-mqoa)。
  *   - 未処理件数 (GET pending-count、issue-report-edit-routes.ts): ほかの読み取り API と同じ。
  *
  * このルーターは何も外へ送らない。投稿 (bdboard-4y8q.4) は別の経路。
@@ -200,7 +202,9 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
   app.get(ISSUE_DRAFTS_PATH, async (c) => {
     // 未処理件数は、読んだ一覧そのものからサービスが数える (画面の一覧と食い違わない。数え方は GET pending-count と同じ 1 つ)。
     const { drafts, pendingCount } = await service.listWithPendingCount();
-    return c.json({ drafts: drafts.map(toSummaryDto), pendingCount });
+    // ETag は本文から作るので、並び順と未処理件数の変化でも変わる (issue-report-etag.ts)。
+    const body = { drafts: drafts.map(toSummaryDto), pendingCount };
+    return jsonWithEtag(c, body, listEtagOf(body));
   });
 
   app.get(`${ISSUE_DRAFTS_PATH}/:id`, async (c) => {
@@ -208,14 +212,10 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
     if (!isDraftId(id)) return c.json({ error: 'invalid draft id' }, 400);
     const draft = await service.get(id);
     if (draft === undefined) return c.json({ error: 'draft not found', id }, 404);
-    const images = (await service.listImages(id)) ?? [];
     // 全部を返すのはローカル直アクセスだけ。判定できない・疑わしいときは絞った形 (fail-closed)。
     const local = isLocalBasicAuthRequest(c);
-    return c.json({
-      draft: toDetailDto(draft, { local, leakCache }),
-      images: images.map((image) => toImageDto(id, image)),
-      latestHarnessVersion: await readLatestHarnessVersion(deps),
-    });
+    const body = await buildDetailBody({ service, leakCache }, draft, { local, latestHarnessVersion: await readLatestHarnessVersion(deps) });
+    return jsonWithEtag(c, body, detailEtagOf(body));
   });
 
   app.patch(`${ISSUE_DRAFTS_PATH}/:id/dismiss`, limitBody(DISMISS_BODY_MAX_BYTES), async (c) => {
@@ -230,7 +230,7 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
     return c.json({ error: 'draft is not pending', status: result.status }, 409);
   });
 
-  registerIssueDraftEditRoutes(app, { service, leakCache });
+  registerIssueDraftEditRoutes(app, { service, leakCache, readLatestHarnessVersion: () => readLatestHarnessVersion(deps) });
 
   app.post(`${ISSUE_DRAFTS_PATH}/:id/images`, localOnlyGuard, limitBody(ATTACHMENT_BODY_MAX_BYTES), async (c) => {
     const id = c.req.param('id');

@@ -18,6 +18,11 @@ import {
 
 export interface IssueDraftEditorProps {
   readonly draft: IssueDraftDetailDto;
+  /**
+   * 表示中の下書きの ETag (bdboard-mqoa)。保存と「自動の文に戻す」の PATCH に If-Match で付け、読んだあとにほかの場所で
+   * 下書きが変わっていれば 412 にしてもらう (最後の書き込みが勝つ、をやめる)。無ければ (古いサーバー) 付けない。
+   */
+  readonly etag?: string;
   readonly onCancel: () => void;
   readonly onSaved: (response: IssueDraftEditResponseDto) => void;
   /** 入力が変わるたびに今の入力 (編集を始めたときの値のままなら null)。編集が外から閉じられたときに見せるため。 */
@@ -50,8 +55,10 @@ function changedFields(base: TextBase, title: string, body: string): IssueDraftT
  * 一覧・件数も読み直す。失敗はステータスごとに利用者の言葉で出す (issueDraftErrors.ts)。
  * 「直した」印の付いた欄には「自動の文に戻す」ボタンを出す (bdboard-494n。IssueDraftFieldReset)。押すとその欄だけを空にした
  * PATCH を送り、編集欄は開いたまま、もう片方の欄の未保存の入力を残す。
+ * どちらの PATCH にも表示中の下書きの ETag を If-Match で付ける。412 (読んだあとにほかの場所で変わった) は、最新を読み直して
+ * その旨を出し、入力は消さない (編集欄の入力は読み直しで置き換わらない。「編集を始めたときの値」と比べて、変わった欄だけを送る)。
  */
-export function IssueDraftEditor({ draft, onCancel, onSaved, onInputChange }: IssueDraftEditorProps) {
+export function IssueDraftEditor({ draft, etag, onCancel, onSaved, onInputChange }: IssueDraftEditorProps) {
   const queryClient = useQueryClient();
   // 編集を始めたときの値。中身の問い合わせが裏で読み直されても (同じ指紋の新しい発生で自動の題名・本文が作り直される)、
   // 入力は消さずに残し、変わったことだけ知らせる (bdboard-4y8q.3.2 レビュー MINOR-1)。自動の文へ戻した欄だけは、戻した値に更新する
@@ -75,17 +82,30 @@ export function IssueDraftEditor({ draft, onCancel, onSaved, onInputChange }: Is
   const reportInput = (nextBase: TextBase, nextTitle: string, nextBody: string) =>
     onInputChange?.(nextTitle !== nextBase.title || nextBody !== nextBase.body ? { title: nextTitle, body: nextBody } : null);
 
-  /** 保存・戻すの成功: 応答の draft は GET の draft と同じ形 (images・latestHarnessVersion は載らないので前の値を残す)。 */
+  const sendEdit = (edit: IssueDraftTextEdit) =>
+    etag === undefined ? patchIssueDraft(draft.id, edit) : patchIssueDraft(draft.id, edit, { ifMatch: etag });
+
+  /**
+   * 保存・戻すの成功: 応答の draft は GET の draft と同じ形 (images・latestHarnessVersion は載らないので前の値を残す)。応答の ETag も
+   * 一緒に置く (次の保存の If-Match になる)。応答に無ければ消す: 古い ETag を残すと、次の保存が必ず 412 になる。
+   */
   const applyResponse = (response: IssueDraftEditResponseDto) => {
-    queryClient.setQueryData<IssueDraftDetailResponseDto>(['issue-reports', 'detail', draft.id], (previous) =>
-      previous === undefined ? previous : { ...previous, draft: response.draft },
-    );
+    queryClient.setQueryData<IssueDraftDetailResponseDto>(['issue-reports', 'detail', draft.id], (previous) => {
+      if (previous === undefined) return previous;
+      const { etag: _stale, ...rest } = previous;
+      return { ...rest, draft: response.draft, ...(response.etag !== undefined ? { etag: response.etag } : {}) };
+    });
     void queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
   };
 
-  /** 失敗の表示。409 (別の画面で見送り・投稿済みになった) は中身を読み直して、状態の表示と「直す」の有無を今の状態に合わせる。 */
+  /**
+   * 失敗の表示。409 (別の画面で見送り・投稿済みになった) は中身を読み直して、状態の表示と「直す」の有無を今の状態に合わせる。
+   * 412 (読んだあとにほかの場所で変わった) も読み直す: 新しい ETag と最新の中身が届き、次の保存は今の下書きへの上書きとして通る。
+   */
   const showFailure = (caught: unknown) => {
-    if (caught instanceof ApiError && caught.status === 409) void queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
+    if (caught instanceof ApiError && (caught.status === 409 || caught.status === 412)) {
+      void queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
+    }
     setError(describeIssueDraftEditError(caught));
   };
 
@@ -104,7 +124,7 @@ export function IssueDraftEditor({ draft, onCancel, onSaved, onInputChange }: Is
     setError(null);
     setResetNotice(null);
     try {
-      const response = await patchIssueDraft(draft.id, edit);
+      const response = await sendEdit(edit);
       applyResponse(response);
       onSaved(response);
     } catch (caught) {
@@ -124,7 +144,7 @@ export function IssueDraftEditor({ draft, onCancel, onSaved, onInputChange }: Is
     setError(null);
     setResetNotice(null);
     try {
-      const response = await patchIssueDraft(draft.id, field === 'title' ? { title: '' } : { body: '' });
+      const response = await sendEdit(field === 'title' ? { title: '' } : { body: '' });
       applyResponse(response);
       const restored = response.draft[field];
       const nextBase: TextBase = { ...base, [field]: restored };

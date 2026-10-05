@@ -74,6 +74,7 @@ export function IssueDraftDetail({ draftId, onBack }: IssueDraftDetailProps) {
       )}
       <IssueDraftPublicSection
         draft={draft}
+        {...(query.data.etag !== undefined ? { etag: query.data.etag } : {})}
         onSaved={(response) => setNotice({ id: response.draft.id, text: savedNotice(response) })}
       />
       <IssueDraftLocalSection draft={draft} images={images} />
