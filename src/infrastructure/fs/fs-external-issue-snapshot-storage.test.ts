@@ -62,12 +62,12 @@ describe('createFsExternalIssueSnapshotStorage', () => {
       await storage.save(makeSnapshot(30));
       await storage.save(makeSnapshot(4));
       await storage.save(makeSnapshot(1_000));
-      expect((await storage.list()).map((snapshot) => snapshot.number)).toEqual([4, 30, 1_000]);
+      expect((await storage.scan()).snapshots.map((snapshot) => snapshot.number)).toEqual([4, 30, 1_000]);
     });
 
     it('returns an empty list and undefined when nothing has been saved yet (no directory)', async () => {
       const storage = make();
-      expect(await storage.list()).toEqual([]);
+      expect((await storage.scan()).snapshots).toEqual([]);
       expect(await storage.get(5)).toBeUndefined();
     });
 
@@ -76,7 +76,7 @@ describe('createFsExternalIssueSnapshotStorage', () => {
       await storage.save(makeSnapshot(12));
       await storage.save(makeSnapshot(12, { needsRejudge: true, missingSince: '2026-10-07T00:00:00.000Z' }));
       expect(await storage.get(12)).toMatchObject({ needsRejudge: true, missingSince: '2026-10-07T00:00:00.000Z' });
-      expect(await storage.list()).toHaveLength(1);
+      expect((await storage.scan()).snapshots).toHaveLength(1);
     });
 
     it('keeps only the snapshot fields: an extra field on the object (url, author) is not written', async () => {
@@ -194,14 +194,14 @@ describe('createFsExternalIssueSnapshotStorage', () => {
       for (const name of ['012.json', '12345678901.json', '12.json.abcdef.tmp', '12.json.bak', 'notes.txt', '.DS_Store', '12.JSON']) {
         await fs.writeFile(path.join(baseDir, name), valid);
       }
-      expect((await storage.list()).map((snapshot) => snapshot.number)).toEqual([12]);
+      expect((await storage.scan()).snapshots.map((snapshot) => snapshot.number)).toEqual([12]);
       expect(warn).not.toHaveBeenCalled();
     });
   });
 
   describe('files that cannot be used', () => {
     // bdboard-g2ti: サービスが「初めて見た issue」(ファイルが無い) と区別できるよう、使えない写しの番号を返す。
-    it('listUnusable: gives the numbers of the files that cannot be used (not JSON, wrong format, wrong number, a directory), in ascending order, and list() leaves them out', async () => {
+    it('scan gives the numbers of the files that cannot be used (not JSON, wrong format, wrong number, a directory), in ascending order, and leaves them out', async () => {
       const storage = make();
       await storage.save(makeSnapshot(12));
       await fs.writeFile(path.join(baseDir, '16.json'), JSON.stringify({ ...makeSnapshot(16), checks: 'nope' }));
@@ -212,48 +212,51 @@ describe('createFsExternalIssueSnapshotStorage', () => {
       await fs.writeFile(path.join(baseDir, 'notes.json'), 'not json {');
       await fs.writeFile(path.join(baseDir, '17.json.abcdef123456.tmp'), 'half written');
 
-      expect(await storage.listUnusable()).toEqual([13, 14, 15, 16]);
-      expect((await storage.list()).map((snapshot) => snapshot.number)).toEqual([12]);
+      const result = await storage.scan();
+      expect(result.unusable).toEqual([13, 14, 15, 16]);
+      expect(result.snapshots.map((snapshot) => snapshot.number)).toEqual([12]);
+      expect(result.snapshots.every((snapshot) => !result.unusable.includes(snapshot.number))).toBe(true);
+      expect([...result.snapshots.map((snapshot) => snapshot.number), ...result.unusable].sort((a, b) => a - b)).toEqual([12, 13, 14, 15, 16]);
     });
 
-    it('listUnusable: does not include a number that has no file, and is empty when the base directory does not exist', async () => {
+    it('scan does not include a number that has no file, and is empty when the base directory does not exist', async () => {
       const storage = make();
-      expect(await storage.listUnusable()).toEqual([]);
+      expect((await storage.scan()).unusable).toEqual([]);
       await storage.save(makeSnapshot(12));
-      expect(await storage.listUnusable()).toEqual([]);
+      expect((await storage.scan()).unusable).toEqual([]);
     });
 
-    it('listUnusable: warns once for the same broken file even when list and listUnusable both read it', async () => {
+    it('scan warns once for the same broken file across repeated scans', async () => {
       await fs.mkdir(baseDir, { recursive: true });
       await fs.writeFile(path.join(baseDir, '13.json'), `{ not json ${SECRET_BODY_TEXT}`);
       const storage = make();
 
-      await storage.list();
-      await storage.listUnusable();
-      await storage.listUnusable();
+      await storage.scan();
+      await storage.scan();
+      await storage.scan();
 
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn).toHaveBeenCalledWith('external issue snapshot 13 is skipped: not valid JSON');
     });
 
-    it('listUnusable: a number drops out of it once the file is written again', async () => {
+    it('scan: a number drops out of unusable once the file is written again', async () => {
       await fs.mkdir(baseDir, { recursive: true });
       await fs.writeFile(path.join(baseDir, '13.json'), 'garbage');
       const storage = make();
-      expect(await storage.listUnusable()).toEqual([13]);
+      expect((await storage.scan()).unusable).toEqual([13]);
 
       await storage.save(makeSnapshot(13));
 
-      expect(await storage.listUnusable()).toEqual([]);
+      expect((await storage.scan()).unusable).toEqual([]);
     });
 
     it('skips a file that is not JSON, with one warning that names the number and the reason but not the content', async () => {
       const storage = make();
       await storage.save(makeSnapshot(12));
       await fs.writeFile(path.join(baseDir, '13.json'), `{ not json ${SECRET_BODY_TEXT}`);
-      expect((await storage.list()).map((snapshot) => snapshot.number)).toEqual([12]);
+      expect((await storage.scan()).snapshots.map((snapshot) => snapshot.number)).toEqual([12]);
       expect(await storage.get(13)).toBeUndefined();
-      await storage.list();
+      await storage.scan();
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls[0]?.[0]).toBe('external issue snapshot 13 is skipped: not valid JSON');
       expect(warn.mock.calls[0]?.[0]).not.toContain(SECRET_BODY_TEXT);
@@ -263,7 +266,7 @@ describe('createFsExternalIssueSnapshotStorage', () => {
       await fs.mkdir(baseDir, { recursive: true });
       await fs.writeFile(path.join(baseDir, '13.json'), JSON.stringify({ ...makeSnapshot(13), checks: 'nope' }));
       const storage = make();
-      expect(await storage.list()).toEqual([]);
+      expect((await storage.scan()).snapshots).toEqual([]);
       expect(warn).toHaveBeenCalledWith('external issue snapshot 13 is skipped: does not match the snapshot format');
     });
 
@@ -278,7 +281,7 @@ describe('createFsExternalIssueSnapshotStorage', () => {
     it('skips a directory that sits where a snapshot should be', async () => {
       await fs.mkdir(path.join(baseDir, '15.json'), { recursive: true });
       const storage = make();
-      expect(await storage.list()).toEqual([]);
+      expect((await storage.scan()).snapshots).toEqual([]);
       expect(warn).toHaveBeenCalledWith('external issue snapshot 15 is skipped: is a directory');
     });
 
@@ -296,8 +299,7 @@ describe('createFsExternalIssueSnapshotStorage', () => {
         const storage = make();
         await storage.save(makeSnapshot(12));
         await fs.chmod(path.join(baseDir, '12.json'), 0o000);
-        await expect(storage.list()).rejects.toMatchObject({ code: 'EACCES' });
-        await expect(storage.listUnusable()).rejects.toMatchObject({ code: 'EACCES' });
+        await expect(storage.scan()).rejects.toMatchObject({ code: 'EACCES' });
         await expect(storage.get(12)).rejects.toMatchObject({ code: 'EACCES' });
       },
     );

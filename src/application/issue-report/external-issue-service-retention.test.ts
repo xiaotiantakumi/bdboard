@@ -228,7 +228,7 @@ describe('poll runs one at a time', () => {
     const h = createHarness([makeIssue(5)]);
     await h.service.poll();
     h.setIssues([withBody(5, 'edited')]);
-    const gate = h.storage.gateList();
+    const gate = h.storage.gateScan();
 
     const polling = h.service.poll();
     // poll が写しを読む (書く前) ところで止まっているあいだに、取り直しを頼む。

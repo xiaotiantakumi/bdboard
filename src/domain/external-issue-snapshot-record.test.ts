@@ -136,9 +136,32 @@ describe('createSnapshotRecord', () => {
   });
 });
 
+
 describe('selectSnapshotsToRemove', () => {
-  const listed = (number: number) => ({ number, missingSince: null });
-  const missing = (number: number, ageMs: number) => ({ number, missingSince: isoAgo(ageMs) });
+  // onList は「今回の一覧に載っている」印 (テスト側の都合の欄。関数が見るのは number / missingSince / snapshotAt と listedNumbers だけ)。
+  interface Rec {
+    readonly number: number;
+    readonly missingSince: string | null;
+    readonly snapshotAt: string;
+    readonly onList: boolean;
+  }
+  const listed = (number: number, snapshotAt = isoAgo(0)): Rec => ({ number, missingSince: null, snapshotAt, onList: true });
+  /** 一覧から外れたと分かっている (外れた時刻は ageMs 前)。 */
+  const missing = (number: number, ageMs: number): Rec => ({
+    number,
+    missingSince: isoAgo(ageMs),
+    snapshotAt: isoAgo(ageMs + 100 * DAY),
+    onList: false,
+  });
+  /** 外れた印は無いが、今回の一覧にも載っていない (打ち切られた poll で見えなかっただけ)。 */
+  const unseen = (number: number, snapshotAgeMs: number): Rec => ({ number, missingSince: null, snapshotAt: isoAgo(snapshotAgeMs), onList: false });
+  const listedRange = (count: number): Rec[] => Array.from({ length: count }, (_, index) => listed(index + 1));
+  const select = (records: readonly Rec[], listingComplete: boolean): number[] =>
+    selectSnapshotsToRemove(records, {
+      nowMs: NOW,
+      listingComplete,
+      listedNumbers: new Set(records.filter((record) => record.onList).map((record) => record.number)),
+    }).sort((a, b) => a - b);
 
   it('pins 30 days and 500 from the ticket', () => {
     expect(EXTERNAL_ISSUE_SNAPSHOT_RETENTION_DAYS).toBe(30);
@@ -148,52 +171,77 @@ describe('selectSnapshotsToRemove', () => {
 
   it('removes a snapshot that has been out of the list for 30 days (exactly 30 days included), not before', () => {
     const records = [missing(1, 30 * DAY), missing(2, 30 * DAY - 1), missing(3, 29 * DAY), missing(4, 400 * DAY)];
-    expect(selectSnapshotsToRemove(records, { nowMs: NOW, listingComplete: true }).sort()).toEqual([1, 4]);
+    expect(select(records, true)).toEqual([1, 4]);
   });
 
   it('never removes a snapshot that is on the list', () => {
-    expect(selectSnapshotsToRemove([listed(1), listed(2)], { nowMs: NOW, listingComplete: true })).toEqual([]);
+    expect(select([listed(1), listed(2)], true)).toEqual([]);
+    // 印がまだ古いままでも、今回の一覧に載っていれば消さない。
+    expect(select([{ ...missing(5, 400 * DAY), onList: true }], true)).toEqual([]);
   });
 
   it('does not remove by age when the listing was cut short (the issue may still be open past the page limit)', () => {
-    expect(selectSnapshotsToRemove([missing(1, 400 * DAY)], { nowMs: NOW, listingComplete: false })).toEqual([]);
+    expect(select([missing(1, 400 * DAY)], false)).toEqual([]);
   });
 
   it('keeps at most 500: the oldest to leave the list go first, and the ones on the list stay', () => {
-    const current = Array.from({ length: 497 }, (_, index) => listed(index + 1));
     // 497 + 5 = 502 件。2 件を消して 500 にする。外れた時刻が古い 2 件 (番号 1000 と 1001) から。
     const records = [
-      ...current,
+      ...listedRange(497),
       missing(1002, 3 * DAY),
       missing(1000, 10 * DAY),
       missing(1003, 2 * DAY),
       missing(1001, 5 * DAY),
       missing(1004, 1 * DAY),
     ];
-    expect(selectSnapshotsToRemove(records, { nowMs: NOW, listingComplete: true }).sort((a, b) => a - b)).toEqual([1000, 1001]);
+    expect(select(records, true)).toEqual([1000, 1001]);
   });
 
   it('applies the cap even when the listing was cut short', () => {
-    const current = Array.from({ length: 500 }, (_, index) => listed(index + 1));
-    expect(selectSnapshotsToRemove([...current, missing(1000, DAY)], { nowMs: NOW, listingComplete: false })).toEqual([1000]);
+    expect(select([...listedRange(500), missing(1000, DAY)], false)).toEqual([1000]);
   });
 
   it('counts what age already removes before applying the cap', () => {
-    const current = Array.from({ length: 499 }, (_, index) => listed(index + 1));
     // 499 + 2 = 501 件。1 件は 30 日過ぎで消えるので、上限のための削除は要らない。
-    const records = [...current, missing(1000, 31 * DAY), missing(1001, DAY)];
-    expect(selectSnapshotsToRemove(records, { nowMs: NOW, listingComplete: true })).toEqual([1000]);
+    expect(select([...listedRange(499), missing(1000, 31 * DAY), missing(1001, DAY)], true)).toEqual([1000]);
   });
 
   it('cannot go under the cap when everything is on the list (the service cuts the list at 500 first)', () => {
-    const current = Array.from({ length: 502 }, (_, index) => listed(index + 1));
-    expect(selectSnapshotsToRemove(current, { nowMs: NOW, listingComplete: true })).toEqual([]);
+    expect(select(listedRange(502), true)).toEqual([]);
   });
 
   it('breaks a tie of the same leaving time by the lower number first, so the choice is stable', () => {
-    const current = Array.from({ length: 499 }, (_, index) => listed(index + 1));
-    const same = isoAgo(DAY);
-    const records = [...current, { number: 2000, missingSince: same }, { number: 1999, missingSince: same }];
-    expect(selectSnapshotsToRemove(records, { nowMs: NOW, listingComplete: true })).toEqual([1999]);
+    expect(select([...listedRange(499), missing(2000, DAY), missing(1999, DAY)], true)).toEqual([1999]);
+  });
+
+  describe('when the listing was cut short and no record has the left-the-list mark (bdboard-558a)', () => {
+    it('removes the ones that are not on the list, oldest snapshot time first, down to 500', () => {
+      // 497 + 5 = 502 件。2 件を消す。写しを取った時刻が古い 2000 (9 日前) と 2002 (8 日前) から。
+      const records = [...listedRange(497), unseen(2000, 9 * DAY), unseen(2001, 7 * DAY), unseen(2002, 8 * DAY), unseen(2003, DAY), unseen(2004, 2 * DAY)];
+      expect(select(records, false)).toEqual([2000, 2002]);
+    });
+
+    it('never removes a record on the list, whatever its snapshot time, even when the list alone is over 500', () => {
+      const records = [...Array.from({ length: 501 }, (_, index) => listed(index + 1, isoAgo(500 * DAY))), unseen(9000, DAY)];
+      expect(select(records, false)).toEqual([9000]);
+    });
+
+    it('removes the ones known to have left the list before the unseen ones, even if an unseen snapshot is older', () => {
+      expect(select([...listedRange(499), unseen(2000, 500 * DAY), missing(2001, DAY)], false)).toEqual([2001]);
+    });
+
+    it('takes the unseen ones once the known-left ones run out', () => {
+      // 497 + 1 (外れた印あり) + 4 (見えなかった) = 502 件。2 件を消す: 外れた印のある 3000 と、見えなかったうち一番古い 2000。
+      const records = [...listedRange(497), missing(3000, DAY), unseen(2000, 9 * DAY), unseen(2001, 7 * DAY), unseen(2002, 8 * DAY), unseen(2003, DAY)];
+      expect(select(records, false)).toEqual([2000, 3000]);
+    });
+
+    it('breaks a tie of the same snapshot time by the lower number first', () => {
+      expect(select([...listedRange(499), unseen(2000, DAY), unseen(1999, DAY)], false)).toEqual([1999]);
+    });
+
+    it('removes nothing while the total is within 500', () => {
+      expect(select([...listedRange(498), unseen(2000, 9 * DAY), unseen(2001, DAY)], false)).toEqual([]);
+    });
   });
 });

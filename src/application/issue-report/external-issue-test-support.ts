@@ -39,20 +39,20 @@ export function okListing(
   return { ok: true, issues, pagesFetched: 1, truncatedByPageLimit: false, skippedLines: 0, ...extra };
 }
 
-/** list (と listUnusable) / save / remove を失敗させられる in-memory の写しの保存先。保存のたびに structuredClone して、ディスクを模す。 */
+/** scan / save / remove を失敗させられる in-memory の写しの保存先。保存のたびに structuredClone して、ディスクを模す。 */
 export interface InMemorySnapshotStorage extends ExternalIssueSnapshotStoragePort {
   readonly files: Map<number, StoredExternalIssueSnapshot>;
   readonly saves: number[];
   readonly removes: number[];
   readonly unusable: Set<number>;
-  failList: Error | undefined;
+  failScan: Error | undefined;
   failSave: ((snapshot: StoredExternalIssueSnapshot) => Error | undefined) | undefined;
   failRemove: Error | undefined;
   /**
-   * 次の list の入口で止める (release するまで list が戻らない)。entered は list がそこに着いたとき解ける。
+   * 次の scan の入口で止める (release するまで scan が戻らない)。entered は scan がそこに着いたとき解ける。
    * 同時の流れの順序を見るテスト用。
    */
-  gateList(): { readonly release: () => void; readonly entered: Promise<void> };
+  gateScan(): { readonly release: () => void; readonly entered: Promise<void> };
 }
 
 export function createInMemorySnapshotStorage(): InMemorySnapshotStorage {
@@ -64,10 +64,10 @@ export function createInMemorySnapshotStorage(): InMemorySnapshotStorage {
     saves: [],
     removes: [],
     unusable,
-    failList: undefined,
+    failScan: undefined,
     failSave: undefined,
     failRemove: undefined,
-    gateList() {
+    gateScan() {
       let release: () => void = () => undefined;
       let enter: () => void = () => undefined;
       const wait = new Promise<void>((resolve) => {
@@ -79,19 +79,18 @@ export function createInMemorySnapshotStorage(): InMemorySnapshotStorage {
       gate = { wait, enter };
       return { release, entered };
     },
-    async list() {
+    async scan() {
       if (gate !== undefined) {
         const pending = gate;
         gate = undefined;
         pending.enter();
         await pending.wait;
       }
-      if (storage.failList) throw storage.failList;
-      return [...files.values()].sort((a, b) => a.number - b.number).map((record) => structuredClone(record));
-    },
-    listUnusable() {
-      if (storage.failList) return Promise.reject(storage.failList);
-      return Promise.resolve([...unusable].sort((a, b) => a - b));
+      if (storage.failScan) throw storage.failScan;
+      return {
+        snapshots: [...files.values()].sort((a, b) => a.number - b.number).map((record) => structuredClone(record)),
+        unusable: [...unusable].sort((a, b) => a - b),
+      };
     },
     get(number) {
       const record = files.get(number);
