@@ -3,8 +3,8 @@ import path from 'node:path';
 /**
  * e2e のサーバー (test/e2e/global-setup.ts が起動する src/main.ts) に渡す環境変数を組み立てる。
  *
- * global-setup.ts から切り出したのは、「このサーバーは本物の gh を起動しない」(bdboard-em45) のように、
- * env が満たすべき性質を e2e を回さずに vitest (e2e-server-env.test.ts) で固定するため。
+ * global-setup.ts から切り出したのは、「このサーバーは本物の gh を起動しない」(bdboard-em45)・「本物の下書きの置き場に
+ * 書かない」(bdboard-xpkz) のように、env が満たすべき性質を e2e を回さずに vitest (e2e-server-env.test.ts) で固定するため。
  * 値の意味と理由のコメントは、すべてここにある (global-setup.ts から動かしただけで、値は変えていない)。
  */
 export interface E2eServerEnvInputs {
@@ -16,6 +16,11 @@ export interface E2eServerEnvInputs {
   /** スキャン対象のプロジェクトのルート (使い捨てディレクトリ)。 */
   readonly scanRoots: readonly string[];
   readonly scanRootsConfigPath: string;
+  /**
+   * 不具合報告の下書きの置き場 (使い捨てディレクトリの中の絶対パス)。省けない: サーバーの既定は <repoRoot>/data/issue-drafts で、
+   * main checkout から回すとメンテナの本物の下書きの置き場になる (bdboard-xpkz)。
+   */
+  readonly issueDraftsDir: string;
   /** bd / claude の stub を置いたディレクトリ。PATH の先頭に入れる。 */
   readonly binDir: string;
   readonly claudeStub: string;
@@ -39,6 +44,19 @@ export function buildE2eServerEnv(inputs: E2eServerEnvInputs): NodeJS.ProcessEnv
     // root so the e2e run never reads/writes the developer's real
     // ~/.config/bdboard/config.json (bdboard-3tw.102.2).
     BDBOARD_SCAN_ROOTS_CONFIG_PATH: inputs.scanRootsConfigPath,
+    // 不具合報告の下書きの置き場を、この実行の使い捨てディレクトリに向ける (bdboard-xpkz)。置き場の既定は
+    // <repoRoot>/data/issue-drafts (src/infrastructure/fs/resolve-issue-drafts-dir.ts。repoRoot は src/main.ts のある checkout で、
+    // .git があれば <repoRoot>/data、無ければ ~/.bdboard)。e2e を main checkout から回すと、そこはメンテナの本物の下書きの
+    // 置き場で、サーバーが次の 3 つで触る: (1) 本体エラーの下書き (API の 5xx・処理されなかった例外・画面の更新の失敗。
+    // 起動した時点では何も書かないが、spec がそれらを起こした時点で書く)、(2) 起動時の掃除 (保管期限と容量の上限を超えた終端の
+    // 下書きの削除)、(3) ヘッダーのタブのバッジとデイリーダイジェストの未処理件数 (読むだけ)。(3) は本物の件数が画面に出て、
+    // どこから回すかで e2e の画面が変わる。ここを向け直せば、この 3 つと、手書きの下書きの受け取り API など同じ置き場を使う
+    // 経路がすべて、実行が終わると global-setup が消す使い捨てディレクトリの中で閉じる。
+    // BDBOARD_SELF_ERROR_DRAFTS=off で本体エラーの下書きだけを止める手もあるが、それは (2) (3) と手書きの下書きの経路を
+    // 残し、本体エラーの配線 (5xx を拾う middleware など) も本番と違う形にしてしまう。置き場の向け直しだけで、書き込みの
+    // 行き先が使い捨てに閉じるので、止めずに残している。
+    // 親の env に BDBOARD_ISSUE_DRAFTS_DIR が入っていても、ここで上書きする。
+    BDBOARD_ISSUE_DRAFTS_DIR: inputs.issueDraftsDir,
     // Auth is explicitly disabled (not "set fake creds and log in") so
     // this fixture never has to hold a username/password-shaped literal.
     BDBOARD_AUTH_DISABLED: '1',

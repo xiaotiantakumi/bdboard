@@ -1,21 +1,30 @@
 import { readFileSync } from 'node:fs';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createVirtualTimers } from '../../src/application/issue-report/external-issue-poll-test-support.js';
+import { BdError } from '../../src/application/ports/issue-repository.js';
 import { createFakeGhAndBd, createTempMaintainerRoot } from '../../src/bootstrap/external-issues-wiring-test-support.js';
 import { wireExternalIssues } from '../../src/bootstrap/wire-external-issues.js';
+import { wireIssueDraftService } from '../../src/bootstrap/wire-issue-draft-service.js';
+import { wireSelfErrorReporter } from '../../src/bootstrap/wire-self-error-reporter.js';
 import { buildE2eServerEnv, type E2eServerEnvInputs } from './e2e-server-env.js';
 
 /**
  * bdboard-em45: e2e のサーバー (global-setup.ts が起動する src/main.ts) は、メンテナ環境 (.beads のある checkout) から
  * 回しても、届いた issue の確認で本物の gh を起動しない。e2e を回さずに、global-setup が渡す env (buildE2eServerEnv) を
  * 本物の配線 (wireExternalIssues) へ通して確かめる。
+ *
+ * bdboard-xpkz: 同じく、不具合報告の下書き (本体エラー・リフレッシュ失敗など) を、その checkout の data/issue-drafts
+ * (= メンテナの本物の下書きの置き場) ではなく、使い捨てのディレクトリに書く。本物の配線 (wireIssueDraftService と
+ * wireSelfErrorReporter) に env を通し、実際に下書きを書かせて、書かれた場所をファイルシステムで確かめる。
  */
 
 const HOUR = 60 * 60_000;
 
-function inputs(baseEnv: NodeJS.ProcessEnv = {}): E2eServerEnvInputs {
+function inputs(baseEnv: NodeJS.ProcessEnv = {}, overrides: Partial<E2eServerEnvInputs> = {}): E2eServerEnvInputs {
   const tmp = path.join(path.sep, 'tmp', 'example-e2e');
   return {
     baseEnv,
@@ -24,6 +33,7 @@ function inputs(baseEnv: NodeJS.ProcessEnv = {}): E2eServerEnvInputs {
     dbPath: path.join(tmp, 'cache.db'),
     scanRoots: [path.join(tmp, 'project-a'), path.join(tmp, 'project-b')],
     scanRootsConfigPath: path.join(tmp, 'scan-roots-config.json'),
+    issueDraftsDir: path.join(tmp, 'issue-drafts'),
     binDir: path.join(tmp, 'bin'),
     claudeStub: path.join(tmp, 'bin', 'claude'),
     listFixture: path.join(tmp, 'list.json'),
@@ -32,6 +42,7 @@ function inputs(baseEnv: NodeJS.ProcessEnv = {}): E2eServerEnvInputs {
     mergeSlotFixture: path.join(tmp, 'merge-slot.json'),
     webDist: path.join(tmp, 'web-dist'),
     instanceNonce: 'example-nonce',
+    ...overrides,
   };
 }
 
@@ -97,6 +108,73 @@ describe('buildE2eServerEnv', () => {
     });
   });
 
+  describe('the issue drafts (bdboard-xpkz)', () => {
+    let root = '';
+    let removeRoot: () => Promise<void> = () => Promise.resolve();
+    let throwaway = '';
+
+    beforeEach(async () => {
+      // 本物のメンテナ checkout と同じく .git のある一時ディレクトリ。下書きの置き場の既定は <root>/data/issue-drafts になる。
+      ({ root, remove: removeRoot } = await createTempMaintainerRoot());
+      throwaway = await fs.mkdtemp(path.join(os.tmpdir(), 'example-e2e-drafts-'));
+    });
+
+    afterEach(async () => {
+      await removeRoot();
+      await fs.rm(throwaway, { recursive: true, force: true });
+    });
+
+    /**
+     * 本体エラーの下書きの書き手 2 つを、本物の配線で動かす: API の 5xx / 処理されなかった例外 (report) と、リフレッシュ失敗
+     * (observeRefresh。種類が不明の失敗は 3 回続けて下書きになる)。reporter が作られること (止められていないこと) も確かめる:
+     * 漏れを塞ぐ手は置き場の向け直しで、本体エラーの下書きを止める (BDBOARD_SELF_ERROR_DRAFTS=off) ことではない。
+     */
+    async function writeSelfErrorDrafts(env: NodeJS.ProcessEnv): Promise<void> {
+      const applicationVersion = { getVersion: () => '1.0.0' };
+      const service = wireIssueDraftService({ repoRoot: root, env, applicationVersion, log: vi.fn() });
+      const project = { id: 'p', name: 'example-project', rootPath: '/example/project', aliasPaths: [], prefixes: [] };
+      const cache = { listProjects: () => [], listProjectRefs: () => [project] };
+      const wired = wireSelfErrorReporter({ env, service, cache, applicationVersion, log: vi.fn() });
+      expect(wired.reporter).toBeDefined();
+      await wired.reporter?.report({ source: 'api:GET /x', errorText: 'boom' });
+      const failure = { refreshed: [], reused: [], removed: [], errors: [new BdError('unknown', 'p', 'example failure')] };
+      for (let attempt = 0; attempt < 3; attempt += 1) await wired.reporter?.observeRefresh(failure, [project]);
+    }
+
+    const exists = (target: string): Promise<boolean> =>
+      fs.access(target).then(
+        () => true,
+        () => false,
+      );
+
+    it('control: with an ordinary env the same checkout writes both drafts under <repoRoot>/data/issue-drafts (so the assertions below are not vacuous)', async () => {
+      await writeSelfErrorDrafts({});
+
+      expect(await fs.readdir(path.join(root, 'data', 'issue-drafts'))).toHaveLength(2);
+    });
+
+    it('writes the self-error drafts to the throwaway directory and creates nothing under <repoRoot>/data', async () => {
+      const issueDraftsDir = path.join(throwaway, 'issue-drafts');
+
+      await writeSelfErrorDrafts(buildE2eServerEnv(inputs({}, { issueDraftsDir })));
+
+      expect(await exists(path.join(root, 'data'))).toBe(false);
+      expect(await fs.readdir(issueDraftsDir)).toHaveLength(2);
+    });
+
+    it.each([
+      ['the real place', () => path.join(root, 'data', 'issue-drafts')],
+      ['an empty string', () => ''],
+    ])('overrides BDBOARD_ISSUE_DRAFTS_DIR inherited from the parent environment (%s)', async (_label, inherited) => {
+      const issueDraftsDir = path.join(throwaway, 'issue-drafts');
+
+      await writeSelfErrorDrafts(buildE2eServerEnv(inputs({ BDBOARD_ISSUE_DRAFTS_DIR: inherited() }, { issueDraftsDir })));
+
+      expect(await exists(path.join(root, 'data'))).toBe(false);
+      expect(await fs.readdir(issueDraftsDir)).toHaveLength(2);
+    });
+  });
+
   describe('the rest of the env', () => {
     it('puts the stub directory first on PATH and keeps the parent PATH after it', () => {
       const env = buildE2eServerEnv(inputs({ PATH: '/usr/bin' }));
@@ -136,6 +214,11 @@ describe('buildE2eServerEnv', () => {
 
     it('does not set the incoming-issue switch on its own', () => {
       expect(source).not.toContain('BDBOARD_EXTERNAL_ISSUES_DISABLED');
+    });
+
+    it('puts the issue drafts directory inside its throwaway tmpRoot, which teardown removes', () => {
+      expect(source).toMatch(/\bissueDraftsDir: path\.join\(tmpRoot, 'issue-drafts'\)/);
+      expect(source).not.toContain('BDBOARD_ISSUE_DRAFTS_DIR');
     });
   });
 });
