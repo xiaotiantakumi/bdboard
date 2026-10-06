@@ -1,0 +1,163 @@
+/* bdboard-4y8q.9.5: 「不具合報告」タブの「届いた issue」。一覧の場所にカードを並べ、右ペインは使わない。 */
+.issue-reports-panel.is-external {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.issue-reports-panel.is-external .issue-reports-detail-pane {
+  display: none;
+}
+
+.external-issue-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.external-issue-status p {
+  margin: 0;
+}
+
+.external-issue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.external-issue-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.external-issue-card > *,
+.external-issue-body {
+  max-width: 100%;
+}
+
+.external-issue-title {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.external-issue-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+
+.external-issue-url {
+  overflow-wrap: anywhere;
+}
+
+.external-issue-truncation {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 0.85rem;
+}
+
+.external-issue-checks-section {
+  width: 100%;
+}
+
+.external-issue-checks-heading {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.external-issue-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 16px;
+  margin: 0;
+}
+
+.external-issue-check {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.85rem;
+}
+
+.external-issue-check dt {
+  color: var(--color-text-secondary);
+}
+
+.external-issue-check dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.external-issue-check-detail {
+  display: block;
+  color: var(--color-text-secondary);
+}
+
+.external-issue-body-toggle {
+  min-height: 44px;
+}
+
+.external-issue-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.external-issue-legend {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.external-issue-raw-body {
+  margin: 0;
+  padding: 8px;
+  max-height: 480px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  background: var(--color-bg-grouped);
+  border-radius: var(--radius-sm);
+}
+
+/* 印は文字でも出している (⟦U+200B⟧ / ⟦HTML コメント⟧)。色と枠は目立たせるだけで、色だけには頼らない。 */
+.external-issue-mark {
+  background: var(--badge-stalled-bg);
+  outline: 1px solid var(--color-warning);
+  border-radius: 2px;
+}
+
+.external-issue-html-comment {
+  background: var(--badge-label-bg);
+}
+
+@media (max-width: 700px) {
+  .external-issue-checks {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 狭い幅 (スマホ) でも押せる大きさ (44px)。 */
+  .external-issue-mode-toggle .toggle-btn {
+    min-height: 44px;
+  }
+}
