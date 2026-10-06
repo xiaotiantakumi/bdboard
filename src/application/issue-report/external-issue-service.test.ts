@@ -373,7 +373,7 @@ describe('poll: failures are a state, not an exception', () => {
     await h.service.poll();
     h.storage.saves.length = 0;
     h.setIssues([withBody(5, 'edited')]);
-    h.storage.failList = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    h.storage.failScan = Object.assign(new Error('permission denied'), { code: 'EACCES' });
     const list = await h.service.poll();
     expect(list).toMatchObject({ state: 'error', error: { kind: 'storage-failed' } });
     expect(list.error?.detail).toContain('EACCES');
