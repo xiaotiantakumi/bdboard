@@ -32,7 +32,7 @@ export interface ExternalIssueDto {
 }
 
 export interface ExternalIssueListDto {
-  /** メンテナ環境でないときは false (gh も bd も呼ばず、一覧は空)。 */
+  /** メンテナ環境でない、または BDBOARD_EXTERNAL_ISSUES_DISABLED で止めたときは false (gh も bd も呼ばず、一覧は空)。 */
   readonly enabled: boolean;
   readonly state: 'idle' | 'ok' | 'error';
   readonly fetchedAt: string | null;
@@ -74,7 +74,7 @@ export function toExternalIssueListDto(list: ExternalIssueList): ExternalIssueLi
   };
 }
 
-/** メンテナ環境でないとき (サービスが無いとき) の応答。 */
+/** 無効のとき (サービスが無いとき。メンテナ環境でない、または BDBOARD_EXTERNAL_ISSUES_DISABLED) の応答。 */
 export const DISABLED_EXTERNAL_ISSUE_LIST_DTO: ExternalIssueListDto = {
   enabled: false,
   state: 'idle',
