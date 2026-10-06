@@ -66,6 +66,13 @@ export const STORAGE_FULL_BODY = { error: 'issue draft storage is full', code: '
 const draftNotPendingBody = (status: string) =>
   ({ error: 'images can only be added to a pending draft', code: 'draft-not-pending', status }) as const;
 
+/**
+ * 1 つの下書きに付けられる枚数の上限に達したときの画像の追加 (409)。`code` は機械が読む固定の値で、画面はこれで
+ * 「未処理でない下書き (draft-not-pending)」と見分ける (bdboard-8zwi。それまでは code が無く、画面が消去法で判定していた)。
+ */
+const imageLimitReachedBody = () =>
+  ({ error: `image limit reached (max ${ISSUE_DRAFT_MAX_IMAGES} per draft)`, code: 'image-limit-reached' }) as const;
+
 const SINGLE_LINE_MESSAGE = 'must be a single line without control, invisible or format characters';
 
 /**
@@ -258,7 +265,7 @@ export function createIssueReportRoutes(deps: IssueReportRoutesDeps): Hono {
         case 'not-pending':
           return c.json(draftNotPendingBody(result.status), 409);
         case 'limit-reached':
-          return c.json({ error: `image limit reached (max ${ISSUE_DRAFT_MAX_IMAGES} per draft)` }, 409);
+          return c.json(imageLimitReachedBody(), 409);
       }
     }
     return c.json({ image: toImageDto(id, result.image) }, 201);

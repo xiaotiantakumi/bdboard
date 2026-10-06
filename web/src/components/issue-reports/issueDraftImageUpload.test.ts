@@ -115,7 +115,9 @@ describe('uploadIssueDraftImages (bdboard-4y8q.6.9)', () => {
   });
 
   it('stops at a 409 limit-reached and returns the images it did not send with their own reason', async () => {
-    vi.mocked(uploadIssueDraftImage).mockResolvedValueOnce(stored).mockRejectedValueOnce(apiError(409));
+    vi.mocked(uploadIssueDraftImage)
+      .mockResolvedValueOnce(stored)
+      .mockRejectedValueOnce(apiError(409, { code: 'image-limit-reached' }));
     const failures = await uploadIssueDraftImages(DRAFT_ID, [
       picked('a.png'),
       picked('b.png'),
@@ -192,7 +194,61 @@ describe('uploadIssueDraftImages (bdboard-4y8q.6.9)', () => {
   it('does not throw: an unexpected error becomes a failure of that image', async () => {
     vi.mocked(uploadIssueDraftImage).mockRejectedValueOnce(new Error('boom'));
     const failures = await uploadIssueDraftImages(DRAFT_ID, [picked('a.png')]);
-    expect(failures).toEqual([{ id: 'id-a.png', name: 'a.png', reason: '付けられませんでした。' }]);
+    expect(failures).toEqual([{ id: 'id-a.png', name: 'a.png', reason: '付けられませんでした。', mayBeStored: true }]);
+  });
+
+  // bdboard-8zwi: 送ったのに応答が届かなかった画像は、サーバーに保存できているかもしれない。その印 (mayBeStored) が付くのは、
+  // 保存したかどうか分からない失敗だけ。サーバーが保存せずに断った失敗と、送っていない画像には付けない。
+  describe('which failures may have been stored by the server anyway', () => {
+    it.each([
+      ['a network failure', new TypeError('Failed to fetch')],
+      ['a 500', apiError(500)],
+      ['a 502 from a proxy', apiError(502)],
+      ['a 504 timeout', apiError(504)],
+      ['an unexpected error', new Error('boom')],
+    ])('marks %s', async (_name, error) => {
+      vi.mocked(uploadIssueDraftImage).mockRejectedValueOnce(error);
+      const failures = await uploadIssueDraftImages(DRAFT_ID, [picked('a.png')]);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.mayBeStored).toBe(true);
+    });
+
+    it.each([
+      ['a 400', apiError(400, { errorMessage: 'invalid or unsupported image data' })],
+      ['a 403', apiError(403, { errorMessage: 'local access only' })],
+      ['a 404', apiError(404)],
+      ['a 409 image-limit-reached', apiError(409, { code: 'image-limit-reached' })],
+      ['a 409 draft-not-pending', apiError(409, { code: 'draft-not-pending' })],
+      ['a 413', apiError(413)],
+      ['a 507', apiError(507, { code: 'storage-full' })],
+    ])('does not mark %s (the server refused before storing)', async (_name, error) => {
+      vi.mocked(uploadIssueDraftImage).mockRejectedValueOnce(error);
+      const failures = await uploadIssueDraftImages(DRAFT_ID, [picked('a.png')]);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).not.toHaveProperty('mayBeStored');
+    });
+
+    // 読み込みに失敗した画像 (送っていない) は、下の「when the file cannot be read」の toEqual が、印が付かないことを固定している。
+    it('does not mark an image that was not sent because an earlier failure stopped the rest', async () => {
+      vi.mocked(uploadIssueDraftImage).mockRejectedValueOnce(apiError(507, { code: 'storage-full' }));
+      const failures = await uploadIssueDraftImages(DRAFT_ID, [picked('a.png'), picked('b.png')]);
+      expect(failures[1]).toEqual({ id: 'id-b.png', name: 'b.png', reason: IMAGE_NOT_SENT_REASON });
+    });
+  });
+
+  it('tells onStored the server file name of each image the server answered for, and not for a failed one', async () => {
+    vi.mocked(uploadIssueDraftImage)
+      .mockResolvedValueOnce({ image: { ...stored.image, fileName: '1-aaaa.png' } })
+      .mockRejectedValueOnce(apiError(400))
+      .mockResolvedValueOnce({ image: { ...stored.image, fileName: '3-cccc.png' } });
+    const onStored = vi.fn();
+    const first = picked('a.png');
+    const third = picked('c.png');
+    await uploadIssueDraftImages(DRAFT_ID, [first, picked('b.png'), third], undefined, onStored);
+    expect(onStored.mock.calls).toEqual([
+      [first, '1-aaaa.png'],
+      [third, '3-cccc.png'],
+    ]);
   });
 
   it('does nothing for an empty list', async () => {

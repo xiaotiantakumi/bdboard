@@ -1,4 +1,3 @@
-import { formatImageSize } from '../chat/attachments';
 import {
   ISSUE_DRAFT_IMAGE_MAX_BYTES,
   ISSUE_DRAFT_IMAGE_MAX_COUNT,
@@ -35,6 +34,33 @@ export function dragCarriesFiles(dataTransfer: Pick<DataTransfer, 'types'>): boo
   return Array.from(dataTransfer.types).includes('Files');
 }
 
+/** 貼り付けた文字を受ける input の type (file・checkbox・button などは文字を受けない)。 */
+const TEXT_ENTRY_INPUT_TYPES: readonly string[] = ['text', 'search', 'url', 'tel', 'email', 'password', 'number'];
+
+/** 貼り付け先が、文字を入れる欄 (textarea と、文字を受ける input) か。フォームの余白・ボタン・ファイル選択は含まない。 */
+export function isTextEntryField(target: EventTarget | null): boolean {
+  if (target instanceof HTMLTextAreaElement) return true;
+  return target instanceof HTMLInputElement && TEXT_ENTRY_INPUT_TYPES.includes(target.type);
+}
+
+/**
+ * クリップボードが文字を運んでいるか (bdboard-8zwi)。Excel・Word は文字 (text/plain) と HTML と画像を一度に載せるので、
+ * 文字の欄へ貼るときは画像でなく文字を入れる。判定は types に text/plain があり、中身が空白だけでないこと。
+ * text/html だけでは文字とは見なさない: Chrome の「画像をコピー」は <img> だけの HTML と画像を載せ、文字は無い。
+ */
+export function clipboardCarriesText(clipboardData: Pick<DataTransfer, 'types' | 'getData'>): boolean {
+  return Array.from(clipboardData.types).includes('text/plain') && clipboardData.getData('text/plain').trim() !== '';
+}
+
+/**
+ * 上限を超えた画像の大きさ (MiB、小数第 1 位)。四捨五入 (formatImageSize) ではなく切り上げる: 上限に 1 バイト足りないほど
+ * 超えただけでも「10 MiB を超えている (10.0 MiB)」と、上限と同じ数字になってしまうため (bdboard-8zwi)。
+ */
+function formatOverLimitSize(bytes: number): string {
+  const mebibytes = bytes / (1024 * 1024);
+  return `${(Math.ceil(mebibytes * 10) / 10).toFixed(1)} MiB`;
+}
+
 function displayName(name: string): string {
   return name === '' ? UNNAMED_IMAGE_LABEL : name;
 }
@@ -66,7 +92,7 @@ export function screenIssueDraftImages<T extends ImageFileLike>(
       problems.push(`「${name}」は中身が空のため付けられません。`);
     } else if (file.size > ISSUE_DRAFT_IMAGE_MAX_BYTES) {
       problems.push(
-        `「${name}」は ${ISSUE_DRAFT_IMAGE_MAX_SIZE_LABEL} を超えているため付けられません (${formatImageSize(file.size)})。`,
+        `「${name}」は ${ISSUE_DRAFT_IMAGE_MAX_SIZE_LABEL} を超えているため付けられません (${formatOverLimitSize(file.size)})。`,
       );
     } else if (existingCount + accepted.length < ISSUE_DRAFT_IMAGE_MAX_COUNT) {
       accepted.push(file);

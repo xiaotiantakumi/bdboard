@@ -1,5 +1,4 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { useId, useMemo, useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { createManualIssueDraft, type IssueDraftSummaryDto } from '../../api/issue-reports';
 import { IssueDraftImageFailures } from './IssueDraftImageFailures';
 import { IssueDraftImagePicker } from './IssueDraftImagePicker';
@@ -8,9 +7,8 @@ import {
   ISSUE_DRAFT_TITLE_MAX_CHARS,
   describeIssueDraftManualError,
 } from './issueDraftErrors';
-import { uploadIssueDraftImages, type ImageUploadFailure, type PickedImage } from './issueDraftImageUpload';
-import { useMountedRef } from '../../hooks/useMountedRef';
 import { type ReportProject } from './manualDraftAccess';
+import { useIssueDraftImageSend } from './useIssueDraftImageSend';
 import { useIssueDraftImages } from './useIssueDraftImages';
 
 export interface IssueDraftManualFormProps {
@@ -24,12 +22,11 @@ export interface IssueDraftManualFormProps {
   /** 作れた (一覧は読み直し済み)。呼び出し側が新しい下書きを選ぶ。画像が付かなかったときは、利用者が「下書きを開く」を押したときに呼ぶ。 */
   readonly onCreated: (draft: IssueDraftSummaryDto) => void;
   readonly onCancel: () => void;
-}
-
-/** 下書きは作れたが、画像が付かなかったもの。ここにある間は、書く画面の代わりに失敗の画面を出す。 */
-interface PartialOutcome {
-  readonly draft: IssueDraftSummaryDto;
-  readonly failures: readonly ImageUploadFailure[];
+  /**
+   * 失敗の画面 (画像が付かなかった結果) を出しているかが変わったときに呼ぶ (閉じるときは false)。パネルが、この画面を出している間に
+   * 「新しく報告」を押されたら書く画面を作り直す (key を替える) ために使う。書きかけの画面は、押されても作り直さない (入力を消さない)。bdboard-8zwi。
+   */
+  readonly onResultShownChange?: (shown: boolean) => void;
 }
 
 /**
@@ -42,8 +39,13 @@ interface PartialOutcome {
  * 下書きは作れた時点で成功しているので、画像の失敗で消さず・作り直さない: 失敗の画面 (IssueDraftImageFailures) に付かなかった画像を出し、
  * その画像だけ送り直すか、下書きを開く。成功したら ['issue-reports'] を読み直してから onCreated を呼ぶ。
  */
-export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel }: IssueDraftManualFormProps) {
-  const queryClient = useQueryClient();
+export function IssueDraftManualForm({
+  project,
+  localAccess,
+  onCreated,
+  onCancel,
+  onResultShownChange,
+}: IssueDraftManualFormProps) {
   const titleId = useId();
   const descriptionId = useId();
   const descriptionHintId = useId();
@@ -53,40 +55,12 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const imageDraft = useIssueDraftImages();
-  const [progress, setProgress] = useState<{ sent: number; total: number } | null>(null);
-  const [partial, setPartial] = useState<PartialOutcome | null>(null);
-  const mounted = useMountedRef();
-
-  // 失敗の一覧に出す名前。同じ名前の画像を見分けるため、送る前の一覧での位置を付ける。
-  const failureItems = useMemo(
-    () =>
-      (partial?.failures ?? []).map((failure) => ({
-        label: `${imageDraft.images.findIndex((image) => image.id === failure.id) + 1} 枚目「${failure.name}」`,
-        reason: failure.reason,
-      })),
-    [partial, imageDraft.images],
-  );
-
-  /**
-   * 画像を送り、一覧を読み直して、全部付いたら下書きを選ばせる。付かなかった分があれば失敗の画面を (新しく) 出す。
-   * 送る画像が無ければ (画像なし・トンネル) 送信も進み具合も出さず、読み直しと onCreated だけ。
-   */
-  const finishCreated = async (draft: IssueDraftSummaryDto, targets: readonly PickedImage[]) => {
-    let failures: readonly ImageUploadFailure[] = [];
-    if (targets.length > 0) {
-      failures = await uploadIssueDraftImages(draft.id, targets, (sent, total) => setProgress({ sent, total }));
-      setProgress(null);
-    }
-    await queryClient.invalidateQueries({ queryKey: ['issue-reports'] });
-    // 送っている間に一覧から別の下書きを選ぶと、この画面は閉じる。画像は送り終えて一覧も読み直すが、作った下書きを選び直して
-    // 利用者が選んだ下書きを奪わない (付いた画像は、その下書きを開けば見られる)。
-    if (!mounted.current) return;
-    if (failures.length === 0) {
-      onCreated(draft);
-    } else {
-      setPartial({ draft, failures });
-    }
-  };
+  // 下書きを作ったあとの画像の送信・送り直し・失敗の画面に出す結果 (useIssueDraftImageSend.ts)。
+  const { progress, partial, failureItems, finishCreated, retry } = useIssueDraftImageSend({
+    images: imageDraft.images,
+    onCreated,
+    onResultShownChange,
+  });
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -132,11 +106,10 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
     }
   };
 
-  const retryFailedImages = async (outcome: PartialOutcome) => {
-    const failedIds = new Set(outcome.failures.map((failure) => failure.id));
+  const retryFailedImages = async (outcome: NonNullable<typeof partial>) => {
     setSending(true);
     try {
-      await finishCreated(outcome.draft, imageDraft.images.filter((image) => failedIds.has(image.id)));
+      await retry(outcome);
     } finally {
       setSending(false);
     }
@@ -206,15 +179,21 @@ export function IssueDraftManualForm({ project, localAccess, onCreated, onCancel
         <IssueDraftImagePicker
           images={imageDraft.images}
           problems={imageDraft.problems}
+          notice={imageDraft.notice}
           disabled={sending}
           onAddFiles={imageDraft.addFiles}
           onRemove={imageDraft.remove}
         />
       )}
-      {progress !== null && (
-        <p className="issue-draft-editor-hint" role="status">
-          画像を送っています ({progress.sent} / {progress.total})
-        </p>
+      {/* 進み具合の読み上げ。入れ物は常に置き、中身だけ替える (中身と一緒にあとから現れる status は、読み上げられないことがある。bdboard-8zwi)。 */}
+      {localAccess && (
+        <div role="status" aria-label="画像の送信の進み具合">
+          {progress !== null && (
+            <p className="issue-draft-editor-hint">
+              画像を送っています ({progress.sent} / {progress.total})
+            </p>
+          )}
+        </div>
       )}
       {error !== null && (
         <p className="error-message" role="alert">

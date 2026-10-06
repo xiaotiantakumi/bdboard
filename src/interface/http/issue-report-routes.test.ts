@@ -1002,6 +1002,11 @@ describe('draft images', () => {
     }
     const over = await app.request(`${DRAFTS}/${id}/images`, json({ mimeType: 'image/png', data: PNG_BASE64 }), LOCAL_ENV);
     expect(over.status).toBe(409);
+    // 機械が読む code (bdboard-8zwi): 未処理でない下書きの 409 (draft-not-pending) と見分けるため。
+    expect(await over.json()).toEqual({
+      error: `image limit reached (max ${ISSUE_DRAFT_MAX_IMAGES} per draft)`,
+      code: 'image-limit-reached',
+    });
   });
 
   it('keeps the draft image limit equal to the attachment image limit', () => {
