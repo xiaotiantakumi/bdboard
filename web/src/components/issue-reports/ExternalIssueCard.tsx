@@ -39,8 +39,13 @@ export function ExternalIssueCard({ issue }: { readonly issue: ExternalIssueDto 
         #{issue.number} <ExternalMarkedText text={issue.title} />
       </h3>
       <p className="external-issue-meta">
-        <span>作者: {issue.author ?? '(不明)'}</span>
-        {issue.authorAssociation !== null && <span>関係: {issue.authorAssociation}</span>}
+        {/* 作者と関係も GitHub から来た文字列。サーバーは形を検査しないので、題名と同じく見えない文字を印にする。 */}
+        <span>作者: {issue.author === null ? '(不明)' : <ExternalMarkedText text={issue.author} />}</span>
+        {issue.authorAssociation !== null && (
+          <span>
+            関係: <ExternalMarkedText text={issue.authorAssociation} />
+          </span>
+        )}
         <span>
           更新: <time dateTime={issue.updatedAt}>{formatAbsoluteTime(issue.updatedAt)}</time>
         </span>

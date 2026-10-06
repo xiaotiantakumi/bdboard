@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../../api/http';
@@ -108,6 +108,8 @@ describe('IssueReportsPanel: what the incoming issues view says about the check'
     ['storage-failed', '写しの保存に失敗しました。一覧は前回のままです。'],
     ['unexpected', '想定外の失敗で確認が止まりました。一覧は前回のままです。'],
     ['a-kind-nobody-knows', '確認が止まりました。'],
+    ['constructor', '確認が止まりました。'],
+    ['toString', '確認が止まりました。'],
   ])('says a fixed sentence for an error of kind %s', async (kind, sentence) => {
     await openExternal(makeExternalList({ state: 'error', fetchedAt: null, issues: [], error: { kind, detail: 'raw detail' } }), REMOTE);
 
@@ -192,6 +194,34 @@ describe('IssueReportsPanel: "check now"', () => {
     expect(screen.getByRole('button', { name: '届いた issue (1)' })).toBeTruthy();
   });
 
+  it('does not let a re-read that was already running overwrite what the check answered', async () => {
+    vi.mocked(fetchExternalIssues).mockResolvedValue(makeExternalList());
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={client}>
+        <IssueReportsPanel hostname={LOCAL} />
+      </QueryClientProvider>,
+    );
+    await user.click(await screen.findByRole('button', { name: /^届いた issue/ }));
+    // 60 秒ごとの読み直しが走っている途中で「今すぐ確認」を押し、読み直しの古い一覧が確認の答えより後に届く。
+    let finishReread: (list: ExternalIssueListDto) => void = () => undefined;
+    vi.mocked(fetchExternalIssues).mockReturnValue(new Promise((resolve) => (finishReread = resolve)));
+    void client.refetchQueries({ queryKey: ['issue-reports', 'external'] });
+    vi.mocked(refreshExternalIssues).mockResolvedValue(makeExternalList({ issues: [makeExternalIssue({ number: 99, title: 'fresh issue' })] }));
+
+    await user.click(screen.getByRole('button', { name: '今すぐ確認' }));
+    expect(await screen.findByRole('heading', { name: '#99 fresh issue' })).toBeTruthy();
+    // react-query は結果を次のタイマーでまとめて流すので、少し待ってから見る。
+    await act(async () => {
+      finishReread(makeExternalList());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(screen.getByRole('heading', { name: '#99 fresh issue' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '#17 external example issue' })).toBeNull();
+  });
+
   it('shows a check that stopped (HTTP 200 with state error) as the list state', async () => {
     vi.mocked(refreshExternalIssues).mockResolvedValue(
       makeExternalList({ state: 'error', error: { kind: 'gh-unauthenticated', detail: 'not logged in' } }),
@@ -251,4 +281,24 @@ describe('IssueReportsPanel: when the incoming issues cannot be read', () => {
     expect(await screen.findByText('未処理の下書きはありません。')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /届いた issue/ })).toBeNull();
   });
+
+  it('keeps the last list (and says so) when only a later re-read fails', async () => {
+    vi.mocked(fetchExternalIssues).mockResolvedValue(makeExternalList());
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={client}>
+        <IssueReportsPanel hostname={LOCAL} />
+      </QueryClientProvider>,
+    );
+    await user.click(await screen.findByRole('button', { name: /^届いた issue/ }));
+
+    vi.mocked(fetchExternalIssues).mockRejectedValue(new ApiError(503, 'restarting'));
+    // useExternalIssues は retry: 1 (既定の待ち 1 秒) なので、読み直しの失敗が確定するまで待つ。
+    await act(() => client.refetchQueries({ queryKey: ['issue-reports', 'external'] }));
+
+    expect(await screen.findByText('最新の一覧を読み込めませんでした。前に読めた一覧を出しています。')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '#17 external example issue' })).toBeTruthy();
+    expect(screen.queryByText('届いた issue を読み込めませんでした。')).toBeNull();
+  }, 10_000);
 });

@@ -27,7 +27,13 @@ const RLO = String.fromCodePoint(0x202e);
 describe('the set of hidden characters shown as marks', () => {
   it('is the same set as the server-side check, for every code point', () => {
     const source = readServerSource('../../../../src/domain/external-issue-hidden-text.ts');
-    const rows = [...source.matchAll(/\{ code: (0x[0-9a-f]+)(?:, last: (0x[0-9a-f]+))?,/g)];
+    // 表 (INVISIBLE_CHARS の配列) だけを切り出す。見つからなければ落とす (名前が変わったのに黙って通らないように)。
+    const table = /const INVISIBLE_CHARS\b[^=]*=\s*\[([\s\S]*?)\n\];/.exec(source)?.[1];
+    expect(table).toBeDefined();
+    // 16 進の大文字・小文字、1 行でも複数行でも読む。
+    const rows = [...(table ?? '').matchAll(/\{\s*code:\s*(0x[0-9a-fA-F]+)\s*,(?:\s*last:\s*(0x[0-9a-fA-F]+)\s*,)?/g)];
+    // 表の中の `code:` は全部読めていること (定数名や別の書き方の行が混ざったら、読み損ねたまま通さずに落とす)。
+    expect(rows).toHaveLength((table ?? '').match(/\bcode\s*:/g)?.length ?? -1);
     // 表の行を読み損ねて空の集合どうしで通ることを防ぐ (表は 17 文字 + タグ文字の範囲 1 つ)。
     expect(rows).toHaveLength(18);
     const server = new Set<number>();

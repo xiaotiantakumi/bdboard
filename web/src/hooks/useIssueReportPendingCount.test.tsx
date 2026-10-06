@@ -20,7 +20,7 @@ function setup() {
 /** 両方の問い合わせは失敗のあと 1 回だけ読み直す (retry: 1。既定の待ちは 1 秒) ので、読めないと分かるまで waitFor の既定の 1 秒では足りない。 */
 const RETRY_WAIT = { timeout: 4000 };
 
-const TWO_EXTERNAL =makeExternalList({ issues: [makeExternalIssue({ number: 1 }), makeExternalIssue({ number: 2 })] });
+const TWO_EXTERNAL = makeExternalList({ issues: [makeExternalIssue({ number: 1 }), makeExternalIssue({ number: 2 })] });
 
 beforeEach(() => {
   // 既定は「メンテナ環境でない」(届いた issue が 0 件)。下書きだけの数のテストはそのまま通る。

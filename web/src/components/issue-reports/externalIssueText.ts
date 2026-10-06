@@ -164,7 +164,9 @@ export function externalStateMessage(list: ExternalIssueListDto): string {
   const error = list.error;
   if (error === null) return '確認が止まりました。';
   if (error.kind === 'failed' && error.detail.startsWith(BUDGET_EXHAUSTED_DETAIL_PREFIX)) return BUDGET_EXHAUSTED_MESSAGE;
-  return ERROR_MESSAGES[error.kind] ?? '確認が止まりました。';
+  // kind はサーバーが増やしうる string。`constructor` などの名前で Object.prototype の値を引かないよう、自分の欄だけを見る。
+  const fixed = Object.hasOwn(ERROR_MESSAGES, error.kind) ? ERROR_MESSAGES[error.kind] : undefined;
+  return fixed ?? '確認が止まりました。';
 }
 
 /** 確認が止まっているとき、前回までの一覧がいつのものか。無ければ null。 */

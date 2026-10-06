@@ -32,8 +32,9 @@ describe('ExternalIssueCard: the summary', () => {
     );
 
     expect(screen.getByRole('heading', { level: 3 }).textContent).toBe('#17 external example issue');
-    expect(screen.getByText('作者: example-user')).toBeTruthy();
-    expect(screen.getByText('関係: NONE')).toBeTruthy();
+    const meta = container.querySelector('.external-issue-meta');
+    expect(meta?.textContent).toContain('作者: example-user');
+    expect(meta?.textContent).toContain('関係: NONE');
     const url = screen.getByText('https://github.com/example/repo/issues/17');
     expect(url.tagName).toBe('CODE');
     expect(container.querySelector('a')).toBeNull();
@@ -48,6 +49,22 @@ describe('ExternalIssueCard: the summary', () => {
 
     expect(screen.getByText('作者: (不明)')).toBeTruthy();
     expect(screen.queryByText(/関係:/)).toBeNull();
+  });
+
+  it('marks hidden characters in the author and the relation too (they come from GitHub unchecked)', () => {
+    const { container } = render(
+      <ul>
+        <ExternalIssueCard
+          issue={makeExternalIssue({ author: `user${RIGHT_TO_LEFT_OVERRIDE}name`, authorAssociation: `NONE${ZERO_WIDTH_SPACE}` })}
+        />
+      </ul>,
+    );
+
+    const meta = container.querySelector('.external-issue-meta');
+    expect(meta?.textContent).toContain('作者: user⟦U+202E⟧name');
+    expect(meta?.textContent).toContain('関係: NONE⟦U+200B⟧');
+    expect(container.textContent).not.toContain(RIGHT_TO_LEFT_OVERRIDE);
+    expect(container.textContent).not.toContain(ZERO_WIDTH_SPACE);
   });
 
   it('puts the machine checks as counts only, without any word of judgment', () => {
