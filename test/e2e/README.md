@@ -307,3 +307,34 @@ focus / ドラッグ中 / WIP 超過といった状態と、モバイル media q
   global-setup の env は止めたままにして、その spec 専用の手立て (偽の gh を向ける、など) を
   別に考える。本物の gh を呼ぶ道は作らない。e2e 自体も、まず worktree から回す
   (メインチェックアウトの 8787 は常時稼働のサーバー。`BDBOARD_E2E_PORT` は 8787 を拒否する)。
+
+### 7. e2e のサーバーは不具合報告の下書きを使い捨てのディレクトリに書く。メインチェックアウトの `data/issue-drafts` には書かない (bdboard-xpkz)
+
+- **症状 (直す前に起きうる形)**: e2e をメインチェックアウトから回し、spec がサーバーに API の 5xx・
+  処理されなかった例外・画面の更新の失敗を起こさせると、本体エラーの下書き (docs/ISSUE-REPORTING.md)
+  が `<repoRoot>/data/issue-drafts` (= メンテナの本物の下書きの置き場) に書かれる。直す前の
+  実測 (worktree から全 118 テスト): 全部通り、worktree に `data/` は作られなかった。**今の spec は
+  下書きを書かない**ので、これは将来の spec で起きうる漏れを先に塞いだもの。
+- **原因**: 下書きの置き場の既定は `<repoRoot>/data/issue-drafts` (`.git` があるとき。無ければ
+  `~/.bdboard/issue-drafts`)。repoRoot は `src/main.ts` のあるチェックアウトで、global-setup が
+  起動するサーバーもそれを使う。置き場はサーバーが次の 3 つで触る: 本体エラー・手書きの下書きなどの
+  書き込み、起動時の掃除 (保管期限や容量の上限を超えた終端の下書きの削除)、ヘッダーのタブの
+  バッジとデイリーダイジェストの未処理件数 (読むだけ。本物の件数が画面に出るので、どこから
+  回すかで e2e の画面が変わりうる)。
+- **いまの形**: `buildE2eServerEnv` が `BDBOARD_ISSUE_DRAFTS_DIR` を必ず立て (親の env の値は
+  上書き)、global-setup は `issueDraftsDir` に `tmpRoot` 配下 (`<tmpRoot>/issue-drafts`、実行の
+  終わりに消える) を渡す。上の 3 つはすべてそこで閉じる。`e2e-server-env.test.ts` が、`.git` のある
+  一時の checkout で本物の配線 (`wireIssueDraftService` と `wireSelfErrorReporter`) に
+  この env を通し、API の 5xx 側 (`report`) とリフレッシュ失敗側 (`observeRefresh`) の両方に下書きを
+  書かせて、使い捨ての置き場にだけ書かれ、`<repoRoot>/data` が作られないことを固定している
+  (対照として、普通の env では同じ checkout の `data/issue-drafts` に書かれる)。
+  global-setup が `issueDraftsDir` に `tmpRoot` 配下を渡していることは、同じテストがソースを読んで確かめる。
+- **`BDBOARD_SELF_ERROR_DRAFTS=off` にしなかった理由**: 本体エラーの下書きを止めても、起動時の掃除・
+  未処理件数の読み取り・手書きの下書きの受け取り API は本物の置き場を使い続ける。置き場の向け直しは
+  この全部を一度に閉じる。止めずに残すので、本体エラーの配線 (5xx を拾う middleware など) は
+  本番と同じ形で動き、将来の spec が本体エラーの下書きを見たいときもそのまま使える。
+- **どう書く・どう回す**: 不具合報告タブ (下書きの一覧) を見る spec を足すときは、下書きを
+  API (`POST /api/issue-reports/manual-drafts` など) か、使い捨ての置き場に fixture を置いて用意する。
+  `data/issue-drafts` には書かない・読まない。同じ種類の漏れが残る置き場に、チケット添付画像
+  (`BDBOARD_ATTACHMENTS_DIR`、既定は `<repoRoot>/data/attachments`) がある。今の spec は
+  書かないが、アップロードを呼ぶ spec を足すときはこの env も使い捨てへ向けること。

@@ -158,8 +158,8 @@ describe('buildE2eServerEnv', () => {
 
       await writeSelfErrorDrafts(buildE2eServerEnv(inputs({}, { issueDraftsDir })));
 
-      expect(await fs.readdir(issueDraftsDir)).toHaveLength(2);
       expect(await exists(path.join(root, 'data'))).toBe(false);
+      expect(await fs.readdir(issueDraftsDir)).toHaveLength(2);
     });
 
     it.each([
@@ -170,8 +170,8 @@ describe('buildE2eServerEnv', () => {
 
       await writeSelfErrorDrafts(buildE2eServerEnv(inputs({ BDBOARD_ISSUE_DRAFTS_DIR: inherited() }, { issueDraftsDir })));
 
-      expect(await fs.readdir(issueDraftsDir)).toHaveLength(2);
       expect(await exists(path.join(root, 'data'))).toBe(false);
+      expect(await fs.readdir(issueDraftsDir)).toHaveLength(2);
     });
   });
 
