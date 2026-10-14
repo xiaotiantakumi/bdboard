@@ -15,8 +15,8 @@ import {
 // issue-public-build.test.ts の線形テストは buildPublicIssueBody 全体を測る。codeSpan / codeBlock が受け取るのは、
 // 置換して欄の上限 (8000 / 1000 / 80 / 120 コードポイント) で切った後の文字列なので、build の比には入力の長さへの伸び方が
 // 出ない (サイズに依らない遅さは比に現れない)。elide は切る前の全文を受け取るが、build の時間の大半は置換の探索なので、
-// elide の 2 次はその時間に埋もれる。ここでは build の上限にかからない長さ (小の実行でも 10k 文字以上で、head の 8000 を
-// 超える) を直接渡す。
+// elide の 2 次はその時間に埋もれる。ここでは build の上限にかからない長さ (大の実行は 10 万文字以上で、head の 8000 を
+// 大きく超える。小の実行もほぼ 10k 文字以上だが、WIDE_GAP (1/20) の 'one huge run of backticks' だけは 5000 文字) を直接渡す。
 // 形ごとに別のテストにするのは、1 つの形の 2 次を他の形の線形の時間に埋もれさせないため (比は合計で見る)。
 //
 // 入力は敵対的な形: バッククォートの長い連なり・短い連なりの繰り返し・長さが増えていく連なり・閉じないコードフェンス・
@@ -31,6 +31,21 @@ const NO_MARKS: readonly TextMark[] = [];
 // 1 回あたりが 11ms と 40ms に割れて、正しいコードでも比が 7〜42 に散る (PR #897 のレビューの実測。31 回中 1 回は 3 試行とも 31.5 で落ちた)。
 // サンプルを 200ms 以上にして GC を平均に含める (20 回で初回の比が 15.4 以下)。Windows は既定の 160ms より少し長いだけ。
 const ALLOCATING: LinearTimeOptions = { minSampleMs: Math.max(MIN_SAMPLE_MS, 200) };
+
+// bdboard-rjij: 文字列を 1 回なぞる形 (BACKTICK_SHAPES / BLOCK_SHAPES) は、既定の「小 1/10・上限 25」だと CI で落ちた
+// (PR #926 の verify: 'many runs of two backticks' は small=0.1ms big=3.6ms ratio=26.9、'one very long line without a backtick' は
+// small=0.4ms big=9.8ms ratio=25.0、どちらも 3 試行とも)。小は minSampleMs まで繰り返して平均しているので、分母が短いことは原因ではない。
+// 大の 1 文字あたりの時間が小の約 2.7 倍に伸びていて、線形の 10 に対して上限 25 は 2.5 倍の余裕しか無かった (手元の mac では
+// 同じ形で比は 9〜11 で再現しない。同じ CI の run でも、2 秒ほど後の codeBlock の同じ 2 つの形は通っていた。伸びの原因は特定していない)。
+// 純粋な二乗の検出力を落とさずに余裕を広げるため、小を 1/20 にして (線形 20・二乗 400) 上限を 80 にする。線形側の余裕は 80 / 20 = 4 倍
+// (以前は 25 / 10 = 2.5 倍)、二乗側は 400 / 80 = 5 倍 (以前は 100 / 25 = 4 倍)、上限が許す伸び方の指数は log 80 / log 20 = 1.46 (以前は 1.40)。
+// ただし線形の項に二乗の項が混ざる実装 (大の長さで二乗の項が線形の項の q 倍) では、比 (1 + q) / (s (1 + s q)) が上限に届く q が
+// 2 から 3.75 に上がる (二乗の項が以前より 1.9 倍強くないと落ちない。上限だけを 40 に上げた場合は 5)。下のミュータントで上限に対する
+// 倍率の最小が 3.3 から 2.8 に下がったのもこれと整合する。
+// 二乗のミュータントでの確認: codeSpan の先頭に「256 文字ごとに rebuilt = rebuilt + text.slice(i, i + 256) をして charCodeAt(0) で
+// 平坦化する」ループ (文字数の二乗のコピー) を足すと、この設定では 5 つの形が落ちる (比は 223〜609、上限 80 の 2.8〜7.6 倍。
+// 以前の既定では比 82〜198、上限 25 の 3.3〜7.9 倍)。'one huge run of backticks' だけは、入力が短いのでこの刻みの二乗が目立たず、どちらでも通る。
+const WIDE_GAP: LinearTimeOptions = { smallScale: 0.05, maxRatio: 80 };
 
 /** 内容と、その中のバッククォートの連なりの最長 (形の作り方から分かる値で、実装を呼んで出さない)。 */
 interface Content {
@@ -95,11 +110,14 @@ describe('codeSpan: linear time on hostile content', () => {
     ({ name, build }) => {
       expectLinearTime(`issue-public-markdown codeSpan: ${name}`, (n) => {
         const content = build(n);
+        // `repeat` や連結で組んだ入力は連結文字列 (rope) で、最初の走査が平坦化のコピーを負担する。計測に入る前に済ませる
+        // (下の spanLength の startsWith / endsWith も平坦化するので、codeSpan では以前から計測の外で済んでいた。codeBlock と揃えて明示する)。
+        content.text.charCodeAt(0);
         const expected = spanLength(content);
         return () => {
           expect(codeSpan({ text: content.text, marks: NO_MARKS }).text.length).toBe(expected);
         };
-      });
+      }, WIDE_GAP);
     },
     LINEAR_TIME_TEST_TIMEOUT_MS,
   );
@@ -150,11 +168,13 @@ describe('codeBlock: linear time on hostile content', () => {
     ({ name, build }) => {
       expectLinearTime(`issue-public-markdown codeBlock: ${name}`, (n) => {
         const content = build(n);
+        // `repeat` や連結で組んだ入力は連結文字列 (rope) で、最初の走査が平坦化のコピーを負担する。計測に入る前に済ませる。
+        content.text.charCodeAt(0);
         const expected = blockLength(content);
         return () => {
           expect(codeBlock({ text: content.text, marks: NO_MARKS }).text.length).toBe(expected);
         };
-      });
+      }, WIDE_GAP);
     },
     LINEAR_TIME_TEST_TIMEOUT_MS,
   );
