@@ -5,7 +5,7 @@ import path from 'node:path';
  *
  * global-setup.ts から切り出したのは、「このサーバーは本物の gh を起動しない」(bdboard-em45)・「本物の下書きの置き場に
  * 書かない」(bdboard-xpkz) のように、env が満たすべき性質を e2e を回さずに vitest (e2e-server-env.test.ts) で固定するため。
- * 値の意味と理由のコメントは、すべてここにある (global-setup.ts から動かしただけで、値は変えていない)。
+ * 値の意味と理由のコメントは、すべてここにある (切り出した時点では global-setup.ts から動かしただけで、値は変えていない)。
  */
 export interface E2eServerEnvInputs {
   /** 親プロセスの env (通常は process.env)。ここへ下の値を上書きして渡す。 */
@@ -48,13 +48,15 @@ export function buildE2eServerEnv(inputs: E2eServerEnvInputs): NodeJS.ProcessEnv
     // <repoRoot>/data/issue-drafts (src/infrastructure/fs/resolve-issue-drafts-dir.ts。repoRoot は src/main.ts のある checkout で、
     // .git があれば <repoRoot>/data、無ければ ~/.bdboard)。e2e を main checkout から回すと、そこはメンテナの本物の下書きの
     // 置き場で、サーバーが次の 3 つで触る: (1) 本体エラーの下書き (API の 5xx・処理されなかった例外・画面の更新の失敗。
-    // 起動した時点では何も書かないが、spec がそれらを起こした時点で書く)、(2) 起動時の掃除 (保管期限と容量の上限を超えた終端の
-    // 下書きの削除)、(3) ヘッダーのタブのバッジとデイリーダイジェストの未処理件数 (読むだけ)。(3) は本物の件数が画面に出て、
+    // 起動した時点では何も書かないが、spec がそれらを起こした時点で書く。合計容量の上限を超えるときは、古い終端の下書きを
+    // 消して空ける)、(2) 起動時の掃除 (保管期限を超えた終端の下書きの削除)、(3) ヘッダーのタブのバッジとデイリーダイジェストの
+    // 未処理件数 (読むだけ)。(3) は本物の件数が画面に出て、
     // どこから回すかで e2e の画面が変わる。ここを向け直せば、この 3 つと、手書きの下書きの受け取り API など同じ置き場を使う
     // 経路がすべて、実行が終わると global-setup が消す使い捨てディレクトリの中で閉じる。
     // BDBOARD_SELF_ERROR_DRAFTS=off で本体エラーの下書きだけを止める手もあるが、それは (2) (3) と手書きの下書きの経路を
     // 残し、本体エラーの配線 (5xx を拾う middleware など) も本番と違う形にしてしまう。置き場の向け直しだけで、書き込みの
-    // 行き先が使い捨てに閉じるので、止めずに残している。
+    // 行き先が使い捨てに閉じるので、止めずに残している (BDBOARD_SELF_ERROR_DRAFTS は親の env をそのまま引き継ぐ。
+    // 本体エラーの下書きを前提にする spec を足すときは、ここでその値も固定する)。
     // 親の env に BDBOARD_ISSUE_DRAFTS_DIR が入っていても、ここで上書きする。
     BDBOARD_ISSUE_DRAFTS_DIR: inputs.issueDraftsDir,
     // Auth is explicitly disabled (not "set fake creds and log in") so
