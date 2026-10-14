@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EXTERNAL_ISSUE_SNAPSHOT_MAX_COUNT } from '../../domain/external-issue-snapshot-record.js';
-import { createHarness, makeIssue, type Harness } from './external-issue-test-support.js';
+import { createHarness, makeIssue, withBody, type Harness } from './external-issue-test-support.js';
 
 // bdboard-558a: gh のページ上限で一覧が毎回打ち切られると、外れた印 (missingSince) が付かず、上限のための削除の候補が無くなって
 // 写しが 500 を超えて増えた。打ち切られた poll でも、今回の一覧に載っていない写しから (外れたと分かっているもの → 写しの古い順に) 消す。
@@ -120,5 +120,29 @@ describe('snapshot cap: the number of saved snapshots stays within 500 on every 
     expect(h.storage.files.get(42)).toMatchObject({ needsRejudge: true, missingSince: null });
     expect(list.issues.find((entry) => entry.number === 42)?.snapshot.needsRejudge).toBe(true);
     expect(h.storage.removes.slice().sort((a, b) => a - b)).toEqual(numbers(1001, 51));
+  });
+
+  // docs/ISSUE-REPORTING.md 8節の差分表 8 の割り切りを固定する (今の挙動のまま通る。挙動を変えるときに気づくためのテスト)。
+  it('treats an issue whose snapshot was removed for the cap as first seen when it is listed again, and its rejudge mark is lost', async () => {
+    const h = createHarness();
+    h.setIssues([makeIssue(5)], { truncatedByPageLimit: true });
+    await h.service.poll();
+    h.setIssues([withBody(5, 'edited')], { truncatedByPageLimit: true });
+    await h.service.poll();
+    expect(h.storage.files.get(5)?.needsRejudge).toBe(true);
+    h.advance(1_000);
+
+    // 5 は打ち切られた一覧から見えなくなり (外れた印は付かない)、写しが一番古いので上限のために消える。
+    h.setIssues(issues(1001, EXTERNAL_ISSUE_SNAPSHOT_MAX_COUNT), { truncatedByPageLimit: true });
+    await h.service.poll();
+    expect(h.storage.files.has(5)).toBe(false);
+    h.advance(1_000);
+
+    // 5 がまた載る。写しが無いので初めて見た issue と同じ: 現在の内容から作り、印は立たない (消す前の印も残らない)。
+    h.setIssues([withBody(5, 'edited again')], { truncatedByPageLimit: true });
+    const list = await h.service.poll();
+
+    expect(h.storage.files.get(5)).toMatchObject({ body: 'edited again', needsRejudge: false, missingSince: null, snapshotAt: h.nowIso() });
+    expect(list.issues.find((entry) => entry.number === 5)?.snapshot.needsRejudge).toBe(false);
   });
 });

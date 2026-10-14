@@ -12,6 +12,7 @@ import {
   prepareExternalIssue,
   selectSnapshotsToRemove,
   type PreparedExternalIssue,
+  type SnapshotRetentionOptions,
   type StoredExternalIssueSnapshot,
 } from '../../domain/external-issue-snapshot-record.js';
 import { findUnlinkedIssues, linkedIssueNumbers, parseRepoSlug } from '../../domain/github-issue-link.js';
@@ -142,10 +143,7 @@ export function createExternalIssueService(options: ExternalIssueServiceOptions)
    * 一覧に載っていない写しから選ぶ (bdboard-558a。選び方は `selectSnapshotsToRemove`)。使えないファイル (`commit` の `unusable`) は
    * `records` に入らないので、ここでは消えない。消せなくても確認は失敗にしない (写しは書けている。次の確認でまた試す)。
    */
-  async function prune(
-    records: ReadonlyMap<number, StoredExternalIssueSnapshot>,
-    options: { readonly nowMs: number; readonly listingComplete: boolean; readonly listedNumbers: ReadonlySet<number> },
-  ): Promise<void> {
+  async function prune(records: ReadonlyMap<number, StoredExternalIssueSnapshot>, options: SnapshotRetentionOptions): Promise<void> {
     for (const number of selectSnapshotsToRemove([...records.values()], options)) {
       try {
         await storage.remove(number);

@@ -136,7 +136,6 @@ describe('createSnapshotRecord', () => {
   });
 });
 
-
 describe('selectSnapshotsToRemove', () => {
   // onList は「今回の一覧に載っている」印 (テスト側の都合の欄。関数が見るのは number / missingSince / snapshotAt と listedNumbers だけ)。
   interface Rec {
