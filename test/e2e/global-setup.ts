@@ -187,6 +187,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       dbPath,
       scanRoots: [projectDir, secondProjectDir],
       scanRootsConfigPath: path.join(tmpRoot, 'scan-roots-config.json'),
+      // 不具合報告の下書きも使い捨てに置く (bdboard-xpkz)。tmpRoot は teardown で消える。
+      issueDraftsDir: path.join(tmpRoot, 'issue-drafts'),
       binDir,
       claudeStub,
       listFixture,

@@ -100,9 +100,9 @@ describe('poll: a saved snapshot that cannot be used', () => {
     expect(h.storage.unusable.has(5)).toBe(true);
   });
 
-  it('is storage-failed and writes nothing when the unusable numbers cannot be read (a read error is not "no unusable file")', async () => {
+  it('is storage-failed and writes nothing when scanning snapshots fails', async () => {
     const h = createHarness([makeIssue(5)]);
-    h.storage.listUnusable = () => Promise.reject(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+    h.storage.failScan = Object.assign(new Error('permission denied'), { code: 'EACCES' });
 
     const list = await h.service.poll();
 

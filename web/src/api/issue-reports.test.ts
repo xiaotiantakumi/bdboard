@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from './http';
-import { createManualIssueDraft, fetchIssueDraft, patchIssueDraft, uploadIssueDraftImage, ISSUE_MANUAL_DRAFTS_API_PATH } from './issue-reports';
+import {
+  createManualIssueDraft,
+  fetchIssueDraft,
+  fetchIssueDraftImageBytes,
+  patchIssueDraft,
+  uploadIssueDraftImage,
+  ISSUE_MANUAL_DRAFTS_API_PATH,
+} from './issue-reports';
 
 const ID = '1758812345678-a1b2c3d4e5f6a7b8';
 const PATH = `/api/issue-reports/drafts/${ID}`;
@@ -24,6 +31,24 @@ function initOf(fetchMock: ReturnType<typeof vi.fn>): RequestInit {
 describe('issue report draft API client (bdboard-mqoa)', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  // bdboard-8zwi: 再送の前に、付いている画像の中身を取って見比べる。
+  describe('fetchIssueDraftImageBytes', () => {
+    it('GETs the image url as given and returns the body bytes', async () => {
+      const fetchMock = vi.fn(() => Promise.resolve(new Response(new Uint8Array([1, 2, 3]), { status: 200 })));
+      vi.stubGlobal('fetch', fetchMock);
+      const bytes = await fetchIssueDraftImageBytes(`${PATH}/images/1-aaaa.png`);
+      expect(fetchMock).toHaveBeenCalledWith(`${PATH}/images/1-aaaa.png`, undefined);
+      expect(Array.from(new Uint8Array(bytes))).toEqual([1, 2, 3]);
+    });
+
+    it('rejects with an ApiError that keeps the status when the server does not answer 2xx', async () => {
+      vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ error: 'image not found' }, { status: 404 }))));
+      const caught = await fetchIssueDraftImageBytes(`${PATH}/images/9-zzzz.png`).catch((error: unknown) => error);
+      expect(caught).toBeInstanceOf(ApiError);
+      expect(caught).toMatchObject({ status: 404 });
+    });
+  });
+
   describe('uploadIssueDraftImage', () => {
     const image = { fileName: 'image.png', url: '/image.png', byteLength: 3, createdAt: '2026-10-06T00:00:00Z' };
     it('POSTs JSON to the encoded image path with the expected header and body', async () => {
@@ -39,7 +64,7 @@ describe('issue report draft API client (bdboard-mqoa)', () => {
       await expect(uploadIssueDraftImage(ID, { mimeType: 'image/png', data: 'AAA' })).resolves.toEqual({ image });
     });
     it.each([
-      [409, { error: 'image limit reached' }, 409, undefined],
+      [409, { error: 'image limit reached', code: 'image-limit-reached' }, 409, 'image-limit-reached'],
       [409, { error: 'draft is not pending', code: 'draft-not-pending' }, 409, 'draft-not-pending'],
       [507, { error: 'full', code: 'storage-full' }, 507, 'storage-full'],
       [400, { error: 'invalid image' }, 400, undefined],

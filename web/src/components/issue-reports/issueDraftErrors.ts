@@ -21,6 +21,8 @@ export const ISSUE_DRAFT_DISMISS_REASON_MAX_CHARS = 200;
 const CODE_TOO_LONG = 'too-long';
 const CODE_DRAFT_TOO_LARGE = 'draft-too-large';
 const CODE_DRAFT_NOT_PENDING = 'draft-not-pending';
+/** 画像の枚数の上限に達した 409 (bdboard-8zwi。サーバーの issue-report-routes.ts の imageLimitReachedBody と同じ値)。 */
+const CODE_IMAGE_LIMIT_REACHED = 'image-limit-reached';
 export const CODE_MANUAL_RATE_LIMITED = 'manual-rate-limited';
 
 export const DRAFT_NOT_FOUND_HELP = 'この下書きは見つかりませんでした。一覧を読み直してください。';
@@ -144,15 +146,18 @@ export function describeIssueDraftManualError(error: unknown): string {
 
 /**
  * POST drafts/:id/images (画像を 1 枚足す) の失敗。
- * 409 は 2 種類ある: 未処理でない下書き (`code: draft-not-pending`。既存の「未処理ではない」の説明) と、20 枚の上限。
- * サーバーは上限の 409 に `code` を付けない (issue-report-routes.ts) ので、前者でない 409 を上限として扱う。
+ * 409 は 2 種類あり、どちらも `code` で見分ける (issue-report-routes.ts): `draft-not-pending` (未処理でない下書き。既存の「未処理ではない」の説明) と、
+ * `image-limit-reached` (20 枚の上限)。どちらでもない 409 (code の無い古いサーバーなど) は、理由を決めつけずに HTTP のステータスだけ出す
+ * (編集・見送りの 409 は常に「未処理ではない」だが、画像の 409 には当てはまらないので commonMessage へも渡さない)。
  */
 export function describeIssueDraftImageError(error: unknown): string {
   if (error instanceof ApiError && error.status === 403 && error.errorMessage === 'local access only') {
     return IMAGE_LOCAL_ONLY_HELP;
   }
   if (error instanceof ApiError && error.status === 409) {
-    return error.code === CODE_DRAFT_NOT_PENDING ? notPendingMessage(error) : IMAGE_LIMIT_REACHED_HELP;
+    if (error.code === CODE_DRAFT_NOT_PENDING) return notPendingMessage(error);
+    if (error.code === CODE_IMAGE_LIMIT_REACHED) return IMAGE_LIMIT_REACHED_HELP;
+    return `付けられませんでした (HTTP ${error.status})。`;
   }
   const common = commonMessage(error);
   if (common !== null) return common;
