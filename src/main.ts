@@ -16,6 +16,7 @@ import { wireBoardLifecycle } from './bootstrap/wire-board-lifecycle.js';
 import { wireAuthAndTunnel } from './bootstrap/wire-auth-and-tunnel.js';
 import { wireBoardApi } from './bootstrap/wire-board-api.js';
 import { wireAttachments } from './bootstrap/wire-attachments.js';
+import { wireLocalFiles } from './bootstrap/wire-local-files.js';
 import { wireIssueReports } from './bootstrap/wire-issue-reports.js';
 import { wireIssueDraftService } from './bootstrap/wire-issue-draft-service.js';
 import { wireSelfErrorReporter } from './bootstrap/wire-self-error-reporter.js';
@@ -161,6 +162,7 @@ async function main(): Promise<void> {
     },
     platformSupport,
     attachmentsRouter: attachments.attachmentsRouter,
+    localFilesRouter: wireLocalFiles({ cache: infra.cache, fsPort: infra.fsPort, commentReader: bdServices.commentReader }),
     inner: boardApi.inner,
     harnessRouter: harness.harnessRouter,
     scanRootsRouter: misc.scanRootsRouter,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
 import { createTunnelAccessService } from '../../application/tunnel/tunnel-access.js';
-import { mountSecurityMiddleware } from './app-security.js';
+import { mountSecurityMiddleware, withFrameAncestorsNone } from './app-security.js';
 import { TUNNEL_SESSION_COOKIE, TUNNEL_TOKEN_QUERY_PARAM } from './tunnel-session.js';
 
 // Placeholder-shaped on purpose: adjacent USER/PASSWORD fixture constants
@@ -223,6 +223,47 @@ describe('mountSecurityMiddleware', () => {
       expect(res.status).toBe(401);
       expect(res.headers.get('X-Frame-Options')).toBe('DENY');
       expect(res.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'none'");
+    });
+
+    function createSecuredAppWithRouteCsp(csp: string) {
+      const app = new Hono();
+      mountSecurityMiddleware(app, { authMode: { kind: 'unconfigured' } });
+      app.get('/x', (c) => {
+        c.header('Content-Security-Policy', csp);
+        return c.text('ok', 200);
+      });
+      return app;
+    }
+
+    it('keeps a route sandbox CSP and appends frame-ancestors none', async () => {
+      const app = createSecuredAppWithRouteCsp("default-src 'none'; sandbox");
+
+      const res = await app.request('/x', { headers: { Host: 'localhost:8787' } }, LOCAL_ENV);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Security-Policy')).toBe(
+        "default-src 'none'; sandbox; frame-ancestors 'none'",
+      );
+    });
+
+    it('replaces a permissive route frame-ancestors with none', async () => {
+      const app = createSecuredAppWithRouteCsp("default-src 'none'; frame-ancestors *");
+
+      const res = await app.request('/x', { headers: { Host: 'localhost:8787' } }, LOCAL_ENV);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Security-Policy')).toBe(
+        "default-src 'none'; frame-ancestors 'none'",
+      );
+    });
+
+    it('withFrameAncestorsNone drops blank input and any frame-ancestors directive', () => {
+      expect(withFrameAncestorsNone(null)).toBe("frame-ancestors 'none'");
+      expect(withFrameAncestorsNone('  ')).toBe("frame-ancestors 'none'");
+      expect(withFrameAncestorsNone("default-src 'none'; sandbox")).toBe(
+        "default-src 'none'; sandbox; frame-ancestors 'none'",
+      );
+      expect(withFrameAncestorsNone("Frame-Ancestors https://example.com; img-src 'self';")).toBe(
+        "img-src 'self'; frame-ancestors 'none'",
+      );
     });
   });
 

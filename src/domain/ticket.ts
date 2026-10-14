@@ -24,6 +24,10 @@ export interface Ticket {
   readonly parentId?: TicketId;
   readonly description?: string;
   readonly notes?: string;
+  /** bd の design。ローカルファイル参照の抽出元 (bdboard-vgdr)。 */
+  readonly design?: string;
+  /** bd の acceptance_criteria。ローカルファイル参照の抽出元 (bdboard-vgdr)。 */
+  readonly acceptanceCriteria?: string;
   readonly labels?: readonly string[];
   /** `bdboard.session` メタデータ由来の手動セッションリンク。 */
   readonly manualSessionId?: string;

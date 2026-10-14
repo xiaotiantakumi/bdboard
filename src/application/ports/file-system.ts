@@ -7,6 +7,8 @@ export interface DirEntry {
 export interface FileStat {
   readonly mtimeMs: number;
   readonly size: number;
+  /** true only for a regular file (false for directories, FIFOs, sockets, devices). Optional so fakes may omit it. */
+  readonly isFile?: boolean;
 }
 
 export interface FileSystemPort {
@@ -16,6 +18,8 @@ export interface FileSystemPort {
   isDirectory(path: string): Promise<boolean>;
   /** Symlink-resolved real path. If it cannot be resolved, return the input unchanged. */
   realPath(path: string): Promise<string>;
+  /** Symlink-resolved real path, or undefined when it cannot be resolved (never echoes the input). */
+  tryRealPath(path: string): Promise<string | undefined>;
   /** 存在しない/読めない場合は undefined を返す(例外を投げない) */
   stat(path: string): Promise<FileStat | undefined>;
   /** 存在しない/読めない場合は undefined を返す(例外を投げない) */

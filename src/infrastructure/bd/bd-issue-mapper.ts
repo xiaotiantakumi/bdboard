@@ -31,6 +31,8 @@ type OptionalTicketFields = {
     | 'parentId'
     | 'description'
     | 'notes'
+    | 'design'
+    | 'acceptanceCriteria'
     | 'closeReason'
     | 'labels'
     | 'manualSessionId'
@@ -124,6 +126,12 @@ export function mapBdIssueToTicket(raw: BdIssue, projectId: string): Ticket {
   }
   if (raw.notes !== undefined) {
     optionalFields.notes = raw.notes;
+  }
+  if (raw.design !== undefined) {
+    optionalFields.design = raw.design;
+  }
+  if (raw.acceptance_criteria !== undefined) {
+    optionalFields.acceptanceCriteria = raw.acceptance_criteria;
   }
   if (raw.close_reason !== undefined && raw.close_reason !== '') {
     optionalFields.closeReason = raw.close_reason;

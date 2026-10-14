@@ -15,7 +15,7 @@ function fakeFs(dirs: Record<string, readonly DirEntry[]>, contents: Record<stri
   const readRangePaths: string[] = [];
   const fs: FileSystemPort = {
     async readDir(p) { const entries = dirs[p]; if (entries === undefined) throw new Error('ENOENT'); return entries; },
-    async isDirectory(p) { return dirs[p] !== undefined; }, async realPath(p) { return p; },
+    async isDirectory(p) { return dirs[p] !== undefined; }, async realPath(p) { return p; }, async tryRealPath(p) { return p; },
     async stat(p) { return stats[p] ?? (contents[p] === undefined ? undefined : { size: Buffer.byteLength(contents[p]), mtimeMs: 1 }); },
     async readFile(p) { return contents[p]; },
     async readRange(p, start, length) { readRangePaths.push(p); return contents[p]?.slice(start, start + length); },

@@ -16,6 +16,7 @@ import {
   type AttachmentMimeType,
 } from './attachment-validation.js';
 import { parseJsonBody } from './request-body.js';
+import { findCachedTicket } from './ticket-project-lookup.js';
 import { createWriteGuardMiddleware, type WriteGuardDeps } from './write-guard.js';
 
 /**
@@ -78,12 +79,7 @@ function findProjectRootPathForTicket(
   cache: BoardCache,
   ticketId: string,
 ): string | undefined {
-  for (const entry of cache.listProjects()) {
-    if (entry.tickets.some((ticket) => ticket.id === ticketId)) {
-      return entry.project.rootPath;
-    }
-  }
-  return undefined;
+  return findCachedTicket(cache, ticketId)?.rootPath;
 }
 
 /**

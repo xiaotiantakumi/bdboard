@@ -63,4 +63,10 @@ export const BOARD_CHANGED_QUERY_KEY_EXCLUSIONS = {
     'ハーネスKPI (reclaim・確認待ち滞留などの集計) も throughput-stats と同じ理由 (bdboard-ws2w/bdboard-himp) で重く、board.changed では追従させず staleTime 延長 + 統計タブの再読み込みボタンに任せる。',
   'issue-reports':
     '不具合報告の下書き (bdboard-4y8q.3.2) は .beads の外 (下書きのディレクトリ。開発時は data/issue-drafts、npm/npx では ~/.bdboard/issue-drafts) にあり、bd の書き込みからは変化しない。件数と一覧は 60 秒ごとのポーリング (useIssueReportPendingCount・IssueReportsPanel)、編集・見送りの操作の側も invalidate する。',
+  'ticket-local-files':
+    'チケット本文が指すプロジェクト内ファイルの一覧 (bdboard-vgdr)。本文やコメントの変更で候補は変わりうるが、取得のたびにサーバーが bd comments を起こすうえ board.changed は頻発するので追従させない。詳細パネルの開き直しか、既定の staleTime (30秒) 経過後の再マウント・フォーカス時の再取得に任せる。',
+  'ticket-local-file-list':
+    'プロジェクト内フォルダの中身 (bdboard-vgdr)。.beads の外のファイルシステムで、bd の書き込みからは変化しない。既定の staleTime 経過後の再マウント・フォーカス時の再取得に任せる。',
+  'local-file-text':
+    '別ウィンドウのビューアが表示する md/json/テキストの中身 (bdboard-vgdr)。.beads の外のファイルで bd の書き込みからは変化しない。ビューアの再読み込みか、既定の staleTime 経過後のフォーカス時の再取得に任せる。',
 } as const satisfies Readonly<Record<string, string>>;

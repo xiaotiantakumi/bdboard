@@ -70,6 +70,10 @@ function createFakeFs(options: FakeFsOptions): FakeFs {
       return dirPath;
     },
 
+    async tryRealPath(dirPath: string): Promise<string | undefined> {
+      return dirPath;
+    },
+
     async stat(filePath: string): Promise<FileStat | undefined> {
       const fromStats = stats[filePath];
       if (fromStats !== undefined) {

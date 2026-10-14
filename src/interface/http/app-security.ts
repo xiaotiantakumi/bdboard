@@ -31,13 +31,35 @@ export interface SecurityMountDeps {
  * ジャッキング)でトンネル公開等の操作を誘発できてしまうリスクが生まれた。
  * 401 応答を含む全レスポンスに付与する(認証プロンプト自体の偽装も防ぐため、
  * 認証ミドルウェアより前段で next() の前後どちらでも確実に効くよう最初に mount)。
+ * ルートが付けた CSP (raw の sandbox 等) は残し、frame-ancestors だけを 'none' に揃える。
  */
 function securityHeadersMiddleware(): MiddlewareHandler {
   return async (c, next) => {
     await next();
     c.res.headers.set('X-Frame-Options', 'DENY');
-    c.res.headers.set('Content-Security-Policy', "frame-ancestors 'none'");
+    c.res.headers.set(
+      'Content-Security-Policy',
+      withFrameAncestorsNone(c.res.headers.get('Content-Security-Policy')),
+    );
   };
+}
+
+/** ルートが付けた CSP を残したまま frame-ancestors 'none' を必ず効かせる (bdboard-vgdr)。 */
+export function withFrameAncestorsNone(existing: string | null): string {
+  const locked = "frame-ancestors 'none'";
+  if (existing === null || existing.trim() === '') {
+    return locked;
+  }
+  const kept: string[] = [];
+  for (const raw of existing.split(';')) {
+    const part = raw.trim();
+    if (part === '') continue;
+    const spaceAt = part.search(/\s/);
+    const name = (spaceAt === -1 ? part : part.slice(0, spaceAt)).toLowerCase();
+    if (name === 'frame-ancestors') continue;
+    kept.push(part);
+  }
+  return kept.length === 0 ? locked : `${kept.join('; ')}; ${locked}`;
 }
 
 /** セキュリティ関連ミドルウェアを正しい順序で mount する。
