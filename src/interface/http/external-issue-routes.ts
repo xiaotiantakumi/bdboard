@@ -19,14 +19,14 @@ import { createPrivilegedApiGuardMiddleware } from './write-guard.js';
 export const EXTERNAL_ISSUES_PATH = '/api/issue-reports/external';
 export const EXTERNAL_ISSUES_REFRESH_PATH = '/api/issue-reports/external/refresh';
 
-/** メンテナ環境でないときの refresh (404)。`code` は機械が読む固定の値。 */
+/** 無効のとき (メンテナ環境でない、または BDBOARD_EXTERNAL_ISSUES_DISABLED) の refresh (404)。`code` は機械が読む固定の値。 */
 const DISABLED_BODY = {
   error: 'incoming issues are not enabled in this environment',
   code: 'external-issues-disabled',
 } as const;
 
 export interface ExternalIssueRoutesDeps {
-  /** undefined = メンテナ環境ではない (無効)。GET は `enabled: false` を返し、refresh は 404。gh も bd も呼ばない。 */
+  /** undefined = 無効 (メンテナ環境ではない、または BDBOARD_EXTERNAL_ISSUES_DISABLED)。GET は `enabled: false` を返し、refresh は 404。gh も bd も呼ばない。 */
   readonly service: Pick<ExternalIssueService, 'getList' | 'poll'> | undefined;
   /** refresh の間隔を測る時計 (ミリ秒)。既定は単調な `performance.now()`。 */
   readonly now?: () => number;

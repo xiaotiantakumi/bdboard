@@ -39,32 +39,35 @@ export function okListing(
   return { ok: true, issues, pagesFetched: 1, truncatedByPageLimit: false, skippedLines: 0, ...extra };
 }
 
-/** list / save / remove を失敗させられる in-memory の写しの保存先。保存のたびに structuredClone して、ディスクを模す。 */
+/** scan / save / remove を失敗させられる in-memory の写しの保存先。保存のたびに structuredClone して、ディスクを模す。 */
 export interface InMemorySnapshotStorage extends ExternalIssueSnapshotStoragePort {
   readonly files: Map<number, StoredExternalIssueSnapshot>;
   readonly saves: number[];
   readonly removes: number[];
-  failList: Error | undefined;
+  readonly unusable: Set<number>;
+  failScan: Error | undefined;
   failSave: ((snapshot: StoredExternalIssueSnapshot) => Error | undefined) | undefined;
   failRemove: Error | undefined;
   /**
-   * 次の list の入口で止める (release するまで list が戻らない)。entered は list がそこに着いたとき解ける。
+   * 次の scan の入口で止める (release するまで scan が戻らない)。entered は scan がそこに着いたとき解ける。
    * 同時の流れの順序を見るテスト用。
    */
-  gateList(): { readonly release: () => void; readonly entered: Promise<void> };
+  gateScan(): { readonly release: () => void; readonly entered: Promise<void> };
 }
 
 export function createInMemorySnapshotStorage(): InMemorySnapshotStorage {
   const files = new Map<number, StoredExternalIssueSnapshot>();
+  const unusable = new Set<number>();
   let gate: { readonly wait: Promise<void>; readonly enter: () => void } | undefined;
   const storage: InMemorySnapshotStorage = {
     files,
     saves: [],
     removes: [],
-    failList: undefined,
+    unusable,
+    failScan: undefined,
     failSave: undefined,
     failRemove: undefined,
-    gateList() {
+    gateScan() {
       let release: () => void = () => undefined;
       let enter: () => void = () => undefined;
       const wait = new Promise<void>((resolve) => {
@@ -76,15 +79,18 @@ export function createInMemorySnapshotStorage(): InMemorySnapshotStorage {
       gate = { wait, enter };
       return { release, entered };
     },
-    async list() {
+    async scan() {
       if (gate !== undefined) {
         const pending = gate;
         gate = undefined;
         pending.enter();
         await pending.wait;
       }
-      if (storage.failList) throw storage.failList;
-      return [...files.values()].sort((a, b) => a.number - b.number).map((record) => structuredClone(record));
+      if (storage.failScan) throw storage.failScan;
+      return {
+        snapshots: [...files.values()].sort((a, b) => a.number - b.number).map((record) => structuredClone(record)),
+        unusable: [...unusable].sort((a, b) => a - b),
+      };
     },
     get(number) {
       const record = files.get(number);
@@ -94,12 +100,14 @@ export function createInMemorySnapshotStorage(): InMemorySnapshotStorage {
       const failure = storage.failSave?.(snapshot);
       if (failure) return Promise.reject(failure);
       files.set(snapshot.number, structuredClone(snapshot));
+      unusable.delete(snapshot.number);
       storage.saves.push(snapshot.number);
       return Promise.resolve();
     },
     remove(number) {
       if (storage.failRemove) return Promise.reject(storage.failRemove);
       files.delete(number);
+      unusable.delete(number);
       storage.removes.push(number);
       return Promise.resolve();
     },

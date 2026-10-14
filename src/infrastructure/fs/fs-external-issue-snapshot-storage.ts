@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { ExternalIssueSnapshotStoragePort } from '../../application/ports/external-issue-snapshot-storage.js';
+import type { ExternalIssueSnapshotScan, ExternalIssueSnapshotStoragePort } from '../../application/ports/external-issue-snapshot-storage.js';
 import { isExternalIssueNumber, type StoredExternalIssueSnapshot } from '../../domain/external-issue-snapshot-record.js';
 import { externalIssueSnapshotSchema } from './external-issue-snapshot-schema.js';
 
@@ -83,28 +83,33 @@ export function createFsExternalIssueSnapshotStorage(
     return result;
   }
 
+  /** 番号の昇順に全ファイルを読み、読めた写しと、ファイルはあるが使えない番号に分ける (ポートの `scan`)。 */
+  async function scan(): Promise<ExternalIssueSnapshotScan> {
+    let names: string[];
+    try {
+      names = await fs.readdir(resolvedBaseDir);
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return { snapshots: [], unusable: [] };
+      throw error;
+    }
+    const numbers = names
+      .map((name) => SNAPSHOT_FILE_PATTERN.exec(name)?.[1])
+      .filter((text): text is string => text !== undefined)
+      .map(Number)
+      .sort((a, b) => a - b);
+    const snapshots: StoredExternalIssueSnapshot[] = [];
+    const unusable: number[] = [];
+    // 最大でも数百件の小さなファイルなので、1 件ずつ読む (同時に開くファイルの数を抑える)。
+    for (const number of numbers) {
+      const result = await readAndReport(number);
+      if (result.kind === 'ok') snapshots.push(result.snapshot);
+      else if (result.kind === 'unusable') unusable.push(number);
+    }
+    return { snapshots, unusable };
+  }
+
   return {
-    async list() {
-      let names: string[];
-      try {
-        names = await fs.readdir(resolvedBaseDir);
-      } catch (error) {
-        if (errorCode(error) === 'ENOENT') return [];
-        throw error;
-      }
-      const numbers = names
-        .map((name) => SNAPSHOT_FILE_PATTERN.exec(name)?.[1])
-        .filter((text): text is string => text !== undefined)
-        .map(Number)
-        .sort((a, b) => a - b);
-      const snapshots: StoredExternalIssueSnapshot[] = [];
-      // 最大でも数百件の小さなファイルなので、1 件ずつ読む (同時に開くファイルの数を抑える)。
-      for (const number of numbers) {
-        const result = await readAndReport(number);
-        if (result.kind === 'ok') snapshots.push(result.snapshot);
-      }
-      return snapshots;
-    },
+    scan,
 
     async get(number) {
       const result = await readAndReport(number);

@@ -12,6 +12,7 @@ import {
   prepareExternalIssue,
   selectSnapshotsToRemove,
   type PreparedExternalIssue,
+  type SnapshotRetentionOptions,
   type StoredExternalIssueSnapshot,
 } from '../../domain/external-issue-snapshot-record.js';
 import { findUnlinkedIssues, linkedIssueNumbers, parseRepoSlug } from '../../domain/github-issue-link.js';
@@ -92,6 +93,7 @@ export function createExternalIssueService(options: ExternalIssueServiceOptions)
   async function syncListed(
     listed: readonly { readonly issue: ExternalIssue; readonly prepared: PreparedExternalIssue }[],
     stored: ReadonlyMap<number, StoredExternalIssueSnapshot>,
+    unusable: ReadonlySet<number>,
     nowIso: string,
   ): Promise<{ readonly entries: ExternalIssueEntry[]; readonly records: Map<number, StoredExternalIssueSnapshot> }> {
     const entries: ExternalIssueEntry[] = [];
@@ -102,6 +104,9 @@ export function createExternalIssueService(options: ExternalIssueServiceOptions)
       if (existing === undefined) {
         // 最初に見た時点の内容を、判定時点の写しの初期値として残す。
         record = createSnapshotRecord(prepared, nowIso);
+        // 使えない写し (壊れた・旧形式) を作り直すと判定時点の写しを失う。黙って印を戻さず再判定を立てる。
+        // 初めて見た issue (ファイルが無い) は立てない (bdboard-g2ti)。
+        if (unusable.has(issue.number)) record = { ...record, needsRejudge: true };
         await storage.save(record);
       } else {
         // 比べる相手は取り直すまで最初の写し。印は一度立てたら下ろさない。書くのは変わったときだけ (毎回は書かない)。
@@ -133,9 +138,13 @@ export function createExternalIssueService(options: ExternalIssueServiceOptions)
     }
   }
 
-  /** 保持期限と上限を超えた写しを消す。消せなくても確認は失敗にしない (写しは書けている。次の確認でまた試す)。 */
-  async function prune(records: ReadonlyMap<number, StoredExternalIssueSnapshot>, nowMs: number, listingComplete: boolean): Promise<void> {
-    for (const number of selectSnapshotsToRemove([...records.values()], { nowMs, listingComplete })) {
+  /**
+   * 保持期限と上限を超えた写しを消す。今回の一覧 (`listedNumbers`) に載る写しは消さない。上限のための削除は、打ち切られた poll でも
+   * 一覧に載っていない写しから選ぶ (bdboard-558a。選び方は `selectSnapshotsToRemove`)。使えないファイル (`commit` の `unusable`) は
+   * `records` に入らないので、ここでは消えない。消せなくても確認は失敗にしない (写しは書けている。次の確認でまた試す)。
+   */
+  async function prune(records: ReadonlyMap<number, StoredExternalIssueSnapshot>, options: SnapshotRetentionOptions): Promise<void> {
+    for (const number of selectSnapshotsToRemove([...records.values()], options)) {
       try {
         await storage.remove(number);
       } catch (error) {
@@ -152,8 +161,11 @@ export function createExternalIssueService(options: ExternalIssueServiceOptions)
     const nowDate = now();
     const nowIso = nowDate.toISOString();
     let stored: readonly StoredExternalIssueSnapshot[];
+    let unusable: ReadonlySet<number>;
     try {
-      stored = await storage.list();
+      const scan = await storage.scan();
+      stored = scan.snapshots;
+      unusable = new Set(scan.unusable);
     } catch (error) {
       return failWith('storage-failed', storageDetail('could not read the saved snapshots', error));
     }
@@ -161,15 +173,16 @@ export function createExternalIssueService(options: ExternalIssueServiceOptions)
     const listed = open.map((issue) => ({ issue, prepared: prepareExternalIssue(issue) }));
     let entries: ExternalIssueEntry[];
     let records: Map<number, StoredExternalIssueSnapshot>;
+    const listedNumbers = new Set(open.map((issue) => issue.number));
     try {
-      ({ entries, records } = await syncListed(listed, new Map(stored.map((record) => [record.number, record])), nowIso));
+      ({ entries, records } = await syncListed(listed, new Map(stored.map((record) => [record.number, record])), unusable, nowIso));
       // 一覧が最後まで読めていないときは、載っていない issue がまだ open かもしれないので、外れた印は付けない。
-      if (!truncated) await markMissing(records, new Set(open.map((issue) => issue.number)), nowIso);
+      if (!truncated) await markMissing(records, listedNumbers, nowIso);
     } catch (error) {
       // 1 件でも写しを残せなかったら、一覧は前回のまま (一覧に載るものは必ず写しがある、を崩さない)。
       return failWith('storage-failed', storageDetail('could not save a snapshot', error));
     }
-    await prune(records, nowDate.getTime(), !truncated);
+    await prune(records, { nowMs: nowDate.getTime(), listingComplete: !truncated, listedNumbers });
     latest = { state: 'ok', fetchedAt: nowIso, issues: entries, error: null, truncated, skippedLines };
     return latest;
   }

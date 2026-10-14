@@ -29,6 +29,11 @@ vi.mock('../api/issue-reports', () => ({
   fetchIssueReportPendingCount: vi.fn(),
 }));
 
+// bdboard-4y8q.9.5: 件数は届いた issue も足すので、その取得も差し替える (差し替えないと本物の fetch が走って読み込み中のままになる)。
+vi.mock('../api/issue-reports-external', () => ({
+  fetchExternalIssues: vi.fn(),
+}));
+
 vi.mock('../bdCommands', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../bdCommands')>();
   return { ...actual, copyTextToClipboard: vi.fn() };
@@ -41,7 +46,9 @@ import {
   fetchProjects,
 } from '../api';
 import { fetchIssueReportPendingCount } from '../api/issue-reports';
+import { fetchExternalIssues, type ExternalIssueListDto } from '../api/issue-reports-external';
 import { copyTextToClipboard } from '../bdCommands';
+import { makeExternalIssue, makeExternalList } from '../test/externalIssueFixtures';
 
 const fetchActivityMock = vi.mocked(fetchActivity);
 const fetchBoardMock = vi.mocked(fetchBoard);
@@ -49,6 +56,15 @@ const fetchPendingDecisionsMock = vi.mocked(fetchPendingDecisions);
 const fetchProjectsMock = vi.mocked(fetchProjects);
 const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
 const fetchIssueReportPendingCountMock = vi.mocked(fetchIssueReportPendingCount);
+const fetchExternalIssuesMock = vi.mocked(fetchExternalIssues);
+
+/** メンテナ環境でないとき (届いた issue は数に入らない)。 */
+const EXTERNAL_DISABLED: ExternalIssueListDto = makeExternalList({
+  enabled: false,
+  state: 'idle',
+  fetchedAt: null,
+  issues: [],
+});
 
 const FIXED_NOW = new Date('2026-08-15T09:30:00+09:00');
 
@@ -206,7 +222,9 @@ function mockAllQueries(options?: {
   pendingReject?: Error;
   projectsReject?: Error;
   issueReportPendingReject?: Error;
+  externalList?: ExternalIssueListDto;
 }) {
+  fetchExternalIssuesMock.mockResolvedValue(options?.externalList ?? EXTERNAL_DISABLED);
   if (options?.issueReportPendingReject !== undefined) {
     fetchIssueReportPendingCountMock.mockRejectedValue(options.issueReportPendingReject);
   } else {
@@ -280,6 +298,7 @@ describe('DailyDigest', () => {
     fetchPendingDecisionsMock.mockReset();
     fetchProjectsMock.mockReset();
     fetchIssueReportPendingCountMock.mockReset();
+    fetchExternalIssuesMock.mockReset();
     copyTextToClipboardMock.mockReset();
     copyTextToClipboardMock.mockResolvedValue(undefined);
   });
@@ -442,5 +461,27 @@ describe('DailyDigest', () => {
     // 件数の問い合わせは 1 回だけ再試行する (useIssueReportPendingCount の retry: 1。既定の待ちは 1 秒)。
     const preview = await screen.findByText(/## 決定待ち \(1件\)/, undefined, { timeout: 5000 });
     expect(preview.closest('pre')?.textContent).toContain('## 不具合報告\n- 未処理の件数を読み込めませんでした');
+  });
+
+  it('adds the incoming issues to the count of pending drafts (bdboard-4y8q.9.5)', async () => {
+    mockAllQueries({
+      externalList: makeExternalList({
+        issues: [makeExternalIssue({ number: 1 }), makeExternalIssue({ number: 2 }), makeExternalIssue({ number: 3 })],
+      }),
+    });
+    renderDailyDigest();
+
+    const preview = await screen.findByText(/## 決定待ち \(1件\)/);
+    // 下書き 2 件 + 届いた issue 3 件。
+    expect(preview.closest('pre')?.textContent).toContain('## 不具合報告\n- 未処理 5件');
+  });
+
+  it('keeps the draft count when the incoming issues cannot be read (bdboard-4y8q.9.5)', async () => {
+    mockAllQueries();
+    fetchExternalIssuesMock.mockRejectedValue(new Error('external failed'));
+    renderDailyDigest();
+
+    const preview = await screen.findByText(/## 決定待ち \(1件\)/, undefined, { timeout: 5000 });
+    expect(preview.closest('pre')?.textContent).toContain('## 不具合報告\n- 未処理 2件');
   });
 });

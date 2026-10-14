@@ -215,6 +215,7 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_UPDATE_CHECK_REPO` | 新バージョンを確認する GitHub リポジトリ(`owner/repo`) | `xiaotiantakumi/bdboard` |
 | `BDBOARD_GH_PATH` | GitHub CLI (`gh`) のパス/名前。PR 状態取得と worktree 作成、メンテナ環境の「届いた issue」の確認(`gh api --method GET`。bdboard-4y8q.9.4)に使う | `gh` |
 | `BDBOARD_EXTERNAL_ISSUES_INTERVAL_MS` | メンテナ環境(`.beads` のある checkout)だけで、公開リポジトリに届いた issue を定期的に確かめる間隔(ミリ秒。bdboard-4y8q.9.4)。起動の 60 秒後に最初の確認、以後この間隔。300000(5 分)未満は 300000 に切り上げ、上限は 24 時間。数値でない値は既定。gh の rate limit と失敗(`rate-limited` / `failed`)のときは間隔を倍々に延ばし、延ばすのは 1 時間まで(間隔がそれより長いときは延ばさない)にする。この機能の gh の起動は、定期・手動 refresh・ページ送りを合わせて 1 時間に 12 回までに抑える(プロセスごとの数え方で、再起動すると数え直す。超えた確認は失敗として出る。[docs/ISSUE-REPORTING.md](docs/ISSUE-REPORTING.md) 8節)。メンテナ環境以外では何も動かない | `900000`(15 分) |
+| `BDBOARD_EXTERNAL_ISSUES_DISABLED` | `1` または `true`(大小無視)で、メンテナ環境(`.beads` のある checkout)でも「届いた issue」の確認を作らない(timer・写しの置き場・gh・bd のどれも動かない。bdboard-em45)。メインチェックアウトから回した e2e のサーバーが本物の gh を呼ばないよう、e2e の global-setup が立てる。通常は設定しない | `false` |
 | `BDBOARD_AI_QUOTA_DISABLED` | `1` または `true`(大小無視)で AI クォータウィジェットを無効化 | `false` |
 | `BDBOARD_AI_QUOTA_PATH` | AI クォータ取得コマンドのパス/名前 | `ai-quota` |
 | `BDBOARD_AI_QUOTA_TIMEOUT_MS` | 上記コマンドのタイムアウト(ミリ秒) | `70000`(70秒。`ai-quota all` の agy/Codex probe を順次待つ) |

@@ -5,6 +5,7 @@
  * 同じエラーが更新のたびに出続けても報告は 1 時間に 1 回 (間引きは self-error-throttle.ts)。決定的な種類 (REFRESH_ERROR_IMMEDIATE_KINDS)
  * 以外は、一時的なことがあるので 3 回続けて見えたら初めて報告する (bdboard-f2ob。以前は lock-contention と timeout だけだった)。
  * 3 回は、同じ文 (キー) の連続か、同じ kind の連続のどちらか早いほう。後者は、文が更新ごとにずれて寄らない失敗のため。
+ * 報告の保存に失敗したら `release(report)` で返す (bdboard-4y8q.6.10): キーを throttle に忘れさせ、kind の連続の回 (ちょうど 3 回目か、その借りを返す回) に出した報告なら次にその kind が見えた結果を再び due にする。
  * 配線 (下書きサービスの呼び出し) は 4y8q.6.3。
  */
 import { normalizeErrorText } from './issue-draft.js';
@@ -68,6 +69,25 @@ export interface RefreshErrorTrackerOptions {
 export interface RefreshErrorTracker {
   /** 1 回のリフレッシュ結果ごとに呼ぶ。いま報告すべきエラーを `errors` の順に返す。 */
   observe(result: RefreshErrorInput, projects: readonly RefreshErrorProject[], now: Date): readonly SelfErrorReport[];
+  /**
+   * `observe` が返した報告の保存に失敗したときに呼ぶ (bdboard-4y8q.6.10)。聞いたキーを throttle に忘れさせ、次の報告がもう一度保存に届くようにする。
+   * 報告が「同じ kind の連続がちょうど 3 回になった回」(か、その借りを返す回) に出したものなら、キーを忘れるだけでは足りない (文が更新ごとにずれたり、
+   * 別の文に変わったりすると、同じキーは二度と due にならず、連続が続く間は下書きが 1 件もできない。その回の文が同じキーの 3 回目でもあったときも同じ)。
+   * そのときは、連続がまだ閾値のままなら、次にその kind が見えた結果を再び due にする。連続が数え直しになっていた (成功した更新を挟んだ) ときは、再び due にしない。この tracker が返していない報告・もう戻した報告は何もしない。
+   */
+  release(report: SelfErrorReport): void;
+}
+
+/** `observe` が返した報告が、どのキーを throttle に聞いて、何で due になったか。報告の形 (`SelfErrorReport`) は変えず、WeakMap で引く。 */
+interface IssuedReport {
+  readonly key: string;
+  readonly projectId: string;
+  readonly kind: string;
+  /**
+   * kind の連続の回 (ちょうど閾値に届いた結果か、借りを返す結果) に出した (決定的な種類を除く)。同じキーの連続でも due だったときも含む:
+   * その回は連続に 1 回きりなので、保存に失敗したら、同じ文がもう出なくても連続が続く間に再び届くようにする。
+   */
+  readonly viaRun: boolean;
 }
 
 /**
@@ -91,6 +111,18 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
   const active = new Map<string, Map<string, number>>();
   // プロジェクト → kind → その kind の失敗が続けて見えた結果の数 (bdboard-f2ob)。キーと違い、文が更新ごとにずれても途切れない。
   const runs = new Map<string, Map<string, number>>();
+  // プロジェクト → 「次にその kind が見えた結果で、再び due にする」kind (bdboard-4y8q.6.10)。kind の連続の回に出した報告の保存が失敗したときに足し、
+  // その kind の報告を出す・連続が数え直しになる・プロジェクトが消える、のどれかで消す。
+  const owed = new Map<string, Set<string>>();
+  const issued = new WeakMap<SelfErrorReport, IssuedReport>();
+
+  /** `owed` から kind を消し、空になったプロジェクトの Set も消す。 */
+  function settle(projectId: string, kind: string): void {
+    const kinds = owed.get(projectId);
+    if (kinds === undefined) return;
+    kinds.delete(kind);
+    if (kinds.size === 0) owed.delete(projectId);
+  }
 
   /** 見えた回数を 1 増やして返す (閾値で頭打ち)。 */
   function see(projectId: string, key: string): number {
@@ -125,7 +157,7 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
       let mask: ((text: string) => string) | undefined;
       // removed と、一覧に無くなったプロジェクト (一度もキャッシュされないまま探索から消えたものは removed に出ない) の状態を捨てる。
       // throttle の記録 (1 時間に 1 回) は消さない: 消えたり出たりするエラーが、そのたびに報告されないようにするため。
-      for (const state of [active, runs]) {
+      for (const state of [active, runs, owed]) {
         for (const id of result.removed) state.delete(id);
         for (const id of [...state.keys()]) if (!projectById.has(id)) state.delete(id);
       }
@@ -152,8 +184,9 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
         const streak = see(project.id, key);
         const reached = runReachedByProject.get(project.id) ?? new Map<string, boolean>();
         runReachedByProject.set(project.id, reached);
-        if (!reached.has(error.kind)) reached.set(error.kind, advanceRun(project.id, error.kind));
-        // 即時の種類は 1 回目から。ほかは、同じキーが 3 回続いた (以後 1 時間に 1 回) か、同じ kind の失敗が 3 回続いたちょうどその回。
+        // 保存に失敗した報告の借り (owed) があれば、連続が閾値のままでも「届いた回」として扱う (release)。advanceRun は借りの有無にかかわらず進める。
+        if (!reached.has(error.kind)) reached.set(error.kind, advanceRun(project.id, error.kind) || owed.get(project.id)?.has(error.kind) === true);
+        // 即時の種類は 1 回目から。ほかは、同じキーが 3 回続いた (以後 1 時間に 1 回) か、同じ kind の失敗が 3 回続いたちょうどその回 (か、その回の保存の失敗の借り)。
         // 後者は、文が更新ごとにずれて normalizeErrorText でも寄らない失敗 (Go の panic の pc=0x…、Dolt の base32 のハッシュ) を、続く間に 1 回は報告するため。
         const due =
           REFRESH_ERROR_IMMEDIATE_KINDS.includes(error.kind) ||
@@ -162,11 +195,20 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
         // 届かない間は throttle に聞かない (聞くと報告済みになり、3 回目の報告が間引かれる)。
         if (!due || reportedKeys.has(key) || !throttle.shouldReport(key, now)) continue;
         reportedKeys.add(key);
-        reports.push({
+        const report: SelfErrorReport = {
           source: `bd-refresh:${error.kind}`,
           errorText,
           project: { name: project.name, path: project.rootPath },
+        };
+        issued.set(report, {
+          key,
+          projectId: project.id,
+          kind: error.kind,
+          viaRun: !REFRESH_ERROR_IMMEDIATE_KINDS.includes(error.kind) && reached.get(error.kind) === true,
         });
+        // この kind の報告を出したので、借りは返した (この保存が失敗すれば release がもう一度足す)。
+        settle(project.id, error.kind);
+        reports.push(report);
       }
 
       // 解消: refreshed に入っているのに errors に無いキー・kind だけ、「続けて見えた回数」を 0 に戻す (throttle の記録は残す)。
@@ -176,6 +218,8 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
         const reachedKinds = runReachedByProject.get(id);
         for (const kind of [...(kinds?.keys() ?? [])]) if (reachedKinds?.has(kind) !== true) kinds?.delete(kind);
         if (kinds?.size === 0) runs.delete(id);
+        // 連続が数え直しになった kind の借りは消す (成功した更新のあとの 2 回で、前の連続の保存失敗を理由に報告しない)。
+        for (const kind of [...(owed.get(id) ?? [])]) if (runs.get(id)?.has(kind) !== true) settle(id, kind);
         const keys = active.get(id);
         if (keys === undefined) continue;
         const current = seenByProject.get(id);
@@ -186,6 +230,19 @@ export function createRefreshErrorTracker(options: RefreshErrorTrackerOptions = 
         if (keys.size === 0) active.delete(id);
       }
       return reports;
+    },
+    release(report) {
+      const meta = issued.get(report);
+      if (meta === undefined) return;
+      issued.delete(report);
+      // 借りを先に足す (throttle の forget が throw しても、借りは残す)。連続がまだ閾値のままのときだけ:
+      // 成功した更新を挟んで数え直しになっていたら、前の連続の失敗を理由に再び報告しない。
+      if (meta.viaRun && runs.get(meta.projectId)?.get(meta.kind) === REFRESH_ERROR_TRANSIENT_THRESHOLD) {
+        const kinds = owed.get(meta.projectId) ?? new Set<string>();
+        kinds.add(meta.kind);
+        owed.set(meta.projectId, kinds);
+      }
+      throttle.forget(meta.key);
     },
   };
 }
