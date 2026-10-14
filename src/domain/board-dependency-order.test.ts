@@ -123,6 +123,53 @@ describe('lane dependency order', () => {
     expect(board.cards).toHaveLength(tickets.length);
   });
 
+  it('keeps a high-priority cycle above a lower-priority unrelated card', () => {
+    const board = humanBoard([
+      makeTicket({
+        id: 'bdboard-p',
+        priority: 0,
+        updatedAt: new Date('2026-05-03T00:00:00.000Z'),
+        dependencies: [blocksEdge('bdboard-p', 'bdboard-q')],
+      }),
+      makeTicket({
+        id: 'bdboard-q',
+        priority: 0,
+        updatedAt: new Date('2026-05-02T00:00:00.000Z'),
+        dependencies: [blocksEdge('bdboard-q', 'bdboard-p')],
+      }),
+      makeTicket({ id: 'bdboard-x', priority: 4, updatedAt: new Date('2026-05-04T00:00:00.000Z') }),
+    ]);
+
+    expect(awaitingIds(board)).toEqual(['bdboard-p', 'bdboard-q', 'bdboard-x']);
+  });
+
+  it('never lifts a card downstream of a cycle above the cycle', () => {
+    // compareCards order is [c, a, b, x]: c is P0, a and b inherit P0 from c, a is newer than b.
+    const board = humanBoard([
+      makeTicket({
+        id: 'bdboard-c',
+        priority: 0,
+        updatedAt: new Date('2026-05-01T00:00:00.000Z'),
+        dependencies: [blocksEdge('bdboard-c', 'bdboard-a')],
+      }),
+      makeTicket({
+        id: 'bdboard-a',
+        priority: 1,
+        updatedAt: new Date('2026-05-03T00:00:00.000Z'),
+        dependencies: [blocksEdge('bdboard-a', 'bdboard-b')],
+      }),
+      makeTicket({
+        id: 'bdboard-b',
+        priority: 1,
+        updatedAt: new Date('2026-05-02T00:00:00.000Z'),
+        dependencies: [blocksEdge('bdboard-b', 'bdboard-a')],
+      }),
+      makeTicket({ id: 'bdboard-x', priority: 1, updatedAt: new Date('2026-05-04T00:00:00.000Z') }),
+    ]);
+
+    expect(awaitingIds(board)).toEqual(['bdboard-a', 'bdboard-b', 'bdboard-c', 'bdboard-x']);
+  });
+
   it('keeps in-lane blocker order after mergeBoards', () => {
     // B and A both unblock one open ticket and B is newer, so compareCards puts B first.
     // A blocks B and B blocks F, so the merged lane is A, B, F.

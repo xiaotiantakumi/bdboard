@@ -1,4 +1,5 @@
 import type { BoardCard } from './types.js';
+import { computeStronglyConnectedComponents } from '../graph-scc.js';
 import type { TicketId } from '../ticket-id.js';
 
 /**
@@ -36,34 +37,51 @@ export function orderByLaneDependencies(sorted: readonly BoardCard[]): BoardCard
 
   if (edgeCount === 0) return [...sorted];
 
-  const ready = new IndexMinHeap();
+  // 循環 (bd dep add --no-cycle-check で作れる) は強連結成分ごとに 1 つのまとまりとして扱い、
+  // まとまりの中は元の順、まとまり同士は「先頭カードの元の位置」が小さい順に出す。
+  // こうすると循環の下流にいるカードが循環より上に来ることも、循環だけが優先度に関係なく
+  // レーンの底へ沈むことも無い (bdboard-0rqc の Opus レビュー指摘)。
+  const { sccMembers, sccOf } = computeStronglyConnectedComponents(
+    sorted.map((_, index) => String(index)),
+    (id) => outgoing[Number(id)].map(String),
+  );
+  const groupCount = sccMembers.length;
+  const groupOf = (index: number): number => sccOf.get(String(index)) ?? -1;
+  const members: number[][] = sccMembers.map((group) =>
+    group.map(Number).sort((left, right) => left - right),
+  );
+  const groupByLeader = new Map<number, number>();
+  members.forEach((group, groupIndex) => groupByLeader.set(group[0], groupIndex));
+
+  const groupOutgoing: number[][] = Array.from({ length: groupCount }, () => []);
+  const groupIndegree = Array.from({ length: groupCount }, () => 0);
+  const seenGroupEdges = new Set<string>();
   for (let index = 0; index < count; index += 1) {
-    if (indegree[index] === 0) ready.push(index);
+    const from = groupOf(index);
+    for (const next of outgoing[index]) {
+      const to = groupOf(next);
+      if (to === from) continue;
+      const key = `${from}:${to}`;
+      if (seenGroupEdges.has(key)) continue;
+      seenGroupEdges.add(key);
+      groupOutgoing[from].push(to);
+      groupIndegree[to] += 1;
+    }
   }
 
-  const emitted = Array.from({ length: count }, () => false);
+  const ready = new IndexMinHeap();
+  members.forEach((group, groupIndex) => {
+    if (groupIndegree[groupIndex] === 0) ready.push(group[0]);
+  });
+
   const ordered: BoardCard[] = [];
-  let scan = 0;
-
-  const take = (index: number): void => {
-    if (emitted[index]) return;
-    emitted[index] = true;
-    ordered.push(sorted[index]);
-    for (const next of outgoing[index]) {
-      indegree[next] -= 1;
-      if (indegree[next] === 0 && !emitted[next]) ready.push(next);
+  for (let leader = ready.pop(); leader !== undefined; leader = ready.pop()) {
+    const groupIndex = groupByLeader.get(leader) ?? -1;
+    for (const index of members[groupIndex]) ordered.push(sorted[index]);
+    for (const next of groupOutgoing[groupIndex]) {
+      groupIndegree[next] -= 1;
+      if (groupIndegree[next] === 0) ready.push(members[next][0]);
     }
-  };
-
-  while (ordered.length < count) {
-    const next = ready.pop();
-    if (next !== undefined) {
-      take(next);
-      continue;
-    }
-    while (scan < count && emitted[scan]) scan += 1;
-    if (scan >= count) break;
-    take(scan);
   }
 
   return ordered;
@@ -73,7 +91,7 @@ function cardKey(projectId: string, ticketId: TicketId): string {
   return `${projectId} ${ticketId}`;
 }
 
-/** 元インデックスをキーにした二分最小ヒープ。 */
+/** 元インデックスをキーにした二分最小ヒープ (まとまりは先頭カードの元インデックスで積む)。 */
 class IndexMinHeap {
   private readonly data: number[] = [];
 
