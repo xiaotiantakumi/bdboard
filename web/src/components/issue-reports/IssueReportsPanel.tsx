@@ -38,6 +38,9 @@ export function IssueReportsPanel({ reportProject, hostname = window.location.ho
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 右ペインに「新しく報告」の書く画面を出している間は true (詳細の代わりに出す)。
   const [composing, setComposing] = useState(false);
+  // 「新しく報告」を押して書く画面を作り直した回数 (form の key)。画像が付かなかった結果の画面を出している間に押されたときだけ増やす (bdboard-8zwi)。
+  const [composeRound, setComposeRound] = useState(0);
+  const [composeResultShown, setComposeResultShown] = useState(false);
   // 「届いた issue」(メンテナ環境だけ。bdboard-4y8q.9.5) を一覧の場所に出している間は true。
   const [showExternal, setShowExternal] = useState(false);
   const externalList = useExternalIssues().data;
@@ -74,6 +77,8 @@ export function IssueReportsPanel({ reportProject, hostname = window.location.ho
               onClick={() => {
                 setSelectedId(null);
                 setComposing(true);
+                // 結果の画面を出している間は新しい書く画面にする (押しても何も変わらない、をなくす)。書きかけの画面は作り直さず、入力を残す。
+                if (composeResultShown) setComposeRound((round) => round + 1);
                 setShowExternal(false);
               }}
             >
@@ -142,6 +147,8 @@ export function IssueReportsPanel({ reportProject, hostname = window.location.ho
       <div className="issue-reports-detail-pane">
         {composing ? (
           <IssueDraftManualForm
+            key={composeRound}
+            onResultShownChange={setComposeResultShown}
             project={reportProject}
             localAccess={localAccess}
             onCancel={() => setComposing(false)}
