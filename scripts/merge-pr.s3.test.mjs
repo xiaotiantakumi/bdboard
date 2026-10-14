@@ -180,6 +180,8 @@ describe('merge-pr S3 pure helpers (bdboard-ulxa.3)', () => {
       'scripts/merge-pr.mjs',
       'scripts/check-drift/**',
       'scripts/check-drift.mjs',
+      'scripts/check-commit-parse/**', // bdboard-07q8: merge-pr/pr-title.mjs が PR タイトルの検査に動的 import する
+      'scripts/check-commit-parse.mjs',
       'scripts/process-identity.mjs',
       'scripts/process-tree.mjs',
       'scripts/verify-slot.mjs',
@@ -189,7 +191,7 @@ describe('merge-pr S3 pure helpers (bdboard-ulxa.3)', () => {
       'scripts/worktree-lock.mjs', // bdboard-wea0.2: merge-pr/worktree-hold.mjs が import する
       'scripts/worktree-lock-owner.mjs',
     ]);
-    for (const file of ['scripts/merge-pr/finish.mjs', 'scripts/merge-pr.mjs', 'scripts/check-drift/git.mjs', 'scripts/check-drift.mjs', 'scripts/process-identity.mjs']) {
+    for (const file of ['scripts/merge-pr/finish.mjs', 'scripts/merge-pr.mjs', 'scripts/check-drift/git.mjs', 'scripts/check-drift.mjs', 'scripts/check-commit-parse/classify.mjs', 'scripts/check-commit-parse.mjs', 'scripts/process-identity.mjs']) {
       for (const side of ['mainFiles', 'mineFiles']) {
         const decided = decideS3Class({ ...f, [side]: [file] }, DEFAULT_HOT_FILES, []);
         expect(decided.class, `${side}: ${file}`).toBe('F');
