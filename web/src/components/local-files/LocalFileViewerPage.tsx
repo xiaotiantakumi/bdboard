@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import type { LocalFileKind } from '../../api/local-files';
+import { useCallback, useEffect, useState } from 'react';
+import type { LocalFileKind, LocalFileListEntryDto } from '../../api/local-files';
 import { buildLocalFileViewerUrl, localFileNameOf, type LocalFileViewerRoute } from '../../localFileViewerRoute';
 import { formatByteSize } from '../TicketAttachments';
 import { isLoopbackHostname } from '../issue-reports/manualDraftAccess';
@@ -34,11 +34,14 @@ export function LocalFileViewerPage({
   });
 
   useEffect(() => {
-    if (!local) return;
+    if (!local) {
+      document.title = 'bdboard';
+      return;
+    }
     document.title = `${localFileNameOf(shown.path)} - bdboard`;
   }, [local, shown.path]);
 
-  const show = (next: ShownFile) => {
+  const show = useCallback((next: ShownFile) => {
     setShown(next);
     window.history.replaceState(
       null,
@@ -50,7 +53,12 @@ export function LocalFileViewerPage({
         size: next.size,
       }),
     );
-  };
+  }, [route.ticketId]);
+
+  const showEntry = useCallback(
+    (entry: LocalFileListEntryDto) => show({ path: entry.path, kind: entry.kind, size: entry.size }),
+    [show],
+  );
 
   if (!local) {
     return <p className="local-file-note">このビューアはローカルで開いたときだけ使えます。</p>;
@@ -70,7 +78,7 @@ export function LocalFileViewerPage({
             key={shown.path}
             ticketId={route.ticketId}
             path={shown.path}
-            onNavigate={(entry) => show({ path: entry.path, kind: entry.kind, size: entry.size })}
+            onNavigate={showEntry}
           />
         )}
         {(shown.kind === 'video' || shown.kind === 'audio') && (
@@ -81,7 +89,7 @@ export function LocalFileViewerPage({
             key={shown.path}
             ticketId={route.ticketId}
             dirPath={shown.path}
-            onSelect={(entry) => show({ path: entry.path, kind: entry.kind, size: entry.size })}
+            onSelect={showEntry}
           />
         )}
         {shown.kind === 'markdown' && (

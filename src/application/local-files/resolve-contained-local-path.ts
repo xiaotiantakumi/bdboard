@@ -28,9 +28,10 @@ export type ContainedLocalPath =
  * 要求パスをプロジェクト根の内側に閉じ込めて解決する。
  * raw / list / 参照解決はすべてここを通す。比較は realpath 済みの値どうしで行う
  * （根が日本語でも、macOS の /var と /private/var の差でもずれない）。
+ * realpath できない根・対象、通常ファイルでない対象、要求と実体で種類が違うリンクは拒否する。
  */
 export async function resolveContainedLocalPath(
-  fs: Pick<FileSystemPort, 'realPath' | 'stat' | 'isDirectory'>,
+  fs: Pick<FileSystemPort, 'tryRealPath' | 'stat' | 'isDirectory'>,
   rootPath: string,
   requestedPath: string,
 ): Promise<ContainedLocalPath> {
@@ -39,9 +40,14 @@ export async function resolveContainedLocalPath(
     return { ok: false, reason: 'invalid' };
   }
 
-  const realRoot = await fs.realPath(rootPath);
-  const realTarget = await fs.realPath(path.join(rootPath, normalized));
-  // 根そのもの、根の外へ出るリンク、存在せず realpath が素通しした値。
+  const realRoot = await fs.tryRealPath(rootPath);
+  const realTarget = await fs.tryRealPath(path.join(rootPath, normalized));
+  // 解決できない根/対象は拒否する。入力を素通しする realPath だと、未解決の文字列で
+  // 閉じ込めを判定しつつ stat/open はリンクをたどってしまう (根の外を配りうる)。
+  if (realRoot === undefined || realTarget === undefined) {
+    return { ok: false, reason: 'not-found' };
+  }
+  // 根そのもの、根の外へ出るリンク。
   if (realTarget === realRoot || !realTarget.startsWith(realRoot + path.sep)) {
     return { ok: false, reason: 'not-found' };
   }
@@ -65,9 +71,15 @@ export async function resolveContainedLocalPath(
     };
   }
 
+  // FIFO・ソケット・デバイスは配らない (isFile を返さない fake は通常ファイル扱い)。
+  if (stat.isFile === false) {
+    return { ok: false, reason: 'not-found' };
+  }
+
   const requested = localFileTypeForPath(normalized);
   const actual = localFileTypeForPath(realTarget);
-  if (requested === undefined || actual === undefined) {
+  // 要求した拡張子と実体の種類が違うリンク (a.json -> b.png) は、要求側の種類で配らない。
+  if (requested === undefined || actual === undefined || requested.kind !== actual.kind) {
     return { ok: false, reason: 'unsupported-type' };
   }
   return {

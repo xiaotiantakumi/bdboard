@@ -27,7 +27,7 @@ export interface LocalFileRoutesDeps {
   readonly cache: Pick<BoardCache, 'listProjects'>;
   readonly fs: Pick<
     FileSystemPort,
-    'realPath' | 'stat' | 'isDirectory' | 'readDir' | 'readRangeBytes'
+    'tryRealPath' | 'stat' | 'isDirectory' | 'readDir' | 'readRangeBytes'
   >;
   readonly commentReader?: CommentReader;
 }

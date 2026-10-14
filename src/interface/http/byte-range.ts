@@ -1,7 +1,8 @@
 /**
  * Single HTTP Range (RFC 9110 §14.2) for a resource of `size` bytes.
  * Invalid syntax and multiple ranges are ignored (`none`). A range that begins
- * at or past `size` is unsatisfiable (416). The inclusive end is clamped to the
+ * at or past `size` is unsatisfiable (416). So is a syntactically valid range
+ * whose start or end is not a safe integer. The inclusive end is clamped to the
  * resource and to `maxChunkBytes`.
  */
 
@@ -39,7 +40,8 @@ export function parseByteRange(
 
   const start = readDigitField(startRaw);
   const end = readDigitField(endRaw);
-  if (start.kind === 'bad' || end.kind === 'bad') return { kind: 'none' };
+  // A bound that is not a safe integer cannot be served exactly (RFC 9110 would clamp a huge last-pos; we refuse it): 416.
+  if (start.kind === 'bad' || end.kind === 'bad') return { kind: 'unsatisfiable' };
 
   if (start.kind === 'value' && end.kind === 'value') {
     if (end.value < start.value) return { kind: 'none' };

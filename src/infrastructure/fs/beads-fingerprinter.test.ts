@@ -20,6 +20,9 @@ function createFakeFs(state: FakeFsState): FileSystemPort {
     async realPath(path: string): Promise<string> {
       return path;
     },
+    async tryRealPath(path: string): Promise<string | undefined> {
+      return path;
+    },
     async stat(path: string): Promise<FileStat | undefined> {
       return state.stats[path];
     },

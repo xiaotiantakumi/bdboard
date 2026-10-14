@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { fetchLocalFileList, localFileRawUrl, type LocalFileListEntryDto } from '../../api/local-files';
+import { fetchLocalFileList, localFileListQueryKey, localFileRawUrl, type LocalFileListEntryDto } from '../../api/local-files';
 import { LocalFileLabel } from './LocalFileLabel';
 import { localFileErrorMessage } from './localFileErrorMessage';
 
@@ -11,7 +11,7 @@ export interface LocalFolderThumbnailsProps {
 
 export function LocalFolderThumbnails({ ticketId, dirPath, onSelect }: LocalFolderThumbnailsProps) {
   const listQuery = useQuery({
-    queryKey: ['ticket-local-file-list', ticketId, dirPath],
+    queryKey: localFileListQueryKey(ticketId, dirPath),
     queryFn: () => fetchLocalFileList(ticketId, dirPath),
   });
 

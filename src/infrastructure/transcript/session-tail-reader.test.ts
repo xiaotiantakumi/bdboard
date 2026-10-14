@@ -38,6 +38,9 @@ function createFakeFs(options: FakeFsOptions = {}): FileSystemPort & {
     async realPath(filePath: string) {
       return realPaths.get(filePath) ?? filePath;
     },
+    async tryRealPath(filePath: string) {
+      return realPaths.get(filePath) ?? filePath;
+    },
     async stat(filePath: string) {
       return stats.get(filePath);
     },

@@ -52,6 +52,11 @@ function createFakeFs(options: FakeFsOptions): FileSystemPort {
       return realPaths[key] ?? key;
     },
 
+    async tryRealPath(dirPath: string): Promise<string | undefined> {
+      const key = normalizeFakePath(dirPath);
+      return realPaths[key] ?? key;
+    },
+
     async stat(filePath: string): Promise<FileStat | undefined> {
       return stats[normalizeFakePath(filePath)];
     },

@@ -31,7 +31,7 @@ const collator = new Intl.Collator('en', { numeric: true });
  * 各項目は resolveContainedLocalPath を通し、シンボリックリンクの脱出と隠しセグメントを落とす。
  */
 export async function listLocalDirectory(
-  fs: Pick<FileSystemPort, 'realPath' | 'stat' | 'isDirectory' | 'readDir'>,
+  fs: Pick<FileSystemPort, 'tryRealPath' | 'stat' | 'isDirectory' | 'readDir'>,
   rootPath: string,
   requestedPath: string,
   limit: number = LOCAL_DIRECTORY_LIST_LIMIT,

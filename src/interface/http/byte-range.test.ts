@@ -66,6 +66,12 @@ describe('parseByteRange', () => {
     expect(parseByteRange('bytes=-0', 100, CHUNK)).toEqual({ kind: 'unsatisfiable' });
   });
 
+  it('marks a bound that is not a safe integer unsatisfiable', () => {
+    expect(parseByteRange('bytes=99999999999999999999-', 100, CHUNK)).toEqual({ kind: 'unsatisfiable' });
+    expect(parseByteRange('bytes=0-99999999999999999999', 100, CHUNK)).toEqual({ kind: 'unsatisfiable' });
+    expect(parseByteRange('bytes=-99999999999999999999', 100, CHUNK)).toEqual({ kind: 'unsatisfiable' });
+  });
+
   it('ignores a missing, blank, or invalid Range header', () => {
     expect(parseByteRange(undefined, 100, CHUNK)).toEqual({ kind: 'none' });
     expect(parseByteRange('', 100, CHUNK)).toEqual({ kind: 'none' });
@@ -75,7 +81,6 @@ describe('parseByteRange', () => {
     expect(parseByteRange('bytes=-', 100, CHUNK)).toEqual({ kind: 'none' });
     expect(parseByteRange('items=0-1', 100, CHUNK)).toEqual({ kind: 'none' });
     expect(parseByteRange('bytes=a-b', 100, CHUNK)).toEqual({ kind: 'none' });
-    expect(parseByteRange('bytes=99999999999999999999-', 100, CHUNK)).toEqual({ kind: 'none' });
   });
 
   it('accepts an uppercase unit and surrounding whitespace', () => {

@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { fetchTicketLocalFiles, type LocalFileRefDto } from '../../api/local-files';
 import { isLoopbackHostname } from '../issue-reports/manualDraftAccess';
+import { formatByteSize } from '../TicketAttachments';
 import { LocalFileLabel } from './LocalFileLabel';
+import { localFileKindLabel } from './localFileKindLabel';
 import { LocalFolderThumbnails } from './LocalFolderThumbnails';
 import { openLocalFileViewer } from './openLocalFileViewer';
 
@@ -59,6 +61,7 @@ function LocalFileRow({
   readonly expanded: boolean;
   readonly onToggle: () => void;
 }) {
+  const thumbnailsId = useId();
   if (file.kind === 'directory') {
     return (
       <li>
@@ -66,23 +69,26 @@ function LocalFileRow({
           type="button"
           className="local-file-row"
           aria-expanded={expanded}
+          aria-controls={expanded ? thumbnailsId : undefined}
           onClick={onToggle}
         >
           <LocalFileLabel kind={file.kind} path={file.path} size={file.size} />
         </button>
         {expanded && (
-          <LocalFolderThumbnails
-            ticketId={ticketId}
-            dirPath={file.path}
-            onSelect={(entry) =>
-              openLocalFileViewer({
-                ticketId,
-                path: entry.path,
-                kind: entry.kind,
-                size: entry.size,
-              })
-            }
-          />
+          <div id={thumbnailsId}>
+            <LocalFolderThumbnails
+              ticketId={ticketId}
+              dirPath={file.path}
+              onSelect={(entry) =>
+                openLocalFileViewer({
+                  ticketId,
+                  path: entry.path,
+                  kind: entry.kind,
+                  size: entry.size,
+                })
+              }
+            />
+          </div>
         )}
       </li>
     );
@@ -93,6 +99,7 @@ function LocalFileRow({
       <button
         type="button"
         className="local-file-row"
+        aria-label={`${localFileKindLabel(file.kind)}、${file.path}${file.size !== null ? `、${formatByteSize(file.size)}` : ''}（新しいウィンドウで開く）`}
         onClick={() =>
           openLocalFileViewer({
             ticketId,

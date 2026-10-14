@@ -9,6 +9,7 @@ function createFakeFs(directories: ReadonlySet<string>): FileSystemPort {
     readDir: async () => [],
     isDirectory: async (targetPath) => directories.has(targetPath),
     realPath: async (targetPath) => targetPath,
+    tryRealPath: async (targetPath) => targetPath,
     stat: async () => undefined,
     readFile: async () => undefined,
     readRange: async () => undefined,

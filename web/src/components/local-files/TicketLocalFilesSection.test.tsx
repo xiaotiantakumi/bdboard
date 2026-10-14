@@ -92,6 +92,9 @@ describe('TicketLocalFilesSection', () => {
     renderSection('127.0.0.1');
 
     await user.click(await screen.findByRole('button', { name: /scenes\.json/ }));
+    expect(
+      screen.getByRole('button', { name: 'JSON、projects/demo/script/scenes.json、512 B（新しいウィンドウで開く）' }),
+    ).toBeInTheDocument();
 
     expect(openSpy).toHaveBeenCalledWith(
       '/?view=local-file&ticket=video-p4q.38&path=projects%2Fdemo%2Fscript%2Fscenes.json&kind=json&size=512',
@@ -118,6 +121,7 @@ describe('TicketLocalFilesSection', () => {
 
     const folder = await screen.findByRole('button', { name: /stills/ });
     expect(folder).toHaveAttribute('aria-expanded', 'false');
+    expect(folder).not.toHaveAttribute('aria-controls');
     await user.click(folder);
 
     expect(folder).toHaveAttribute('aria-expanded', 'true');
@@ -128,6 +132,9 @@ describe('TicketLocalFilesSection', () => {
       ),
     );
     const thumbs = await screen.findAllByRole('img');
+    const region = document.getElementById(folder.getAttribute('aria-controls') ?? '');
+    expect(region).not.toBeNull();
+    expect(region).toContainElement(thumbs[0]!);
     expect(thumbs).toHaveLength(2);
     expect(thumbs[0]).toHaveAttribute('src', localFileRawUrl(TICKET_ID, STILL_PATH));
     expect(thumbs[0]).toHaveAttribute('loading', 'lazy');

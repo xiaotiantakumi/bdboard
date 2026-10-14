@@ -5,18 +5,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FileSystemPort } from '../ports/file-system.js';
 import { listLocalDirectory } from './list-local-directory.js';
 
-const fileSystem: Pick<FileSystemPort, 'realPath' | 'stat' | 'isDirectory' | 'readDir'> = {
-  async realPath(targetPath) {
+const fileSystem: Pick<FileSystemPort, 'tryRealPath' | 'stat' | 'isDirectory' | 'readDir'> = {
+  async tryRealPath(targetPath) {
     try {
       return await realpath(targetPath);
     } catch {
-      return targetPath;
+      return undefined;
     }
   },
   async stat(targetPath) {
     try {
       const info = await fsStat(targetPath);
-      return { mtimeMs: info.mtimeMs, size: info.size };
+      return { mtimeMs: info.mtimeMs, size: info.size, isFile: info.isFile() };
     } catch {
       return undefined;
     }
@@ -126,7 +126,7 @@ describe('listLocalDirectory', () => {
   });
 
   it('maps a readDir failure to not-found', async () => {
-    const unreadable: Pick<FileSystemPort, 'realPath' | 'stat' | 'isDirectory' | 'readDir'> = {
+    const unreadable: Pick<FileSystemPort, 'tryRealPath' | 'stat' | 'isDirectory' | 'readDir'> = {
       ...fileSystem,
       readDir() {
         return Promise.reject(new Error('unreadable'));

@@ -18,6 +18,9 @@ function createFakeFs(
       realPathCalls.push(dirPath);
       return realPathImpl(dirPath);
     },
+    async tryRealPath(dirPath: string) {
+      return realPathImpl(dirPath);
+    },
     async stat() {
       return undefined;
     },

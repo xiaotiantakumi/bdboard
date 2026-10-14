@@ -28,10 +28,18 @@ export class NodeFileSystem implements FileSystemPort {
     }
   }
 
+  async tryRealPath(targetPath: string): Promise<string | undefined> {
+    try {
+      return await realpath(targetPath);
+    } catch {
+      return undefined;
+    }
+  }
+
   async stat(filePath: string): Promise<FileStat | undefined> {
     try {
       const fileStat = await fsStat(filePath);
-      return { mtimeMs: fileStat.mtimeMs, size: fileStat.size };
+      return { mtimeMs: fileStat.mtimeMs, size: fileStat.size, isFile: fileStat.isFile() };
     } catch {
       return undefined;
     }

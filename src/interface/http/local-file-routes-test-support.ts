@@ -9,10 +9,10 @@ import type { Ticket } from '../../domain/ticket.js';
 export const LOCAL_FILES_TEST_ROOT = '/projects/動画生成';
 export const LOCAL_FILES_TEST_TICKET_ID = 'video-1';
 
-/** Map ベースの偽 FS。realPath は恒等。addFile は親フォルダも全部作る。 */
+/** Map ベースの偽 FS。tryRealPath は登録済みのパスなら恒等、未登録なら undefined。addFile は親フォルダも全部作る。 */
 export interface FakeLocalFs extends Pick<
   FileSystemPort,
-  'realPath' | 'stat' | 'isDirectory' | 'readDir' | 'readRangeBytes'
+  'tryRealPath' | 'stat' | 'isDirectory' | 'readDir' | 'readRangeBytes'
 > {
   addFile(relativePath: string, content: string | Buffer): void;
   addDirectory(relativePath: string): void;
@@ -48,8 +48,10 @@ export function createFakeLocalFs(root: string = LOCAL_FILES_TEST_ROOT): FakeLoc
     addDirectory(relativePath) {
       addDirectoryChain(path.join(root, relativePath));
     },
-    realPath(targetPath) {
-      return Promise.resolve(targetPath);
+    tryRealPath(targetPath) {
+      return Promise.resolve(
+        files.has(targetPath) || directories.has(targetPath) ? targetPath : undefined,
+      );
     },
     stat(targetPath) {
       const buf = files.get(targetPath);

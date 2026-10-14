@@ -54,6 +54,11 @@ export function fetchLocalFileList(ticketId: string, dirPath: string): Promise<L
   );
 }
 
+/** フォルダ一覧の React Query キー。サムネイル一覧と画像ビューアの前後送りで同じキャッシュを共有する。 */
+export function localFileListQueryKey(ticketId: string, dirPath: string) {
+  return ['ticket-local-file-list', ticketId, dirPath] as const;
+}
+
 export function localFileRawUrl(ticketId: string, path: string): string {
   return `${localFilesBase(ticketId)}/raw?path=${encodeURIComponent(path)}`;
 }

@@ -24,7 +24,7 @@ import { localFileErrorResponse } from './local-file-http-errors.js';
  */
 export async function serveLocalFileRaw(
   c: Context,
-  fs: Pick<FileSystemPort, 'realPath' | 'stat' | 'isDirectory' | 'readRangeBytes'>,
+  fs: Pick<FileSystemPort, 'tryRealPath' | 'stat' | 'isDirectory' | 'readRangeBytes'>,
   rootPath: string,
 ): Promise<Response> {
   const requested = c.req.query('path');

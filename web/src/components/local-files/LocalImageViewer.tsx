@@ -1,6 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { fetchLocalFileList, localFileRawUrl, type LocalFileListEntryDto } from '../../api/local-files';
+import {
+  fetchLocalFileList,
+  localFileListQueryKey,
+  localFileRawUrl,
+  type LocalFileListEntryDto,
+} from '../../api/local-files';
 import { isTypingTarget } from '../../keyboardShortcuts';
 import { localFileNameOf } from '../../localFileViewerRoute';
 
@@ -19,7 +24,7 @@ export function LocalImageViewer({ ticketId, path, onNavigate }: LocalImageViewe
   const [failedPath, setFailedPath] = useState<string | null>(null);
   const parent = parentDirectory(path);
   const listQuery = useQuery({
-    queryKey: ['local-image-siblings', ticketId, parent],
+    queryKey: localFileListQueryKey(ticketId, parent ?? ''),
     queryFn: () => fetchLocalFileList(ticketId, parent ?? ''),
     enabled: parent !== null,
   });
@@ -36,6 +41,8 @@ export function LocalImageViewer({ ticketId, path, onNavigate }: LocalImageViewe
     if (index < 0) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      // Alt/Cmd/Ctrl/Shift + 矢印はブラウザの戻る・進むや選択の操作なので奪わない。
+      if (event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
       if (isTypingTarget(event.target)) return;
       const entry = event.key === 'ArrowLeft' ? previous : next;
       if (entry === undefined) return;
@@ -59,22 +66,38 @@ export function LocalImageViewer({ ticketId, path, onNavigate }: LocalImageViewe
           画像を読み込めませんでした。
         </p>
       )}
-      {index >= 0 && (
+      {parent !== null && (
         <div className="local-file-viewer-nav">
           <button
             type="button"
             className="btn"
-            disabled={previous === undefined}
-            onClick={() => previous && onNavigate(previous)}
+            onClick={() => onNavigate({ name: localFileNameOf(parent), path: parent, kind: 'directory', size: null })}
           >
-            前へ
+            フォルダの一覧へ
           </button>
-          <span className="local-file-viewer-position">
-            {index + 1} / {images.length}
-          </span>
-          <button type="button" className="btn" disabled={next === undefined} onClick={() => next && onNavigate(next)}>
-            次へ
-          </button>
+          {index >= 0 && (
+            <>
+              <button
+                type="button"
+                className="btn"
+                disabled={previous === undefined}
+                onClick={() => previous && onNavigate(previous)}
+              >
+                前へ
+              </button>
+              <span className="local-file-viewer-position">
+                {index + 1} / {images.length}
+              </span>
+              <button
+                type="button"
+                className="btn"
+                disabled={next === undefined}
+                onClick={() => next && onNavigate(next)}
+              >
+                次へ
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

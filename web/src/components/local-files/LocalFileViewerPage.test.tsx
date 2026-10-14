@@ -53,6 +53,7 @@ describe('LocalFileViewerPage', () => {
   });
 
   it('shows a local-only notice and does not fetch off loopback', async () => {
+    document.title = 'stale';
     const fetchMock = installList([S02]);
     renderPage(
       { ticketId: TICKET_ID, path: S02.path, kind: 'image', size: S02.size ?? undefined },
@@ -61,6 +62,7 @@ describe('LocalFileViewerPage', () => {
 
     expect(screen.getByText('このビューアはローカルで開いたときだけ使えます。')).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
+    await waitFor(() => expect(document.title).toBe('bdboard'));
   });
 
   it('shows an image, its path, its size, and the file name in the title', async () => {

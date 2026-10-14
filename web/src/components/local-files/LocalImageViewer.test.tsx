@@ -110,5 +110,35 @@ describe('LocalImageViewer', () => {
     await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: '前へ' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '次へ' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'フォルダの一覧へ' })).not.toBeInTheDocument();
+  });
+
+  it('leaves modifier + arrow chords to the browser', async () => {
+    installListFetch();
+    const { onNavigate } = renderViewer(S02.path);
+
+    expect(await screen.findByText('2 / 3')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'ArrowRight', ctrlKey: true });
+    fireEvent.keyDown(window, { key: 'ArrowRight', metaKey: true });
+    fireEvent.keyDown(window, { key: 'ArrowLeft', altKey: true });
+    fireEvent.keyDown(window, { key: 'ArrowLeft', shiftKey: true });
+    expect(onNavigate).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(onNavigate).toHaveBeenCalledWith(S10);
+  });
+
+  it('goes back to the folder grid from the folder button', async () => {
+    const user = userEvent.setup();
+    installListFetch();
+    const { onNavigate } = renderViewer(S02.path);
+
+    await user.click(await screen.findByRole('button', { name: 'フォルダの一覧へ' }));
+    expect(onNavigate).toHaveBeenCalledWith({
+      name: 'stills',
+      path: DIR,
+      kind: 'directory',
+      size: null,
+    });
   });
 });

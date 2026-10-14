@@ -5,18 +5,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FileSystemPort } from '../ports/file-system.js';
 import { resolveContainedLocalPath, toLocalFileRef } from './resolve-contained-local-path.js';
 
-const fileSystem: Pick<FileSystemPort, 'realPath' | 'stat' | 'isDirectory'> = {
-  async realPath(targetPath) {
+const fileSystem: Pick<FileSystemPort, 'tryRealPath' | 'stat' | 'isDirectory'> = {
+  async tryRealPath(targetPath) {
     try {
       return await realpath(targetPath);
     } catch {
-      return targetPath;
+      return undefined;
     }
   },
   async stat(targetPath) {
     try {
       const info = await fsStat(targetPath);
-      return { mtimeMs: info.mtimeMs, size: info.size };
+      return { mtimeMs: info.mtimeMs, size: info.size, isFile: info.isFile() };
     } catch {
       return undefined;
     }
@@ -62,6 +62,7 @@ async function createFixture(rootDir: string, outsideDir: string): Promise<void>
   await symlink(path.join(rootDir, '.git', 'config.md'), path.join(rootDir, 'notes.md'));
   await symlink(path.join(rootDir, 'x.svg'), path.join(rootDir, 'pic.png'));
   await symlink(path.join(outsideDir, 'secret.md'), path.join(rootDir, 'out-link.md'));
+  await symlink(path.join(rootDir, 'out', 'stills', 's01.png'), path.join(rootDir, 'data.json'));
 }
 
 describe('resolveContainedLocalPath', () => {
@@ -153,6 +154,7 @@ describe('resolveContainedLocalPath', () => {
     ['docs/gitlink/HEAD.md', 'not-found'],
     ['notes.md', 'not-found'],
     ['pic.png', 'unsupported-type'],
+    ['data.json', 'unsupported-type'],
     ['a.svg', 'unsupported-type'],
     ['a.html', 'unsupported-type'],
     ['a.ts', 'unsupported-type'],
@@ -163,6 +165,47 @@ describe('resolveContainedLocalPath', () => {
   ])('rejects %j as %s', async (requestedPath, reason) => {
     const resolved = await resolveContainedLocalPath(fileSystem, root, requestedPath);
     expect(resolved).toEqual({ ok: false, reason });
+  });
+
+  it('fails closed when the target real path cannot be resolved even though stat would follow it', async () => {
+    // A fake that echoed the input would let 'script/scenes.json' through: it starts with root/ and stat succeeds.
+    const unresolvable: Pick<FileSystemPort, 'tryRealPath' | 'stat' | 'isDirectory'> = {
+      ...fileSystem,
+      async tryRealPath(targetPath) {
+        return targetPath === root ? root : undefined;
+      },
+    };
+    expect(await resolveContainedLocalPath(unresolvable, root, 'script/scenes.json')).toEqual({
+      ok: false,
+      reason: 'not-found',
+    });
+  });
+
+  it('fails closed when the root real path cannot be resolved', async () => {
+    const rootUnresolvable: Pick<FileSystemPort, 'tryRealPath' | 'stat' | 'isDirectory'> = {
+      ...fileSystem,
+      async tryRealPath(targetPath) {
+        return targetPath === root ? undefined : fileSystem.tryRealPath(targetPath);
+      },
+    };
+    expect(await resolveContainedLocalPath(rootUnresolvable, root, 'script/scenes.json')).toEqual({
+      ok: false,
+      reason: 'not-found',
+    });
+  });
+
+  it('rejects a target that is not a regular file', async () => {
+    const fifoLike: Pick<FileSystemPort, 'tryRealPath' | 'stat' | 'isDirectory'> = {
+      ...fileSystem,
+      async stat(targetPath) {
+        const info = await fileSystem.stat(targetPath);
+        return info === undefined ? undefined : { ...info, isFile: false };
+      },
+    };
+    expect(await resolveContainedLocalPath(fifoLike, root, 'script/scenes.json')).toEqual({
+      ok: false,
+      reason: 'not-found',
+    });
   });
 });
 

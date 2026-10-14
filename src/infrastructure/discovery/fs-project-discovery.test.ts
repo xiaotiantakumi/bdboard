@@ -24,6 +24,7 @@ function createFallbackOnlyFs(fallbackRoot: string): FileSystemPort {
         : [],
     isDirectory: async (target: string) => target === fallbackRoot,
     realPath: async (target: string) => target,
+    tryRealPath: async (target: string) => target,
     stat: async () => undefined,
     readFile: async () => undefined,
     readRange: async () => undefined,
