@@ -83,7 +83,7 @@ export async function readErrorPayload(res: Response): Promise<{
   return { body };
 }
 
-async function fetchOk(path: string, init?: RequestInit): Promise<Response> {
+export async function fetchOk(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, init);
   if (!res.ok) {
     const { body, errorMessage, detail, code, reason, details } =
