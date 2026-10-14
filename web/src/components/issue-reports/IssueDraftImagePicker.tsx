@@ -8,6 +8,8 @@ export interface IssueDraftImagePickerProps {
   readonly images: readonly PickedImage[];
   /** 直近の追加で断った理由。 */
   readonly problems: readonly string[];
+  /** 直近の「付けた」「外した」を伝える文。画面には出さず、読み上げだけに使う (bdboard-8zwi)。 */
+  readonly notice: string;
   /** 送信中。追加・外す・ドロップをすべて止める。 */
   readonly disabled: boolean;
   readonly onAddFiles: (files: readonly File[]) => void;
@@ -42,7 +44,14 @@ function ImageThumb({ file, name }: { readonly file: File; readonly name: string
  * この欄で受けたドロップは preventDefault するので、親の form は重ねて足さない。状態は持たず、検査と一覧は親 (useIssueDraftImages) が持つ。
  * キーボードだけで、追加は「画像を選ぶ」ボタン、取り消しは各画像の「外す」ボタンでできる。
  */
-export function IssueDraftImagePicker({ images, problems, disabled, onAddFiles, onRemove }: IssueDraftImagePickerProps) {
+export function IssueDraftImagePicker({
+  images,
+  problems,
+  notice,
+  disabled,
+  onAddFiles,
+  onRemove,
+}: IssueDraftImagePickerProps) {
   const guideId = useId();
   const noteId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -118,6 +127,10 @@ export function IssueDraftImagePicker({ images, problems, disabled, onAddFiles, 
           disabled={disabled}
           onChange={handleChoose}
         />
+      </div>
+      {/* 付けた・外したを読み上げる polite な status。入れ物は常に置き、中身だけ替える (あとから現れる status は読まれないことがある)。 */}
+      <div className="sr-only" role="status">
+        {notice}
       </div>
       {problems.length > 0 && (
         // role="alert" は ul に付けない (list の役割が上書きされ、li が箱なしになる)。外の div で読み上げさせる。
