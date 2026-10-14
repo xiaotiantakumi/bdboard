@@ -75,7 +75,7 @@ export function countEmphasisMarks(text: string): number {
   return count;
 }
 
-function tooHeavyReason(text: string): string | null {
+export function previewHeavyReason(text: string): string | null {
   if (countEmphasisMarks(text) > SAFE_PREVIEW_MAX_MARKS) return '強調やリンクの記号が多いので、プレビューは省きました。';
   if (text.length > SAFE_PREVIEW_MAX_CHARS) return '本文が長いので、プレビューは省きました。';
   if (maxLineNesting(text) > SAFE_PREVIEW_MAX_NESTING) return '入れ子が深いので、プレビューは省きました。';
@@ -116,7 +116,7 @@ class PreviewBoundary extends Component<BoundaryProps, { readonly failed: boolea
 
 function SafeMarkdownPreviewInner({ text, className }: SafeMarkdownPreviewProps) {
   const wrapperClassName = ['markdown-body', 'safe-markdown-preview', className].filter(Boolean).join(' ');
-  const heavy = tooHeavyReason(text);
+  const heavy = previewHeavyReason(text);
   return (
     <div className={wrapperClassName}>
       {heavy !== null ? (
