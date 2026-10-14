@@ -11,6 +11,7 @@ import {
 import { isStalled } from '../stalled.js';
 import { buildBlocksIndex, deriveBlocks } from './blocks.js';
 import { compareCards } from './card-compare.js';
+import { orderByLaneDependencies } from './dependency-order.js';
 import { computeEffectivePriorities } from './effective-priority.js';
 import { buildLanes } from './lanes.js';
 import { buildSessionIdsByTicket, deriveLiveness, deriveSessions } from './sessions.js';
@@ -89,10 +90,11 @@ export function buildBoard(input: BuildBoardInput): Board {
   });
 
   cards.sort(compareCards);
+  const ordered = orderByLaneDependencies(cards);
 
   return {
-    cards,
-    lanes: buildLanes(cards),
+    cards: ordered,
+    lanes: buildLanes(ordered),
   };
 }
 
@@ -112,9 +114,10 @@ export function mergeBoards(boards: readonly Board[]): Board {
   }
 
   cards.sort(compareCards);
+  const ordered = orderByLaneDependencies(cards);
 
   return {
-    cards,
-    lanes: buildLanes(cards),
+    cards: ordered,
+    lanes: buildLanes(ordered),
   };
 }
