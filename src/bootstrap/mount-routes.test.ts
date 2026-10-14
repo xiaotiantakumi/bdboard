@@ -2,6 +2,12 @@ import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SelfErrorReportOutcome, SelfErrorReporter } from '../application/issue-report/self-error-reporter.js';
 import { unrestrictedPlatformSupport } from '../domain/platform-support.js';
+import { createLocalFileRoutes } from '../interface/http/local-file-routes.js';
+import {
+  createFakeLocalFilesCache,
+  createFakeLocalFs,
+  requestLocal,
+} from '../interface/http/local-file-routes-test-support.js';
 import { ERROR_DRAFT_HEADER } from '../interface/http/server-error-capture.js';
 import { mountRoutes, type MountRoutesDeps } from './mount-routes.js';
 
@@ -23,6 +29,7 @@ function buildDeps(overrides: Partial<MountRoutesDeps> = {}): MountRoutesDeps {
     security: { authMode: { kind: 'unconfigured' } },
     platformSupport: unrestrictedPlatformSupport('darwin'),
     attachmentsRouter: stubRouter('/__sentinel/attachments'),
+    localFilesRouter: stubRouter('/__sentinel/local-files'),
     inner: stubRouter('/__sentinel/inner'),
     harnessRouter: stubRouter('/__sentinel/harness'),
     scanRootsRouter: stubRouter('/__sentinel/scan-roots'),
@@ -53,6 +60,7 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
 
     expect(sentinelGets).toEqual([
       '/__sentinel/attachments',
+      '/__sentinel/local-files',
       '/__sentinel/inner',
       '/__sentinel/harness',
       '/__sentinel/scan-roots',
@@ -89,11 +97,14 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
     const paths = app.routes.map((route) => route.path);
     const platformSupportIndex = paths.indexOf('/api/platform-support');
     const attachmentsIndex = paths.indexOf('/__sentinel/attachments');
+    const localFilesIndex = paths.indexOf('/__sentinel/local-files');
     const innerIndex = paths.indexOf('/__sentinel/inner');
 
     expect(platformSupportIndex).toBeGreaterThanOrEqual(0);
     expect(platformSupportIndex).toBeLessThan(attachmentsIndex);
     expect(attachmentsIndex).toBeLessThan(innerIndex);
+    expect(localFilesIndex).toBeGreaterThan(attachmentsIndex);
+    expect(localFilesIndex).toBeLessThan(innerIndex);
 
     // processes ガード (collection + wildcard) と chat ガードは ALL メソッドの
     // ミドルウェアとして platform-support routes の直後に登録される。
@@ -157,6 +168,54 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
     // 登録しない)。API-only モードでは GET '/*' 自体が現れないことを見る。
     expect(apiOnlyGetPaths).not.toContain('/*');
     expect(apiOnlyGetPaths).toContain('/__sentinel/tunnel');
+  });
+
+  it('serves local-files routes instead of the inner ticket catch-all', async () => {
+    const fs = createFakeLocalFs();
+    fs.addFile('docs/a.md', '# a');
+    const cache = createFakeLocalFilesCache({ description: '見る：docs/a.md' });
+    const inner = new Hono().get('/api/tickets/:id{.+}', (c) =>
+      c.json({ from: 'inner-catch-all' }),
+    );
+    const app = new Hono();
+    mountRoutes(
+      app,
+      buildDeps({
+        security: { authMode: { kind: 'disabled-explicitly' } },
+        localFilesRouter: createLocalFileRoutes({ cache, fs }),
+        inner,
+        staticSpa: undefined,
+      }),
+    );
+
+    const listed = await requestLocal(app, '/api/tickets/video-1/local-files');
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({
+      files: [{ path: 'docs/a.md', kind: 'markdown', size: 3 }],
+    });
+
+    const raw = await requestLocal(
+      app,
+      '/api/tickets/video-1/local-files/raw?path=docs%2Fa.md',
+    );
+    expect(raw.status).toBe(200);
+    expect(await raw.text()).toBe('# a');
+    expect(raw.headers.get('content-type')).toBe('text/markdown; charset=utf-8');
+    expect(raw.headers.get('content-security-policy')).toBe(
+      "default-src 'none'; sandbox; frame-ancestors 'none'",
+    );
+    expect(raw.headers.get('x-content-type-options')).toBe('nosniff');
+
+    const directory = await requestLocal(
+      app,
+      '/api/tickets/video-1/local-files/list?path=docs',
+    );
+    expect(directory.status).toBe(200);
+    expect(await directory.json()).toMatchObject({ path: 'docs' });
+
+    const caught = await requestLocal(app, '/api/tickets/video-1');
+    expect(caught.status).toBe(200);
+    expect(await caught.json()).toEqual({ from: 'inner-catch-all' });
   });
 });
 

@@ -35,6 +35,8 @@ export interface MountRoutesDeps {
   readonly platformSupport: PlatformSupport;
   /** チケット添付画像 (bdboard-qw26)。`inner` の catch-all より前に mount する。 */
   readonly attachmentsRouter: Hono;
+  /** チケット本文が指すプロジェクト内ファイル (bdboard-vgdr)。ローカル直アクセス限定。`inner` の catch-all より前に mount する。 */
+  readonly localFilesRouter: Hono;
   /** src/interface/http/routes.ts (bdboard-sso1.1 で分割済み)。 */
   readonly inner: Hono;
   readonly harnessRouter: Hono;
@@ -86,8 +88,9 @@ export function mountRoutes(app: Hono, deps: MountRoutesDeps): void {
   app.use('/api/chat/*', createPlatformFeatureGuard(deps.platformSupport, 'chat'));
 
   // `inner` (routes.ts) の `GET /api/tickets/:id{.+}` は catch-all なので、
-  // attachment routes は必ず inner より前に mount する (bdboard-qw26)。
+  // attachment / local-files routes は必ず inner より前に mount する (bdboard-qw26)。
   app.route('/', deps.attachmentsRouter);
+  app.route('/', deps.localFilesRouter);
   app.route('/', deps.inner);
 
   app.route('/', deps.harnessRouter);

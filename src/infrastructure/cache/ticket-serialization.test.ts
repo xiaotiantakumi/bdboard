@@ -38,6 +38,8 @@ function fullTicket(): Required<Ticket> {
     parentId: 'proj-parent',
     description: 'desc',
     notes: 'notes',
+    design: 'design',
+    acceptanceCriteria: 'acceptance',
     closeReason: 'Merged via PR #42',
     labels: ['human', 'needs-review'],
     commentCount: 3,
@@ -90,6 +92,8 @@ describe('ticket serialization', () => {
     expect(parsed[0]).not.toHaveProperty('parentId');
     expect(parsed[0]).not.toHaveProperty('description');
     expect(parsed[0]).not.toHaveProperty('notes');
+    expect(parsed[0]).not.toHaveProperty('design');
+    expect(parsed[0]).not.toHaveProperty('acceptanceCriteria');
     expect(parsed[0]).not.toHaveProperty('labels');
 
     const restored = deserializeTickets(json)[0];
@@ -102,6 +106,8 @@ describe('ticket serialization', () => {
     expect(Object.keys(restored)).not.toContain('parentId');
     expect(Object.keys(restored)).not.toContain('description');
     expect(Object.keys(restored)).not.toContain('notes');
+    expect(Object.keys(restored)).not.toContain('design');
+    expect(Object.keys(restored)).not.toContain('acceptanceCriteria');
   });
 
   it('round-trips multiple dependencies', () => {

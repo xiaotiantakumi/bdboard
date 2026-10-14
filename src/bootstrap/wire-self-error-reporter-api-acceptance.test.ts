@@ -68,6 +68,7 @@ function mount(wired: ReturnType<typeof wireSelfErrorReporter>): Hono {
     security: { authMode: { kind: 'disabled-explicitly' } },
     platformSupport: unrestrictedPlatformSupport('darwin'),
     attachmentsRouter: stub('/__s/attachments'),
+    localFilesRouter: stub('/__s/local-files'),
     inner: inner(),
     harnessRouter: stub('/__s/harness'),
     scanRootsRouter: stub('/__s/scan-roots'),

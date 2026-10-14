@@ -238,6 +238,20 @@ bdboard 自身は `8787` / `scripts/always-on-server.sh` を宣言している�
   持つ」の両方。判定の前段でCSRF対策(`Sec-Fetch-Site` / `Content-Type` / `Origin` の3レイヤ)を
   適用する。依存が渡されない場合は fail-closed でlocalhost限定にフォールバックする。新規に追加した
   書き込みルートも、このミドルウェアの内側に登録される限り自動的にガード対象になる。
+- **チケットが指すプロジェクト内ファイルの閲覧はローカル直アクセス限定・根に閉じ込める** (bdboard-vgdr): `interface/http/local-file-routes.ts`(+ `local-file-raw.ts`)の `GET /api/tickets/:id/local-files`
+  は description / design / acceptance_criteria / notes / コメント本文から抽出し実在分だけ最大100件返す。`.../local-files/list?path=` はフォルダ直下で `.` 始まりと許可外拡張子を出さず自然順・500件まで、`.../local-files/raw?path=` は中身を返す。
+  `createPrivilegedApiGuardMiddleware({})` をトンネル用の依存無しで `/api/tickets/:id/local-files` と `/api/tickets/:id/local-files/*` の両方に掛ける。ローカル直アクセスだけが通る。
+  トンネル経由は書き込み許可つきのセッションでも403になる。GETでもCSRF/Fetch Metadata判定を通すので、`Sec-Fetch-Site` が same-origin 以外(アドレスバー直打ちの `none` も)は403である。
+  中身は同一オリジンのビューア画面から `<img>` / `<video>` / fetch で読む。router は inner の `GET /api/tickets/:id{.+}` キャッチオールより前に mount する(`bootstrap/mount-routes.ts`、順序はテストで固定)。
+  raw / list / 参照解決は `application/local-files/resolve-contained-local-path.ts` の1関数を通る。(1) 字面で NUL・制御文字・バックスラッシュ・`/` `~` 始まり・`..`・空セグメント・`.` 始まりを拒否する(末尾の `/` 1つは落とす)。
+  (2) `realpath(根)` と `realpath(根/相対)` を取り後者が前者の下にある。(3) realpath 後の相対にも `.` 始まりセグメントが無い(シンボリックリンクで `.git` 等へ逃げない)。(4) 拡張子は要求パスと realpath の両方で許可表を通す。
+  比較は realpath 済みの値どうしである(根が日本語を含んでも、macOS の `/var` → `/private/var` でもずれない)。拒否は400/404/415。新しいポートは作らず既存の `FileSystemPort`(`realPath` / `stat` / `isDirectory` / `readDir` / `readRangeBytes`)を使う。
+  許可拡張子(`domain/local-file-kinds.ts`)は画像 png jpg jpeg webp gif / 動画 mp4 webm m4v mov / 音声 mp3 m4a wav / md / json / txt csv srt vtt。svg と html は入れない(能動的なコンテンツになりうる)。
+  Content-Type は拡張子から決め sniff しない。応答に `X-Content-Type-Options: nosniff`・`Content-Security-Policy: default-src 'none'; sandbox`・`Cache-Control: no-store` を付ける。
+  `securityHeadersMiddleware`(`interface/http/app-security.ts`)はルートが付けた CSP を残し、`frame-ancestors 'none'` だけを揃える(以前は無条件に上書きしていた)。大きいファイルは全体を読まない。
+  Range は単一範囲だけで1回 4 MiB までであり、終端省略も明示終端も切る。満たせない範囲は416。Range 無しはテキスト系 2 MiB・画像 30 MiB・動画/音声 4 MiB を超えると413になる。
+  本文からの抽出は ASCII のパス文字(`[A-Za-z0-9._-/]`)の連続だけである。日本語を含むパスは、全角の「：」「（」「、」などの区切りと区別できないため抽出の対象外である(フォルダ一覧に出る日本語名のファイルは見られる)。
+  URL・`/` `~` 始まり・`..`・隠しセグメントは候補にしない。根から見つからない候補は、同じ行で直前に解決したパスの祖先フォルダを近い順に試す(スラッシュ無しのファイル名はそのフォルダだけ)。
 
 ## v1計画との差分(注記)
 

@@ -25,6 +25,8 @@ function fullIssue(): BdIssue {
     parent: 'proj-parent',
     description: 'desc',
     notes: 'notes',
+    design: 'design',
+    acceptance_criteria: 'acceptance',
     labels: ['human', 'needs-review'],
     dependency_count: 1,
     dependent_count: 0,
@@ -65,6 +67,8 @@ describe('mapBdIssueToTicket', () => {
       parentId: 'proj-parent',
       description: 'desc',
       notes: 'notes',
+      design: 'design',
+      acceptanceCriteria: 'acceptance',
       labels: ['human', 'needs-review'],
       dependencies: [
         { issueId: 'proj-abc', dependsOnId: 'proj-blocker', kind: 'blocks' },
