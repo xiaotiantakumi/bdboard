@@ -69,7 +69,7 @@ export function useIssueDraftImages(): UseIssueDraftImages {
       return;
     }
     // Excel・Word のように文字と画像が一緒に来たとき、文字の欄 (題名・説明) へ貼るなら画像は引き受けず、文字を入れる (bdboard-8zwi)。
-    // 画像は「画像を選ぶ」から付けられる。文字の欄ではない所 (フォームの余白・ボタンなど) は、文字を受ける先が無いので画像を付ける。
+    // 画像は「画像を選ぶ」から付けられる。書く画面の中の文字の欄ではない要素 (「画像を選ぶ」などのボタン) にフォーカスがあるときは、文字を受ける先が無いので画像を付ける (余白をクリックするとフォーカスは body へ移り、貼り付けはここに届かない)。
     if (isTextEntryField(event.target) && clipboardCarriesText(event.clipboardData)) {
       return;
     }

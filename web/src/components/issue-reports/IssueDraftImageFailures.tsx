@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
 export interface IssueDraftImageFailureItem {
   /** どの画像か。同じ名前の画像 (貼り付けは image.png ばかり) を見分けるため、位置も入れる (`2 枚目「image.png」`)。 */
@@ -32,7 +32,9 @@ export function IssueDraftImageFailures({ failures, sending, onRetry, onOpen }: 
 
   // 書く画面の「送る」を押した位置のボタンは消えるので、フォーカスを見出しへ移して結果を読み上げさせる。
   // 送り直しで一覧が新しくなったときも、無効になっていたボタンから外れたフォーカスを戻す。
-  useEffect(() => {
+  // 見出しが DOM に入るのと同じ commit で移す (useLayoutEffect。bdboard-wt1c): passive effect だと、結果が act の外 (Promise の解決) から
+  // 出たときに後で流れ、見出しが見えた直後はまだ body にフォーカスがある (読み上げも遅れる。テストは負荷時に落ちていた)。
+  useLayoutEffect(() => {
     headingRef.current?.focus();
   }, [failures]);
 

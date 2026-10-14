@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useLayoutEffect, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { expectNoA11yViolations } from '../../test/axe';
 import { IssueDraftImageFailures, type IssueDraftImageFailureItem } from './IssueDraftImageFailures';
@@ -61,6 +62,41 @@ describe('IssueDraftImageFailures (bdboard-4y8q.6.9)', () => {
     screen.getByRole('button', { name: '下書きを開く' }).focus();
     view.rerender(<IssueDraftImageFailures failures={FAILURES} sending onRetry={onRetry} onOpen={onOpen} />);
     expect(screen.getByRole('heading', { name: '下書きを作りました' })).not.toHaveFocus();
+  });
+
+  // bdboard-wt1c: フォーカスは、見出しが DOM に入るのと同じ commit で移す。passive effect (useEffect) で移すと、結果の画面が
+  // act の外 (Promise の解決) から出たとき effect が後で流れ、見出しが見えた直後 (findByRole の直後・読み上げ) にはまだ body に
+  // フォーカスがある (負荷時の IssueDraftManualForm.test.tsx の落ち方)。親の layout effect は子の layout effect の後、passive effect
+  // の前に走るので、そこで見たフォーカスで「同じ commit で移っている」ことを確かめる。
+  describe('moving the focus in the same commit that shows the result (bdboard-wt1c)', () => {
+    function FocusAtCommit({ seen, children }: { readonly seen: (Element | null)[]; readonly children: ReactNode }) {
+      useLayoutEffect(() => {
+        seen.push(document.activeElement);
+      });
+      return children;
+    }
+
+    function renderProbed(failures: readonly IssueDraftImageFailureItem[], seen: (Element | null)[]) {
+      return (
+        <FocusAtCommit seen={seen}>
+          <IssueDraftImageFailures failures={failures} sending={false} onRetry={vi.fn()} onOpen={vi.fn()} />
+        </FocusAtCommit>
+      );
+    }
+
+    it('has the heading focused when the result is first committed', () => {
+      const seen: (Element | null)[] = [];
+      render(renderProbed(FAILURES, seen));
+      expect(seen[0]).toBe(screen.getByRole('heading', { name: '下書きを作りました' }));
+    });
+
+    it('has the heading focused again in the commit that renews the list', () => {
+      const seen: (Element | null)[] = [];
+      const view = render(renderProbed(FAILURES, seen));
+      screen.getByRole('button', { name: '下書きを開く' }).focus();
+      view.rerender(renderProbed([...FAILURES], seen));
+      expect(seen[seen.length - 1]).toBe(screen.getByRole('heading', { name: '下書きを作りました' }));
+    });
   });
 
   // bdboard-8zwi: 送り直しても同じ画像が同じ理由で落ちると、alert の文は前と同じ。読み上げは変化のないものを読まないので、

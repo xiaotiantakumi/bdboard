@@ -37,7 +37,7 @@ export function dragCarriesFiles(dataTransfer: Pick<DataTransfer, 'types'>): boo
 /** 貼り付けた文字を受ける input の type (file・checkbox・button などは文字を受けない)。 */
 const TEXT_ENTRY_INPUT_TYPES: readonly string[] = ['text', 'search', 'url', 'tel', 'email', 'password', 'number'];
 
-/** 貼り付け先が、文字を入れる欄 (textarea と、文字を受ける input) か。フォームの余白・ボタン・ファイル選択は含まない。 */
+/** 貼り付け先が、文字を入れる欄 (textarea と、文字を受ける input) か。ボタン・ファイル選択は含まない。 */
 export function isTextEntryField(target: EventTarget | null): boolean {
   if (target instanceof HTMLTextAreaElement) return true;
   return target instanceof HTMLInputElement && TEXT_ENTRY_INPUT_TYPES.includes(target.type);
@@ -53,8 +53,8 @@ export function clipboardCarriesText(clipboardData: Pick<DataTransfer, 'types' |
 }
 
 /**
- * 上限を超えた画像の大きさ (MiB、小数第 1 位)。四捨五入 (formatImageSize) ではなく切り上げる: 上限に 1 バイト足りないほど
- * 超えただけでも「10 MiB を超えている (10.0 MiB)」と、上限と同じ数字になってしまうため (bdboard-8zwi)。
+ * 上限を超えた画像の大きさ (MiB、小数第 1 位)。四捨五入 (formatImageSize) ではなく切り上げる: 上限を 1 バイトだけ
+ * 超えても「10 MiB を超えている (10.0 MiB)」と、上限と同じ数字になってしまうため (bdboard-8zwi)。
  */
 function formatOverLimitSize(bytes: number): string {
   const mebibytes = bytes / (1024 * 1024);
