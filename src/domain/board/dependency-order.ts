@@ -5,7 +5,7 @@ import type { TicketId } from '../ticket-id.js';
 /**
  * bdboard-0rqc: compareCards で並べた順を保ったまま、同じレーンの中で「まだ終わっていない
  * カードに止められているカード」を止めている側より必ず下に置く (安定なトポロジカル順)。
- * 依存の無いカード同士の相対順は compareCards のまま。循環している依存は元の順で崩す。
+ * 依存の無いカード同士の相対順は compareCards のまま。循環している依存はひとまとまりにして、その中は元の順で並べる。
  */
 export function orderByLaneDependencies(sorted: readonly BoardCard[]): BoardCard[] {
   const count = sorted.length;
@@ -16,7 +16,6 @@ export function orderByLaneDependencies(sorted: readonly BoardCard[]): BoardCard
   }
 
   const outgoing: number[][] = Array.from({ length: count }, () => []);
-  const indegree = Array.from({ length: count }, () => 0);
   const seenEdges = new Set<string>();
   let edgeCount = 0;
 
@@ -30,7 +29,6 @@ export function orderByLaneDependencies(sorted: readonly BoardCard[]): BoardCard
       if (seenEdges.has(edgeKey)) continue;
       seenEdges.add(edgeKey);
       outgoing[blockerIndex].push(index);
-      indegree[index] += 1;
       edgeCount += 1;
     }
   }
