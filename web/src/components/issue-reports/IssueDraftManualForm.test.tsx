@@ -21,10 +21,21 @@ import { IMAGE_NOT_SENT_REASON } from './issueDraftImageUpload';
 
 vi.mock('../../api/issue-reports', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/issue-reports')>();
-  return { ...actual, createManualIssueDraft: vi.fn(), uploadIssueDraftImage: vi.fn() };
+  return {
+    ...actual,
+    createManualIssueDraft: vi.fn(),
+    uploadIssueDraftImage: vi.fn(),
+    fetchIssueDraft: vi.fn(),
+    fetchIssueDraftImageBytes: vi.fn(),
+  };
 });
 
-import { createManualIssueDraft, uploadIssueDraftImage } from '../../api/issue-reports';
+import {
+  createManualIssueDraft,
+  fetchIssueDraft,
+  fetchIssueDraftImageBytes,
+  uploadIssueDraftImage,
+} from '../../api/issue-reports';
 
 const created: IssueDraftSummaryDto = {
   id: '1758812345678-a1b2c3d4e5f6a7b8',
@@ -76,6 +87,8 @@ let restoreObjectUrls: () => void;
 beforeEach(() => {
   vi.mocked(createManualIssueDraft).mockReset();
   vi.mocked(uploadIssueDraftImage).mockReset();
+  vi.mocked(fetchIssueDraft).mockReset();
+  vi.mocked(fetchIssueDraftImageBytes).mockReset();
   restoreObjectUrls = stubObjectUrls().restore;
 });
 
@@ -251,6 +264,10 @@ async function typeReport(user: ReturnType<typeof userEvent.setup>) {
 
 const sendButton = () => screen.getByRole('button', { name: '送る' });
 
+/** 画像を送る進み具合を読み上げる status (入れ物は常に置き、中身だけ替わる)。付けた・外したの status とは別。 */
+const PROGRESS_STATUS = '画像の送信の進み具合';
+const progressStatus = () => screen.getByRole('status', { name: PROGRESS_STATUS });
+
 /** 送った画像の base64 の並び (呼ばれた順)。 */
 function uploadedData(): string[] {
   return vi.mocked(uploadIssueDraftImage).mock.calls.map((call) => call[1].data);
@@ -272,6 +289,17 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
       expect(screen.queryByText(PRIVACY_NOTE)).toBeNull();
     });
 
+    // bdboard-8zwi: 付けた・外したを polite な status で読み上げる (入れ物は常に置く)。
+    it('announces an attached and a removed image through the polite status of the image field', async () => {
+      const { user } = setup();
+      const status = screen.getAllByRole('status').find((element) => element.classList.contains('sr-only'));
+      expect(status).toBeEmptyDOMElement();
+      chooseImages([png('a.png', 'a'), png('b.png', 'b')]);
+      expect(status).toHaveTextContent('2 枚の画像を付けました (全部で 2 枚)。');
+      await user.click(screen.getByRole('button', { name: '「a.png」を外す' }));
+      expect(status).toHaveTextContent('「a.png」を外しました (全部で 1 枚)。');
+    });
+
     it('takes an image pasted into the form and stops the browser from pasting it as text', () => {
       setup();
       const prevented = !fireEvent.paste(screen.getByRole('textbox', { name: /説明/ }), {
@@ -288,6 +316,33 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
       });
       expect(prevented).toBe(false);
       expect(screen.queryByRole('list', { name: '付ける画像' })).toBeNull();
+    });
+
+    // bdboard-8zwi: Excel・Word は文字と画像を一度に載せる。文字の欄へは文字を入れ (画像は引き受けない)、欄の外なら画像を付ける。
+    describe('a paste carrying both text and an image (Excel, Word)', () => {
+      const officeClipboard = () => ({
+        files: [png('cells.png')],
+        types: ['text/plain', 'text/html', 'Files'],
+        getData: (type: string) => (type === 'text/plain' ? 'a\tb' : '<table></table>'),
+      });
+
+      it.each([
+        ['description', /説明/],
+        ['title', /題名/],
+      ])('leaves it to the browser in the %s, so the text goes in and no image is attached', (_label, name) => {
+        setup();
+        const prevented = !fireEvent.paste(screen.getByRole('textbox', { name }), { clipboardData: officeClipboard() });
+        expect(prevented).toBe(false);
+        expect(screen.queryByRole('list', { name: '付ける画像' })).toBeNull();
+        expect(screen.queryByText('cells.png')).toBeNull();
+      });
+
+      it('attaches the image when it lands on the form outside the fields', () => {
+        setup();
+        const prevented = !fireEvent.paste(screen.getByRole('form', { name: '新しく報告' }), { clipboardData: officeClipboard() });
+        expect(prevented).toBe(true);
+        expect(screen.getByText('cells.png')).toBeInTheDocument();
+      });
     });
 
     it('ignores a pasted image through the tunnel (no field to show it in, and the paste is left to the browser)', () => {
@@ -433,7 +488,8 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
       await fillAndSend(user);
       await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created));
       expect(uploadIssueDraftImage).not.toHaveBeenCalled();
-      expect(screen.queryByRole('status')).toBeNull();
+      // 進み具合の入れ物は置いたまま、中身は空 (あとから現れる status は読まれないことがあるので、入れ物は常に置く)。
+      expect(progressStatus()).toBeEmptyDOMElement();
     });
 
     it('sends no image request through the tunnel', async () => {
@@ -458,7 +514,7 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
       chooseImages([png('a.png'), png('b.png')]);
       await user.click(sendButton());
 
-      expect(await screen.findByRole('status')).toHaveTextContent('画像を送っています (0 / 2)');
+      expect(await screen.findByRole('status', { name: PROGRESS_STATUS })).toHaveTextContent('画像を送っています (0 / 2)');
       expect(screen.getByRole('button', { name: '送信中…' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'やめる' })).toBeDisabled();
       expect(screen.getByRole('button', { name: '画像を選ぶ' })).toBeDisabled();
@@ -480,7 +536,7 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
 
       await waitFor(() => expect(releases).toHaveLength(1));
       releases[0]?.();
-      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('画像を送っています (1 / 2)'));
+      await waitFor(() => expect(progressStatus()).toHaveTextContent('画像を送っています (1 / 2)'));
       await waitFor(() => expect(releases).toHaveLength(2));
       releases[1]?.();
       await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created));
@@ -577,6 +633,89 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
       expect(createManualIssueDraft).toHaveBeenCalledTimes(1);
     });
 
+    // bdboard-8zwi: 送ったのに応答が届かなかった画像は、サーバーに保存できているかもしれない。再送の前に下書きの画像を取り直して、
+    // もう付いているものは送らない。
+    describe('when a response never arrived and the image may have been stored anyway', () => {
+      /** サーバーにある画像 (file 名 → 中身)。一覧 (fetchIssueDraft) と中身 (fetchIssueDraftImageBytes) の両方に見せる。 */
+      function serverHas(images: Record<string, string>) {
+        const dtos = Object.entries(images).map(([fileName, contents]) => ({
+          fileName,
+          url: `/api/issue-reports/drafts/${created.id}/images/${fileName}`,
+          byteLength: new TextEncoder().encode(contents).byteLength,
+          createdAt: '2026-10-06T00:00:00.000Z',
+        }));
+        vi.mocked(fetchIssueDraft).mockResolvedValue({ draft: created, images: dtos } as never);
+        vi.mocked(fetchIssueDraftImageBytes).mockImplementation((url) => {
+          const contents = images[url.slice(url.lastIndexOf('/') + 1)] ?? '';
+          return Promise.resolve(new TextEncoder().encode(contents).buffer as ArrayBuffer);
+        });
+      }
+
+      /** 1 枚目は保存できて、2 枚目は保存したのに応答が届かなかった (通信の失敗)。 */
+      async function sendWithLostResponse(user: ReturnType<typeof userEvent.setup>) {
+        vi.mocked(createManualIssueDraft).mockResolvedValue({ outcome: 'created', draft: created });
+        vi.mocked(uploadIssueDraftImage)
+          .mockResolvedValueOnce({ image: { ...storedImage.image, fileName: '1-aaaa.png' } })
+          .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        await typeReport(user);
+        chooseImages([png('first.png', 'a'), png('second.png', 'b')]);
+        await user.click(sendButton());
+        await screen.findByRole('heading', { name: '下書きを作りました' });
+      }
+
+      it('does not send the image again when the server already has it, and opens the draft', async () => {
+        const { user, onCreated } = setup();
+        await sendWithLostResponse(user);
+        expect(uploadIssueDraftImage).toHaveBeenCalledTimes(2);
+        serverHas({ '1-aaaa.png': 'a', '2-bbbb.png': 'b' });
+
+        await user.click(screen.getByRole('button', { name: '付かなかった画像をもう一度送る' }));
+        await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created));
+        expect(fetchIssueDraft).toHaveBeenCalledWith(created.id);
+        // 再送で送った画像は 0 枚 (1 回目の 2 枚のまま)。
+        expect(uploadIssueDraftImage).toHaveBeenCalledTimes(2);
+      });
+
+      it('sends the image again when the server does not have it', async () => {
+        const { user, onCreated } = setup();
+        await sendWithLostResponse(user);
+        serverHas({ '1-aaaa.png': 'a' });
+        vi.mocked(uploadIssueDraftImage).mockResolvedValueOnce(storedImage);
+
+        await user.click(screen.getByRole('button', { name: '付かなかった画像をもう一度送る' }));
+        await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created));
+        expect(uploadIssueDraftImage).toHaveBeenCalledTimes(3);
+        expect(uploadedData()).toEqual(['YQ==', 'Yg==', 'Yg==']);
+      });
+
+      it('sends the image again when the list of the draft cannot be fetched', async () => {
+        const { user, onCreated } = setup();
+        await sendWithLostResponse(user);
+        vi.mocked(fetchIssueDraft).mockRejectedValue(new TypeError('Failed to fetch'));
+        vi.mocked(uploadIssueDraftImage).mockResolvedValueOnce(storedImage);
+
+        await user.click(screen.getByRole('button', { name: '付かなかった画像をもう一度送る' }));
+        await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created));
+        expect(uploadIssueDraftImage).toHaveBeenCalledTimes(3);
+      });
+
+      it('does not ask the server about an image the server refused (it was never stored)', async () => {
+        vi.mocked(createManualIssueDraft).mockResolvedValue({ outcome: 'created', draft: created });
+        vi.mocked(uploadIssueDraftImage)
+          .mockResolvedValueOnce(storedImage)
+          .mockRejectedValueOnce(apiError(400, { error: 'invalid or unsupported image data' }))
+          .mockResolvedValueOnce(storedImage);
+        const { user, onCreated } = setup();
+        await typeReport(user);
+        chooseImages([png('first.png', 'a'), png('second.png', 'b')]);
+        await user.click(sendButton());
+        await user.click(await screen.findByRole('button', { name: '付かなかった画像をもう一度送る' }));
+        await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created));
+        expect(fetchIssueDraft).not.toHaveBeenCalled();
+        expect(uploadIssueDraftImage).toHaveBeenCalledTimes(3);
+      });
+    });
+
     it('opens the draft from the result without sending anything more', async () => {
       vi.mocked(createManualIssueDraft).mockResolvedValue({ outcome: 'created', draft: created });
       vi.mocked(uploadIssueDraftImage).mockRejectedValue(apiError(400, { error: 'invalid or unsupported image data' }));
@@ -601,7 +740,9 @@ describe('IssueDraftManualForm: images (bdboard-4y8q.6.9)', () => {
 
     it('stops at a 409 limit-reached and says the rest were not sent', async () => {
       vi.mocked(createManualIssueDraft).mockResolvedValue({ outcome: 'created', draft: created });
-      vi.mocked(uploadIssueDraftImage).mockRejectedValueOnce(apiError(409, { error: 'image limit reached (max 20 per draft)' }));
+      vi.mocked(uploadIssueDraftImage).mockRejectedValueOnce(
+        apiError(409, { error: 'image limit reached (max 20 per draft)', code: 'image-limit-reached' }),
+      );
       const { user } = setup();
       await sendWithTwoImages(user);
       await screen.findByRole('heading', { name: '下書きを作りました' });

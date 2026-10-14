@@ -92,6 +92,7 @@ export function createExternalIssueService(options: ExternalIssueServiceOptions)
   async function syncListed(
     listed: readonly { readonly issue: ExternalIssue; readonly prepared: PreparedExternalIssue }[],
     stored: ReadonlyMap<number, StoredExternalIssueSnapshot>,
+    unusable: ReadonlySet<number>,
     nowIso: string,
   ): Promise<{ readonly entries: ExternalIssueEntry[]; readonly records: Map<number, StoredExternalIssueSnapshot> }> {
     const entries: ExternalIssueEntry[] = [];
@@ -102,6 +103,9 @@ export function createExternalIssueService(options: ExternalIssueServiceOptions)
       if (existing === undefined) {
         // 最初に見た時点の内容を、判定時点の写しの初期値として残す。
         record = createSnapshotRecord(prepared, nowIso);
+        // 使えない写し (壊れた・旧形式) を作り直すと判定時点の写しを失う。黙って印を戻さず再判定を立てる。
+        // 初めて見た issue (ファイルが無い) は立てない (bdboard-g2ti)。
+        if (unusable.has(issue.number)) record = { ...record, needsRejudge: true };
         await storage.save(record);
       } else {
         // 比べる相手は取り直すまで最初の写し。印は一度立てたら下ろさない。書くのは変わったときだけ (毎回は書かない)。
@@ -152,8 +156,10 @@ export function createExternalIssueService(options: ExternalIssueServiceOptions)
     const nowDate = now();
     const nowIso = nowDate.toISOString();
     let stored: readonly StoredExternalIssueSnapshot[];
+    let unusable: ReadonlySet<number>;
     try {
       stored = await storage.list();
+      unusable = new Set(await storage.listUnusable());
     } catch (error) {
       return failWith('storage-failed', storageDetail('could not read the saved snapshots', error));
     }
@@ -162,7 +168,7 @@ export function createExternalIssueService(options: ExternalIssueServiceOptions)
     let entries: ExternalIssueEntry[];
     let records: Map<number, StoredExternalIssueSnapshot>;
     try {
-      ({ entries, records } = await syncListed(listed, new Map(stored.map((record) => [record.number, record])), nowIso));
+      ({ entries, records } = await syncListed(listed, new Map(stored.map((record) => [record.number, record])), unusable, nowIso));
       // 一覧が最後まで読めていないときは、載っていない issue がまだ open かもしれないので、外れた印は付けない。
       if (!truncated) await markMissing(records, new Set(open.map((issue) => issue.number)), nowIso);
     } catch (error) {

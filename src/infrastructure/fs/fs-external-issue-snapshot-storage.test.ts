@@ -200,6 +200,53 @@ describe('createFsExternalIssueSnapshotStorage', () => {
   });
 
   describe('files that cannot be used', () => {
+    // bdboard-g2ti: サービスが「初めて見た issue」(ファイルが無い) と区別できるよう、使えない写しの番号を返す。
+    it('listUnusable: gives the numbers of the files that cannot be used (not JSON, wrong format, wrong number, a directory), in ascending order, and list() leaves them out', async () => {
+      const storage = make();
+      await storage.save(makeSnapshot(12));
+      await fs.writeFile(path.join(baseDir, '16.json'), JSON.stringify({ ...makeSnapshot(16), checks: 'nope' }));
+      await fs.writeFile(path.join(baseDir, '13.json'), 'not json {');
+      await fs.writeFile(path.join(baseDir, '14.json'), JSON.stringify(makeSnapshot(13)));
+      await fs.mkdir(path.join(baseDir, '15.json'));
+      // 番号の形のファイル名ではないものは、使えない写しにも数えない (読まないファイル)。
+      await fs.writeFile(path.join(baseDir, 'notes.json'), 'not json {');
+      await fs.writeFile(path.join(baseDir, '17.json.abcdef123456.tmp'), 'half written');
+
+      expect(await storage.listUnusable()).toEqual([13, 14, 15, 16]);
+      expect((await storage.list()).map((snapshot) => snapshot.number)).toEqual([12]);
+    });
+
+    it('listUnusable: does not include a number that has no file, and is empty when the base directory does not exist', async () => {
+      const storage = make();
+      expect(await storage.listUnusable()).toEqual([]);
+      await storage.save(makeSnapshot(12));
+      expect(await storage.listUnusable()).toEqual([]);
+    });
+
+    it('listUnusable: warns once for the same broken file even when list and listUnusable both read it', async () => {
+      await fs.mkdir(baseDir, { recursive: true });
+      await fs.writeFile(path.join(baseDir, '13.json'), `{ not json ${SECRET_BODY_TEXT}`);
+      const storage = make();
+
+      await storage.list();
+      await storage.listUnusable();
+      await storage.listUnusable();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith('external issue snapshot 13 is skipped: not valid JSON');
+    });
+
+    it('listUnusable: a number drops out of it once the file is written again', async () => {
+      await fs.mkdir(baseDir, { recursive: true });
+      await fs.writeFile(path.join(baseDir, '13.json'), 'garbage');
+      const storage = make();
+      expect(await storage.listUnusable()).toEqual([13]);
+
+      await storage.save(makeSnapshot(13));
+
+      expect(await storage.listUnusable()).toEqual([]);
+    });
+
     it('skips a file that is not JSON, with one warning that names the number and the reason but not the content', async () => {
       const storage = make();
       await storage.save(makeSnapshot(12));
@@ -250,6 +297,7 @@ describe('createFsExternalIssueSnapshotStorage', () => {
         await storage.save(makeSnapshot(12));
         await fs.chmod(path.join(baseDir, '12.json'), 0o000);
         await expect(storage.list()).rejects.toMatchObject({ code: 'EACCES' });
+        await expect(storage.listUnusable()).rejects.toMatchObject({ code: 'EACCES' });
         await expect(storage.get(12)).rejects.toMatchObject({ code: 'EACCES' });
       },
     );
