@@ -1,0 +1,176 @@
+import { describe, expect, it } from 'vitest';
+import type { DependencyEdge } from './dependency.js';
+import { buildBoard, mergeBoards } from './board.js';
+import { makeTicket } from './test-support.js';
+
+const NOW = new Date('2026-06-01T12:00:00.000Z');
+const PROJECT = '/projects/bdboard';
+
+function blocksEdge(issueId: string, dependsOnId: string): DependencyEdge {
+  return { issueId, dependsOnId, kind: 'blocks' };
+}
+
+function openTicket(
+  id: string,
+  updatedAt: string,
+  dependencies: DependencyEdge[] = [],
+  status: 'open' | 'closed' = 'open',
+) {
+  return makeTicket({
+    id,
+    status,
+    priority: 1,
+    updatedAt: new Date(updatedAt),
+    dependencies,
+  });
+}
+
+function humanBoard(
+  tickets: ReturnType<typeof openTicket>[],
+  humanIds: readonly string[] = tickets.map((ticket) => ticket.id),
+  projectId = PROJECT,
+) {
+  return buildBoard({
+    projectId,
+    tickets,
+    now: NOW,
+    humanLabeledIds: new Set(humanIds),
+  });
+}
+
+function awaitingIds(board: ReturnType<typeof humanBoard>): string[] {
+  return board.lanes.awaiting_human.map((card) => card.ticket.id);
+}
+
+describe('lane dependency order', () => {
+  it('places an in-lane blocker above the newer card it blocks', () => {
+    // compareCards (unblocksCount desc, then updatedAt desc) is b, a, d, c.
+    // A blocks B and B blocks C in the same lane, so A moves above B: a, b, d, c.
+    const board = humanBoard([
+      openTicket('bdboard-a', '2026-05-01T00:00:00.000Z'),
+      openTicket('bdboard-b', '2026-05-02T00:00:00.000Z', [
+        blocksEdge('bdboard-b', 'bdboard-a'),
+      ]),
+      openTicket('bdboard-c', '2026-05-03T00:00:00.000Z', [
+        blocksEdge('bdboard-c', 'bdboard-b'),
+      ]),
+      openTicket('bdboard-d', '2026-05-04T00:00:00.000Z'),
+    ]);
+
+    expect(awaitingIds(board)).toEqual([
+      'bdboard-a',
+      'bdboard-b',
+      'bdboard-d',
+      'bdboard-c',
+    ]);
+  });
+
+  it('keeps compareCards order when there are no dependencies', () => {
+    const board = humanBoard([
+      openTicket('bdboard-newer', '2026-05-04T00:00:00.000Z'),
+      openTicket('bdboard-older', '2026-05-01T00:00:00.000Z'),
+    ]);
+
+    expect(awaitingIds(board)).toEqual(['bdboard-newer', 'bdboard-older']);
+  });
+
+  it('does not reorder cards for a blocker in a different lane', () => {
+    const board = humanBoard(
+      [
+        openTicket('bdboard-x', '2026-05-03T00:00:00.000Z'),
+        openTicket('bdboard-y', '2026-05-02T00:00:00.000Z', [
+          blocksEdge('bdboard-y', 'bdboard-x'),
+        ]),
+        openTicket('bdboard-z', '2026-05-04T00:00:00.000Z'),
+      ],
+      ['bdboard-y', 'bdboard-z'],
+    );
+
+    expect(board.lanes.ready.map((card) => card.ticket.id)).toEqual(['bdboard-x']);
+    expect(awaitingIds(board)).toEqual(['bdboard-z', 'bdboard-y']);
+  });
+
+  it('keeps compareCards order when the blocker is closed', () => {
+    const board = humanBoard(
+      [
+        openTicket('bdboard-a', '2026-05-03T00:00:00.000Z', [], 'closed'),
+        openTicket('bdboard-b', '2026-05-02T00:00:00.000Z', [
+          blocksEdge('bdboard-b', 'bdboard-a'),
+        ]),
+        openTicket('bdboard-e', '2026-05-01T00:00:00.000Z'),
+      ],
+      ['bdboard-b', 'bdboard-e'],
+    );
+
+    expect(awaitingIds(board)).toEqual(['bdboard-b', 'bdboard-e']);
+  });
+
+  it('keeps every card once when dependencies cycle', () => {
+    const tickets = [
+      openTicket('bdboard-p', '2026-05-02T00:00:00.000Z', [
+        blocksEdge('bdboard-p', 'bdboard-q'),
+      ]),
+      openTicket('bdboard-q', '2026-05-03T00:00:00.000Z', [
+        blocksEdge('bdboard-q', 'bdboard-p'),
+      ]),
+      openTicket('bdboard-r', '2026-05-01T00:00:00.000Z'),
+    ];
+    const board = humanBoard(tickets);
+    const ids = awaitingIds(board);
+
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids)).toEqual(new Set(['bdboard-p', 'bdboard-q', 'bdboard-r']));
+    expect(board.cards).toHaveLength(tickets.length);
+  });
+
+  it('keeps in-lane blocker order after mergeBoards', () => {
+    // B and A both unblock one open ticket and B is newer, so compareCards puts B first.
+    // A blocks B and B blocks F, so the merged lane is A, B, F.
+    const boardOne = humanBoard(
+      [
+        openTicket('bdboard-a', '2026-05-02T00:00:00.000Z'),
+        openTicket('bdboard-b', '2026-05-03T00:00:00.000Z', [
+          blocksEdge('bdboard-b', 'bdboard-a'),
+        ]),
+        openTicket('bdboard-f', '2026-05-01T00:00:00.000Z', [
+          blocksEdge('bdboard-f', 'bdboard-b'),
+        ]),
+      ],
+      ['bdboard-a', 'bdboard-b', 'bdboard-f'],
+      '/p/one',
+    );
+    const boardTwo = humanBoard(
+      [openTicket('bdboard-g', '2026-05-04T00:00:00.000Z')],
+      ['bdboard-g'],
+      '/p/two',
+    );
+
+    const oneAwaiting = mergeBoards([boardOne, boardTwo])
+      .lanes.awaiting_human.filter((card) => card.projectId === '/p/one')
+      .map((card) => card.ticket.id);
+
+    expect(oneAwaiting).toEqual(['bdboard-a', 'bdboard-b', 'bdboard-f']);
+  });
+
+  it('does not create cross-project edges for the same ticket id', () => {
+    const boardOne = humanBoard(
+      [
+        openTicket('bdboard-x', '2026-05-01T00:00:00.000Z'),
+        openTicket('bdboard-y', '2026-05-02T00:00:00.000Z', [
+          blocksEdge('bdboard-y', 'bdboard-x'),
+        ]),
+      ],
+      ['bdboard-x', 'bdboard-y'],
+      '/p/one',
+    );
+    const boardTwo = humanBoard(
+      [openTicket('bdboard-x', '2026-05-03T00:00:00.000Z')],
+      ['bdboard-x'],
+      '/p/two',
+    );
+
+    const merged = mergeBoards([boardOne, boardTwo]);
+
+    expect(merged.cards).toHaveLength(3);
+  });
+});
