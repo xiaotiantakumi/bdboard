@@ -93,32 +93,48 @@ export interface SnapshotRetentionOptions {
    * しれないので、日数での削除をしない。上限の数での削除は、一覧が読めたかによらず行う。
    */
   readonly listingComplete: boolean;
+  /**
+   * 今回の一覧 (サービスが 500 件までに切った後) に載っている issue の番号。この番号の写しは、日数でも上限でも消さない
+   * (判定時点の写しを失うため)。載っていない写しが消す候補で、`missingSince` の有無は候補の順序にだけ使う。
+   */
+  readonly listedNumbers: ReadonlySet<number>;
 }
 
 /**
- * 消す写しの番号を選ぶ。
+ * 消す写しの番号を選ぶ。今回の一覧に載っている写し (`listedNumbers`) は、どちらでも消さない。
  * 1. 一覧から外れて `EXTERNAL_ISSUE_SNAPSHOT_RETENTION_DAYS` 日以上たったもの (一覧が最後まで読めたときだけ)。
- * 2. それでも `EXTERNAL_ISSUE_SNAPSHOT_MAX_COUNT` を超えるなら、一覧から外れたもののうち外れた時刻が古いものから。
- * 一覧に載っている写し (`missingSince` が null) は、どちらでも消さない。
+ * 2. それでも `EXTERNAL_ISSUE_SNAPSHOT_MAX_COUNT` を超えるなら、一覧に載っていない写しを次の順に (bdboard-558a):
+ *    ① 一覧から外れたと分かっているもの (`missingSince` あり) を、外れた時刻の古い順。
+ *    ② ①を使い切ってもまだ足りなければ、外れた印は無いが今回の一覧にも載っていないもの (打ち切られた poll で見えなかっただけで、
+ *       まだ open かもしれない) を、`snapshotAt` の古い順。「最後に一覧で見た時刻」の欄が記録に無いので `snapshotAt` で代用する。
+ *    どちらも同じ時刻なら番号の小さい順。載っていない写しが足りなければ、上限を超えたまま返す (サービスが一覧を上限で切る)。
  */
 export function selectSnapshotsToRemove(
-  records: readonly Pick<StoredExternalIssueSnapshot, 'number' | 'missingSince'>[],
+  records: readonly Pick<StoredExternalIssueSnapshot, 'number' | 'missingSince' | 'snapshotAt'>[],
   options: SnapshotRetentionOptions,
 ): number[] {
   const removals = new Set<number>();
   if (options.listingComplete) {
     for (const record of records) {
-      if (record.missingSince !== null && options.nowMs - Date.parse(record.missingSince) >= EXTERNAL_ISSUE_SNAPSHOT_RETENTION_MS) {
+      if (
+        record.missingSince !== null &&
+        !options.listedNumbers.has(record.number) &&
+        options.nowMs - Date.parse(record.missingSince) >= EXTERNAL_ISSUE_SNAPSHOT_RETENTION_MS
+      ) {
         removals.add(record.number);
       }
     }
   }
   const excess = records.length - removals.size - EXTERNAL_ISSUE_SNAPSHOT_MAX_COUNT;
   if (excess > 0) {
-    const oldestFirst = records
-      .filter((record) => record.missingSince !== null && !removals.has(record.number))
+    const candidates = records.filter((record) => !options.listedNumbers.has(record.number) && !removals.has(record.number));
+    const knownLeft = candidates
+      .filter((record) => record.missingSince !== null)
       .sort((a, b) => Date.parse(a.missingSince ?? '') - Date.parse(b.missingSince ?? '') || a.number - b.number);
-    for (const record of oldestFirst.slice(0, excess)) removals.add(record.number);
+    const unseen = candidates
+      .filter((record) => record.missingSince === null)
+      .sort((a, b) => Date.parse(a.snapshotAt) - Date.parse(b.snapshotAt) || a.number - b.number);
+    for (const record of [...knownLeft, ...unseen].slice(0, excess)) removals.add(record.number);
   }
   return [...removals];
 }

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { ExternalIssueSnapshotStoragePort } from '../../application/ports/external-issue-snapshot-storage.js';
+import type { ExternalIssueSnapshotScan, ExternalIssueSnapshotStoragePort } from '../../application/ports/external-issue-snapshot-storage.js';
 import { isExternalIssueNumber, type StoredExternalIssueSnapshot } from '../../domain/external-issue-snapshot-record.js';
 import { externalIssueSnapshotSchema } from './external-issue-snapshot-schema.js';
 
@@ -83,8 +83,8 @@ export function createFsExternalIssueSnapshotStorage(
     return result;
   }
 
-  /** 番号の昇順に全ファイルを読み、読めた写しと、ファイルはあるが使えない番号 (`listUnusable`) に分ける。 */
-  async function scan(): Promise<{ readonly snapshots: StoredExternalIssueSnapshot[]; readonly unusable: number[] }> {
+  /** 番号の昇順に全ファイルを読み、読めた写しと、ファイルはあるが使えない番号に分ける (ポートの `scan`)。 */
+  async function scan(): Promise<ExternalIssueSnapshotScan> {
     let names: string[];
     try {
       names = await fs.readdir(resolvedBaseDir);
@@ -109,13 +109,7 @@ export function createFsExternalIssueSnapshotStorage(
   }
 
   return {
-    async list() {
-      return (await scan()).snapshots;
-    },
-
-    async listUnusable() {
-      return (await scan()).unusable;
-    },
+    scan,
 
     async get(number) {
       const result = await readAndReport(number);
