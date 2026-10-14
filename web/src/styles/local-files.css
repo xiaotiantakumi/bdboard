@@ -195,3 +195,9 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* 別ウィンドウのフォルダ表示は広いので、16:9 の静止画が見分けられる大きさにする。 */
+.local-file-viewer-page .attachment-thumbnail-button {
+  width: 240px;
+  height: 135px;
+}
