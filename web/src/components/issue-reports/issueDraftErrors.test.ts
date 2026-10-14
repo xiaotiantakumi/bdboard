@@ -114,7 +114,10 @@ describe('describeIssueDraftManualError (bdboard-4y8q.6.8)', () => {
 
 describe('describeIssueDraftImageError', () => {
   it.each([
-    ['409 image limit', apiError(409, { error: 'image limit reached' }), IMAGE_LIMIT_REACHED_HELP],
+    ['409 image limit', apiError(409, { error: 'image limit reached', code: 'image-limit-reached' }), IMAGE_LIMIT_REACHED_HELP],
+    // 理由を決めつけない (消去法で「20 枚まで」にも「未処理ではない」にもしない): code の無い 409 はステータスだけ出す。
+    ['409 without a known code', apiError(409, { error: 'image limit reached' }), '付けられませんでした (HTTP 409)。'],
+    ['409 with an unknown code', apiError(409, { error: 'x', code: 'something-new' }), '付けられませんでした (HTTP 409)。'],
     ['409 not pending', apiError(409, { error: 'draft is not pending', code: 'draft-not-pending', status: 'dismissed' }), '見送り'],
     ['507 storage full', apiError(507, { error: 'full', code: 'storage-full' }), STORAGE_FULL_HELP],
     ['403 local-only', apiError(403, { error: 'local access only' }), IMAGE_LOCAL_ONLY_HELP],

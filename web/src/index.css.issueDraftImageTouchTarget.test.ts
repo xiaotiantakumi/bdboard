@@ -32,4 +32,10 @@ describe('issue draft image field touch target (bdboard-4y8q.6.9)', () => {
     const rule = /\.issue-draft-image-picker \.btn\s*\{[^}]*min-height:\s*44px/;
     expect(narrowMediaBlocks(css).some((block) => rule.test(block))).toBe(true);
   });
+
+  // bdboard-8zwi: 画像が付かなかった画面 (IssueDraftImageFailures) のボタンも同じ。コンポーネントは actions の div にこの class を付ける。
+  it('gives the buttons in .issue-draft-image-failure-actions a 44px minimum height inside a narrow-width media query', () => {
+    const rule = /\.issue-draft-image-failure-actions \.btn\s*\{[^}]*min-height:\s*44px/;
+    expect(narrowMediaBlocks(css).some((block) => rule.test(block))).toBe(true);
+  });
 });

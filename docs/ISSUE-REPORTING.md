@@ -375,11 +375,16 @@ head/tail が置き換え後の文章から作られるようになったら、�
 
 | 項目 | 内容 |
 |---|---|
-| 画面で先に断るもの | サーバーと同じ一覧と上限: 形式は PNG・JPEG・WebP・GIF(`ATTACHMENT_ALLOWED_MIME_TYPES`。`extensionForMimeType` が拡張子に直せる 4 つ)、1 枚 10 MiB(`ATTACHMENT_MAX_BYTES` = 10 * 1024 * 1024 バイト。ちょうどは通す)、0 バイトは断る(サーバーも 400)、1 下書き 20 枚(`ISSUE_DRAFT_MAX_IMAGES`)。断ったものだけを外して理由を出し、残りは付ける。20 枚を超える分は 1 件の理由にまとめる。画面ではマジックバイトを見ない(宣言した形式と中身が合わなければ、送ったときにサーバーが 400 にする) |
+| 画面で先に断るもの | サーバーと同じ一覧と上限: 形式は PNG・JPEG・WebP・GIF(`ATTACHMENT_ALLOWED_MIME_TYPES`。`extensionForMimeType` が拡張子に直せる 4 つ)、1 枚 10 MiB(`ATTACHMENT_MAX_BYTES` = 10 * 1024 * 1024 バイト。ちょうどは通す)、0 バイトは断る(サーバーも 400)、1 下書き 20 枚(`ISSUE_DRAFT_MAX_IMAGES`)。断ったものだけを外して理由を出し、残りは付ける。20 枚を超える分は 1 件の理由にまとめる。上限を超えた画像の大きさは小数第 1 位で**切り上げて**出す(10 MiB を 1 バイトだけ超えても「10 MiB を超えている (10.1 MiB)」。四捨五入だと「10.0 MiB」になり、上限と同じ数字になる。bdboard-8zwi)。画面ではマジックバイトを見ない(宣言した形式と中身が合わなければ、送ったときにサーバーが 400 にする) |
 | 値をサーバーと同じにする方法 | **web/ から src/ は import できない**(依存境界 `web-no-server-src` / `server-no-web`)ので、画面側の `issueDraftImageLimits.ts`(定数だけ・他を import しない)に同じ値を二重に持つ。一致は `src/interface/http/issue-report-image-limits.test.ts` が固定する: 画面側のファイルを `typescript` の `transpileModule` で変換して評価し(import ではなく読み込みなので境界は破れない)、枚数・バイト数・MIME の一覧(順序も)をサーバーの 3 定数と比べ、`extensionForMimeType` で 4 つの拡張子に直せることも見る。どちらかの値だけを変えるとこのテストが落ちる(上限を変えるときは両方を同じ PR で変える) |
 | 送る順序 | ① 題名・説明の検査(画像は欄に足した時点で検査済み)→ ② `POST manual-drafts`(失敗したら理由を出して入力と画像を残し、画像は 1 枚も送らない)→ ③ 画像を**1 枚ずつ、前の応答を待ってから**送る(送る直前に `readFileAsDataUrl`(`chat/attachments.ts` から流用)で 1 枚だけ読み、送ったら捨てる。20 枚ぶんの base64 を同時に持たない。サーバーも 1 枚ごとに枚数と容量を確かめる)→ ④ `['issue-reports']` の読み直しを待つ → ⑤ 失敗が無ければ新しい下書きを選ぶ。作成が先なので、詳細を開いたときは画像の一覧が揃っている |
 | 一部が付かなかったとき | **下書きは作れているので、画像の失敗で下書きを消さない・作り直さない。**書く画面の代わりに「下書きを作りました」の画面を出し、付かなかった画像を `n 枚目「名前」` と理由つきで並べる(同じ名前の貼り付け `image.png` を見分けるため位置も付ける)。ボタンは「付かなかった画像をもう一度送る」(失敗した分だけを同じ下書きへ送り直す。全部付けば下書きを選ぶ)と「下書きを開く」。**この画面には「送る」も入力欄も出さない**(もう一度「送る」を押して同じ報告を重ねて作る事故を防ぐ) |
-| 失敗の理由 | `describeIssueDraftImageError`(`issueDraftErrors.ts`)。**409 は 2 種類**: `code: 'draft-not-pending'`(見送り・投稿済み)は既存の「未処理ではない」の説明、それ以外の 409 は「この下書きに付けられる画像は 20 枚までです」(サーバーは枚数超過の 409 に `code` を付けない。下の「既知の限界」)。507 は容量の説明(`STORAGE_FULL_HELP`)、403 `local access only` は「ローカルで開いたときだけ画像を付けられます」、400 は「画像として受け付けられませんでした」、413 は「大きすぎます」 |
+| 失敗の理由 | `describeIssueDraftImageError`(`issueDraftErrors.ts`)。**409 は 2 種類で、どちらも `code` で見分ける**(bdboard-8zwi): `code: 'draft-not-pending'`(見送り・投稿済み)は既存の「未処理ではない」の説明、`code: 'image-limit-reached'` は「この下書きに付けられる画像は 20 枚までです」。どちらでもない 409(`code` の無い古いサーバーなど)は理由を決めつけず「付けられませんでした (HTTP 409)」。507 は容量の説明(`STORAGE_FULL_HELP`)、403 `local access only` は「ローカルで開いたときだけ画像を付けられます」、400 は「画像として受け付けられませんでした」、413 は「大きすぎます」 |
+| 貼り付けで文字と画像が一緒に来たとき(bdboard-8zwi) | Excel・Word は、セルや文章をコピーすると文字と画像を一度にクリップボードへ載せる。**貼り付け先が文字の欄(題名の `input`・説明の `textarea` など。`isTextEntryField`)で、クリップボードに文字がある(`types` に `text/plain` があり、中身が空白だけでない。`clipboardCarriesText`)ときは、画像を引き受けず(`preventDefault` しない)、文字をふつうに入れる。**画像は「画像を選ぶ」から付けられる。次の場合は従来どおり画像を付ける: 画像だけ(スクリーンショット。`types` が `Files` だけ)、書く画面の中の、文字の欄ではない要素にフォーカスがあるとき(「画像を選ぶ」などのボタン。文字を受ける先が無いので、文字と画像が両方来ても画像を付ける。余白をクリックするとフォーカスは body へ移り、貼り付けは書く画面に届かない)。`text/html` があるだけでは文字と見なさない: Chrome の「画像をコピー」は `<img>` だけの HTML と画像を載せ、文字は無く、HTML で文字を優先すると画像が付かず何も貼られないため |
+| 再送で同じ画像を二重に付けない(bdboard-8zwi) | 送ったのに応答が届かなかった画像(通信の失敗・想定外の応答。`ImageUploadFailure.mayBeStored`)は、サーバーに保存できているかもしれない。**「付かなかった画像をもう一度送る」の前に、下書きの画像の一覧を取り直し(`fetchIssueDraft`)、もう付いているものは送らない**(`findImagesAlreadyStored`、`issueDraftImageResend.ts`)。サーバーは画像の元の名前も内容のハッシュも持たない(一覧にあるのは生成された file 名・大きさ・時刻)ので、見比べは ① この画面が応答で「保存できた」と確かめた file 名を除いた画像から、② 大きさが同じものを候補にし、③ 中身を取って 1 バイトずつ見比べる(大きさだけでは別の画像を同じと見て黙って落とす)。一致した 1 枚は 1 枚の画像にしか割り当てない(同じ画像を 2 回付けた人の 2 枚目を落とさない)。サーバーが保存せずに断った失敗(400・403・404・409・413・507)と、送っていない画像は確かめない。一覧も中身も取れなければ「付いていない」として送る(二重に付く可能性は残るが、画像が付かないよりよい)。**冪等キーをサーバーに足す案は取らなかった**(サーバーに新しい保存の状態が要り、API も変わる。画面だけで、実際に起きる「保存できたが応答が届かない」を防げる) |
+| 読み上げ(bdboard-8zwi) | 画像を付けた・外したは、画面では見えても読み上げには届かなかった。欄の中に、画面には出さない(`sr-only`)polite な `role="status"` を置き、「N 枚の画像を付けました (全部で M 枚)。」「「名前」を外しました (全部で M 枚)。」を伝える。断った理由はこれまでどおり `role="alert"`。**status の入れ物は常に置き、中身だけ替える**(中身と一緒にあとから現れる status は読まれないことがある。画像を送る進み具合 `画像を送っています (n / m)` も同じ作りに直した)。失敗の画面の alert は、一覧が新しくなるたびに要素を作り直す(`key`): 送り直しても同じ画像が同じ理由で落ちると、文が前と同じで読み上げ側が変化なしと見て読まないため |
+| 狭い幅の押す大きさ(bdboard-8zwi) | 画像が付かなかった画面の「もう一度送る」「下書きを開く」も、狭い幅(700px 以下)で 44px 以上にする(`.issue-draft-image-failure-actions .btn`。画像の欄のボタンと同じ。規則は `index.css.issueDraftImageTouchTarget.test.ts` が見る) |
+| 結果の画面で「新しく報告」(bdboard-8zwi) | 画像が付かなかった結果の画面を出している間に見出しの「新しく報告」を押すと、新しい空の書く画面にする(パネルが form の `key` を増やして作り直す)。以前は押しても何も変わらなかった。**書きかけの画面は作り直さない**(押しても入力を消さない): 画面が結果を出しているかは `onResultShownChange` でパネルへ知らせ、そのときだけ `key` を増やす。作った下書きは一覧に残り、付かなかった画像はそこで諦める(押したのは利用者の判断) |
 | 送るのをやめる失敗 | 403・404・409・507 は下書き全体に当たる原因なので、残りの画像は送らず「送っていません」として一覧に出す(送っても同じ理由で落ち、14 MiB 級の本文を無駄に送るだけ)。400・413・読み込みの失敗・通信の失敗は 1 枚の事情なので、次の画像へ進む |
 | トンネル | **画像の入力を出さない。**書く画面そのものがローカルでしか開けない(6.8。ボタンが無効)うえ、書く画面の `localAccess`(パネルが `isLoopbackHostname` で決めた値を渡す。判定は 1 か所)が false なら、画像の欄・注記・貼り付けの処理をすべて出さない。サーバーは画像の追加を `localOnlyGuard` で 403 にする(正はサーバー) |
 | 注記 | 「画像は手元にだけ保存され、公開 issue には自動では載りません」を欄に出し、`aria-describedby` で欄と結ぶ。スクリーンショットは生ログと同じ種類の秘密が写りうるので、トンネルには見せない(3 節)のと同じ理由でこの文を置く。**本当に「自動では載らない」ことの根拠**: 公開本文の組み立て(5 節。`src/domain/` の下書きの本文の組み立て)は画像を入力に取らず、画像のファイル名・URL も本文に載らない。投稿(4y8q.4)で画像を載せるかどうかは、そちらで決める |
@@ -389,8 +394,11 @@ head/tail が置き換え後の文章から作られるようになったら、�
 - **画像が付かなかったときは下書きを選ばない**: 6.8 は「作れたら必ず新しい下書きを選ぶ」だったが、画像が付かなかったときは、選ぶ前に失敗を読ませる(選ぶと書く画面が閉じ、失敗の表示が消える)。「下書きを開く」で選ぶ。画像が全部付いた(または 0 枚の)ときは 6.8 と同じ。
 - **10MB は 10 MiB**: チケットの「10MB」は、サーバーの `ATTACHMENT_MAX_BYTES`(10 * 1024 * 1024 バイト)のこと。画面の文言は、既存の添付(`formatImageSize`)に合わせて MiB で書く。
 - **縮小表示は object URL**: 貼り付けた時点で data URL にすると、20 枚 × 最大 10 MiB(base64 で約 13 MiB)をメモリに持つ。縮小表示は `URL.createObjectURL`(外す・閉じるで `revokeObjectURL`)で出し、`readFileAsDataUrl` は送る直前に 1 枚ずつだけ使う。CSP は `frame-ancestors 'none'` だけ(`app-security.ts`)で `blob:` の画像を妨げない。
+- **貼り付けで Office が載せる形式は、ブラウザで未確認**(bdboard-8zwi): 上の「貼り付けで文字と画像が一緒に来たとき」は、Excel・Word が `text/plain`(と `text/html`・画像)を載せる前提で作り、`clipboardData` の形を作ったテストで固定した。実際の Office・ブラウザの組み合わせで何が載るかは、ブラウザで確かめていない(worker は実機のブラウザを使えない)。文字が入らない・画像が付くなど、想定と違う組み合わせが見つかったら `clipboardCarriesText` の判定を見直す。
 
-**既知の限界**: 画面は、枚数超過の 409 を「`code` が `draft-not-pending` でない 409」として判定する(サーバーの `issue-report-routes.ts` は枚数超過の 409 に `code` を付けない)。サーバーが 409 の理由を増やしたら、この判定の見直しが要る(`code` を付ける変更は、4y8q.6.9 の範囲外のサーバー変更なので入れていない)。
+**既知の限界**:
+- 画面は、枚数超過の 409 を `code: 'image-limit-reached'` で、未処理でない下書きの 409 を `code: 'draft-not-pending'` で見分ける(bdboard-8zwi)。サーバーが 409 の理由を増やしたら、その `code` を画面に足す(足すまでは「付けられませんでした (HTTP 409)」と出る)。
+- 再送の二重付けを避ける見比べ(`findImagesAlreadyStored`)は、一覧か中身を取れないと「付いていない」として送るので、まれに同じ画像が 2 枚付く。付いた画像を消す画面は無い。
 
 ### 閲覧・編集(PATCH)側のフィールド範囲
 
@@ -759,7 +767,9 @@ function normalizeErrorText(text: string): string {
   (mutex の内側、画像の枚数と上限の確認より前)。ルートも、最大 10MB の本文を読んでデコードする前に、すでに読んでいる下書きの
   状態で先回りして同じ 409 を返す(サービスの判定は残る)。画像は期限が来れば下書きごと消えるので、消える下書きに画像だけ
   増やさせない。
-  枚数の上限(1 下書き 20 枚)の 409 は従来どおり。
+  枚数の上限(1 下書き 20 枚)の 409 は、本文が
+  `{"error":"image limit reached (max 20 per draft)","code":"image-limit-reached"}`(bdboard-8zwi で `code` を足した。それまでは `code` が無く、
+  画面が「`draft-not-pending` でない 409」という消去法で判定していた)。画面は 409 を `code` で見分ける。
 
 **読み取りの失敗の扱い(N5)との関係**
 
@@ -977,7 +987,7 @@ function normalizeErrorText(text: string): string {
 |---|---|---|
 | `src/domain/self-error-throttle.ts` | `createSelfErrorThrottle({intervalMs?, maxKeys?})` → `shouldReport(key, now)` / `forget(key)` / `size()` | キーごとの最後の報告時刻。既定 1 時間に 1 回、覚えるのは 500 キー(LRU) |
 | `src/domain/self-error-mask.ts` | `maskSelfErrorText(text, projects)` / `createSelfErrorMasker(projects)` | 根・別名のパス → `<project-root>`、接頭辞で始まるチケット ID → `<ticket-id>`、名前と接頭辞そのもの(と、その Dolt のデータベース名の形)→ `<project>` |
-| `src/domain/refresh-error-tracker.ts` | `createRefreshErrorTracker({throttle?})` → `observe(result, projects, now)` → `SelfErrorReport[]` | リフレッシュ結果から「いま報告するもの」を選ぶ |
+| `src/domain/refresh-error-tracker.ts` | `createRefreshErrorTracker({throttle?})` → `observe(result, projects, now)` → `SelfErrorReport[]`、`release(report)`(4y8q.6.10: 保存に失敗した報告を返す) | リフレッシュ結果から「いま報告するもの」を選ぶ |
 
 **追跡の規則**: キーは `(kind, 伏せた detail を normalizeErrorText で寄せたもの)` で、プロジェクトをまたいで共有する(別のプロジェクトの同じエラーは
 伏せて寄せたあと同じ文字列になり、1 時間に 1 回に数える)。寄せ方は下書きの指紋(4節)と同じなので、間引きの粒度と下書きのまとまり方が揃う。
@@ -1042,7 +1052,11 @@ Dolt サーバーにつながらない失敗(`dolt server unreachable at 127.0.0
 - 即時でない種類を報告するのは、(1) が 3 回に届いたとき(以後 1 時間に 1 回)と、(2) が 3 回にちょうど届いたその結果(いま見えている文で 1 回)。
   (2) が無いと、文の一部が実行ごとに変わり `normalizeErrorText` でも寄らない失敗(bd が Go の panic で落ちたときの `pc=0x…` はアドレス空間の配置のランダム化で毎回変わる。
   Dolt の base32 のハッシュ `u2a5cfe0…` も寄らない)は、キーが毎回別になって 3 回に届かず、続いていても報告されない。(2) が 3 回に届いたあと、同じ連続の中で新しく出た文は
-  報告しない(文が毎回ずれる失敗で、更新ごとに下書きが増えないように)。その文が同じ形で 3 回続けば (1) で報告される。
+  報告しない(文が毎回ずれる失敗で、更新ごとに下書きが増えないように)。その文が同じ形で 3 回続けば (1) で報告される。**ただし、(2) で出した報告の保存に失敗した回は再武装する**
+  (bdboard-4y8q.6.10、PR #926 のレビュー F1): 連続がまだ続いていれば、次にその kind が見えた結果を、いま見えている文でもう一度報告の対象にする(保存が成功するまで、更新ごとに 1 回ずつ)。
+  再武装しないと、失敗した報告のキーを忘れても、文がずれるので同じキーは二度と 3 回に届かず、(2) も「ちょうど 3 回」の 1 回きりなので、連続が続く間は下書きが 1 件もできない。
+  その回の文が (1) でも 3 回目だった(最初の 3 回が同じ文)ときと、再武装で出した報告の保存もまた失敗したときも同じ(同じ文がもう出なければ、キーを忘れるだけでは届かない)。
+  成功した更新を挟んで数え直しになったときは、再武装も消える(6.4 の逸脱表 14)。
 - 0 に戻るのは、そのプロジェクトが `refreshed` に入っていて、そのキー(または kind)が `errors` に無い結果(成功)のとき。`reused` だけの結果(そのプロジェクトを見なかった)は、
   数えも戻しもしない。別の kind の失敗が挟まっても途切れない(6.2 の逸脱表 12 の(2)。失敗したプロジェクトは `refreshed` に入らないため)。別の kind どうしは 1 つの連続にしない。
 - 届くまでは throttle に聞かない(聞くと報告済みになり、3 回目が間引かれる)。成功で戻るのは数えだけで、throttle の記録は残る(6.2 の逸脱表 11)。
@@ -1085,7 +1099,7 @@ Dolt サーバーにつながらない失敗(`dolt server unreachable at 127.0.0
 
 | 部品 | 役割 |
 |---|---|
-| `createSelfErrorReporter({service, throttle, listProjects, envInfo, log, now?})` | `report({source, errorText, agentNote?, project?})`(伏せる → 間引く → `receive` を待たずに呼ぶ。**4y8q.6.4 で変わった**: `receive` の完了を待ち、`'recorded' | 'throttled' | 'skipped'` を返す。下の「本体エラーの取り込み」の逸脱表 2)と `observeRefresh(result, projects)`(6.2 の tracker が選んだ報告をそのまま `receive` へ)。どちらも返す Promise は **reject しない**(呼び出し側は `void` で捨ててよい) |
+| `createSelfErrorReporter({service, throttle, listProjects, envInfo, log, now?})` | `report({source, errorText, agentNote?, project?})`(伏せる → 間引く → `receive` を待たずに呼ぶ。**4y8q.6.4 で変わった**: `receive` の完了を待ち、`'recorded' | 'throttled' | 'skipped'` を返す。下の「本体エラーの取り込み」の逸脱表 2。**4y8q.6.10 で変わった**: 保存に失敗したキーは間引きの記録を残さない。逸脱表 13)と `observeRefresh(result, projects)`(6.2 の tracker が選んだ報告をそのまま `receive` へ)。どちらも返す Promise は **reject しない**(呼び出し側は `void` で捨ててよい) |
 | `createRefreshResultObserver({discovery, cache, onResult, logError})`(`src/application/board/refresh-result-observer.ts`) | `discover()` の結果を覚える包みと、結果 1 回ごとの `onResult(result, projects)` の呼び出し(投げない) |
 | `wireSelfErrorReporter` | throttle・envInfo(`serverEnvInfo`)・停止の環境変数をつないで、`reporter` と `onRefreshResult` を返す(止めているときは両方 `undefined`) |
 
@@ -1112,8 +1126,11 @@ discovery が返す Project は `prefixes` が常に `[]` で(接頭辞は bd �
 
 **失敗の扱い**: 取り込みは、リフレッシュを止めない・遅らせない・落とさない。`receive` が reject・同期 throw・`{ok:false}` を返しても、envInfo・伏せる処理・tracker が throw しても、
 reporter の中で握って**ログに code だけ**出す: `self error draft failed (<code>)`(`error.code` が `[A-Za-z0-9_-]{1,40}` のときだけ。それ以外は `unknown`)と
-`self error draft not saved (<reason>)`(`storage-full` など固定の語彙)。パス・message・stack・エラー文は出さない。保存に失敗した報告は、throttle がすでに「報告済み」にしているので、同じキーはその 1 時間は再試行しない(消えるのは 1 件分で、続いていれば
-1 時間後に次の報告が来る)。`onRefreshResult` を呼ぶ側(`createRefreshResultObserver`)も、
+`self error draft not saved (<reason>)`(`storage-full` など固定の語彙)。パス・message・stack・エラー文は出さない。
+**保存に失敗した報告は、throttle の記録を取り消す(bdboard-4y8q.6.10 で変わった)**。この節の初版は、throttle が聞いた時点で「報告済み」にしていたので、保存に失敗しても同じキーはその 1 時間は
+再試行されず、下書きが 1 件もできないまま、画面(6.4 のヘッダー)には `throttled`(報告済み)と見えた。いまは、`report()` の報告は失敗したキーを throttle に `forget` させ、同じキーの次の `report()` がもう一度 `receive` を試みる。リフレッシュの報告は tracker の `release(report)` に返し
+(tracker が聞いたキーを忘れ、kind の連続の回(ちょうど 3 回目か、借りを返す回)に出した報告なら、連続が続く間は次にその kind が見えた更新を再び報告の対象にする。中身は 6.4 の節の逸脱表 13・14)、
+同じ失敗が続いていれば次の更新がもう一度 `receive` を試みる。`onRefreshResult` を呼ぶ側(`createRefreshResultObserver`)も、
 コールバックが throw したら固定文 `Refresh result observer failed` だけ出して続ける。
 なお、起動時の初回リフレッシュが以前から出している `Refresh error [kind] project=…: detail`(`console.error`)はこの取り込みとは別で、今回は変えていない。
 
@@ -1190,11 +1207,14 @@ status が 500 未満の応答にもヘッダーは付けない。
 | `/api/tunnel*`・`/api/chat*`・`/api/runs*`・`/api/sessions*`(前方一致) | `HTTP <status>` と、`error` のラベル(`[A-Za-z0-9 _,'-]` の 80 文字までのものだけ)または例外のクラス名だけ。`detail`・message・stack・本文のほかの欄は取り込まない(接続の URL・認証・会話の本文、エージェントへの指示・作業のパスが入りうるため) |
 | `Error` でない値の throw | `HTTP 500` と `non-Error value thrown`(値は入れない) |
 
-errorText は reporter が伏せ(6.2 の `createSelfErrorMasker`)、`selfErrorKey(source, 伏せた文)` で throttle に聞く。同じルートの同じ失敗を 50 回起こしても `receive` は 1 回。
+errorText は reporter が伏せ(6.2 の `createSelfErrorMasker`)、`selfErrorKey(source, 伏せた文)` で throttle に聞く。同じルートの同じ失敗を 50 回起こしても `receive` は 1 回(保存に成功している間。失敗したキーは下の「ヘッダー」と逸脱表 13 のとおり記録を残さない)。
 
-**ヘッダー `X-Bdboard-Error-Draft`**(画面が同じ失敗を二重に報告しないための印): `recorded`(下書きに保存した)・`throttled`(1 時間以内に報告済みで送らなかった)・`skipped`(拾わない種類・形の合わない source・保存できなかった・内部の失敗・時間切れ)。
+**ヘッダー `X-Bdboard-Error-Draft`**(画面が同じ失敗を二重に報告しないための印): `recorded`(この要求が下書きに保存した)・`throttled`(同じ出どころ・同じエラー文が、1 時間以内に**保存できている**ので送らなかった。
+保存中の同じキーの 1 回目が成功した場合を含む)・`skipped`(拾わない種類・形の合わない source・**保存できなかった**・内部の失敗・時間切れ。保存中の同じキーの 1 回目が失敗した場合を含む)。
+**`throttled` は「下書きができている」だけを言う**(4y8q.6.10。以前の版は、保存の前に throttle に記録していたので、保存に失敗しても 1 時間 `throttled` を返し、画面は「報告済み」と読んでしまった)。保存に失敗した失敗は
+間引きの記録を残さないので、**次の同じ失敗がもう一度保存を試みる**(その応答が `recorded` か、また失敗なら `skipped`)。画面(4y8q.6.5)は `skipped` を「サーバーが下書きにしたとは限らない」と読み、自分の報告を送ってよい(時間切れの `skipped` は、下の 2 秒の説明のとおり保存が裏で成功することもある)。
 `report()` の戻り値が `Promise<'recorded' | 'throttled' | 'skipped'>` になったため、ヘッダーはその値をそのまま使う。**middleware は `report()` の完了を待ってから応答を返す**(保存はディスクの IO を含む)。
-ただし待つのは**最大 2 秒**で、超えたら `skipped` を付けて返す(保存は裏で続くことがあり、この `skipped` は「保存しなかった」とは限らない。画面(4y8q.6.5)の報告は source が違うので指紋も違い、サーバーは 1 件にまとめない。画面は時間切れの `skipped` で二重に報告しうる前提で扱う)。`BDBOARD_SELF_ERROR_DRAFTS=off` のときは reporter が無く
+ただし待つのは**最大 2 秒**で、超えたら `skipped` を付けて返す(保存は裏で続くことがあり、この `skipped` は「保存しなかった」とは限らない。画面(4y8q.6.5)の報告は source が違うので指紋も違い、サーバーは 1 件にまとめない。画面は時間切れの `skipped` で二重に報告しうる前提で扱う。時間切れのあと保存が成功すれば、同じ失敗の次の応答は `throttled`)。`BDBOARD_SELF_ERROR_DRAFTS=off` のときは reporter が無く
 middleware を mount しないので**ヘッダーは付かない**(`skipped` も付けない)。
 
 **止め方**: 6.3 と同じ `BDBOARD_SELF_ERROR_DRAFTS`(`off` / `0` / `false`)。止めているときは 5xx を拾わず、ヘッダーも付かない。500 の JSON を返す `app.onError` は**止めていても付く**(応答の形は取り込みの設定ではないため)。
@@ -1223,6 +1243,9 @@ middleware を mount しないので**ヘッダーは付かない**(`skipped` �
 | 10 | 限界: 新規下書き 20 件/時の共有の枠 | 上の (3)。2 つの形で起きる: ① 伏せられないデータベース名が違う失敗(逸脱表 9)。② **1 つの原因が複数のルートを 5xx にする**(bd が壊れていると、読み取りの API がどれも 502 になる)と、source にルートが入るので**ルートごとに別の下書き**になる。どちらも枠(新規 20 件/時)を使い切ると、残りは 4節の「大量発生」の 1 件に丸め込まれる(本体エラーの下書き全体の枠なので、リフレッシュの失敗も同じ枠から出る)。ルートをまたいで束ねる・API の報告に予算を置く、は 6.4 の範囲外とした(後続の判断) |
 | 11 | 限界: 環境による 503 | チャットのエージェントが無いときの `chat agent unavailable`(503)のように、利用者の環境が原因の 5xx も、チケットの除外(501・507)に無いので拾う(`/api/chat*` はラベルだけ、1 時間に 1 回) |
 | 12 | `report()` の都度、伏せる正規表現を作る | `report()` は呼ばれるたびに `createSelfErrorMasker` を作る(間引きの判断に伏せた文が要るため)。プロジェクト数に比例する。1 秒に何度も 5xx が出る状況で CPU を食う場合の最適化(伏せた表の使い回し・生の文での先行の間引き)は、していない |
+| 13 | 保存に失敗した報告の間引き(bdboard-4y8q.6.10。Opus レビュー minor 3) | 4y8q.6.3〜6.4 の初版は、伏せたあとに throttle へ記録してから `receive` を呼んだので、保存に失敗しても同じキーは 1 時間 `throttled` を返し、下書きは 1 件もできなかった(6.4 で `X-Bdboard-Error-Draft` に出るようになり、画面は `throttled` を「報告済み」と読んでしまう)。**記録は保存の前に取り(同じキーが同時に来ても二重の下書きにならない)、保存に失敗したら `forget` で取り消す**方式にした。「保存に成功した時だけ記録する」にしなかった理由: 保存中のキーの表はどちらの方式でも要る(後から記録する方式では保存中に来た同じキーの二重の保存を止めるため、この方式では 2 回目に `throttled` か `skipped` の正しい答えを返すため)ので、決め手にならない。決め手は、tracker(6.2)が聞いた時点で記録するので `observeRefresh` 側は結局取り消しが要ることと、取り消し方式なら throttle の API(`forget` は既存)を変えないこと。**同じキーが同時に 2 回来たとき**(1 回目の `receive` が終わっていない間の 2 回目)は、reporter が保存中のキーを持ち、**2 回目は 1 回目の結果を待つ**: 1 回目が成功なら `throttled`、失敗なら `skipped`(2 回目は保存しない。同時に来た全員が失敗のたびに再試行して、壊れた保存先を押しつぶさないため)。1 回目が失敗したキーは記録が残らないので、**次の `report()` がもう一度 `receive` に届く**。`receive` が `{ok:false}` を返す・reject する・同期 throw する、のどれでも同じ。`forget` が throw しても `report()` は reject しない(ログは code だけ)。テスト: `self-error-reporter-receive-failure.test.ts`・`server-error-capture-receive-failure.test.ts` |
+| 14 | `observeRefresh`(リフレッシュの失敗)も同じ(4y8q.6.10、PR #926 のレビュー F1 で形を変えた) | **範囲に入れた**。tracker(6.2)は聞いた時点で throttle に記録する(同じ throttle を共有するので、同じ問題があった)。最初は reporter が報告の source からキーを作り直して `forget` した(tracker は変えない)が、これは **#922(f2ob)が入ると足りない**: 文が更新ごとにずれる失敗(`unknown` の panic の `pc=0x…` など)は「同じ kind の連続がちょうど 3 回になった回」だけが報告の対象で、その 1 回の保存が失敗してキーを忘れても、ずれた文のキーは二度と 3 回に届かず、連続が続く間は下書きが 1 件もできない(レビュアーが 3 者結合で再現: 3 回目の保存を 1 回失敗させると、その後 7 回更新しても `receive` は 1 回のまま)。そこで **tracker(domain)に `release(report)` を足した**。`observe` が返した報告ごとに(WeakMap で。報告の形は変えない)聞いたキー・プロジェクト・kind・「kind の連続の回(ちょうど 3 回目の結果か、借りを返す結果)に出したか」を覚え、`release` は ① キーを throttle に `forget` し、② kind の連続の回に出した報告で、その連続がまだ閾値のままなら、**次にその kind が見えた結果を再び報告の対象にする**(プロジェクト → kind の借り `owed`)。借りは、その kind の報告を出したとき・成功した更新で連続が数え直しになったとき・プロジェクトが消えたときに消す。次の保存も失敗すれば `release` がもう一度借りを足すので、保存できるまで更新ごとに 1 回ずつ届き、保存できたあとは 1 件で止まる。その回の文が同じキーの 3 回目でもあったとき(最初の 3 回が同じ文)と、借りを返した報告が同じキーの 3 回目でもあったときも借りを足す(PR #926 の再レビュー: 足さないと、そのあと文が変わって同じ文が二度と出なければ、連続が続く間は届かない)。kind の連続の回をもう使ったあとに同じキーの 3 回で出した報告と決定的な種類(`schema-mismatch`)の報告は、キーを忘れるだけ(同じ文が次に見えたら再び届く。借りは足さない)。reporter は報告の source からキーを作り直さず(`REFRESH_SOURCE_PREFIX`・`refreshKeyOf` は消した)、`tracker.release(report)` を呼ぶだけ。重なったリフレッシュは今までどおり、記録が残っている間は同じキーを報告しない。**残る極端な場合**: 保存が 3 回分の更新より長くかかり、`release` の前に連続が数え直しになって 3 回に組み直されると、その連続の報告と失敗した報告の借りで 1 件多く報告しうる(下書きは指紋でまとまるか 1 件増えるだけで、実害は無視できる)。テスト: `refresh-error-tracker-release.test.ts`(tracker 単体)と `self-error-reporter-receive-failure.test.ts` の「the text shifts on every refresh」(3 回目の保存の失敗 → 次の更新で再び届く・成功したら以降は 1 件・成功した更新を挟んだら再武装しない) |
+| 15 | 限界: 保存が壊れ続けているとき(4y8q.6.10) | 保存先が失敗し続ける間(`storage-full`・ディスクの書き込みエラーなど)、**`report()` の呼び出しごと・リフレッシュごとに 1 回ずつ `receive` を試み、そのたびにログが 1 行出る**(`self error draft not saved (<reason>)` / `self error draft failed (<code>)`)。以前は同じキーは 1 時間に 1 回だった。失敗の後に間を空ける再試行はしていない(受け入れが「次の `report()` で再び `receive` に届く」ため)。同時に来た同じ `report()` は 1 回の試みにまとまる。ログの量や保存先への負荷が問題になる場合は、失敗したキーだけ短い間隔(数分)の記録に置き換える、が次の手 |
 
 ## 5. 公開本文の組み立てと置き換え(項目 e、bdboard-4y8q.2)
 
@@ -2069,11 +2092,39 @@ reader、メンテナ環境の判定)。一覧の組み立て・写しの保存�
 - `GET` は一覧を返すだけで確認を始めない(読むたびに gh を呼ばない。1000 回読んでも gh は 0 回)。
 - `POST refresh` は、ローカル直アクセスの確認(トンネルのヘッダー・ローカルでない送り元・Host・CSRF)→ 無効なら 404 → 間隔(`createMinGapGate`、60 秒)の順。断られた要求は間隔を使わない。間隔の中の 2 回目は **429**(`refresh-rate-limited`、`Retry-After` と `retryAfterSeconds`)。確認が失敗しても HTTP は **200** で、本文の `state: 'error'` と `error` に出る(HTTP の失敗は「受け付けなかった」だけにする)。定期の確認が走っている最中の refresh は新しい確認を始めず、その確認の結果を返す(それでも 60 秒の間隔は使う)。
 - **`needsRejudge` の意味は 9.3 のまま**(題名か本文が写しと違うとき。`updatedAt` だけの変化では立たない)。API はそれを変えず、そのまま返す。使えない写し(壊れた・旧形式)を作り直したときも `needsRejudge` は true で返る(9.3 の 12。bdboard-g2ti で直した。以前は黙って false に戻っていた)。API の側からは、GitHub 側の編集による true と作り直しによる true を区別しない(どちらも、判定時点の写しが今の内容と違う可能性がある、という意味)。
-- 応答の大きさ: 件数は gh の 3 ページ(300 件)で先に頭打ちになる(写しの上限 500 件より小さい)。本文は切った後で 20,000 文字なので、300 件 x 20,000 文字で、UTF-8 と JSON のエスケープ次第では数十 MB になりうる。`GET` は読むたびに一覧を JSON に組み直す。今の規模では遠いが、画面(9.5)が使うときに、本文を一覧から外す・ページ分け・一覧が変わらない間は組んだ JSON を使い回す(ETag)のどれかを検討する。
+- 応答の大きさ: 件数は gh の 3 ページ(300 件)で先に頭打ちになる(写しの上限 500 件より小さい)。本文は切った後で 20,000 文字なので、300 件 x 20,000 文字で、UTF-8 と JSON のエスケープ次第では数十 MB になりうる。`GET` は読むたびに一覧を JSON に組み直す。今の規模では遠いが、画面(9.5)が使うときに、本文を一覧から外す・ページ分け・一覧が変わらない間は組んだ JSON を使い回す(ETag)のどれかを検討する。**→ 9.5 は画面の折りたたみだけにした(9.5 の逸脱表 1)。バッジが全ページで 60 秒ごとにこの一覧を読むので、件数だけの API か ETag を bdboard-ga1e で扱う。**
 
 #### main.ts の変更
 
 `src/main.ts` は 2 行だけ(`wireIssueReports` に `commandRunner` を渡す、`wireShutdown` に `externalIssues` を渡す)。配線の本体は `wire-external-issues.ts`(max-lines の 200 行に収めるため。並行の 4y8q.6.4 も `main.ts` / `mount-routes.ts` を触るので、差を小さくした)。
+
+### 実装との差分(4y8q.9.5、届いた issue の画面)
+
+4y8q.9.5 は、9.4 の読み取り API を使って、不具合報告タブに 4 つ目の切り替え「届いた issue」を足す画面(web のみ。サーバーは変えない)。
+機械の検査の結果は数だけで出し、判定の言葉は使わない。判定(4y8q.10)と bd への取り込みはまだ無い。設計との食い違いと、実装で決めたこと
+(4y8q.11 の規則)。ここに無い点は設計どおり。
+
+| ファイル | 中身 |
+|---|---|
+| `web/src/api/issue-reports-external.ts` | サーバー DTO の web 側の型、`fetchExternalIssues`、`refreshExternalIssues`(POST)、429 の待ち秒数 `refreshWaitSeconds` |
+| `web/src/components/issue-reports/externalIssueText.ts` | 見えない文字の集合と印・本文の区切り (`segmentExternalText`)・検査の数の整形・状態の固定文・「今すぐ確認」の失敗の文(IO なしの純粋関数) |
+| `ExternalIssueCard.tsx` / `ExternalIssueBody.tsx` / `ExternalMarkedText.tsx` / `ExternalIssueList.tsx` | 折りたたみのカード、生の本文とプレビュー、印を付けた文字の表示、状態の文と「今すぐ確認」を持つ一覧 |
+| `web/src/hooks/useIssueReportPendingCount.ts` | `useExternalIssues`(キー `['issue-reports', 'external']`、60 秒)と、下書き + 届いた issue のバッジの数 |
+| `IssueReportsPanel.tsx` / `SafeMarkdownPreview.tsx` | 切り替えの追加だけ / `previewHeavyReason` の export だけ |
+| `web/src/styles/issue-reports-external.css` | カードと印の見た目(右ペインは隠し、一覧を全幅にする) |
+
+| # | 項目 | 実装 |
+|---:|---|---|
+| 1 | 一覧の重さ(9.4 のレビューの申し送り 1) | **API は変えず、ETag もページ送りも入れない。一覧の応答の重さは未対策**(300 件 x 本文 20,000 文字の JSON を毎回読む)で、画面は本文を最初から描かず、カードを開いたときだけ描く(折りたたみ)だけにした。一覧の応答そのものは 60 秒ごとに読み直すので、件数が増えて重くなったら、本文を一覧から外す・ETag を別チケットで扱う。タブのバッジも同じ一覧を読むので、不具合報告タブを開いていなくても全ページで 60 秒ごと(トンネル越しも)に本文込みの一覧を取る。件数だけの API か ETag は bdboard-ga1e |
+| 2 | 「後で」の 2 種(申し送り 2) | 「今すぐ確認」の 429 は、本文の `retryAfterSeconds`(Retry-After と同じ秒)を文言に出す。予算切れの `failed` は「しばらくしてから」と出し、**時刻は出さない**(サーバーが再開の時刻を返さない)。予算切れかどうかは `error.detail` の先頭 `gh call limit reached` で**分類するだけ**で、`detail` は表示しない(サーバーの文言と web の先頭は `externalIssueText.test.ts` が一致を確かめる)。429 に秒が無いときは「しばらくしてから」。それ以外の失敗は固定文(サーバーの文言や例外を出さない) |
+| 3 | `error.detail`(申し送り 3) | ローカルの読み手(開いているページの hostname が `localhost` / `127.0.0.1` / `[::1]`。「新しく報告」「今すぐ確認」と同じ `isLoopbackHostname`)にだけ「詳細: …」と出す。リモート(トンネル越し)には状態ごとの固定文だけ(`gh-missing` / `gh-unauthenticated` / `rate-limited` / `failed` / `bd-failed` / `storage-failed` / `unexpected`、それ以外の種類は「確認が止まりました。」)。サーバーの GET の応答は変えない(detail は今もトンネル越しの GET に載る。画面で出さないだけ) |
+| 4 | API の呼び出しの置き場 | チケットは `web/src/api/issue-reports.ts` に足すとしたが、並行する下書き側の PR(#925)がそのファイルを触るので、衝突を避けて **`issue-reports-external.ts` に分けた**。`IssueReportsPanel.tsx` の変更も切り替えの追加に絞った |
+| 5 | 見えない文字の集合 | サーバーの検査(`external-issue-hidden-text.ts` の `INVISIBLE_CHARS`。17 文字 + タグ文字 U+E0000–E007F)と**同じ集合**を web 側に二重に持つ(web から src は import できない。dependency-cruiser の `web-no-server-src`)。`externalIssueText.test.ts` がサーバーのソースを**文字として読み**、U+0000–U+10FFFF の全コードポイントで一致を確かめる(表の行が 18 行あること、表の中の `code:` を全部読めたことも確かめ、16 進の大文字・複数行の書き方・定数名の行でも読み損ねたまま通らない)。サーバーが文字を足したら、このテストが落ちる |
+| 6 | 本文の表示 | 既定は生の本文。見えない文字は `⟦U+200B⟧` の印に置き換え(連続は 1 つの印にまとめて DOM を増やさない。タグ文字などサロゲートの対は 1 文字)、HTML コメントは `⟦HTML コメント⟧`(閉じていなければ `(閉じていない)`)を先頭に付け、コメントの文字は `<!-- … -->` ごとそのまま残す。人が「プレビュー」を押したときだけ `SafeMarkdownPreview`(リンクは `<a href>` にせず文字、画像は読み込まず文字、生の HTML は描かない)で出す。プレビューは見えない文字と HTML コメントが見えないので、そう警告する。重い本文(`previewHeavyReason`)ではプレビューのボタンを無効にして、印の付いた生の本文のままにする。題名・作者・関係にも同じ印を付ける(作者と関係はサーバーが形を検査しないため)。GitHub の URL も文字として出す(`<a>` は使わない) |
+| 7 | 本文の表示の限界 | `SafeMarkdownPreview` の描画が throw したときの自前のフォールバックは、印の無い生の文字(既存のまま。プレビューの中でだけ)。印の `⟦ ⟧` は、本文に同じ文字が書かれていれば偽の印にもなる(数は機械の検査の数を見る)。HTML コメントは 9.1 と同じく、コードブロックの中のものも数え・印を付ける |
+| 8 | バッジの数 | 下書きの未処理 + 届いた issue の数。**どちらかが読めなくても壊れず、読めたほうだけ**を数える。`enabled: false`(メンテナ環境でない)は足すものが無いので読めないのと同じ扱いで、下書きも読めなければ「不明」(null)のまま。両方読めないときだけ「不明」。届いた issue は 0 件のとき下書きの数だけ。一覧と同じキー・同じ 60 秒で、バッジと切り替えの件数が食い違わない |
+| 9 | 切り替え | `enabled: true` のときだけ 4 つ目のボタン「届いた issue (件数)」を出す。`enabled: false`・読み込み中・読めないときは出さない(一度読めたあとで読み直しだけが失敗したときは、前に読めた一覧と件数のまま出し、一覧の上に「最新の一覧を読み込めませんでした」と添える)。押すと一覧の場所にカードを出し、右ペインは隠す(選んでいる下書きと「新しく報告」の画面は閉じる)。`updatedAtChanged` だけの変化は画面に出さない(U9。コメントの追加でも進むので、`needsRejudge` だけを出す) |
+| 10 | 600 行の分割 | チケットは「600 行を超えそうなら印の置き換えを別の子に分ける」としたが、本番コードは約 608 行で、**分けなかった**。印の置き換え(`segmentExternalText` / `ExternalMarkedText`)は受け入れ基準そのもので、分けると 9.5 が基準を満たさなくなるため。子チケットは作っていない |
 
 ### 2体のエージェント(4y8q.10)
 

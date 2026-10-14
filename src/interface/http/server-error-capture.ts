@@ -14,6 +14,10 @@ import type { SelfErrorReporter } from '../../application/issue-report/self-erro
 import { selfErrorApiSource } from '../../domain/self-error-source.js';
 
 export const ERROR_DRAFT_HEADER = 'X-Bdboard-Error-Draft';
+/**
+ * `recorded`: この要求が下書きに保存した。`throttled`: 同じ失敗がもう保存できている (1 時間以内。保存中の同じ失敗の 1 回目が成功した場合を含む)。
+ * `skipped`: 拾わない・保存できなかった (その失敗は間引きの記録に残らず、次の同じ失敗がもう一度保存を試みる)・内部の失敗・時間切れ (bdboard-4y8q.6.10)。
+ */
 export type ErrorDraftHeaderValue = 'recorded' | 'throttled' | 'skipped';
 
 export interface ServerErrorCaptureDeps {

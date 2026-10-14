@@ -412,6 +412,11 @@ summary.issue-draft-section-title {
     min-height: 44px;
   }
 
+  /* 画像が付かなかった画面の「もう一度送る」「下書きを開く」も同じ大きさ (bdboard-8zwi)。 */
+  .issue-draft-image-failure-actions .btn {
+    min-height: 44px;
+  }
+
   .issue-draft-local[open] > .issue-draft-local-list,
   .issue-draft-version-list {
     grid-template-columns: minmax(0, 1fr);
