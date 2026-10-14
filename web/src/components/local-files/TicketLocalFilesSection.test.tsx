@@ -44,6 +44,7 @@ function installFetch(files: readonly LocalFileRefDto[], list?: LocalFileListDto
 describe('TicketLocalFilesSection', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

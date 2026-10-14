@@ -49,6 +49,7 @@ describe('LocalFileViewerPage', () => {
   afterEach(() => {
     document.title = '';
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 
