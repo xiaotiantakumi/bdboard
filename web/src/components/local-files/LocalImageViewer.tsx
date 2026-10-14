@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import {
   fetchLocalFileList,
-  localFileListQueryKey,
   localFileRawUrl,
   type LocalFileListEntryDto,
 } from '../../api/local-files';
@@ -24,7 +23,8 @@ export function LocalImageViewer({ ticketId, path, onNavigate }: LocalImageViewe
   const [failedPath, setFailedPath] = useState<string | null>(null);
   const parent = parentDirectory(path);
   const listQuery = useQuery({
-    queryKey: localFileListQueryKey(ticketId, parent ?? ''),
+    // フォルダのサムネイル一覧 (LocalFolderThumbnails) と同じキーでキャッシュを共有する。
+    queryKey: ['ticket-local-file-list', ticketId, parent ?? ''],
     queryFn: () => fetchLocalFileList(ticketId, parent ?? ''),
     enabled: parent !== null,
   });
