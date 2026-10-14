@@ -32,6 +32,9 @@ vi.mock('./TicketLabelsSection', () => ({
 vi.mock('./TicketDescriptionSection', () => ({
   TicketDescriptionSection: vi.fn(() => <div data-testid="description-section" />),
 }));
+vi.mock('../local-files/TicketLocalFilesSection', () => ({
+  TicketLocalFilesSection: vi.fn(() => null),
+}));
 
 import { TicketAgentRunTrigger, TicketAgentRunConfirm } from './TicketAgentRunTriggerSection';
 import { TicketChildrenSection } from './TicketChildrenSection';
@@ -39,6 +42,7 @@ import { TicketInFlightOverlapsSection } from './TicketInFlightOverlapsSection';
 import { TicketSimilarTicketsSection } from './TicketSimilarTicketsSection';
 import { TicketLabelsSection } from './TicketLabelsSection';
 import { TicketDescriptionSection } from './TicketDescriptionSection';
+import { TicketLocalFilesSection } from '../local-files/TicketLocalFilesSection';
 import { TicketDetailBody, type TicketDetailBodyProps } from './TicketDetailBody';
 
 const triggerMock = vi.mocked(TicketAgentRunTrigger);
@@ -48,6 +52,7 @@ const inFlightMock = vi.mocked(TicketInFlightOverlapsSection);
 const similarMock = vi.mocked(TicketSimilarTicketsSection);
 const labelsMock = vi.mocked(TicketLabelsSection);
 const descriptionMock = vi.mocked(TicketDescriptionSection);
+const localFilesMock = vi.mocked(TicketLocalFilesSection);
 
 function makeData(overrides: Partial<TicketDetailDto> = {}): TicketDetailDto {
   return {
@@ -283,6 +288,7 @@ describe('TicketDetailBody', () => {
     // PR バッジ (state: 'open' -> "PR open" というラベルで描画される)。
     expect(getByText('PR open')).toBeInTheDocument();
     expect(getByText('Notes')).toBeInTheDocument();
+    expect(localFilesMock.mock.calls.at(-1)?.[0]).toEqual({ ticketId: 'MARK-id' });
     // MarkdownContent はハイフン区切りの語を bead リンクとして解釈し、Notes 本文を
     // 複数のノードに分割し得るため(例: "MARK-notes" と "body-text" が別ボタンになる)、
     // getByText で単一ノード一致を求めず、Notes セクション全体の textContent へ

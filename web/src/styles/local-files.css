@@ -1,0 +1,197 @@
+.local-files-list,
+.local-file-entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.local-file-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.local-file-row:hover {
+  border-color: var(--color-border-strong);
+}
+
+.local-file-row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.local-file-kind {
+  flex: none;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.local-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+.local-file-size {
+  flex: none;
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+}
+
+.local-file-folder-body {
+  margin: 4px 0 8px;
+}
+
+.local-file-note {
+  margin: 8px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+.local-file-viewer-text {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--color-text);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.local-file-viewer-image-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.local-file-viewer-image {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100dvh - 120px);
+  object-fit: contain;
+  margin-inline: auto;
+}
+
+.local-file-viewer-media {
+  display: block;
+  max-width: 100%;
+}
+
+.local-file-viewer-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 8px 0 0;
+}
+
+.local-file-viewer-nav button {
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.local-file-viewer-nav button:disabled {
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+
+.local-file-viewer-position {
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+.local-file-viewer-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 16px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.local-file-viewer-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.local-file-viewer-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.local-file-viewer-size {
+  flex: none;
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+}
+
+.local-file-viewer-body {
+  min-width: 0;
+}
+
+.local-json-tree {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--color-text);
+}
+
+.local-json-node {
+  margin: 0;
+  border-left: 1px solid var(--color-border);
+  padding-left: 12px;
+}
+
+.local-json-children {
+  padding-left: 12px;
+}
+
+.local-json-key {
+  color: var(--color-text);
+}
+
+.local-json-summary,
+.local-json-colon {
+  color: var(--color-text-secondary);
+}
+
+.local-json-value {
+  color: var(--color-text);
+}
+
+.local-json-primitive {
+  padding: 1px 0 1px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

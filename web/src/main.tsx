@@ -5,6 +5,8 @@ import './index.css';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { WatchedTicketsProvider } from './components/WatchedTicketsProvider';
+import { LocalFileViewerPage } from './components/local-files/LocalFileViewerPage';
+import { parseLocalFileViewerRoute } from './localFileViewerRoute';
 import { resolveCredentialRedirect } from './stripUrlCredentials';
 
 const REDIRECT_GUARD_KEY = 'bdboard.credential-redirect';
@@ -31,18 +33,25 @@ function mount(): void {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { staleTime: 30_000 } },
   });
+  const viewerRoute = parseLocalFileViewerRoute(window.location.search);
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
-        <WatchedTicketsProvider>
-          {/* 最後の砦。App 自身のフックや、境界を張れないルート側のラッパーが
-              throw したときに白画面まで落ちないようにする。個々のパネル/ビューは
-              App 内の境界が先に受け止めるので、ここまで来るのは例外的な経路だけ。 */}
+        {viewerRoute === null ? (
+          <WatchedTicketsProvider>
+            {/* 最後の砦。App 自身のフックや、境界を張れないルート側のラッパーが
+                throw したときに白画面まで落ちないようにする。個々のパネル/ビューは
+                App 内の境界が先に受け止めるので、ここまで来るのは例外的な経路だけ。 */}
+            <ErrorBoundary label="アプリ全体">
+              <App />
+            </ErrorBoundary>
+          </WatchedTicketsProvider>
+        ) : (
           <ErrorBoundary label="アプリ全体">
-            <App />
+            <LocalFileViewerPage route={viewerRoute} />
           </ErrorBoundary>
-        </WatchedTicketsProvider>
+        )}
       </QueryClientProvider>
     </StrictMode>,
   );

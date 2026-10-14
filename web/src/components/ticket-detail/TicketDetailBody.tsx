@@ -16,6 +16,7 @@ import { TicketSimilarTicketsSection } from './TicketSimilarTicketsSection';
 import { TicketLabelsSection } from './TicketLabelsSection';
 import { TicketDescriptionSection } from './TicketDescriptionSection';
 import { MarkdownContent } from '../MarkdownContent';
+import { TicketLocalFilesSection } from '../local-files/TicketLocalFilesSection';
 import {
   TicketAgentRunTrigger,
   TicketAgentRunConfirm,
@@ -186,6 +187,7 @@ export function TicketDetailBody({
           />
         </div>
       )}
+      <TicketLocalFilesSection ticketId={data.id} />
     </>
   );
 }
