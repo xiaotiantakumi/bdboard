@@ -173,6 +173,14 @@ describe('mapBdIssueToTicket', () => {
     expect(ticket.complexity).toBe('med');
   });
 
+  it('maps bdboard.review_after metadata to reviewAfter', () => {
+    const ticket = mapBdIssueToTicket(
+      { ...fullIssue(), metadata: { 'bdboard.review_after': ' bdboard-a,bdboard-b ' } },
+      'my-project',
+    );
+    expect(ticket.reviewAfter).toEqual(['bdboard-a', 'bdboard-b']);
+  });
+
   it('omits complexity when metadata is absent or the value is not a non-empty string', () => {
     const withoutMetadata = mapBdIssueToTicket(fullIssue(), 'my-project');
     expect(withoutMetadata.complexity).toBeUndefined();

@@ -35,6 +35,7 @@ interface SerializedTicket {
   readonly manualSessionId?: string;
   readonly models?: readonly { readonly stage: string; readonly model: string }[];
   readonly complexity?: string;
+  readonly reviewAfter?: readonly TicketId[];
 }
 
 function serializeDependency(edge: DependencyEdge): SerializedDependencyEdge {
@@ -92,6 +93,7 @@ function serializeTicket(ticket: Ticket): SerializedTicket {
       : {}),
     ...(ticket.models !== undefined ? { models: ticket.models } : {}),
     ...(ticket.complexity !== undefined ? { complexity: ticket.complexity } : {}),
+    ...(ticket.reviewAfter !== undefined ? { reviewAfter: ticket.reviewAfter } : {}),
   };
 }
 
@@ -126,6 +128,7 @@ function deserializeTicket(raw: SerializedTicket): Ticket {
       : {}),
     ...(raw.models !== undefined ? { models: raw.models } : {}),
     ...(raw.complexity !== undefined ? { complexity: raw.complexity } : {}),
+    ...(raw.reviewAfter !== undefined ? { reviewAfter: raw.reviewAfter } : {}),
   };
 
   return ticket;

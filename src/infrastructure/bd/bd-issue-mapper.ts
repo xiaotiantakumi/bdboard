@@ -5,6 +5,7 @@ import type { DependencyEdge } from '../../domain/dependency.js';
 import type { Priority } from '../../domain/status.js';
 import type { Ticket } from '../../domain/ticket.js';
 import { parseTicketComplexity } from '../../domain/ticket-complexity.js';
+import { parseTicketReviewAfter } from '../../domain/ticket-review-after.js';
 import { parseTicketId } from '../../domain/ticket-id.js';
 import { parseTicketModelRecords } from '../../domain/ticket-model.js';
 import { parseTicketManualSessionId } from '../../domain/ticket-session-link.js';
@@ -37,7 +38,8 @@ type OptionalTicketFields = {
     | 'labels'
     | 'manualSessionId'
     | 'models'
-    | 'complexity']?: Ticket[K];
+    | 'complexity'
+    | 'reviewAfter']?: Ticket[K];
 };
 
 function summarizeZodError(error: { issues: readonly { path: readonly (string | number)[]; message: string }[] }): string {
@@ -150,6 +152,10 @@ export function mapBdIssueToTicket(raw: BdIssue, projectId: string): Ticket {
   const complexity = parseTicketComplexity(raw.metadata);
   if (complexity !== undefined) {
     optionalFields.complexity = complexity;
+  }
+  const reviewAfter = parseTicketReviewAfter(raw.metadata);
+  if (reviewAfter !== undefined) {
+    optionalFields.reviewAfter = reviewAfter;
   }
 
   return { ...ticket, ...optionalFields };

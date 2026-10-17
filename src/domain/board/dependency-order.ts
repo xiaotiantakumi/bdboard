@@ -4,7 +4,8 @@ import type { TicketId } from '../ticket-id.js';
 
 /**
  * bdboard-0rqc: compareCards で並べた順を保ったまま、同じレーンの中で「まだ終わっていない
- * カードに止められているカード」を止めている側より必ず下に置く (安定なトポロジカル順)。
+ * カードに止められているカード」を止めている側より必ず下に置く。確認待ちでは
+ * `review_after` による表示順も加える (安定なトポロジカル順)。
  * 依存の無いカード同士の相対順は compareCards のまま。循環している依存はひとまとまりにして、その中は元の順で並べる。
  */
 export function orderByLaneDependencies(sorted: readonly BoardCard[]): BoardCard[] {
@@ -18,6 +19,14 @@ export function orderByLaneDependencies(sorted: readonly BoardCard[]): BoardCard
   const outgoing: number[][] = Array.from({ length: count }, () => []);
   const seenEdges = new Set<string>();
   let edgeCount = 0;
+  const addEdge = (from: number, to: number): void => {
+    if (from === to) return;
+    const edgeKey = `${from}:${to}`;
+    if (seenEdges.has(edgeKey)) return;
+    seenEdges.add(edgeKey);
+    outgoing[from].push(to);
+    edgeCount += 1;
+  };
 
   for (let index = 0; index < count; index += 1) {
     const card = sorted[index];
@@ -25,11 +34,40 @@ export function orderByLaneDependencies(sorted: readonly BoardCard[]): BoardCard
       const blockerIndex = positionByKey.get(cardKey(card.projectId, blockerId));
       if (blockerIndex === undefined || blockerIndex === index) continue;
       if (sorted[blockerIndex].lane !== card.lane) continue;
-      const edgeKey = `${blockerIndex}:${index}`;
-      if (seenEdges.has(edgeKey)) continue;
-      seenEdges.add(edgeKey);
-      outgoing[blockerIndex].push(index);
-      edgeCount += 1;
+      addEdge(blockerIndex, index);
+    }
+  }
+
+  // blocks の「止めている側が必ず上」を review_after で崩さない。
+  const canReach = (start: number, target: number): boolean => {
+    const visited = new Set<number>([start]);
+    const pending = [start];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === undefined) continue;
+      if (current === target) return true;
+      for (const next of outgoing[current]) {
+        if (visited.has(next)) continue;
+        visited.add(next);
+        pending.push(next);
+      }
+    }
+    return false;
+  };
+
+  for (let index = 0; index < count; index += 1) {
+    const card = sorted[index];
+    if (card.lane === 'awaiting_human') {
+      for (const predecessorId of card.ticket.reviewAfter ?? []) {
+        const predecessorIndex = positionByKey.get(cardKey(card.projectId, predecessorId));
+        if (predecessorIndex === undefined || sorted[predecessorIndex].lane !== card.lane) continue;
+        if (!canReach(index, predecessorIndex)) addEdge(predecessorIndex, index);
+        for (const gateId of card.blockedBy) {
+          const gateIndex = positionByKey.get(cardKey(card.projectId, gateId));
+          if (gateIndex === undefined || sorted[gateIndex].lane !== card.lane || gateId === predecessorId) continue;
+          if (!canReach(gateIndex, predecessorIndex)) addEdge(predecessorIndex, gateIndex);
+        }
+      }
     }
   }
 
