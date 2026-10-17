@@ -46,6 +46,7 @@ function fullTicket(): Required<Ticket> {
     manualSessionId: 'sess-manual',
     models: [{ stage: 'implement', model: 'composer-2.5' }],
     complexity: 'high',
+    reviewAfter: ['proj-before', 'proj-earlier'],
   };
 }
 

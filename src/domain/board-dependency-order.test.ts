@@ -43,6 +43,76 @@ function awaitingIds(board: ReturnType<typeof humanBoard>): string[] {
 }
 
 describe('lane dependency order', () => {
+  it('orders awaiting human cards by reviewAfter without changing blocking or lane state', () => {
+    const a = openTicket('bdboard-a', '2026-05-01T00:00:00.000Z');
+    const b = { ...openTicket('bdboard-b', '2026-05-03T00:00:00.000Z'), reviewAfter: ['bdboard-a'] };
+    const board = humanBoard([b, a]);
+    expect(awaitingIds(board)).toEqual(['bdboard-a', 'bdboard-b']);
+    expect(board.lanes.awaiting_human.find((card) => card.ticket.id === 'bdboard-b')?.blockedBy).toEqual([]);
+  });
+
+  it('orders reviewAfter ahead of priority in awaiting_human', () => {
+    const a = makeTicket({ id: 'bdboard-a', status: 'open', priority: 2, updatedAt: new Date('2026-05-01T00:00:00.000Z') });
+    const b = { ...makeTicket({ id: 'bdboard-b', status: 'open', priority: 0, updatedAt: new Date('2026-05-03T00:00:00.000Z') }), reviewAfter: ['bdboard-a'] };
+    const board = humanBoard([b, a]);
+
+    expect(awaitingIds(board)).toEqual(['bdboard-a', 'bdboard-b']);
+    expect(board.lanes.awaiting_human.find((card) => card.ticket.id === 'bdboard-b')?.blockedBy).toEqual([]);
+  });
+
+  it('ignores reviewAfter predecessor ids that exist only in another project', () => {
+    const b = { ...openTicket('bdboard-b', '2026-05-03T00:00:00.000Z'), reviewAfter: ['bdboard-a'] };
+    const boardOne = humanBoard([b], ['bdboard-b'], '/p/one');
+    const boardTwo = humanBoard(
+      [openTicket('bdboard-a', '2026-05-01T00:00:00.000Z')],
+      ['bdboard-a'],
+      '/p/two',
+    );
+    const merged = mergeBoards([boardOne, boardTwo]);
+    expect(merged.lanes.awaiting_human.map((card) => [card.projectId, card.ticket.id])).toEqual([
+      ['/p/one', 'bdboard-b'],
+      ['/p/two', 'bdboard-a'],
+    ]);
+  });
+
+  it('ignores reviewAfter outside awaiting_human and when predecessor is absent or another lane', () => {
+    const a = openTicket('bdboard-a', '2026-05-01T00:00:00.000Z');
+    const b = { ...openTicket('bdboard-b', '2026-05-03T00:00:00.000Z'), reviewAfter: ['bdboard-a', 'bdboard-missing'] };
+    const ready = humanBoard([b, a], []);
+    expect(ready.lanes.ready.map((card) => card.ticket.id)).toEqual(['bdboard-b', 'bdboard-a']);
+    const split = humanBoard([b, a], ['bdboard-b']);
+    expect(awaitingIds(split)).toEqual(['bdboard-b']);
+  });
+
+  it('inherits review ordering onto the in-lane gate that blocks the card', () => {
+    const a = openTicket('bdboard-a', '2026-05-01T00:00:00.000Z');
+    const g = openTicket('bdboard-g', '2026-05-02T00:00:00.000Z');
+    const b = { ...openTicket('bdboard-b', '2026-05-03T00:00:00.000Z', [blocksEdge('bdboard-b', 'bdboard-g')]), reviewAfter: ['bdboard-a'] };
+    expect(awaitingIds(humanBoard([b, g, a]))).toEqual(['bdboard-a', 'bdboard-g', 'bdboard-b']);
+  });
+
+  it('keeps the blocker above a reviewAfter predecessor', () => {
+    const a = makeTicket({ id: 'bdboard-a', status: 'open', priority: 0, updatedAt: new Date('2026-05-03T00:00:00.000Z'), dependencies: [blocksEdge('bdboard-a', 'bdboard-b')] });
+    const b = { ...makeTicket({ id: 'bdboard-b', status: 'open', priority: 2, updatedAt: new Date('2026-05-01T00:00:00.000Z') }), reviewAfter: ['bdboard-a'] };
+    expect(awaitingIds(humanBoard([a, b]))).toEqual(['bdboard-b', 'bdboard-a']);
+  });
+
+  it('keeps a shared blocker above both reviewAfter predecessor and dependent card', () => {
+    const gate = makeTicket({ id: 'bdboard-g', status: 'open', priority: 2, updatedAt: new Date('2026-05-04T00:00:00.000Z') });
+    const predecessor = { ...makeTicket({ id: 'bdboard-p', status: 'open', priority: 0, updatedAt: new Date('2026-05-03T00:00:00.000Z'), dependencies: [blocksEdge('bdboard-p', 'bdboard-g')] }), reviewAfter: [] };
+    const b = { ...makeTicket({ id: 'bdboard-b', status: 'open', priority: 0, updatedAt: new Date('2026-05-01T00:00:00.000Z'), dependencies: [blocksEdge('bdboard-b', 'bdboard-g')] }), reviewAfter: ['bdboard-p'] };
+    expect(awaitingIds(humanBoard([gate, predecessor, b]))).toEqual(['bdboard-g', 'bdboard-p', 'bdboard-b']);
+  });
+
+  it('places every reviewAfter predecessor above a higher-priority card', () => {
+    const a = makeTicket({ id: 'bdboard-a', status: 'open', priority: 2, updatedAt: new Date('2026-05-01T00:00:00.000Z') });
+    const c = makeTicket({ id: 'bdboard-c', status: 'open', priority: 2, updatedAt: new Date('2026-05-02T00:00:00.000Z') });
+    const b = { ...makeTicket({ id: 'bdboard-b', status: 'open', priority: 0, updatedAt: new Date('2026-05-03T00:00:00.000Z') }), reviewAfter: ['bdboard-a', 'bdboard-c'] };
+    const ids = awaitingIds(humanBoard([b, a, c]));
+    expect(ids.at(-1)).toBe('bdboard-b');
+    expect([...ids].sort()).toEqual(['bdboard-a', 'bdboard-b', 'bdboard-c']);
+  });
+
   it('places an in-lane blocker above the newer card it blocks', () => {
     // compareCards (unblocksCount desc, then updatedAt desc) is b, a, d, c.
     // A blocks B and B blocks C in the same lane, so A moves above B: a, b, d, c.

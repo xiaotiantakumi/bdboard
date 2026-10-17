@@ -42,8 +42,21 @@ EOF
 
 bd comment <id> "質問は gate $GATE_ID を参照（bd show $GATE_ID）"
 bd label add <id> human
+# 任意: 確認待ちで先に見てほしいチケットがあるときだけ（並び順だけ。ブロックはしない）
+#   bd update <id> --set-metadata bdboard.review_after=<先のid>
 # → 回答を待たずに次の ready へ進む
 ```
+
+**確認の順番は `bdboard.review_after` で付ける — `bd dep add` を使わない**（bdboard-iuiu）。
+`bd dep add <id> --blocked-by <先のid>` で並べると、回答後に human ラベルを外した瞬間 `<id>` は
+本物のブロッカーを持つチケットとしてブロックレーンへ移り、`bd ready` からも消える（続きの
+作業があって後でまた確認待ちに戻したいときに破綻する）。`review_after` は確認待ちレーンの
+並びにだけ効き、bd の ready / blocked には一切効かない。付けるのは**作業チケット `<id>` だけ**
+でよい — `<id>` を止めている確認待ちのカード（gate 等）はボード側で `<id>` の `review_after` を
+受け継ぐ。`blocks` 依存と食い違う指定は無視される（依存の並びが優先）。
+`--set-metadata` は値を上書きするので、先行が複数なら `bd show <id> --json` で既存の値を読み、
+`A,C` のようにカンマで足して書き直す。本当に「先のチケットが終わるまで進められない」ときだけ
+`blocks` 依存を使う。
 
 **create → update の間で中断したら**: `bd gate list <id>` で当該チケットをブロックしている
 gate を出し、`bd show <gate-id>` の description が `Ad-hoc gate blocking <id>` のままの
