@@ -129,15 +129,6 @@ export function fetchStatus(): Promise<StatusDto> {
   return fetchJson<StatusDto>('/api/status');
 }
 
-/** bdboard-o1e5: 画面に出しているプロジェクトをサーバーへ申告する (TTL 付きの UI 状態)。 */
-export function reportVisibleProjects(clientId: string, projectIds: string[]): Promise<void> {
-  return fetchJson<{ ok: boolean }>('/api/ui/visible-projects', {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ clientId, projectIds }),
-  }).then(() => undefined);
-}
-
 export function postRefresh(): Promise<void> {
   return fetchJson<{ ok: boolean }>('/api/refresh', { method: 'POST' }).then(() => undefined);
 }

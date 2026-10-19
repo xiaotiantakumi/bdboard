@@ -46,6 +46,7 @@ export function wireCoreInfra(deps: WireCoreInfraDeps) {
   const visibleProjects = createVisibleProjectsRegistry();
   const commandRunner = createDoltAutostartCommandRunner(new NodeCommandRunner(), {
     shouldStart: (projectRoot) => visibleProjects.isVisible(projectRoot),
+    log: (message) => log.log(message),
   });
   const bdVersionRead = readBdVersion(commandRunner, deps.bdPath, deps.bdVersionCheckTimeoutMs, process.cwd());
   const bdVersion: BdVersionSource = createBdVersionSnapshot(bdVersionRead);

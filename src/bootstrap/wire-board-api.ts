@@ -127,6 +127,8 @@ export function wireBoardApi(deps: WireBoardApiDeps) {
       getStatus: deps.boardRefreshServices.getStatus,
       refresh: () => deps.boardRefreshServices.runRefresh(true),
       refreshProjectByRootPath,
+      refreshProjects: (projectIds) =>
+        deps.boardRefreshServices.runRefresh(true, projectIds),
       events: deps.events,
       boardThresholdsConfigStore: deps.boardThresholdsConfigStore,
       hygieneThresholdsConfigStore: deps.hygieneThresholdsConfigStore,

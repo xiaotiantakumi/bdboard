@@ -3,6 +3,7 @@ import type {
   CommandResult,
   CommandRunner,
 } from '../../application/ports/command-runner.js';
+import { createVisibleProjectsRegistry } from '../../application/board/visible-projects-registry.js';
 import {
   createDoltAutostartCommandRunner,
   isDoltServerUnreachable,
@@ -102,6 +103,100 @@ describe('createDoltAutostartCommandRunner', () => {
     allowed = true;
     await wrapped.run('bd', READ_ARGS);
     expect(calls.filter((a) => a.includes('dolt'))).toHaveLength(1);
+  });
+
+  it('wired to the visible-projects registry: starts only for reported or wildcard projects', async () => {
+    const registry = createVisibleProjectsRegistry();
+    const { runner, calls } = scripted([UNREACHABLE, UNREACHABLE, UNREACHABLE, OK]);
+    const wrapped = createDoltAutostartCommandRunner(runner, {
+      shouldStart: (root) => registry.isVisible(root),
+    });
+    // 申告が無い: start しない
+    await wrapped.run('bd', READ_ARGS);
+    expect(calls.filter((a) => a.includes('dolt'))).toHaveLength(0);
+    // 別プロジェクトだけ申告: start しない
+    registry.report('tab', { projectIds: ['/p/other'] });
+    await wrapped.run('bd', READ_ARGS);
+    expect(calls.filter((a) => a.includes('dolt'))).toHaveLength(0);
+    // ワイルドカード: start する
+    registry.report('tab', { all: true });
+    expect(await wrapped.run('bd', READ_ARGS)).toEqual(OK);
+    expect(calls.filter((a) => a.includes('dolt'))).toHaveLength(1);
+  });
+
+  it('does not start when autostart is disabled', async () => {
+    const disabled: CommandResult = {
+      stdout: '',
+      stderr:
+        'Error: dolt server unreachable at 127.0.0.1:3307\nauto-start is disabled; the server is externally managed',
+      exitCode: 1,
+    };
+    const { runner, calls } = scripted([disabled]);
+    const wrapped = createDoltAutostartCommandRunner(runner);
+    expect(await wrapped.run('bd', READ_ARGS)).toEqual(disabled);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('does not start for an externally managed server (dolt.auto-start: false)', async () => {
+    const external: CommandResult = {
+      stdout: '',
+      stderr:
+        'dolt server unreachable: Dolt server is not running on port 3307, and auto-start is suppressed because the server is externally managed (dolt.auto-start: false)',
+      exitCode: 1,
+    };
+    const { runner, calls } = scripted([external]);
+    const wrapped = createDoltAutostartCommandRunner(runner);
+    expect(await wrapped.run('bd', READ_ARGS)).toEqual(external);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('retries without starting when a start finished after this call began', async () => {
+    let t = 0;
+    const calls: string[][] = [];
+    const releaseRead: Array<() => void> = [];
+    let reads = 0;
+    const runner: CommandRunner = {
+      async run(_c, args) {
+        calls.push([...args]);
+        if (args.includes('dolt')) {
+          t = 5;
+          return OK;
+        }
+        reads += 1;
+        if (reads <= 2) {
+          // 2 本の読み取りが同時に走り、どちらも unreachable で失敗する。
+          await new Promise<void>((resolve) => releaseRead.push(resolve));
+          return UNREACHABLE;
+        }
+        return OK;
+      },
+    };
+    const wrapped = createDoltAutostartCommandRunner(runner, { now: () => t });
+    const a = wrapped.run('bd', READ_ARGS);
+    const b = wrapped.run('bd', READ_ARGS);
+    await new Promise((r) => setTimeout(r, 5));
+    releaseRead[0]?.();
+    expect(await a).toEqual(OK); // a が start して再試行
+    releaseRead[1]?.();
+    expect(await b).toEqual(OK); // b は start 完了済みなので start せずに再試行
+    expect(calls.filter((x) => x.includes('dolt'))).toHaveLength(1);
+  });
+
+  it('logs each start attempt and its outcome', async () => {
+    const { runner } = scripted([UNREACHABLE, OK]);
+    const lines: string[] = [];
+    const wrapped = createDoltAutostartCommandRunner(runner, { log: (m) => lines.push(m) });
+    await wrapped.run('bd', READ_ARGS);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('/p/a');
+    expect(lines[1]).toContain('exit=0');
+  });
+
+  it('only treats a leading --readonly as a readonly call', async () => {
+    const { runner, calls } = scripted([UNREACHABLE]);
+    const wrapped = createDoltAutostartCommandRunner(runner);
+    await wrapped.run('bd', ['-C', '/p/a', 'list', '--readonly']);
+    expect(calls).toHaveLength(1);
   });
 
   it('single-flights concurrent starts per project', async () => {

@@ -53,6 +53,8 @@ export interface ApiDeps {
    * 何もしない(従来どおり定期リフレッシュ/ファイル監視まかせ)。
    */
   readonly refreshProjectByRootPath?: (rootPath: string) => Promise<void>;
+  /** bdboard-o1e5: 指定したプロジェクト ID だけを強制リフレッシュする (1 回にまとめる)。 */
+  readonly refreshProjects?: (projectIds: readonly string[]) => Promise<void>;
   readonly events: EventHub;
   readonly sessions?: () => readonly AgentSession[];
   readonly links?: () => readonly SessionLink[];

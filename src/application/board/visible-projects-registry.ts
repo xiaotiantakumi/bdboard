@@ -3,28 +3,52 @@
  * インメモリのレジストリ。クライアント (タブ) ごとに最新の申告を TTL つきで保持し、
  * 有効な申告すべての和集合を「表示中のプロジェクト」とする。
  *
+ * 申告は ID の一覧か、全プロジェクト表示 (選択が空) を表すワイルドカード (`all`)。
+ * ワイルドカードが1件でも有効なら、すべてのプロジェクトが表示中として扱われる
+ * (まだキャッシュに無いプロジェクトも含む)。
+ *
  * 用途は2つだけ: (1) 停止した Dolt サーバーの `dolt start` を表示中のプロジェクトに
  * 限る、(2) /api/status のエラーを表示中のプロジェクト分に絞る。全プロジェクトの
  * 読み取りリフレッシュ自体はこのレジストリに影響されない。
  */
 export const DEFAULT_VISIBLE_PROJECTS_TTL_MS = 5 * 60_000;
+/** 保持するクライアント数の上限。超えたら最も古い申告から捨てる。 */
+export const MAX_VISIBLE_PROJECTS_CLIENTS = 32;
 
-export interface VisibleProjectsRegistry {
-  /** clientId の申告を置き換える。戻り値は、この申告で新たに表示中になったプロジェクト ID。 */
-  report(clientId: string, projectIds: readonly string[]): readonly string[];
-  /** 有効な申告すべての和集合。 */
-  visibleIds(): ReadonlySet<string>;
-  /** 有効な申告が1件でもあるか。 */
-  hasReports(): boolean;
+export type VisibleProjectsReport =
+  | { readonly all: true }
+  | { readonly projectIds: readonly string[] };
+
+export interface VisibleProjectsSnapshot {
+  readonly hasReports: boolean;
   isVisible(projectId: string): boolean;
 }
 
+export interface VisibleProjectsRegistry extends VisibleProjectsSnapshot {
+  /** clientId の申告を置き換える。戻り値は、この申告で新たに表示中になったプロジェクト ID (ワイルドカードは含まない)。 */
+  report(clientId: string, report: VisibleProjectsReport): readonly string[];
+  /** 有効な申告のある時点のスナップショット (1リクエストで繰り返し判定するとき用)。 */
+  snapshot(): VisibleProjectsSnapshot;
+}
+
+interface Entry {
+  readonly all: boolean;
+  readonly ids: ReadonlySet<string>;
+  readonly expiresAt: number;
+}
+
 export function createVisibleProjectsRegistry(
-  options: { readonly now?: () => number; readonly ttlMs?: number } = {},
+  options: {
+    readonly now?: () => number;
+    readonly ttlMs?: number;
+    readonly maxClients?: number;
+  } = {},
 ): VisibleProjectsRegistry {
   const now = options.now ?? Date.now;
   const ttlMs = options.ttlMs ?? DEFAULT_VISIBLE_PROJECTS_TTL_MS;
-  const entries = new Map<string, { ids: ReadonlySet<string>; expiresAt: number }>();
+  const maxClients = options.maxClients ?? MAX_VISIBLE_PROJECTS_CLIENTS;
+  // Map は挿入順を保つ。再申告は delete → set で末尾へ回すので、先頭が最も古い。
+  const entries = new Map<string, Entry>();
 
   function prune(): void {
     const t = now();
@@ -35,39 +59,53 @@ export function createVisibleProjectsRegistry(
     }
   }
 
-  function union(): Set<string> {
+  function snapshot(): VisibleProjectsSnapshot {
     prune();
-    const out = new Set<string>();
+    let all = false;
+    const ids = new Set<string>();
     for (const entry of entries.values()) {
+      if (entry.all) {
+        all = true;
+      }
       for (const id of entry.ids) {
-        out.add(id);
+        ids.add(id);
       }
     }
-    return out;
+    return {
+      hasReports: entries.size > 0,
+      isVisible: (projectId) => all || ids.has(projectId),
+    };
   }
 
   return {
-    report(clientId, projectIds) {
-      const before = union();
+    report(clientId, report) {
+      const before = snapshot();
+      const ids = 'all' in report ? new Set<string>() : new Set(report.projectIds);
+      entries.delete(clientId);
       entries.set(clientId, {
-        ids: new Set(projectIds),
+        all: 'all' in report,
+        ids,
         expiresAt: now() + ttlMs,
       });
+      while (entries.size > maxClients) {
+        const oldest = entries.keys().next().value;
+        if (oldest === undefined) break;
+        entries.delete(oldest);
+      }
       const added: string[] = [];
-      for (const id of new Set(projectIds)) {
-        if (!before.has(id)) {
+      for (const id of ids) {
+        if (!before.isVisible(id)) {
           added.push(id);
         }
       }
       return added;
     },
-    visibleIds: union,
-    hasReports() {
-      prune();
-      return entries.size > 0;
-    },
+    snapshot,
     isVisible(projectId) {
-      return union().has(projectId);
+      return snapshot().isVisible(projectId);
+    },
+    get hasReports() {
+      return snapshot().hasReports;
     },
   };
 }
