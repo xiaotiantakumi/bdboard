@@ -1,4 +1,6 @@
+import { useMemo } from 'react';
 import type { BoardMode } from '../../api';
+import { useReportVisibleProjects } from '../../hooks/useReportVisibleProjects';
 import { useWatchedTickets } from '../WatchedTicketsProvider';
 import { useNotificationEvents } from '../../hooks/useNotificationEvents';
 import { useWatchedTicketDetails } from '../../hooks/useWatchedTicketDetails';
@@ -47,6 +49,12 @@ export function useAppDataSources({
 }: UseAppDataSourcesParams) {
   const { projectsQuery, chatProjects, projectNames, projectActiveSessions, projectRootPaths } =
     useProjectsData({ setSelectedProjectIds });
+
+  const allProjectIds = useMemo(
+    () => (projectsQuery.data === undefined ? undefined : projectsQuery.data.map((p) => p.id)),
+    [projectsQuery.data],
+  );
+  useReportVisibleProjects(selectedProjectIds, allProjectIds);
 
   const { totalSessionCount, activeSessionCount } = useSessionsData();
 

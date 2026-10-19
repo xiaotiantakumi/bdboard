@@ -37,11 +37,13 @@ import type { EventHub } from '../interface/sse/event-hub.js';
 import { buildApiDeps } from '../interface/http/build-api-deps.js';
 import { createApiRoutes } from '../interface/http/routes.js';
 import type { WriteGuardDeps } from '../interface/http/write-guard.js';
+import type { VisibleProjectsRegistry } from '../application/board/visible-projects-registry.js';
 import type { BoardRefreshServices } from './wire-board-refresh.js';
 import type { BoardSessionServices } from './wire-board-sessions.js';
 
 export interface WireBoardApiDeps {
   readonly cache: BoardCache;
+  readonly visibleProjects: VisibleProjectsRegistry;
   readonly applicationVersion: ApplicationVersionProvider;
   readonly instanceNonce: string | undefined;
   readonly boardRefreshServices: Pick<BoardRefreshServices, 'getStatus' | 'runRefresh'>;
@@ -118,6 +120,7 @@ export function wireBoardApi(deps: WireBoardApiDeps) {
   const inner = createApiRoutes(
     buildApiDeps({
       cache: deps.cache,
+      visibleProjects: deps.visibleProjects,
       applicationVersion: deps.applicationVersion,
       instanceNonce: deps.instanceNonce,
       now: () => new Date(),

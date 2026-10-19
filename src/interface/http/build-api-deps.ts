@@ -1,4 +1,5 @@
 import type { ApplicationVersionProvider } from '../../application/ports/application-version.js';
+import type { VisibleProjectsRegistry } from '../../application/board/visible-projects-registry.js';
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import type { BoardThresholdsConfigPort } from '../../application/ports/board-thresholds-config.js';
 import type { CommentReader } from '../../application/ports/comment-reader.js';
@@ -25,6 +26,7 @@ import type { WriteGuardDeps } from './write-guard.js';
 
 export interface BuildApiDepsParams {
   readonly cache: BoardCache;
+  readonly visibleProjects?: VisibleProjectsRegistry;
   readonly applicationVersion: ApplicationVersionProvider;
   readonly instanceNonce?: string;
   readonly now: () => Date;

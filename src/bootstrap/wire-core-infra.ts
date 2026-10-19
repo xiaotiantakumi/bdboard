@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  createDoltAutostartCommandRunner,
   createFileAiQuotaAlertConfigStore,
   createFileBoardThresholdsConfigStore,
   createFileHygieneThresholdsConfigStore,
@@ -21,6 +22,7 @@ import {
 import { runBdVersionStartupCheck } from '../application/bd/run-bd-version-startup-check.js';
 import { createBdVersionSnapshot } from '../application/bd/bd-version-snapshot.js';
 import type { BdVersionSource } from '../application/bd/bd-version-snapshot.js';
+import { createVisibleProjectsRegistry } from '../application/board/visible-projects-registry.js';
 import { envString } from './env.js';
 
 export interface WireCoreInfraDeps {
@@ -38,7 +40,13 @@ export function wireCoreInfra(deps: WireCoreInfraDeps) {
 
   const cache = createSqliteBoardCache(deps.dbPath);
   const fsPort = new NodeFileSystem();
-  const commandRunner = new NodeCommandRunner();
+  // bdboard-o1e5: 止まった Dolt サーバーは --readonly 読み取りが unreachable で失敗したとき
+  // だけ `dolt start` して1回再試行する (データは書かない)。start は画面に表示中の
+  // プロジェクトだけに限る (クライアントの申告。Project.id === rootPath)。
+  const visibleProjects = createVisibleProjectsRegistry();
+  const commandRunner = createDoltAutostartCommandRunner(new NodeCommandRunner(), {
+    shouldStart: (projectRoot) => visibleProjects.isVisible(projectRoot),
+  });
   const bdVersionRead = readBdVersion(commandRunner, deps.bdPath, deps.bdVersionCheckTimeoutMs, process.cwd());
   const bdVersion: BdVersionSource = createBdVersionSnapshot(bdVersionRead);
   // 診断だけが目的なので、bd が未導入・壊れている場合も起動を止めない。
@@ -60,6 +68,7 @@ export function wireCoreInfra(deps: WireCoreInfraDeps) {
 
   return {
     cache,
+    visibleProjects,
     bdVersion,
     fsPort,
     commandRunner,
