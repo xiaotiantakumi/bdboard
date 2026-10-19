@@ -9,6 +9,7 @@
  * (main.ts) には `getStatus()` / 完成済み `watchedProjectsSync` だけを返す。
  */
 import type { RefreshResult } from '../application/board/refresh-projects.js';
+import { mergeStatusErrors } from '../application/board/merge-status-errors.js';
 import { runInitialRefresh } from '../application/board/run-initial-refresh.js';
 import { runUnattendedRefresh } from '../application/board/run-unattended-refresh.js';
 import {
@@ -41,14 +42,13 @@ function updateStatusFromResult(
   cache: BoardCache,
   result: RefreshResult,
   refreshedAt: Date,
+  previous: ApiStatus,
+  onlyProjectIds?: readonly string[],
 ): ApiStatus {
   return {
     lastRefreshAt: refreshedAt,
-    errors: result.errors.map((error) => ({
-      kind: error.kind,
-      projectId: error.projectId,
-      detail: error.detail,
-    })),
+    // bdboard-o1e5: 一部のプロジェクトだけの更新では、対象外プロジェクトの既存エラーを残す。
+    errors: mergeStatusErrors(previous.errors, result.errors, result.removed, onlyProjectIds),
     projectCount: cache.listProjects().length,
   };
 }
@@ -127,8 +127,8 @@ export async function wireBoardRefresh(deps: WireBoardRefreshDeps) {
       deps.events.publish({ name: 'notification', data: payload });
     },
     getWatchedProjectsSync: () => watchedProjectsSync,
-    onResult: (result, refreshedAt) => {
-      status = updateStatusFromResult(deps.cache, result, refreshedAt);
+    onResult: (result, refreshedAt, onlyProjectIds) => {
+      status = updateStatusFromResult(deps.cache, result, refreshedAt, status, onlyProjectIds);
       refreshObserver.observe(result);
     },
   });
@@ -150,7 +150,7 @@ export async function wireBoardRefresh(deps: WireBoardRefreshDeps) {
   for (const error of initialResult.errors) {
     logError(`Refresh error [${error.kind}] project=${error.projectId}: ${error.detail}`);
   }
-  status = updateStatusFromResult(deps.cache, initialResult, new Date());
+  status = updateStatusFromResult(deps.cache, initialResult, new Date(), status);
   refreshObserver.observe(initialResult);
 
   return {

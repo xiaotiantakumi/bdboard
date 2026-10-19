@@ -188,6 +188,27 @@ bdboard 自身は `8787` / `scripts/always-on-server.sh` を宣言している�
 - **bdへの読み取りは `--readonly` 固定**: `createBdCliIssueRepository` の一覧取得や、書き込み系アダプタが
   内部で行う存在確認的な `show` 呼び出しも含め、読み取り目的のbd呼び出しは一貫して `--readonly`
   フラグを付与する(`src/infrastructure/bd/*.ts`)。
+  **唯一の例外 (bdboard-o1e5)**: `--readonly` の読み取りが `dolt server unreachable`
+  (Dolt sql-server 停止。PC 再起動後など) で失敗したときに限り、
+  `createDoltAutostartCommandRunner` (`src/infrastructure/bd/dolt-autostart-command-runner.ts`、
+  `wire-core-infra.ts` で CommandRunner を包む) がそのプロジェクトで `bd -C <root> dolt start`
+  を実行し、元の読み取りを1回だけ再試行する。許可するのは `dolt start` のみで、これは
+  サーバープロセスを起動するだけでデータを変更しない。プロジェクトごとに単一飛行 + 60 秒
+  クールダウンで、再試行も失敗した場合は従来どおりステータスエラーに出す。
+  `dolt start` と `/api/status` のエラー表示は**画面に表示中のプロジェクトだけ**が対象:
+  クライアントが `PUT /api/ui/visible-projects` (`{clientId, projectIds}`、選択が空 = 全表示の
+  ときはワイルドカード `{clientId, all: true}`) で表示中のプロジェクトを申告し (読み込み時・
+  選択変更時・SSE 接続/再接続時・2 分ごとのハートビート。失敗は数秒後に再送)、サーバーは
+  申告を 5 分 TTL・最大 32 クライアントのインメモリレジストリ
+  (`application/board/visible-projects-registry.ts`) に持って全クライアントの和集合を使う
+  (ワイルドカードが有効なら全プロジェクトが表示中)。`/api/status` が隠すのはキャッシュに
+  あるプロジェクトのエラーだけで、キャッシュに無い projectId のエラーは常に出す。
+  一部のプロジェクトだけのリフレッシュは、対象外プロジェクトの既存エラーを消さない
+  (`merge-status-errors.ts`)。bd が自動起動を無効・外部管理と答えたプロジェクトには
+  `dolt start` しない。この PUT はデータを変えない UI 状態の申告だが、他の書き込みと同じ
+  write-guard の内側 (ローカル直アクセスのみ。トンネル書き込み未開放なら 403) に置く。
+  有効な申告が無いときは `/api/status` は絞り込まず、`dolt start` は行わない。
+  全プロジェクトの読み取りリフレッシュ自体はこの絞り込みの影響を受けない。
 - **子プロセス起動経路の一本化**: `.dependency-cruiser.cjs` のルールにより `child_process` は
   `infrastructure/process` と `infrastructure/runners` 以外からimportできない。bd/gh/git/ai-quota
   等の外部コマンド実行はすべてこの経路を通る。

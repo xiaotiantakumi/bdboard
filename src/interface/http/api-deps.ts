@@ -1,4 +1,5 @@
 import type { ApplicationVersionProvider } from '../../application/ports/application-version.js';
+import type { VisibleProjectsRegistry } from '../../application/board/visible-projects-registry.js';
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import type { CommentReader } from '../../application/ports/comment-reader.js';
 import type { ProcessScanner } from '../../application/ports/process-scanner.js';
@@ -37,6 +38,8 @@ export interface ApiStatus {
 
 export interface ApiDeps {
   readonly cache: BoardCache;
+  /** bdboard-o1e5: クライアントが申告した表示中プロジェクト。未指定なら /api/status は絞り込まない。 */
+  readonly visibleProjects?: VisibleProjectsRegistry;
   readonly applicationVersion: ApplicationVersionProvider;
   /** e2e 等 per-run 識別子。未設定時は /api/health に含めない (通常運用の応答形を維持)。 */
   readonly instanceNonce?: string;
@@ -50,6 +53,8 @@ export interface ApiDeps {
    * 何もしない(従来どおり定期リフレッシュ/ファイル監視まかせ)。
    */
   readonly refreshProjectByRootPath?: (rootPath: string) => Promise<void>;
+  /** bdboard-o1e5: 指定したプロジェクト ID だけを強制リフレッシュする (1 回にまとめる)。 */
+  readonly refreshProjects?: (projectIds: readonly string[]) => Promise<void>;
   readonly events: EventHub;
   readonly sessions?: () => readonly AgentSession[];
   readonly links?: () => readonly SessionLink[];

@@ -1,4 +1,5 @@
 import type { BoardMode } from '../../api';
+import { useReportVisibleProjects } from '../../hooks/useReportVisibleProjects';
 import { useWatchedTickets } from '../WatchedTicketsProvider';
 import { useNotificationEvents } from '../../hooks/useNotificationEvents';
 import { useWatchedTicketDetails } from '../../hooks/useWatchedTicketDetails';
@@ -47,6 +48,8 @@ export function useAppDataSources({
 }: UseAppDataSourcesParams) {
   const { projectsQuery, chatProjects, projectNames, projectActiveSessions, projectRootPaths } =
     useProjectsData({ setSelectedProjectIds });
+
+  useReportVisibleProjects(selectedProjectIds);
 
   const { totalSessionCount, activeSessionCount } = useSessionsData();
 

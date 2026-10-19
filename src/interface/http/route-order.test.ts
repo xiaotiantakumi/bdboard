@@ -18,6 +18,9 @@ import { createApiRoutes, type ApiDeps } from './routes.js';
 const EXPECTED_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'GET', path: '/api/health' },
   { method: 'GET', path: '/api/status' },
+  // bodyLimit ミドルウェア + ハンドラの 2 エントリ。
+  { method: 'PUT', path: '/api/ui/visible-projects' },
+  { method: 'PUT', path: '/api/ui/visible-projects' },
   { method: 'GET', path: '/api/projects' },
   { method: 'GET', path: '/api/board' },
   { method: 'GET', path: '/api/search' },

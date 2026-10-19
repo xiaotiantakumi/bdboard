@@ -71,6 +71,7 @@ async function main(): Promise<void> {
 
   const boardApi = wireBoardApi({
     cache: infra.cache,
+    visibleProjects: infra.visibleProjects,
     applicationVersion,
     instanceNonce: config.instanceNonce,
     boardRefreshServices: lifecycle.boardRefreshServices,

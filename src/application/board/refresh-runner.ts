@@ -40,7 +40,12 @@ export interface RefreshRunnerDeps extends RefreshProjectsDeps {
   /** watcher 作成前は undefined を返してよい (元実装と同じ)。 */
   readonly getWatchedProjectsSync: () => WatchedProjectsSync | undefined;
   /** `status = updateStatusFromResult(cache, result, refreshedAt)` に相当する差し替え可能なフック。 */
-  readonly onResult: (result: RefreshResult, refreshedAt: Date) => void;
+  /** onlyProjectIds: 一部のプロジェクトだけを更新した場合の対象 (全体更新なら undefined)。 */
+  readonly onResult: (
+    result: RefreshResult,
+    refreshedAt: Date,
+    onlyProjectIds?: readonly string[],
+  ) => void;
   /** 省略時は `console.error` (元実装と同じメッセージ書式)。 */
   readonly onWatcherSyncError?: (err: unknown) => void;
 }
@@ -137,7 +142,7 @@ export function createRefreshRunner(deps: RefreshRunnerDeps): RefreshRunner {
               },
             );
 
-            deps.onResult(result, new Date());
+            deps.onResult(result, new Date(), useOnlyProjectIds);
 
             // Only announce a change when something actually changed. `bd --readonly`
             // still touches .beads/last-touched, so every refresh re-triggers the
