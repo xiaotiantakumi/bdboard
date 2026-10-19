@@ -150,6 +150,18 @@ describe('createDoltAutostartCommandRunner', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('does not start when the output says server mode configured', async () => {
+    const configured: CommandResult = {
+      stdout: '',
+      stderr: 'dolt server unreachable at 127.0.0.1:3307 (external server mode configured)',
+      exitCode: 1,
+    };
+    const { runner, calls } = scripted([configured]);
+    const wrapped = createDoltAutostartCommandRunner(runner);
+    expect(await wrapped.run('bd', READ_ARGS)).toEqual(configured);
+    expect(calls).toHaveLength(1);
+  });
+
   it('retries without starting when a start finished after this call began', async () => {
     let t = 0;
     const calls: string[][] = [];

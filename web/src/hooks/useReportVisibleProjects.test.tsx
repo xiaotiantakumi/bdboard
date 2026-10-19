@@ -3,20 +3,29 @@ import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../api/http', () => ({
+vi.mock('../api/http', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/http')>()),
   fetchJson: vi.fn(),
 }));
 
 const openListeners = new Set<() => void>();
+const sse = { alreadyOpen: false, acquired: 0 };
 vi.mock('../lib/sseConnection', () => ({
-  acquireSharedEventSource: () => ({
-    addOpenListener: (l: () => void) => openListeners.add(l),
-    removeOpenListener: (l: () => void) => openListeners.delete(l),
-    release: () => undefined,
-  }),
+  acquireSharedEventSource: () => {
+    sse.acquired += 1;
+    return {
+      // 実装と同じく、接続済みなら登録時にすぐ呼ぶ。
+      addOpenListener: (l: () => void) => {
+        openListeners.add(l);
+        if (sse.alreadyOpen) l();
+      },
+      removeOpenListener: (l: () => void) => openListeners.delete(l),
+      release: () => undefined,
+    };
+  },
 }));
 
-import { fetchJson } from '../api/http';
+import { ApiError, fetchJson } from '../api/http';
 import {
   VISIBLE_PROJECTS_HEARTBEAT_MS,
   VISIBLE_PROJECTS_RETRY_MS,
@@ -49,6 +58,8 @@ describe('useReportVisibleProjects', () => {
     fetchJsonMock.mockReset();
     fetchJsonMock.mockResolvedValue({ ok: true });
     openListeners.clear();
+    sse.alreadyOpen = false;
+    sse.acquired = 0;
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -96,6 +107,43 @@ describe('useReportVisibleProjects', () => {
       vi.advanceTimersByTime(VISIBLE_PROJECTS_RETRY_MS);
     });
     expect(fetchJsonMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a failure that cannot recover (4xx), but still heartbeats', async () => {
+    fetchJsonMock.mockRejectedValue(new ApiError(403, 'forbidden'));
+    setup(['/a']);
+    await act(async () => {});
+    await act(async () => {
+      vi.advanceTimersByTime(VISIBLE_PROJECTS_RETRY_MS * 3);
+    });
+    expect(fetchJsonMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      vi.advanceTimersByTime(VISIBLE_PROJECTS_HEARTBEAT_MS);
+    });
+    expect(fetchJsonMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a 5xx failure', async () => {
+    fetchJsonMock.mockRejectedValueOnce(new ApiError(503, 'down'));
+    setup(['/a']);
+    await act(async () => {});
+    await act(async () => {
+      vi.advanceTimersByTime(VISIBLE_PROJECTS_RETRY_MS);
+    });
+    expect(fetchJsonMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends exactly once on mount and once per selection change even when SSE is already open', async () => {
+    sse.alreadyOpen = true;
+    const { rerender, invalidate } = setup(['/a']);
+    await act(async () => {});
+    expect(fetchJsonMock).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    rerender({ ids: ['/a', '/b'] });
+    await act(async () => {});
+    expect(fetchJsonMock).toHaveBeenCalledTimes(2);
+    expect(invalidate).toHaveBeenCalledTimes(2);
+    expect(sse.acquired).toBe(1); // 選択変更で EventSource を取り直さない
   });
 
   it('re-reports when the SSE connection opens', async () => {

@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo } from 'react';
-import { fetchJson } from '../api/http';
+import { useEffect, useMemo, useRef } from 'react';
+import { ApiError, fetchJson } from '../api/http';
 import { acquireSharedEventSource } from '../lib/sseConnection';
 
 // サーバー側の TTL (5 分) より十分短い間隔で再申告する。
@@ -13,6 +13,11 @@ const CLIENT_ID =
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `tab-${Math.random().toString(36).slice(2)}`;
+
+/** 再送して直りうる失敗か: ネットワークエラー (ApiError 以外) と 5xx のみ。 */
+function isRecoverable(error: unknown): boolean {
+  return !(error instanceof ApiError) || error.status >= 500;
+}
 
 /** projectIds が null = 選択が空 (全プロジェクト表示) のワイルドカード。 */
 export function buildVisibleProjectsPayload(
@@ -46,6 +51,8 @@ export function reportVisibleProjects(
 export function useReportVisibleProjects(selectedProjectIds: string[]): void {
   const queryClient = useQueryClient();
   const key = useMemo(() => selectedProjectIds.join('\n'), [selectedProjectIds]);
+  // SSE 接続イベントから「最新の選択」で再申告するための参照。
+  const sendRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
     const ids = key === '' ? [] : key.split('\n');
@@ -63,19 +70,19 @@ export function useReportVisibleProjects(selectedProjectIds: string[]): void {
             void queryClient.invalidateQueries({ queryKey: ['status'] });
           }
         },
-        () => {
-          if (!cancelled && retryTimer === null) {
+        (error: unknown) => {
+          // 回復しうる失敗 (ネットワークエラー・5xx) だけ再送する。4xx (トンネルで書き込み拒否の
+          // 403 など) は待っても直らないので、次のハートビート / SSE 再接続まで再送しない。
+          if (!cancelled && retryTimer === null && isRecoverable(error)) {
             retryTimer = setTimeout(send, VISIBLE_PROJECTS_RETRY_MS);
           }
         },
       );
     };
 
+    sendRef.current = send;
     send();
     const heartbeat = setInterval(send, VISIBLE_PROJECTS_HEARTBEAT_MS);
-    // SSE の接続・再接続のたびに再申告する (サーバー再起動で申告が消えた場合の回復)。
-    const conn = acquireSharedEventSource();
-    conn.addOpenListener(send);
 
     return () => {
       cancelled = true;
@@ -83,8 +90,25 @@ export function useReportVisibleProjects(selectedProjectIds: string[]): void {
       if (retryTimer !== null) {
         clearTimeout(retryTimer);
       }
-      conn.removeOpenListener(send);
-      conn.release();
     };
   }, [key, queryClient]);
+
+  // 共有 EventSource は選択が変わっても取得・解放し直さない (マウント中 1 回だけ)。
+  useEffect(() => {
+    const conn = acquireSharedEventSource();
+    // addOpenListener は接続済みなら登録時にすぐ呼ぶ。その分は上の申告と重複するので捨て、
+    // 以降の接続・再接続 (サーバー再起動で申告が消えた場合の回復) だけ再申告する。
+    let registering = true;
+    const onOpen = (): void => {
+      if (!registering) {
+        sendRef.current();
+      }
+    };
+    conn.addOpenListener(onOpen);
+    registering = false;
+    return () => {
+      conn.removeOpenListener(onOpen);
+      conn.release();
+    };
+  }, []);
 }

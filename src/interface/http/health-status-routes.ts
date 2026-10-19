@@ -38,7 +38,7 @@ export function createHealthStatusRoutes(deps: ApiDeps): Hono {
     // (初回起動で読めなかった等) のエラーは、表示中かどうか分からないので必ず出す。
     const visible = deps.visibleProjects?.snapshot();
     let errors = status.errors;
-    if (visible !== undefined && visible.hasReports) {
+    if (visible !== undefined && visible.hasReports && status.errors.length > 0) {
       const cachedIds = new Set(readProjectRefs(deps.cache).map((p) => p.id));
       errors = status.errors.filter(
         (error) => !cachedIds.has(error.projectId) || visible.isVisible(error.projectId),

@@ -23,7 +23,7 @@ const UNREACHABLE_PATTERN = /dolt server unreachable/i;
 // "auto-start is disabled; the server is externally managed" /
 // "auto-start is suppressed because the server is externally managed (dolt.auto-start: false").
 const AUTOSTART_OPT_OUT_PATTERN =
-  /auto-start is (?:disabled|suppressed)|externally managed|dolt\.auto-start: false/i;
+  /auto-start is (?:disabled|suppressed)|externally managed|server mode configured|dolt\.auto-start: false/i;
 const DEFAULT_COOLDOWN_MS = 60_000;
 const DEFAULT_START_TIMEOUT_MS = 30_000;
 
