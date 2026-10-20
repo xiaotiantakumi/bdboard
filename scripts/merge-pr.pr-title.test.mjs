@@ -135,7 +135,7 @@ describe('merge-pr PR title helpers (bdboard-07q8)', () => {
   });
 });
 
-describe('merge-pr PR title checks, end to end (bdboard-07q8)', () => {
+describe('merge-pr PR title checks, end to end (bdboard-07q8)', { timeout: 120_000 }, () => {
   registerTempRepoHooks();
 
   function setPullTitle(title) {

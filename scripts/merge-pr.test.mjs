@@ -263,8 +263,9 @@ describe('hasApprovedReview spelling variants', () => {
   });
 });
 
-// 1 テストで node / git を十数回起こす。verify の並列実行中でも既定 5 秒で落ちないよう余裕を取る。
-describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp repo + fake gh/bd/npm', { timeout: 30_000 }, () => {
+// 1 テストで node / git を十数回起こす。load average 20〜80 の着地後検証で 1 テスト 50 秒かかった実測があり、
+// 30 秒の上限で main-broken を繰り返したため 120 秒にした (bdboard-w1zq)。下げないこと。
+describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp repo + fake gh/bd/npm', { timeout: 120_000 }, () => {
   registerTempRepoHooks();
 
   it('rejects usage errors before touching git', () => {
@@ -907,8 +908,8 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       advanceMain({ 'peer2.txt': 'peer2\n' }); // 別 PR が着地した
       const started = Date.now();
       expect(await exited).toBe(75);
-      expect(Date.now() - started).toBeLessThan(15_000); // 60 秒の verify を最後まで待たない
-      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 });
+      expect(Date.now() - started).toBeLessThan(40_000); // 60 秒の verify を最後まで待たない
+      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 30_000 });
     } finally {
       child.kill('SIGKILL');
       if (verifyPid !== undefined && pidAlive(verifyPid)) {
@@ -1100,7 +1101,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       expect(signal).toBeNull();
       expect(code).toBe(130);
 
-      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 });
+      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 30_000 });
     } finally {
       if (!child.killed) {
         child.kill('SIGKILL');

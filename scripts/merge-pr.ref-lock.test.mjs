@@ -26,7 +26,7 @@ const lockFile = () => path.join(mainCheckout, '.git', 'refs', 'remotes', 'origi
 
 // 1 テストで merge-pr を何本も起こす (prepare / gate / verify)。既定の 5 秒は高負荷の verify 中に足りないので、
 // 同じ harness を使う merge-pr.test.mjs / merge-pr.finish.test.mjs と同じ 30 秒にそろえる。
-describe('merge-pr ref lock handling (bdboard-1syo)', { timeout: 30_000 }, () => {
+describe('merge-pr ref lock handling (bdboard-1syo)', { timeout: 120_000 }, () => {
   registerTempRepoHooks();
   const tempDirs = [];
   afterEach(() => {
