@@ -40,7 +40,7 @@ export function pidAlive(pid) {
   }
 }
 
-export async function waitUntil(predicate, { timeoutMs = 10_000, intervalMs = 20 } = {}) {
+export async function waitUntil(predicate, { timeoutMs = 60_000, intervalMs = 20 } = {}) {
   const start = Date.now();
   while (!predicate()) {
     if (Date.now() - start > timeoutMs) {

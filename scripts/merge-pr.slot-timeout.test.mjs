@@ -29,8 +29,9 @@ import {
 
 const SLOT_TIMEOUT = { FAKE_VERIFY_EXIT: '75' };
 
-// 1 テストで node / git を十数回起こす。verify の並列実行中でも既定 5 秒で落ちないよう余裕を取る。
-describe.skipIf(process.platform === 'win32')('merge-pr: a verify slot wait timeout is not a failed verify (bdboard-wj9m)', { timeout: 30_000 }, () => {
+// 1 テストで node / git を十数回起こす。load average 20〜80 の着地後検証で 1 テスト 50 秒かかった実測があり、
+// 30 秒の上限で main-broken を繰り返したため 120 秒にした (bdboard-w1zq)。下げないこと。
+describe.skipIf(process.platform === 'win32')('merge-pr: a verify slot wait timeout is not a failed verify (bdboard-wj9m)', { timeout: 120_000 }, () => {
   registerTempRepoHooks();
 
   it('finish: records no failure (nor main-broken), keeps no slot, and says the verify did not run', () => {

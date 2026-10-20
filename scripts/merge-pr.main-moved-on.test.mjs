@@ -71,7 +71,7 @@ function landClassL() {
   return landSquash();
 }
 
-describe.skipIf(process.platform === 'win32')('merge-pr: landed failure after main moved on (bdboard-89jv)', { timeout: 60_000 }, () => {
+describe.skipIf(process.platform === 'win32')('merge-pr: landed failure after main moved on (bdboard-89jv)', { timeout: 120_000 }, () => {
   registerTempRepoHooks();
 
   it('F1 repro A: finish re-run after a repair landed and the tip is green does not take the old SHA main-broken slot', () => {

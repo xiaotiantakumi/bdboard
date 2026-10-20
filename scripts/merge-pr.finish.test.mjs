@@ -34,8 +34,9 @@ import {
   writeFake,
 } from './merge-pr.test-support.mjs';
 
-// 1 テストで node / git を十数回起こす。verify の並列実行中でも既定 5 秒で落ちないよう余裕を取る。
-describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp repo + fake gh/bd/npm', { timeout: 30_000 }, () => {
+// 1 テストで node / git を十数回起こす。load average 20〜80 の着地後検証で 1 テスト 50 秒かかった実測があり、
+// 30 秒の上限で main-broken を繰り返したため 120 秒にした (bdboard-w1zq)。下げないこと。
+describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp repo + fake gh/bd/npm', { timeout: 120_000 }, () => {
   registerTempRepoHooks();
 
   it('finish: an unmerged PR (merge refused / 409) just returns the slot', () => {
@@ -206,7 +207,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
 
       // 自然な sleep 終了 (60 秒) よりずっと短い窓で死んでいることを確かめる (kill が効いていない
       // 場合に「たまたま自然終了と重なって green になる」誤検出を避ける)。
-      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 }); // 孤児にならず、確かに終わっている
+      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 30_000 }); // 孤児にならず、確かに終わっている
     } finally {
       // アサーションが途中で失敗しても、子プロセスと (60 秒 sleep 中かもしれない) fake verify の
       // 孫プロセスを確実に後始末する。正常系ではどちらも既に死んでいるので kill は no-op になる。
@@ -275,7 +276,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       expect(signal).toBeNull();
       expect(code).toBe(143); // SIGTERM
 
-      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 });
+      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 30_000 });
     } finally {
       if (!child.killed) {
         child.kill('SIGKILL');
@@ -362,7 +363,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       expect(code).toBe(130);
 
       // グループ全体が本当に空になるまでポーリングで待つ (孫が生き残っていないか)。
-      await waitUntil(() => !pidAlive(verifyPid) && !pidAlive(grandchildPid), { timeoutMs: 5_000 });
+      await waitUntil(() => !pidAlive(verifyPid) && !pidAlive(grandchildPid), { timeoutMs: 30_000 });
     } finally {
       if (!child.killed) {
         child.kill('SIGKILL');
