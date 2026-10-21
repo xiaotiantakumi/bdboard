@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { fetchTicketLocalFiles, type LocalFileRefDto } from '../../api/local-files';
-import { isLoopbackHostname } from '../issue-reports/manualDraftAccess';
 import { formatByteSize } from '../TicketAttachments';
 import { LocalFileLabel } from './LocalFileLabel';
 import { localFileKindLabel } from './localFileKindLabel';
@@ -10,23 +9,22 @@ import { openLocalFileViewer } from './openLocalFileViewer';
 
 export interface TicketLocalFilesSectionProps {
   readonly ticketId: string;
-  /** 既定は window.location.hostname。テストから差し替えられる。 */
-  readonly hostname?: string;
 }
 
-export function TicketLocalFilesSection({
-  ticketId,
-  hostname = window.location.hostname,
-}: TicketLocalFilesSectionProps) {
-  const localAccess = isLoopbackHostname(hostname);
+/**
+ * bdboard-teir: ホスト名では出し分けない。ローカルでも、強いパスワードで認可済みのトンネルセッションでも
+ * サーバーが 200 を返し、それ以外は 403 になる (チャット・添付と同じ「まず送ってサーバーの 403 を見る」形)。
+ * 403 のときは何も出さない (ファイルがあるかを知らないまま案内を出すと全チケットに出てしまう)。
+ * 案内はファイルを開く画面 (LocalFileViewerPage) が出す。
+ */
+export function TicketLocalFilesSection({ ticketId }: TicketLocalFilesSectionProps) {
   const filesQuery = useQuery({
     queryKey: ['ticket-local-files', ticketId],
     queryFn: () => fetchTicketLocalFiles(ticketId),
-    enabled: localAccess,
   });
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
 
-  if (!localAccess || filesQuery.isPending || filesQuery.isError || filesQuery.data === undefined) {
+  if (filesQuery.isPending || filesQuery.isError || filesQuery.data === undefined) {
     return null;
   }
   const files = filesQuery.data.files;

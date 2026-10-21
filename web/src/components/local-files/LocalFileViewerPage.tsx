@@ -1,8 +1,9 @@
+import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
-import type { LocalFileKind, LocalFileListEntryDto } from '../../api/local-files';
+import { fetchTicketLocalFiles, type LocalFileKind, type LocalFileListEntryDto } from '../../api/local-files';
 import { buildLocalFileViewerUrl, localFileNameOf, type LocalFileViewerRoute } from '../../localFileViewerRoute';
 import { formatByteSize } from '../TicketAttachments';
-import { isLoopbackHostname } from '../issue-reports/manualDraftAccess';
+import { LOCAL_FILE_ACCESS_HELP, isLocalFileAccessDenied } from './localFileErrorMessage';
 import { LocalFolderThumbnails } from './LocalFolderThumbnails';
 import { LocalImageViewer } from './LocalImageViewer';
 import { LocalJsonViewer } from './LocalJsonViewer';
@@ -12,8 +13,6 @@ import { LocalTextViewer } from './LocalTextViewer';
 
 export interface LocalFileViewerPageProps {
   readonly route: LocalFileViewerRoute;
-  /** 既定は window.location.hostname。テストから差し替えられる。 */
-  readonly hostname?: string;
 }
 
 interface ShownFile {
@@ -22,11 +21,17 @@ interface ShownFile {
   readonly size?: number | null;
 }
 
-export function LocalFileViewerPage({
-  route,
-  hostname = window.location.hostname,
-}: LocalFileViewerPageProps) {
-  const local = isLoopbackHostname(hostname);
+/**
+ * bdboard-teir: ホスト名では止めない。ローカル直と、強いパスワードで認可済みのトンネルセッション
+ * (チャット・添付と同じ資格) をサーバーのガードが通す。ガードが 403 を返したときだけ案内を出す。
+ * 画像・動画は <img>/<video> がそのまま取りに行き失敗の理由が見えないので、ガードが掛かる一覧を先に 1 回引いて判定する。
+ */
+export function LocalFileViewerPage({ route }: LocalFileViewerPageProps) {
+  const accessProbe = useQuery({
+    queryKey: ['ticket-local-files', route.ticketId],
+    queryFn: () => fetchTicketLocalFiles(route.ticketId),
+  });
+  const denied = accessProbe.isError && isLocalFileAccessDenied(accessProbe.error);
   const [shown, setShown] = useState<ShownFile>({
     path: route.path,
     kind: route.kind,
@@ -34,12 +39,12 @@ export function LocalFileViewerPage({
   });
 
   useEffect(() => {
-    if (!local) {
+    if (denied) {
       document.title = 'bdboard';
       return;
     }
     document.title = `${localFileNameOf(shown.path)} - bdboard`;
-  }, [local, shown.path]);
+  }, [denied, shown.path]);
 
   const show = useCallback((next: ShownFile) => {
     setShown(next);
@@ -60,8 +65,12 @@ export function LocalFileViewerPage({
     [show],
   );
 
-  if (!local) {
-    return <p className="local-file-note">このビューアはローカルで開いたときだけ使えます。</p>;
+  if (denied) {
+    return (
+      <p className="local-file-note" role="alert">
+        {LOCAL_FILE_ACCESS_HELP}
+      </p>
+    );
   }
 
   return (

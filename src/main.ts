@@ -163,7 +163,7 @@ async function main(): Promise<void> {
     },
     platformSupport,
     attachmentsRouter: attachments.attachmentsRouter,
-    localFilesRouter: wireLocalFiles({ cache: infra.cache, fsPort: infra.fsPort, commentReader: bdServices.commentReader }),
+    localFilesRouter: wireLocalFiles({ cache: infra.cache, fsPort: infra.fsPort, commentReader: bdServices.commentReader, writeAccess: auth.writeAccess }),
     inner: boardApi.inner,
     harnessRouter: harness.harnessRouter,
     scanRootsRouter: misc.scanRootsRouter,

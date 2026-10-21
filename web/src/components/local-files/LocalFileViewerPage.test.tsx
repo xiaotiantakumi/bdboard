@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { localFileRawUrl, type LocalFileListEntryDto } from '../../api/local-files';
 import { buildLocalFileViewerUrl, type LocalFileViewerRoute } from '../../localFileViewerRoute';
 import { LocalFileViewerPage } from './LocalFileViewerPage';
+import { LOCAL_FILE_ACCESS_HELP } from './localFileErrorMessage';
 
 const TICKET_ID = 'video-p4q.38';
 const DIR = 'out/13-demo/stills';
@@ -25,13 +26,13 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-function renderPage(route: LocalFileViewerRoute, hostname = 'localhost') {
+function renderPage(route: LocalFileViewerRoute) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <LocalFileViewerPage route={route} hostname={hostname} />
+      <LocalFileViewerPage route={route} />
     </QueryClientProvider>,
   );
 }
@@ -53,17 +54,37 @@ describe('LocalFileViewerPage', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows a local-only notice and does not fetch off loopback', async () => {
+  it('shows an access notice and no viewer when the server denies the session (403)', async () => {
     document.title = 'stale';
-    const fetchMock = installList([S02]);
-    renderPage(
-      { ticketId: TICKET_ID, path: S02.path, kind: 'image', size: S02.size ?? undefined },
-      'example.trycloudflare.com',
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ error: 'local access only' }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+      }),
     );
+    vi.stubGlobal('fetch', fetchMock);
+    renderPage({ ticketId: TICKET_ID, path: S02.path, kind: 'image', size: S02.size ?? undefined });
 
-    expect(screen.getByText('このビューアはローカルで開いたときだけ使えます。')).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
+    expect(await screen.findByText(LOCAL_FILE_ACCESS_HELP)).toBeInTheDocument();
+    expect(document.querySelector('img.local-file-viewer-image')).toBeNull();
     await waitFor(() => expect(document.title).toBe('bdboard'));
+  });
+
+  it('plays a video through a tunnel session the server accepts', async () => {
+    const path = 'out/13-demo/reading-review.mp4';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ files: [] })),
+    );
+    renderPage({ ticketId: TICKET_ID, path, kind: 'video', size: 4096 });
+
+    const video = await waitFor(() => {
+      const el = document.querySelector('video');
+      expect(el).not.toBeNull();
+      return el as HTMLVideoElement;
+    });
+    expect(video).toHaveAttribute('src', localFileRawUrl(TICKET_ID, path));
+    expect(screen.queryByText(LOCAL_FILE_ACCESS_HELP)).not.toBeInTheDocument();
   });
 
   it('shows an image, its path, its size, and the file name in the title', async () => {

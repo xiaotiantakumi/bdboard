@@ -18,13 +18,13 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-function renderSection(hostname: string) {
+function renderSection() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <TicketLocalFilesSection ticketId={TICKET_ID} hostname={hostname} />
+      <TicketLocalFilesSection ticketId={TICKET_ID} />
     </QueryClientProvider>,
   );
 }
@@ -53,7 +53,7 @@ describe('TicketLocalFilesSection', () => {
       { path: 'projects/demo/script/scenes.json', kind: 'json', size: 512 },
       { path: 'projects/demo/script/review.md', kind: 'markdown', size: 2048 },
     ]);
-    renderSection('localhost');
+    renderSection();
 
     expect(await screen.findByRole('heading', { name: 'ファイル' })).toBeInTheDocument();
     expect(screen.getByText('JSON')).toBeInTheDocument();
@@ -64,20 +64,32 @@ describe('TicketLocalFilesSection', () => {
     expect(screen.getByText('2.0 KB')).toBeInTheDocument();
   });
 
-  it('renders nothing and does not fetch when the hostname is a tunnel', async () => {
-    const fetchMock = installFetch([
-      { path: 'projects/demo/thumbnail.json', kind: 'json', size: 10 },
-    ]);
-    const { container } = renderSection('example.trycloudflare.com');
+  it('lists the files on a tunnel host too (the server guard decides)', async () => {
+    vi.stubGlobal('location', { ...window.location, hostname: 'example.trycloudflare.com' });
+    installFetch([{ path: 'projects/demo/thumbnail.json', kind: 'json', size: 10 }]);
+    renderSection();
 
-    await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
+    expect(await screen.findByRole('heading', { name: 'ファイル' })).toBeInTheDocument();
+    expect(screen.getByText('projects/demo/thumbnail.json')).toBeInTheDocument();
+  });
+
+  it('renders nothing when the server denies the session (403)', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ error: 'local access only' }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = renderSection();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
-    expect(screen.queryByRole('heading', { name: 'ファイル' })).not.toBeInTheDocument();
   });
 
   it('renders nothing when the ticket has no local files', async () => {
     const fetchMock = installFetch([]);
-    const { container } = renderSection('localhost');
+    const { container } = renderSection();
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(FILES_URL, undefined));
     expect(container).toBeEmptyDOMElement();
@@ -90,7 +102,7 @@ describe('TicketLocalFilesSection', () => {
     installFetch([
       { path: 'projects/demo/script/scenes.json', kind: 'json', size: 512 },
     ]);
-    renderSection('127.0.0.1');
+    renderSection();
 
     await user.click(await screen.findByRole('button', { name: /scenes\.json/ }));
     expect(
@@ -118,7 +130,7 @@ describe('TicketLocalFilesSection', () => {
         ],
       },
     );
-    renderSection('localhost');
+    renderSection();
 
     const folder = await screen.findByRole('button', { name: /stills/ });
     expect(folder).toHaveAttribute('aria-expanded', 'false');
