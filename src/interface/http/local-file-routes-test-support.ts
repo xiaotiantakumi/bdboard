@@ -14,13 +14,14 @@ export interface FakeLocalFs extends Pick<
   FileSystemPort,
   'tryRealPath' | 'stat' | 'isDirectory' | 'readDir' | 'readRangeBytes'
 > {
-  addFile(relativePath: string, content: string | Buffer): void;
+  addFile(relativePath: string, content: string | Buffer, mtimeMs?: number): void;
   addDirectory(relativePath: string): void;
   readonly readRangeCalls: Array<{ path: string; start: number; length: number }>;
 }
 
 export function createFakeLocalFs(root: string = LOCAL_FILES_TEST_ROOT): FakeLocalFs {
   const files = new Map<string, Buffer>();
+  const mtimes = new Map<string, number>();
   const directories = new Set<string>([root]);
   const readRangeCalls: FakeLocalFs['readRangeCalls'] = [];
 
@@ -38,11 +39,12 @@ export function createFakeLocalFs(root: string = LOCAL_FILES_TEST_ROOT): FakeLoc
 
   return {
     readRangeCalls,
-    addFile(relativePath, content) {
+    addFile(relativePath, content, mtimeMs = 0) {
       const absolute = path.join(root, relativePath);
       // Buffer.from の overload は string | Buffer を一度に受けない。
       const bytes = typeof content === 'string' ? Buffer.from(content) : Buffer.from(content);
       files.set(absolute, bytes);
+      mtimes.set(absolute, mtimeMs);
       addDirectoryChain(path.dirname(absolute));
     },
     addDirectory(relativePath) {
@@ -55,7 +57,9 @@ export function createFakeLocalFs(root: string = LOCAL_FILES_TEST_ROOT): FakeLoc
     },
     stat(targetPath) {
       const buf = files.get(targetPath);
-      if (buf !== undefined) return Promise.resolve({ mtimeMs: 0, size: buf.length });
+      if (buf !== undefined) {
+        return Promise.resolve({ mtimeMs: mtimes.get(targetPath) ?? 0, size: buf.length });
+      }
       if (directories.has(targetPath)) return Promise.resolve({ mtimeMs: 0, size: 0 });
       return Promise.resolve(undefined);
     },

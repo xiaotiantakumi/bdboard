@@ -1,7 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchLocalFileList, type LocalFileKind, type LocalFileListEntryDto } from '../../api/local-files';
 import { buildLocalFileViewerUrl, localFileNameOf, type LocalFileViewerRoute } from '../../localFileViewerRoute';
+import {
+  getOfflineVideoStore,
+  probeOfflineVideoSupport,
+  removeAllOfflineVideos,
+} from '../../lib/offline-video';
+import { useOfflineVideoSweep } from '../../lib/offline-video/useOfflineVideoSweep';
 import { formatByteSize } from '../TicketAttachments';
 import { LOCAL_FILE_ACCESS_HELP, isLocalFileAccessDenied } from './localFileErrorMessage';
 import { LocalFolderThumbnails } from './LocalFolderThumbnails';
@@ -28,6 +34,11 @@ interface ShownFile {
  * 結果が出るまでビューアを載せない (403 の前に壊れた <img>/<video> を見せない)。403 以外の失敗はビューア側の表示に任せる。
  */
 export function LocalFileViewerPage({ route }: LocalFileViewerPageProps) {
+  useOfflineVideoSweep();
+  const [offlineEpoch, setOfflineEpoch] = useState(0);
+  // 保存・削除のたびに「全て削除」ボタンの表示を読み直す (プレーヤーの key には使わない)。
+  const [offlineChanges, setOfflineChanges] = useState(0);
+  const onOfflineChange = useCallback(() => setOfflineChanges((count) => count + 1), []);
   const accessProbe = useQuery({
     queryKey: ['ticket-local-files-access-probe', route.ticketId],
     queryFn: async () => {
@@ -76,10 +87,16 @@ export function LocalFileViewerPage({ route }: LocalFileViewerPageProps) {
   );
 
   if (denied) {
+    // セッションが切れても、端末に保存済みの動画は再生できる (保存の操作は出さない)。
     return (
-      <p className="local-file-note" role="alert">
-        {LOCAL_FILE_ACCESS_HELP}
-      </p>
+      <>
+        <p className="local-file-note" role="alert">
+          {LOCAL_FILE_ACCESS_HELP}
+        </p>
+        {shown.kind === 'video' && (
+          <LocalMediaViewer ticketId={route.ticketId} path={shown.path} kind="video" offlineOnly />
+        )}
+      </>
     );
   }
 
@@ -94,6 +111,10 @@ export function LocalFileViewerPage({ route }: LocalFileViewerPageProps) {
         {typeof shown.size === 'number' && (
           <span className="local-file-viewer-size">{formatByteSize(shown.size)}</span>
         )}
+        <RemoveAllOfflineVideosButton
+          changes={offlineChanges}
+          onRemoved={() => setOfflineEpoch((epoch) => epoch + 1)}
+        />
       </header>
       <div className="local-file-viewer-body">
         {shown.kind === 'image' && (
@@ -105,7 +126,14 @@ export function LocalFileViewerPage({ route }: LocalFileViewerPageProps) {
           />
         )}
         {(shown.kind === 'video' || shown.kind === 'audio') && (
-          <LocalMediaViewer key={shown.path} ticketId={route.ticketId} path={shown.path} kind={shown.kind} />
+          <LocalMediaViewer
+            key={`${shown.path}:${offlineEpoch}`}
+            ticketId={route.ticketId}
+            path={shown.path}
+            kind={shown.kind}
+            size={typeof shown.size === 'number' ? shown.size : null}
+            onOfflineChange={onOfflineChange}
+          />
         )}
         {shown.kind === 'directory' && (
           <LocalFolderThumbnails
@@ -126,5 +154,56 @@ export function LocalFileViewerPage({ route }: LocalFileViewerPageProps) {
         )}
       </div>
     </div>
+  );
+}
+
+function RemoveAllOfflineVideosButton({
+  changes,
+  onRemoved,
+}: {
+  readonly changes: number;
+  readonly onRemoved: () => void;
+}) {
+  const [visible, setVisible] = useState(false);
+  const removing = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (!(await probeOfflineVideoSupport())) return;
+        const manifest = await getOfflineVideoStore().readManifest();
+        if (!cancelled) setVisible(manifest.length > 0);
+      } catch {
+        // 台帳が読めなければボタンは出さない。
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [changes]);
+
+  const onClick = () => {
+    if (removing.current) return;
+    if (!window.confirm('端末に保存した動画をすべて削除しますか？')) return;
+    removing.current = true;
+    void (async () => {
+      try {
+        await removeAllOfflineVideos(getOfflineVideoStore());
+        setVisible(false);
+        onRemoved();
+      } catch {
+        // 消せなければボタンを残し、もう一度押せるようにする。
+      } finally {
+        removing.current = false;
+      }
+    })();
+  };
+
+  if (!visible) return null;
+  return (
+    <button type="button" className="local-file-viewer-remove-all" onClick={onClick}>
+      保存した動画を全て削除
+    </button>
   );
 }

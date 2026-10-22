@@ -79,15 +79,17 @@ describe('resolveContainedLocalPath', () => {
 
   it('resolves a json file inside a root whose name is not ASCII', async () => {
     const realRoot = await realpath(root);
+    const realPath = path.join(realRoot, 'script', 'scenes.json');
     const resolved = await resolveContainedLocalPath(fileSystem, root, 'script/scenes.json');
     expect(resolved).toEqual({
       ok: true,
       relativePath: 'script/scenes.json',
-      realPath: path.join(realRoot, 'script', 'scenes.json'),
+      realPath,
       isDirectory: false,
       kind: 'json',
       contentType: 'application/json; charset=utf-8',
       size: 2,
+      mtimeMs: (await fsStat(realPath)).mtimeMs,
     });
     expect(resolved.ok && resolved.realPath.startsWith(realRoot + path.sep)).toBe(true);
   });
@@ -108,30 +110,34 @@ describe('resolveContainedLocalPath', () => {
 
   it('resolves an image whose path contains non-ASCII segments', async () => {
     const realRoot = await realpath(root);
+    const realPath = path.join(realRoot, '静止画', 'サムネ.png');
     const resolved = await resolveContainedLocalPath(fileSystem, root, '静止画/サムネ.png');
     expect(resolved).toEqual({
       ok: true,
       relativePath: '静止画/サムネ.png',
-      realPath: path.join(realRoot, '静止画', 'サムネ.png'),
+      realPath,
       isDirectory: false,
       kind: 'image',
       contentType: 'image/png',
       size: 3,
+      mtimeMs: (await fsStat(realPath)).mtimeMs,
     });
     expect(resolved.ok && resolved.realPath.startsWith(realRoot + path.sep)).toBe(true);
   });
 
   it('keeps the requested relative path when a symlink stays inside the root', async () => {
     const realRoot = await realpath(root);
+    const realPath = path.join(realRoot, 'docs', 'a.md');
     const resolved = await resolveContainedLocalPath(fileSystem, root, 'alias.md');
     expect(resolved).toEqual({
       ok: true,
       relativePath: 'alias.md',
-      realPath: path.join(realRoot, 'docs', 'a.md'),
+      realPath,
       isDirectory: false,
       kind: 'markdown',
       contentType: 'text/markdown; charset=utf-8',
       size: 2,
+      mtimeMs: (await fsStat(realPath)).mtimeMs,
     });
     expect(resolved.ok && resolved.realPath.startsWith(realRoot + path.sep)).toBe(true);
   });

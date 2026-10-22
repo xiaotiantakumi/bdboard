@@ -21,6 +21,8 @@ export type ContainedLocalPath =
       readonly kind: LocalFileContentKind;
       readonly contentType: string;
       readonly size: number;
+      /** stat の mtimeMs。強い ETag の元。ディレクトリは配らないのでファイルだけ持つ。 */
+      readonly mtimeMs: number;
     }
   | { readonly ok: false; readonly reason: 'invalid' | 'not-found' | 'unsupported-type' };
 
@@ -90,6 +92,7 @@ export async function resolveContainedLocalPath(
     kind: requested.kind,
     contentType: requested.contentType,
     size: stat.size,
+    mtimeMs: stat.mtimeMs,
   };
 }
 
