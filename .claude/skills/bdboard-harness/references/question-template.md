@@ -92,6 +92,29 @@ EOF
 書き換えた事実は `bd comment <gate-id> "本文を更新"` の1行だけ残してよい。ただし判断材料
 の本体は必ず `description` 側に一本化し、「最新が常に1つ」を保つ。
 
+## description は「今の依頼」だけ・経緯は notes へ（bdboard-xfi7、2026-10-22 ユーザー決定）
+
+gate だけでなく、確認待ちに載せる作業チケットの `description` も同じ扱いにする。
+**description = 今みてほしいこと（今の依頼・今の状態）だけ。** 前回の質問・回答・訂正を
+description の上や下に積み足さない — 積み上がると、ユーザーはどこが今の依頼か探す羽目になる。
+
+経緯は bd の `notes` に日付付きで追記する。**書き換える前に、旧 description の要点を
+notes へ移してから** description を全文置換する（順番を逆にすると経緯が消える）:
+
+```bash
+bd update <id> --append-notes "$(date +%F): <旧 description の要点。誰が何を決めた/何が変わったか を1〜3行>"
+bd update <id> --description "$(cat <<'EOF'
+<今の依頼だけを全文で書き直した本文>
+EOF
+)"
+```
+
+- `--append-notes` は既存の notes に改行区切りで足す。`--notes` は**全置換**なので使わない。
+- notes の各記録は行頭を `YYYY-MM-DD` で始める。bdboard の詳細パネルはこの日付から
+  「これまでの経緯」の件数と最終日を数え、notes を閉じた状態で description の下に出す。
+- 回答そのものはコメントに残ってよい（回答フォームはコメントとして記録する）。notes には
+  「その回答で何が決まったか」の要点だけを書く。
+
 ## 視覚的な確認を求めるとき — スクショ/プレビューへの導線を必ず添える（bdboard-qw26）
 
 実機・見た目の確認を human gate に載せるときは、ユーザーが**画面を見るだけ**で回答できる

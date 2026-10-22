@@ -15,7 +15,7 @@ import { TicketInFlightOverlapsSection } from './TicketInFlightOverlapsSection';
 import { TicketSimilarTicketsSection } from './TicketSimilarTicketsSection';
 import { TicketLabelsSection } from './TicketLabelsSection';
 import { TicketDescriptionSection } from './TicketDescriptionSection';
-import { MarkdownContent } from '../MarkdownContent';
+import { TicketNotesSection } from './TicketNotesSection';
 import { TicketLocalFilesSection } from '../local-files/TicketLocalFilesSection';
 import {
   TicketAgentRunTrigger,
@@ -176,17 +176,11 @@ export function TicketDetailBody({
         isTicketOnBoard={isTicketOnBoard}
         onOpenTicket={onOpenTicket}
       />
-      {data.notes !== undefined && (
-        <div className="detail-section">
-          <h3>Notes</h3>
-          <MarkdownContent
-            text={data.notes}
-            isTicketOnBoard={isTicketOnBoard}
-            onOpenTicket={onOpenTicket}
-            className="markdown-detail"
-          />
-        </div>
-      )}
+      <TicketNotesSection
+        notes={data.notes}
+        isTicketOnBoard={isTicketOnBoard}
+        onOpenTicket={onOpenTicket}
+      />
       <TicketLocalFilesSection ticketId={data.id} />
     </>
   );
