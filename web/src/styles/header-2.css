@@ -149,7 +149,7 @@
 }
 
 .btn-tunnel.is-on {
-  border-color: var(--accent, currentColor);
+  border-color: var(--color-accent);
 }
 
 @media (max-width: 700px) {
