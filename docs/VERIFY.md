@@ -265,8 +265,8 @@ rebase 後には必ず `npm run check:file-size` を単体で再実行し、他 
 
 `npm run verify` が回すのは build / build:web / test:server / test:web / check:boundaries だけで、
 Playwright の e2e は**含まない** (`test/e2e/*.test.ts` の vitest 単体テスト — ポート採番などの補助 — だけは
-test:server に入る)。e2e は CI の別ジョブ `e2e` (`npm run test:e2e`) で走り、`verify` /
-`commit-parse` と並ぶ required status check になっている ([GIT-WORKFLOW.md](GIT-WORKFLOW.md))。
+test:server に入る)。e2e は CI の別ジョブ `e2e` (`npm run test:e2e`) で走り、`verify` と
+並ぶ required status check になっている ([GIT-WORKFLOW.md](GIT-WORKFLOW.md))。
 したがって:
 
 - **「verify が exit 0」は e2e が通った根拠にならない。** e2e の spec を足した・変えた PR、あるいは
@@ -809,6 +809,9 @@ Not part of `npm run verify` (needs the full git history, and the release tags
 for the normal path).
 
 ### ローカルが exit 1 なのに CI の commit-parse が緑のとき
+
+> CI の `commit-parse` job は 2026-10-22 に廃止した (bdboard-1e2l)。以下はローカルの
+> `npm run check:commits` を手で回すときの参考として残す。
 
 ローカルと CI は**見ているコミットの範囲が違う**ので、結果が食い違うのは異常ではない。
 
