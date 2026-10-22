@@ -6,6 +6,7 @@
  * escaped text). Do not add rehype-raw or similar plugins without revisiting
  * sanitization.
  */
+import { useMemo } from 'react';
 import ReactMarkdown, {
   defaultUrlTransform,
   type Components,
@@ -15,6 +16,13 @@ import {
   BEAD_ID_URL_PREFIX,
   remarkBeadIdLinks,
 } from '../markdown/remarkBeadIdLinks';
+import {
+  LOCAL_FILE_URL_PREFIX,
+  localFilePathFromUrl,
+  remarkLocalFileLinks,
+} from '../markdown/remarkLocalFileLinks';
+import { openLocalFileViewer } from './local-files/openLocalFileViewer';
+import { useTicketLocalFileLinks } from './local-files/TicketLocalFileLinks';
 
 export interface MarkdownContentProps {
   text: string;
@@ -36,8 +44,37 @@ export function MarkdownContent({
   onOpenTicket,
   className,
 }: MarkdownContentProps) {
+  const localFiles = useTicketLocalFileLinks();
+  const localFilePaths = useMemo(
+    () => (localFiles?.files ?? []).map((file) => file.path),
+    [localFiles],
+  );
   const components: Components = {
     a: ({ href, children, ...props }) => {
+      const localPath = localFilePathFromUrl(href);
+      if (localPath !== undefined && localFiles !== null) {
+        const file = localFiles.files.find((candidate) => candidate.path === localPath);
+        if (file !== undefined) {
+          // ファイル一覧の行と同じ: 新しいタブのビューアで開く (フォルダもビューアがサムネイル一覧を出す)。
+          return (
+            <button
+              type="button"
+              className="markdown-local-file-link"
+              title={`${file.path}（新しいウィンドウで開く）`}
+              onClick={() =>
+                openLocalFileViewer({
+                  ticketId: localFiles.ticketId,
+                  path: file.path,
+                  kind: file.kind,
+                  size: file.size,
+                })
+              }
+            >
+              {children}
+            </button>
+          );
+        }
+      }
       const beadId = beadIdFromHref(href);
       if (beadId !== undefined) {
         return (
@@ -64,9 +101,13 @@ export function MarkdownContent({
   return (
     <div className={wrapperClassName}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, [remarkBeadIdLinks, isTicketOnBoard]]}
+        remarkPlugins={[
+          remarkGfm,
+          [remarkBeadIdLinks, isTicketOnBoard],
+          [remarkLocalFileLinks, localFilePaths],
+        ]}
         urlTransform={(url) => {
-          if (url.startsWith(BEAD_ID_URL_PREFIX)) {
+          if (url.startsWith(BEAD_ID_URL_PREFIX) || url.startsWith(LOCAL_FILE_URL_PREFIX)) {
             return url;
           }
           return defaultUrlTransform(url);
