@@ -69,7 +69,6 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `IssueWriterPort` | `createBdCliIssueWriter` | チケットの状態変更・コメント等の書き込み |
 | `DependencyWriterPort` | `createBdCliDependencyWriter` | 依存関係(blocks等)の追加 |
 | `LeaseReader` / `LeaseReclaimer` | `createBdCliLeaseReader` / `createBdCliLeaseReclaimer` | claim(lease)の読み取り/期限切れ回収 |
-| `MergeSlotReader` | `createBdCliMergeSlotReader` | マージ直列化用スロットの読み取り |
 | `CommentReader` | `createBdCliCommentReader` | チケットコメント取得 |
 | `HumanDecisionsPort` | `createBdCliHumanDecisions` | 人間の意思決定待ちキューの読み書き |
 | `SessionLinkWriterPort` | `createBdCliSessionLinkWriter` | チケット⇔セッションの手動紐付け |
