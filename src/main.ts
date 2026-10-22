@@ -195,7 +195,6 @@ async function main(): Promise<void> {
     refreshIntervalTimer: lifecycle.refreshIntervalTimer,
     sessionIntervalTimer: lifecycle.sessionIntervalTimer,
     transcriptIntervalTimer: lifecycle.transcriptIntervalTimer,
-    cfdSnapshotIntervalTimer: lifecycle.cfdSnapshotIntervalTimer,
     aiQuotaAlertIntervalTimer: features.aiQuotaAlertIntervalTimer,
     reclaimScheduler: lifecycle.reclaimScheduler,
   });

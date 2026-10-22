@@ -46,9 +46,9 @@ function renderGlobalBar(overrides?: Partial<React.ComponentProps<typeof GlobalB
 
 describe('GlobalBar view switcher a11y', () => {
   it('marks the active view with aria-current and omits it on inactive views', () => {
-    renderGlobalBar({ view: 'stats' });
+    renderGlobalBar({ view: 'settings' });
 
-    expect(screen.getByRole('button', { name: '統計' })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: '設定' })).toHaveAttribute(
       'aria-current',
       'true',
     );
@@ -66,9 +66,9 @@ describe('GlobalBar view switcher a11y', () => {
     const user = userEvent.setup();
     const { onViewChange } = renderGlobalBar({ view: 'split' });
 
-    await user.click(screen.getByRole('button', { name: '統計' }));
+    await user.click(screen.getByRole('button', { name: '設定' }));
 
-    expect(onViewChange).toHaveBeenCalledWith('stats');
+    expect(onViewChange).toHaveBeenCalledWith('settings');
   });
 });
 

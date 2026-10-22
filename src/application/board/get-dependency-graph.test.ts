@@ -4,7 +4,7 @@ import type { DependencyEdge } from '../../domain/dependency.js';
 import type { Project } from '../../domain/project.js';
 import { makeTicket } from '../../domain/test-support.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
-import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
+import { createEmptyCacheStatsMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
 import { getDependencyGraph } from './get-dependency-graph.js';
 
 function edge(
@@ -55,7 +55,7 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close(): void {},

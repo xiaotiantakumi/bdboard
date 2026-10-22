@@ -11,7 +11,7 @@ import { makeTicket } from '../../domain/test-support.js';
 import type { Project } from '../../domain/project.js';
 import type { BoardCache, CachedProject } from '../../application/ports/board-cache.js';
 import type { ChatSessionDiscoveryPort } from '../../application/ports/chat-session-discovery.js';
-import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../../application/ports/board-cache-fakes.js';
+import { createEmptyCacheStatsMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../../application/ports/board-cache-fakes.js';
 import type { ChatAgentPort } from '../../application/ports/chat-agent.js';
 import { createChatSessionStore } from '../../application/chat/chat-session-store.js';
 import { createInMemoryChatMessageRepository } from '../../application/chat/in-memory-chat-message-repository.js';
@@ -83,7 +83,7 @@ export function createFakeBoardCache(
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close(): void {},

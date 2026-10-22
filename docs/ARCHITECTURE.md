@@ -108,7 +108,7 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 
 表に載せないモジュール:
 
-- `board-cache-fakes.ts` — `BoardCache` のメソッド群(CFD・セッションリンク・interactions)ごとの部分 fake(`Pick<>`)を返すテスト用ファクトリ。
+- `board-cache-fakes.ts` — `BoardCache` のメソッド群(キャッシュ統計・セッションリンク・interactions)ごとの部分 fake(`Pick<>`)を返すテスト用ファクトリ。
 - `tunnel-interruption-store-fakes.ts` — `TunnelInterruptionStore` のテスト用 in-memory fake ファクトリ。
 
 各ポートのフルインターフェースは `src/application/ports/*.ts` を参照。
@@ -153,7 +153,7 @@ bdboard 自身は `8787` / `scripts/always-on-server.sh` を宣言している�
    変化トリガーそのものも供給し、加えて `BDBOARD_REFRESH_INTERVAL_MS` 間隔の全体リフレッシュを
    取りこぼし保険として併走させる)。
 3. **キャッシュ**: 取得結果は `BoardCache`(`createSqliteBoardCache`、`~/.bdboard/cache.db`)に永続化される。
-   チケット/プロジェクト/セッションリンク/トランスクリプト走査オフセット/CFDスナップショット等を
+   チケット/プロジェクト/セッションリンク/トランスクリプト走査オフセット等を
    保持し、再起動時もここから復元する(トランスクリプトリンクは起動時に
    `hydrateTranscriptLinksFromCache()` でインメモリ `Map` へ再構築)。
 4. **セッション/トランスクリプト観測**: 並行して `SessionRegistry`(`createClaudeSessionRegistry`)が

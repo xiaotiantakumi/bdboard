@@ -8,7 +8,7 @@ import { makeTicket } from '../../domain/test-support.js';
 import type { TicketId } from '../../domain/ticket-id.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import {
-  createEmptyCfdCacheMethods,
+  createEmptyCacheStatsMethods,
   createEmptyInteractionsCacheMethods,
   createEmptySessionLinksCacheMethods,
 } from '../ports/board-cache-fakes.js';
@@ -44,7 +44,7 @@ function createFakeBoardCache(): BoardCache {
     setTranscriptOffset: () => {},
     addSessionUsage: () => {},
     getSessionUsage: () => [],
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close: () => {},

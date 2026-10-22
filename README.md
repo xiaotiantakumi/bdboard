@@ -17,7 +17,6 @@
   導出レーン(Ready / In Progress / Blocked / Deferred / Done)表示、ドラッグ&ドロップでのステータス変更、
   各カードからのクイックアクション(close / claim / defer / priority 変更、取り消し可能な undo スナックバー付き)
 - **アクティビティフィード / デイリーダイジェスト**: 直近の変更をまとめて把握
-- **統計 (スループット / CFD)**: 完了ペースや累積フロー図で進捗を可視化
 - **依存グラフ**: `blocks` / `parent-child` 依存関係をグラフ表示
 - **Hygiene パネル**: 放置チケットなど台帳の健全性チェック
 - **セッション紐付け**: 稼働中の Claude Code セッションをチケットに紐付けて表示し、セッションの
@@ -185,8 +184,6 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_REFRESH_INTERVAL_MS` | 全プロジェクトの定期リフレッシュ間隔(ミリ秒) | `300000`(5分) |
 | `BDBOARD_SESSION_INTERVAL_MS` | Claude Code セッション一覧の再取得間隔(ミリ秒) | `10000`(10秒) |
 | `BDBOARD_TRANSCRIPT_INTERVAL_MS` | セッション⇔チケットのトランスクリプト走査間隔(ミリ秒)。`0` 以下で無効化 | `30000`(30秒) |
-| `BDBOARD_CFD_SNAPSHOT_INTERVAL_MS` | 累積フロー図(CFD)スナップショットの記録間隔(ミリ秒)。`0` 以下で無効化 | `3600000`(1時間) |
-| `BDBOARD_CFD_SNAPSHOT_RETENTION_DAYS` | 累積フロー図(CFD)スナップショットの保持日数 | `365` |
 | `BDBOARD_RECLAIM_ENABLED` | 期限切れの agent lease を定期回収する処理を有効化する。`0` / `false` で無効化 | `true` |
 | `BDBOARD_RECLAIM_INTERVAL_MS` | agent lease 回収の実行間隔(ミリ秒) | `300000`(5分) |
 | `BDBOARD_RECLAIM_OLDER_THAN` | agent lease を回収対象とみなす経過時間。`bd` の duration 形式。作業中のチケットを回収しないよう 1 時間以上を保つこと (bdboard-hybu) | `2h` |

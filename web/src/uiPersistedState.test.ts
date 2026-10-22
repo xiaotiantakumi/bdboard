@@ -15,7 +15,6 @@ import {
   validateLaneArray,
   validatePriorityCeiling,
   validateRecentTickets,
-  validateStatsWeeks,
   validateString,
   validateViewMode,
   validateWatchedTicketIds,
@@ -32,8 +31,8 @@ import {
 } from './uiPersistedState';
 
 describe('uiPersistedState', () => {
-  it('accepts stats as a view mode', () => {
-    expect(validateViewMode('stats')).toBe('stats');
+  it('maps the removed stats view to split', () => {
+    expect(validateViewMode('stats')).toBe('split');
   });
 
   it('migrates the removed merged view to split and exposes split as the only Kanban view', () => {
@@ -67,13 +66,6 @@ describe('uiPersistedState', () => {
 
   it('maps the removed events view to split', () => {
     expect(validateViewMode('events')).toBe('split');
-  });
-
-  it('validates stats weeks options', () => {
-    expect(validateStatsWeeks(4)).toBe(4);
-    expect(validateStatsWeeks(8)).toBe(8);
-    expect(validateStatsWeeks(12)).toBe(12);
-    expect(validateStatsWeeks(6)).toBeNull();
   });
 
   it('validates priority ceiling choices', () => {
@@ -233,7 +225,7 @@ describe('uiPersistedState', () => {
 
   it('matches board filter preset state', () => {
     const state: BoardFilterPresetState = {
-      view: 'stats',
+      view: 'settings',
       selectedProjectIds: ['proj-1'],
       priorityCeiling: '1',
       issueTypes: ['bug', 'task'],
@@ -445,8 +437,8 @@ describe('describeBoardFilterPresetState', () => {
   it('always names the view and the project scope', () => {
     expect(describeBoardFilterPresetState(state)).toBe('ビュー: 分割 / 全プロジェクト');
     expect(
-      describeBoardFilterPresetState({ ...state, view: 'stats', selectedProjectIds: ['a', 'b'] }),
-    ).toBe('ビュー: 統計 / プロジェクト2件');
+      describeBoardFilterPresetState({ ...state, view: 'settings', selectedProjectIds: ['a', 'b'] }),
+    ).toBe('ビュー: 設定 / プロジェクト2件');
   });
 
   it('lists only the filters that are actually set', () => {

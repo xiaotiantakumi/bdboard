@@ -36,7 +36,7 @@ const samplePresets: BoardFilterPreset[] = [
   {
     id: 'preset-2',
     name: 'Next Up',
-    view: 'stats',
+    view: 'settings',
     selectedProjectIds: [],
     priorityCeiling: 'all',
     issueTypes: [],

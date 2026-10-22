@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
-import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
+import { createEmptyCacheStatsMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
 import type { ModelUsageTotals } from '../transcript/extract-usage.js';
 import { compareStrings } from '../../domain/compare.js';
 import type { SessionLink } from '../../domain/session.js';
@@ -63,7 +63,7 @@ function createFakeBoardCache(
         compareStrings(left.model, right.model),
       );
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close(): void {},

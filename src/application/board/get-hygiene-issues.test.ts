@@ -5,7 +5,7 @@ import { DEFAULT_HYGIENE_THRESHOLDS } from '../../domain/hygiene-thresholds.js';
 import { pendingDecisionKey } from '../../domain/hygiene.js';
 import { makeTicket } from '../../domain/test-support.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
-import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
+import { createEmptyCacheStatsMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
 import { getHygieneIssues } from './get-hygiene-issues.js';
 
 const NOW = new Date('2026-06-01T12:00:00.000Z');
@@ -50,7 +50,7 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close(): void {},

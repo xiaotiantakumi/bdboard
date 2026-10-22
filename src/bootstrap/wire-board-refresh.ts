@@ -1,6 +1,6 @@
 /**
  * bdboard-sso1.14: src/main.ts (composition root) からプロジェクト discovery・
- * リフレッシュ (coalescing 込み)・初期 CFD snapshot・ファイル watcher の組み立てを
+ * リフレッシュ (coalescing 込み)・ファイル watcher の組み立てを
  * 切り出したもの (move only, 挙動変更ゼロ)。
  *
  * `status`/`watchedProjectsSync` は元実装でも「watcher 作成より前に runRefresh を
@@ -19,7 +19,6 @@ import {
 import { createBoardNotificationPublisher } from '../application/board/board-notification-transitions.js';
 import { createWatchedProjectsSync } from '../application/board/sync-watched-projects.js';
 import type { WatchedProjectsSync } from '../application/board/sync-watched-projects.js';
-import { recordCfdSnapshot, pruneOldCfdSnapshots } from '../application/board/record-cfd-snapshot.js';
 import { computeBoardNotificationSnapshot } from '../domain/board-notifications.js';
 import type { BoardCache } from '../application/ports/board-cache.js';
 import type { IssueRepository } from '../application/ports/issue-repository.js';
@@ -63,16 +62,14 @@ export interface WireBoardRefreshDeps {
   readonly humanDecisions: HumanDecisionsPort;
   readonly events: EventHub;
   readonly refreshIntervalMs: number;
-  readonly cfdSnapshotIntervalMs: number;
-  readonly cfdSnapshotRetentionDays: number;
   readonly log?: (message: string) => void;
   readonly logError?: (message: string) => void;
   readonly onRefreshResult?: (result: RefreshResult, projects: readonly Project[]) => void;
 }
 
 /**
- * main() の discovery + refreshRunner + 初期リフレッシュ + 初期 CFD snapshot +
- * watcher + refresh/CFD インターバルを、元のコードと同じ順序でまとめて行う。
+ * main() の discovery + refreshRunner + 初期リフレッシュ +
+ * watcher + refresh インターバルを、元のコードと同じ順序でまとめて行う。
  * `sessionDiscoverySupported ? sessionLivenessTracker.refresh() ...` (board-sessions
  * 側) は初期リフレッシュのログの直後・通知スナップショット seed の直前に走る
  * (main.ts 側で挟む — このファイルの対象外)。
@@ -160,7 +157,7 @@ export async function wireBoardRefresh(deps: WireBoardRefreshDeps) {
     getStatus: (): ApiStatus => status,
     isScanRootsEnvOverridden,
     envScanRootsList,
-    /** 通知スナップショットの seed + 初期 CFD snapshot。sessions の初期取得の直後に呼ぶ。 */
+    /** 通知スナップショットの seed。sessions の初期取得の直後に呼ぶ。 */
     finishInitialization: (): void => {
       const initialCacheEntries = deps.cache.listProjects();
       boardNotificationPublisher.seedSnapshot(
@@ -169,21 +166,6 @@ export async function wireBoardRefresh(deps: WireBoardRefreshDeps) {
           new Date(),
         ),
       );
-
-      const initialCfdSnapshot = recordCfdSnapshot(deps.cache, new Date());
-      log(
-        `Initial CFD snapshot: recorded=${initialCfdSnapshot.recorded} date=${initialCfdSnapshot.snapshotDate}`,
-      );
-      const initialPrune = pruneOldCfdSnapshots(
-        deps.cache,
-        new Date(),
-        deps.cfdSnapshotRetentionDays,
-      );
-      if (initialPrune.deletedCount > 0) {
-        log(
-          `Initial CFD snapshot prune: deleted=${initialPrune.deletedCount} cutoff=${initialPrune.cutoffDate}`,
-        );
-      }
     },
     /** watcher 作成 + インターバル起動一式。sessions/transcript の初期処理の後に main.ts が呼ぶ。 */
     startWatchAndIntervals: async () => {
@@ -202,27 +184,7 @@ export async function wireBoardRefresh(deps: WireBoardRefreshDeps) {
         void runUnattendedRefresh({ refresh: () => runRefresh(true) });
       }, deps.refreshIntervalMs);
 
-      let cfdSnapshotIntervalTimer: ReturnType<typeof setInterval> | undefined;
-      if (deps.cfdSnapshotIntervalMs > 0) {
-        cfdSnapshotIntervalTimer = setInterval(() => {
-          const result = recordCfdSnapshot(deps.cache, new Date());
-          if (result.recorded) {
-            log(`CFD snapshot recorded: date=${result.snapshotDate}`);
-          }
-          const pruneResult = pruneOldCfdSnapshots(
-            deps.cache,
-            new Date(),
-            deps.cfdSnapshotRetentionDays,
-          );
-          if (pruneResult.deletedCount > 0) {
-            log(
-              `CFD snapshot prune: deleted=${pruneResult.deletedCount} cutoff=${pruneResult.cutoffDate}`,
-            );
-          }
-        }, deps.cfdSnapshotIntervalMs);
-      }
-
-      return { watchHandle, refreshIntervalTimer, cfdSnapshotIntervalTimer };
+      return { watchHandle, refreshIntervalTimer };
     },
   };
 }

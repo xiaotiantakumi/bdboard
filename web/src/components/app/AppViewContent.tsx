@@ -3,7 +3,6 @@ import { type BoardCardDto, type BoardViewDto, type PrBadgeDto } from '../../api
 import { type BoardFilterState } from '../../hooks/useBoardFilterState';
 import {
   type ActivityWindowDays,
-  type StatsWeeks,
   type ViewMode,
 } from '../../uiPersistedState';
 import { type WipLimitsOverrides } from '../../wip-limits';
@@ -14,7 +13,6 @@ import { ErrorBoundary } from '../ErrorBoundary';
 import { HygienePanel } from '../HygienePanel';
 import { type NextUpRunLoopController } from '../nextUpRunLoop';
 import { SettingsPanel } from '../SettingsPanel';
-import { ThroughputStats } from '../ThroughputStats';
 import { AppBoardViewSwitch } from './AppBoardViewSwitch';
 
 /**
@@ -34,7 +32,7 @@ import { AppBoardViewSwitch } from './AppBoardViewSwitch';
  *
  * ボード系ビュー(split)の JSX は ESLint の200行上限のため
  * ./AppBoardViewSwitch.tsx へさらに分けた。ここは ErrorBoundary と
- * ボード以外のビュー(activity/stats/hygiene/graph/settings)
+ * ボード以外のビュー(activity/hygiene/graph/settings)
  * の出し分けだけを持つ。
  */
 export interface AppViewContentProps {
@@ -66,8 +64,6 @@ export interface AppViewContentProps {
   windows: {
     activityWindowDays: ActivityWindowDays;
     onActivityWindowDaysChange: (days: ActivityWindowDays) => void;
-    statsWeeks: StatsWeeks;
-    onStatsWeeksChange: (weeks: StatsWeeks) => void;
   };
 }
 
@@ -111,13 +107,6 @@ export function AppViewContent({
           windowDays={windows.activityWindowDays}
           onWindowDaysChange={windows.onActivityWindowDaysChange}
           onSelectTicket={onCardClick}
-        />
-      )}
-      {view === 'stats' && (
-        <ThroughputStats
-          projectIds={boardMeta.selectedProjectIds}
-          weeks={windows.statsWeeks}
-          onWeeksChange={windows.onStatsWeeksChange}
         />
       )}
       {view === 'hygiene' && (

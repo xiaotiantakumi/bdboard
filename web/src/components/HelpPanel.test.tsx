@@ -119,7 +119,6 @@ describe('HelpPanel', () => {
     expect(screen.getByText(`v${__BDBOARD_VERSION__}`)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Kanban（看板）' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '依存グラフ' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '統計' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'チャット' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'トンネル公開とQR' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '設定' })).toBeInTheDocument();

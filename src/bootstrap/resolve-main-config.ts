@@ -107,8 +107,6 @@ export interface MainConfig {
   readonly sessionIntervalMs: number;
   readonly transcriptIntervalMs: number;
   readonly shutdownTimeoutMs: number;
-  readonly cfdSnapshotIntervalMs: number;
-  readonly cfdSnapshotRetentionDays: number;
   readonly bdPath: string;
   readonly ghPath: string;
   readonly reclaimEnabled: boolean;
@@ -131,8 +129,6 @@ export function resolveMainConfig(repoRoot: string, isLinkedWorktreeCheckout: bo
     sessionIntervalMs: envInt('BDBOARD_SESSION_INTERVAL_MS', 10_000),
     transcriptIntervalMs: envInt('BDBOARD_TRANSCRIPT_INTERVAL_MS', 30_000),
     shutdownTimeoutMs: envInt('BDBOARD_SHUTDOWN_TIMEOUT_MS', DEFAULT_SHUTDOWN_TIMEOUT_MS),
-    cfdSnapshotIntervalMs: envInt('BDBOARD_CFD_SNAPSHOT_INTERVAL_MS', 3_600_000),
-    cfdSnapshotRetentionDays: envInt('BDBOARD_CFD_SNAPSHOT_RETENTION_DAYS', 365),
     bdPath: envString('BDBOARD_BD_PATH', 'bd'),
     ghPath: envString('BDBOARD_GH_PATH', 'gh'),
     reclaimEnabled: envBoolDefaultTrue('BDBOARD_RECLAIM_ENABLED'),

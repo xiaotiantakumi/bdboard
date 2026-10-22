@@ -59,8 +59,8 @@ describe('App bulk action bar visibility (bdboard-ml0k)', () => {
     expect(screen.getByRole('button', { name: '全解除' })).toBeInTheDocument();
   });
 
-  // 逆向きも1ビューだけだと `view !== 'stats'` のような変異が生き残る。
-  it.each(['統計', '設定', '依存グラフ'])(
+  // 逆向きも1ビューだけだと `view !== 'settings'` のような変異が生き残る。
+  it.each(['設定', '依存グラフ'])(
     'keeps the bar out of the %s view, which renders no cards',
     async (viewLabel) => {
       const user = userEvent.setup();

@@ -4,7 +4,7 @@
  * 切り出したもの。runStore/chatRepositories を必須化した点を除けば、main.ts に
  * あった配線ロジックそのものの移動で挙動は変えていない (レビュー指摘で必須化のみ追加)。
  *
- * shutdownForSignal 内の後始末順序 (refresh → session → transcript → CFD snapshot →
+ * shutdownForSignal 内の後始末順序 (refresh → session → transcript →
  * ai-quota-alert のタイマー停止 → reclaimScheduler.stop() → shutdown()) は元の
  * main.ts と完全に同じ (bdboard-4y8q.9.4: reclaimScheduler.stop() の次に、届いた issue の
  * 定期確認の停止 externalIssues.stop() を足した)。drain 内部の順序 (runStore → tunnelService → watchHandle →
@@ -45,7 +45,6 @@ export interface WireShutdownDeps extends Omit<ShutdownDrainDeps, 'runStore' | '
   readonly refreshIntervalTimer: ReturnType<typeof setInterval>;
   readonly sessionIntervalTimer: ReturnType<typeof setInterval> | null;
   readonly transcriptIntervalTimer: ReturnType<typeof setInterval> | undefined;
-  readonly cfdSnapshotIntervalTimer: ReturnType<typeof setInterval> | undefined;
   readonly aiQuotaAlertIntervalTimer: ReturnType<typeof setInterval> | undefined;
   readonly reclaimScheduler: Pick<ReclaimScheduler, 'stop'>;
   /** 届いた issue の定期確認 (bdboard-4y8q.9.4)。無効なら `stop` は何もしない。省略可 (テスト・古い呼び出し)。 */
@@ -92,9 +91,6 @@ export function wireShutdown(deps: WireShutdownDeps): WireShutdownResult {
     }
     if (deps.transcriptIntervalTimer !== undefined) {
       clearInterval(deps.transcriptIntervalTimer);
-    }
-    if (deps.cfdSnapshotIntervalTimer !== undefined) {
-      clearInterval(deps.cfdSnapshotIntervalTimer);
     }
     if (deps.aiQuotaAlertIntervalTimer !== undefined) {
       clearInterval(deps.aiQuotaAlertIntervalTimer);

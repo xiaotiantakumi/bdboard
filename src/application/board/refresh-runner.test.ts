@@ -3,7 +3,7 @@ import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import {
-  createEmptyCfdCacheMethods,
+  createEmptyCacheStatsMethods,
   createEmptyInteractionsCacheMethods,
   createEmptySessionLinksCacheMethods,
 } from '../ports/board-cache-fakes.js';
@@ -32,7 +32,7 @@ function createFakeCache(): BoardCache & { readonly entries: Map<string, CachedP
     setTranscriptOffset: () => {},
     addSessionUsage: () => {},
     getSessionUsage: () => [],
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close: () => {},

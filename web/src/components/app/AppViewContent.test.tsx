@@ -29,11 +29,6 @@ vi.mock('../ActivityFeed', () => ({
     <div data-testid="activity-feed">{props.windowDays}</div>
   )),
 }));
-vi.mock('../ThroughputStats', () => ({
-  ThroughputStats: vi.fn((props: { weeks: number }) => (
-    <div data-testid="throughput-stats">{props.weeks}</div>
-  )),
-}));
 vi.mock('../HygienePanel', () => ({
   HygienePanel: vi.fn(() => <div data-testid="hygiene-panel" />),
 }));
@@ -57,11 +52,9 @@ const appBoardViewSwitchMock = vi.mocked(AppBoardViewSwitch);
 // ボード以外のリーフ view だけにする。
 const LEAF_TESTIDS = [
   'activity-feed',
-  'throughput-stats',
   'hygiene-panel',
   'dependency-graph-view',
   'settings-panel',
-  'event-center-panel',
 ];
 
 function makeFilterState(): BoardFilterState {
@@ -115,8 +108,6 @@ function makeProps(overrides: Partial<AppViewContentProps> = {}): AppViewContent
     windows: {
       activityWindowDays: 1,
       onActivityWindowDaysChange: vi.fn(),
-      statsWeeks: 8,
-      onStatsWeeksChange: vi.fn(),
     },
     ...overrides,
   };
@@ -145,7 +136,7 @@ describe('AppViewContent', () => {
     // "view をそのまま渡すこと" を直接検証する: AppBoardViewSwitch はモック
     // されているため描画結果からは view の値を確認できない。呼び出し引数を
     // 直接見ることで、view がハードコードされていないことを保証する。
-    for (const view of ['split', 'stats'] as ViewMode[]) {
+    for (const view of ['split', 'settings'] as ViewMode[]) {
       const { unmount } = render(<AppViewContent {...makeProps({ view })} />);
       expect(appBoardViewSwitchMock.mock.calls.at(-1)?.[0]).toMatchObject({ view });
       unmount();
@@ -222,7 +213,6 @@ describe('AppViewContent', () => {
 
   const leafCases: { view: ViewMode; testid: string }[] = [
     { view: 'activity', testid: 'activity-feed' },
-    { view: 'stats', testid: 'throughput-stats' },
     { view: 'hygiene', testid: 'hygiene-panel' },
     { view: 'graph', testid: 'dependency-graph-view' },
     { view: 'settings', testid: 'settings-panel' },
@@ -244,36 +234,19 @@ describe('AppViewContent', () => {
     }
   });
 
-  it('forwards windows state to the matching view (activity/stats)', () => {
-    const { rerender } = render(
+  it('forwards windows state to the matching view (activity)', () => {
+    render(
       <AppViewContent
         {...makeProps({
           view: 'activity',
           windows: {
             activityWindowDays: 7,
             onActivityWindowDaysChange: vi.fn(),
-            statsWeeks: 8,
-            onStatsWeeksChange: vi.fn(),
           },
         })}
       />,
     );
     expect(screen.getByTestId('activity-feed')).toHaveTextContent('7');
-
-    rerender(
-      <AppViewContent
-        {...makeProps({
-          view: 'stats',
-          windows: {
-            activityWindowDays: 1,
-            onActivityWindowDaysChange: vi.fn(),
-            statsWeeks: 4,
-            onStatsWeeksChange: vi.fn(),
-          },
-        })}
-      />,
-    );
-    expect(screen.getByTestId('throughput-stats')).toHaveTextContent('4');
   });
 
   it('forwards selectedTicketId as the graph focusTicketId', () => {

@@ -8,7 +8,7 @@ import { makeTicket } from '../../domain/test-support.js';
 import type { Project } from '../../domain/project.js';
 import type { BoardCache, CachedProject } from '../../application/ports/board-cache.js';
 import {
-  createEmptyCfdCacheMethods,
+  createEmptyCacheStatsMethods,
   createEmptyInteractionsCacheMethods,
   createEmptySessionLinksCacheMethods,
 } from '../../application/ports/board-cache-fakes.js';
@@ -77,7 +77,7 @@ export function createFakeBoardCache(): BoardCache & { readonly entries: Map<str
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close(): void {},

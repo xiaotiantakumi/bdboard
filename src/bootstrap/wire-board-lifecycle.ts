@@ -45,8 +45,6 @@ export interface WireBoardLifecycleDeps {
   readonly refreshIntervalMs: number;
   readonly sessionIntervalMs: number;
   readonly transcriptIntervalMs: number;
-  readonly cfdSnapshotIntervalMs: number;
-  readonly cfdSnapshotRetentionDays: number;
   readonly leaseReclaimer: LeaseReclaimer;
   readonly leaseReader: LeaseReader;
   readonly worktreeScanner: WorktreeScanner;
@@ -76,8 +74,6 @@ export async function wireBoardLifecycle(deps: WireBoardLifecycleDeps) {
     humanDecisions: deps.humanDecisions,
     events,
     refreshIntervalMs: deps.refreshIntervalMs,
-    cfdSnapshotIntervalMs: deps.cfdSnapshotIntervalMs,
-    cfdSnapshotRetentionDays: deps.cfdSnapshotRetentionDays,
     ...(deps.onRefreshResult !== undefined ? { onRefreshResult: deps.onRefreshResult } : {}),
   });
 
@@ -94,7 +90,7 @@ export async function wireBoardLifecycle(deps: WireBoardLifecycleDeps) {
     transcriptIntervalMs: deps.transcriptIntervalMs,
   });
 
-  const { watchHandle, refreshIntervalTimer, cfdSnapshotIntervalTimer } =
+  const { watchHandle, refreshIntervalTimer } =
     await boardRefreshServices.startWatchAndIntervals();
 
   const sessionIntervalTimer = startSessionInterval(
@@ -121,7 +117,6 @@ export async function wireBoardLifecycle(deps: WireBoardLifecycleDeps) {
     transcriptIntervalTimer,
     watchHandle,
     refreshIntervalTimer,
-    cfdSnapshotIntervalTimer,
     sessionIntervalTimer,
     reclaimScheduler,
     reclaimHistory,

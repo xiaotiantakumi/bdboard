@@ -1,4 +1,4 @@
-import type { CachedProject, CfdSnapshotRow, SessionLinkRow } from '../../../application/ports/board-cache.js';
+import type { CachedProject, SessionLinkRow } from '../../../application/ports/board-cache.js';
 import type { PendingDecision } from '../../../application/ports/human-decisions.js';
 import type { InteractionRecord } from '../../../domain/interaction.js';
 import type { Project } from '../../../domain/project.js';
@@ -6,7 +6,6 @@ import type { Ticket } from '../../../domain/ticket.js';
 import type { SessionLinkSource } from '../../../domain/session.js';
 import { deserializeTickets } from '../ticket-serialization.js';
 import type {
-  CfdSnapshotRowDb,
   InteractionRowDb,
   ProjectRow,
   SessionLinkRowDb,
@@ -145,14 +144,6 @@ export const rowToSessionLink = (row: SessionLinkRowDb): SessionLinkRow => ({
     confidence: row.confidence,
     observedAt: new Date(row.observed_at),
   },
-});
-
-export const rowToCfdSnapshot = (row: CfdSnapshotRowDb): CfdSnapshotRow => ({
-  projectId: row.project_id,
-  status: row.status,
-  snapshotDate: row.snapshot_date,
-  snapshottedAt: new Date(row.snapshotted_at),
-  count: row.count,
 });
 
 export const rowToInteraction = (row: InteractionRowDb): InteractionRecord => ({

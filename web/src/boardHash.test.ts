@@ -31,9 +31,9 @@ describe('parseBoardHash', () => {
   });
 
   it('parses ticket and view', () => {
-    expect(parseBoardHash('#ticket=a&view=stats')).toEqual({
+    expect(parseBoardHash('#ticket=a&view=settings')).toEqual({
       ticketId: 'a',
-      view: 'stats',
+      view: 'settings',
     });
   });
 
@@ -73,8 +73,8 @@ describe('parseBoardHash', () => {
 
 describe('serializeBoardHash', () => {
   it('serializes ticket and view in fixed order', () => {
-    expect(serializeBoardHash({ ticketId: 'a', view: 'stats' })).toBe(
-      '#ticket=a&view=stats',
+    expect(serializeBoardHash({ ticketId: 'a', view: 'settings' })).toBe(
+      '#ticket=a&view=settings',
     );
   });
 
@@ -88,15 +88,15 @@ describe('boardHashTarget', () => {
   it('builds a relative URL with pathname, search, and hash', () => {
     expect(
       boardHashTarget(
-        { ticketId: 'a', view: 'stats' },
+        { ticketId: 'a', view: 'settings' },
         { pathname: '/board', search: '?x=1' },
       ),
-    ).toBe('/board?x=1#ticket=a&view=stats');
+    ).toBe('/board?x=1#ticket=a&view=settings');
   });
 
   it('never produces absolute URLs or credential markers (AC4)', () => {
     const target = boardHashTarget(
-      { ticketId: 'a', view: 'stats' },
+      { ticketId: 'a', view: 'settings' },
       { pathname: '/board', search: '?x=1' },
     );
     expect(target.startsWith('/')).toBe(true);
@@ -123,10 +123,10 @@ describe('boardHashTarget', () => {
 describe('stripUrlCredentials integration (AC4 / bdboard-1qm)', () => {
   it('preserves deep-link hash when stripping credentials', () => {
     const stripped = stripUrlCredentials(
-      credentialUrl('/?x=1#ticket=bdboard-3tw.94&view=stats'),
+      credentialUrl('/?x=1#ticket=bdboard-3tw.94&view=settings'),
     );
     expect(stripped).toBe(
-      'https://board.example/?x=1#ticket=bdboard-3tw.94&view=stats',
+      'https://board.example/?x=1#ticket=bdboard-3tw.94&view=settings',
     );
   });
 });
