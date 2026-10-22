@@ -15,17 +15,11 @@
 //
 // 戻り値はセクションの関心事ごとにグループ化して返す
 // (title/description/labels/dependencies/comment/sessionLink/timeline/
-// similarTickets/inFlightOverlaps/quickActions/decision/copy)。
+// similarTickets/inFlightOverlaps/decision)。
 // 各グループの中身は対応するフックの戻り値オブジェクトをそのまま(または
 // 表示に必要な派生値を足して spread した)もので、フィールド名は元の
 // TicketDetailPanel 内のローカル変数名/フックの戻り値フィールド名を変えていない。
-import { useCallback, useEffect, useRef, type RefObject } from 'react';
-import {
-  BD_COMMAND_DEFINITIONS,
-  buildBdCommand,
-  type BdCommandKind,
-  copyTextToClipboard,
-} from '../../bdCommands';
+import { useEffect, useRef, type RefObject } from 'react';
 import { type PendingDecisionDto } from '../../api';
 import { useAutoClearedValue } from '../../hooks/useAutoClearedValue';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
@@ -38,7 +32,6 @@ import { useTicketLabels } from './useTicketLabels';
 import { useTicketDependencies } from './useTicketDependencies';
 import { useTicketComment } from './useTicketComment';
 import { useTicketSessionLink } from './useTicketSessionLink';
-import { useTicketQuickActions } from './useTicketQuickActions';
 import { useTicketFormReset } from './useTicketFormReset';
 import { useCommentFocusShortcut } from './useCommentFocusShortcut';
 
@@ -78,19 +71,14 @@ export function useTicketDetailController({
     pendingDecision,
     onTicketViewed,
   });
-  const { queryClient, undoSnackbar, data, isLoading, error, projectRootPath, decision } =
+  const { queryClient, data, isLoading, error, projectRootPath, decision } =
     queries;
 
   // bdboard-ty72: コピー表示は copyTextToClipboard の継続から出るので、素の
   // setTimeout だとアンマウント後にタイマーを仕掛けうる。
   const {
-    value: copyDisplay,
-    show: showCopyDisplay,
     clear: clearCopyDisplay,
   } = useAutoClearedValue<CopyDisplay>(EMPTY_COPY_DISPLAY, COPY_FEEDBACK_MS);
-  const copyFeedback = copyDisplay.feedback;
-  const ariaLiveMessage = copyDisplay.aria;
-  const quickActions = useTicketQuickActions(ticketId, data, undoSnackbar);
   const title = useTicketTitleEditing(ticketId, data?.title);
   const description = useTicketDescriptionEditing(
     ticketId,
@@ -105,14 +93,12 @@ export function useTicketDetailController({
   const prevCommentCountRef = useRef<number | undefined>(undefined);
 
   // ticketId/projectRootPath 変更時の各セクション横断リセットは
-  // useTicketFormReset.ts に抽出済み (bdboard-sso1.5)。agentRun は含まない
-  // (useTicketAgentRun が自前でリセットを持つ理由はそのフック冒頭のコメント参照)。
+  // useTicketFormReset.ts に抽出済み (bdboard-sso1.5)。
   useTicketFormReset({
     ticketId,
     projectRootPath,
     clearCopyDisplay,
     resetDecision: decision.reset,
-    resetQuickActions: quickActions.reset,
     resetComment: comment.reset,
     resetDependencies: dependencies.reset,
     resetLabelInput: labels.reset,
@@ -125,15 +111,14 @@ export function useTicketDetailController({
     containerRef: panelRef,
     initialFocusRef: closeButtonRef,
     onEscape: onClose,
-    enabled: quickActions.confirmingQuickAction === null,
+    enabled: true,
   });
 
   // パネル外枠の 'c' キーボードショートカット (コメント入力欄へフォーカス)。
-  // useTicketFormReset と同じく、disabled の中身 (quickActions/agentRun の
-  // 確認中フラグ) は複数セクションのフックを跨ぐため、合成は親側に残す。
+  // useTicketFormReset と同じく、disabled の中身  は複数セクションのフックを跨ぐため、合成は親側に残す。
   const onCommentFocusShortcut = useCommentFocusShortcut({
     textareaRef: commentTextareaRef,
-    disabled: quickActions.confirmingQuickAction !== null,
+    disabled: false,
   });
 
   useEffect(() => {
@@ -152,31 +137,6 @@ export function useTicketDetailController({
     }
   }, [data?.commentCount, queryClient, ticketId]);
 
-  const handleCopyCommand = useCallback(
-    async (kind: BdCommandKind) => {
-      const command = buildBdCommand(kind, ticketId, projectRootPath);
-      const definition = BD_COMMAND_DEFINITIONS.find((entry) => entry.kind === kind);
-
-      try {
-        await copyTextToClipboard(command);
-        showCopyDisplay({
-          feedback: { kind: 'success', command: kind },
-          aria: `${definition?.label ?? 'コマンド'}をコピーしました`,
-        });
-      } catch (copyError) {
-        console.error('Failed to copy bd command', copyError);
-        showCopyDisplay({
-          feedback: { kind: 'error' },
-          aria: 'コピーできませんでした',
-        });
-      }
-    },
-    [projectRootPath, showCopyDisplay, ticketId],
-  );
-
-  const quickActionsDisabled =
-    quickActions.mutationPending ||
-    quickActions.confirmingQuickAction !== null;
 
   return {
     data,
@@ -192,9 +152,7 @@ export function useTicketDetailController({
     timeline: queries.timeline,
     similarTickets: queries.similarTickets,
     inFlightOverlaps: queries.inFlightOverlaps,
-    quickActions: { ...quickActions, disabled: quickActionsDisabled },
     decision,
-    copy: { copyFeedback, ariaLiveMessage, handleCopyCommand },
     onCommentFocusShortcut,
   };
 }

@@ -11,7 +11,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./useTicketDetailQueries');
 vi.mock('../../hooks/useAutoClearedValue');
-vi.mock('./useTicketQuickActions');
 vi.mock('./useTicketTitleEditing');
 vi.mock('./useTicketDescriptionEditing');
 vi.mock('./useTicketLabels');
@@ -24,7 +23,6 @@ vi.mock('./useCommentFocusShortcut');
 
 import { useTicketDetailQueries } from './useTicketDetailQueries';
 import { useAutoClearedValue } from '../../hooks/useAutoClearedValue';
-import { useTicketQuickActions } from './useTicketQuickActions';
 import { useTicketTitleEditing } from './useTicketTitleEditing';
 import { useTicketDescriptionEditing } from './useTicketDescriptionEditing';
 import { useTicketLabels } from './useTicketLabels';
@@ -41,7 +39,6 @@ import {
 
 const queriesMock = vi.mocked(useTicketDetailQueries);
 const autoClearedMock = vi.mocked(useAutoClearedValue);
-const quickActionsMock = vi.mocked(useTicketQuickActions);
 const titleMock = vi.mocked(useTicketTitleEditing);
 const descriptionMock = vi.mocked(useTicketDescriptionEditing);
 const labelsMock = vi.mocked(useTicketLabels);
@@ -66,9 +63,7 @@ const MARK_DATA = {
 // 受け渡しているか)」を同一性で検証する。
 const shortcutHandler = vi.fn();
 
-function setupMocks(overrides: {
-  quickActions?: Partial<ReturnType<typeof useTicketQuickActions>>;
-} = {}) {
+function setupMocks() {
   const queryClient = { invalidateQueries: vi.fn() };
   const undoSnackbar = { MARK: 'undo-snackbar' };
   const decisionReset = vi.fn();
@@ -98,15 +93,6 @@ function setupMocks(overrides: {
     hold: vi.fn(),
     clear: autoClearedClear,
   });
-
-  const quickActionsReset = vi.fn();
-  quickActionsMock.mockReturnValue({
-    mutationPending: false,
-    confirmingQuickAction: null,
-    reset: quickActionsReset,
-    MARK: 'quick-actions',
-    ...overrides.quickActions,
-  } as unknown as ReturnType<typeof useTicketQuickActions>);
 
   const titleReset = vi.fn();
   titleMock.mockReturnValue({ MARK: 'title', reset: titleReset } as unknown as ReturnType<
@@ -148,7 +134,6 @@ function setupMocks(overrides: {
     decision,
     decisionReset,
     autoClearedClear,
-    quickActionsReset,
     titleReset,
     descriptionReset,
     labelsReset,
@@ -236,25 +221,6 @@ describe('useTicketDetailController', () => {
     });
   });
 
-  it('computes quickActions.disabled from the combined flags', () => {
-    setupMocks();
-    const params = makeParams();
-    const { result: allFalse } = renderHook(() => useTicketDetailController(params));
-    expect(allFalse.current.quickActions.disabled).toBe(false);
-
-    setupMocks({ quickActions: { mutationPending: true } });
-    const { result: mutationPending } = renderHook(() =>
-      useTicketDetailController(params),
-    );
-    expect(mutationPending.current.quickActions.disabled).toBe(true);
-
-    setupMocks({ quickActions: { confirmingQuickAction: { kind: 'claim' } } });
-    const { result: confirmingQuickAction } = renderHook(() =>
-      useTicketDetailController(params),
-    );
-    expect(confirmingQuickAction.current.quickActions.disabled).toBe(true);
-  });
-
   it('calls useTicketDetailQueries with the documented arguments, including the onTicketViewed reference', () => {
     setupMocks();
     const params = makeParams();
@@ -268,26 +234,11 @@ describe('useTicketDetailController', () => {
     });
   });
 
-  it('sources the copy group values from useAutoClearedValue, not from a different mock', () => {
-    setupMocks();
-    const params = makeParams();
-    const { result } = renderHook(() => useTicketDetailController(params));
-
-    expect(result.current.copy.copyFeedback).toEqual({ kind: 'success', command: 'claim' });
-    expect(result.current.copy.ariaLiveMessage).toBe('MARK-aria');
-    expect(result.current.copy.handleCopyCommand).toEqual(expect.any(Function) as unknown);
-  });
-
   it('wires the panel refs into useFocusTrap/useCommentFocusShortcut and calls each sub-hook with the documented arguments', () => {
     setupMocks();
     const params = makeParams();
     renderHook(() => useTicketDetailController(params));
 
-    expect(quickActionsMock).toHaveBeenCalledWith(
-      'MARK-ticket-id',
-      MARK_DATA,
-      expect.objectContaining({ MARK: 'undo-snackbar' }) as unknown,
-    );
     expect(titleMock).toHaveBeenCalledWith('MARK-ticket-id', 'MARK-title');
     expect(descriptionMock).toHaveBeenCalledWith(
       'MARK-ticket-id',
@@ -315,25 +266,11 @@ describe('useTicketDetailController', () => {
     });
   });
 
-  it('drives useFocusTrap.enabled and useCommentFocusShortcut.disabled from confirmingQuickAction', () => {
-    const params = makeParams();
-
-    setupMocks({ quickActions: { confirmingQuickAction: { kind: 'claim' } } });
-    renderHook(() => useTicketDetailController(params));
-    expect(focusTrapMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ enabled: false }) as unknown,
-    );
-    expect(commentFocusShortcutMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ disabled: true }) as unknown,
-    );
-  });
-
   it('binds every useTicketFormReset reset*/clear callback to the matching sub-hook mock reference', () => {
     const {
       decisionReset,
       autoClearedClear,
-      quickActionsReset,
-      titleReset,
+        titleReset,
       descriptionReset,
       labelsReset,
       dependenciesReset,
@@ -348,7 +285,6 @@ describe('useTicketDetailController', () => {
       projectRootPath: 'MARK-project-root',
       clearCopyDisplay: autoClearedClear,
       resetDecision: decisionReset,
-      resetQuickActions: quickActionsReset,
       resetComment: commentReset,
       resetDependencies: dependenciesReset,
       resetLabelInput: labelsReset,

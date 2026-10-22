@@ -14,8 +14,6 @@ import { TicketDecisionSection } from './TicketDecisionSection';
 import { TicketTimelineSection } from './TicketTimelineSection';
 import { TicketAttachments } from '../TicketAttachments';
 import { TicketCommentsSection } from './TicketCommentsSection';
-import { TicketQuickActionsSection } from './TicketQuickActionsSection';
-import { TicketBdCommandSection } from './TicketBdCommandSection';
 import type { useTicketDetailController } from './useTicketDetailController';
 
 type Controller = ReturnType<typeof useTicketDetailController>;
@@ -23,7 +21,6 @@ type Controller = ReturnType<typeof useTicketDetailController>;
 export interface TicketDetailSecondaryBodyProps {
   data: TicketDetailDto;
   ticketId: string;
-  projectRootPath: string | undefined;
   pendingDecision: PendingDecisionDto | undefined;
   isTicketOnBoard: (ticketId: string) => boolean;
   onOpenTicket: (ticketId: string) => void;
@@ -32,15 +29,12 @@ export interface TicketDetailSecondaryBodyProps {
   decision: Controller['decision'];
   timeline: Controller['timeline'];
   comment: Controller['comment'];
-  quickActions: Controller['quickActions'];
-  copy: Controller['copy'];
   commentTextareaRef: RefObject<HTMLTextAreaElement | null>;
 }
 
 export function TicketDetailSecondaryBody({
   data,
   ticketId,
-  projectRootPath,
   pendingDecision,
   isTicketOnBoard,
   onOpenTicket,
@@ -49,8 +43,6 @@ export function TicketDetailSecondaryBody({
   decision,
   timeline,
   comment,
-  quickActions,
-  copy,
   commentTextareaRef,
 }: TicketDetailSecondaryBodyProps) {
   // bdboard-u6hf レビュー指摘: このセクションは pendingDecision の有無で2つの
@@ -138,35 +130,6 @@ export function TicketDetailSecondaryBody({
         onCommentTextChange={comment.setCommentText}
         canSubmit={comment.canSubmitComment}
         mutation={comment.mutation}
-      />
-      <TicketQuickActionsSection
-        priority={data.priority}
-        confirmingQuickAction={quickActions.confirmingQuickAction}
-        onSetConfirmingQuickAction={quickActions.setConfirmingQuickAction}
-        quickActionsDisabled={quickActions.disabled}
-        deferPeriodKind={quickActions.deferPeriodKind}
-        onDeferPeriodKindChange={quickActions.setDeferPeriodKind}
-        customDeferDate={quickActions.customDeferDate}
-        onCustomDeferDateChange={quickActions.setCustomDeferDate}
-        deferSubmitDisabled={quickActions.deferSubmitDisabled}
-        onDeferQuickAction={quickActions.handleDeferQuickAction}
-        canRaisePriority={quickActions.canRaisePriority}
-        canLowerPriority={quickActions.canLowerPriority}
-        quickActionConfirmRef={quickActions.quickActionConfirmRef}
-        cancelQuickActionRef={quickActions.cancelQuickActionRef}
-        onCancelQuickAction={quickActions.handleCancelQuickAction}
-        closeReason={quickActions.closeReason}
-        onCloseReasonChange={quickActions.setCloseReason}
-        mutationPending={quickActions.mutationPending}
-        onConfirmQuickAction={quickActions.handleConfirmQuickAction}
-        mutationError={quickActions.mutationError}
-      />
-      <TicketBdCommandSection
-        ticketId={data.id}
-        projectRootPath={projectRootPath}
-        copyFeedback={copy.copyFeedback}
-        ariaLiveMessage={copy.ariaLiveMessage}
-        onCopyCommand={(kind) => void copy.handleCopyCommand(kind)}
       />
     </>
   );

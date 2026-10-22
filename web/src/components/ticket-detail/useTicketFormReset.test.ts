@@ -31,7 +31,6 @@ function makeParams(
     projectRootPath: '/repo',
     clearCopyDisplay: vi.fn(),
     resetDecision: vi.fn(),
-    resetQuickActions: vi.fn(),
     resetComment: vi.fn(),
     resetDependencies: vi.fn(),
     resetLabelInput: vi.fn(),
@@ -52,7 +51,6 @@ describe('useTicketFormReset', () => {
     expect(params.resetDecision).toHaveBeenCalledWith({
       clearSubmittedDecision: true,
     });
-    expect(params.resetQuickActions).toHaveBeenCalledTimes(1);
     expect(params.resetComment).toHaveBeenCalledTimes(1);
     expect(params.resetDependencies).toHaveBeenCalledTimes(1);
     expect(params.resetLabelInput).toHaveBeenCalledTimes(1);
@@ -66,7 +64,6 @@ describe('useTicketFormReset', () => {
     const params = makeParams({
       clearCopyDisplay: vi.fn(() => order.push('clearCopyDisplay')),
       resetDecision: vi.fn(() => order.push('resetDecision')),
-      resetQuickActions: vi.fn(() => order.push('resetQuickActions')),
       resetComment: vi.fn(() => order.push('resetComment')),
       resetDependencies: vi.fn(() => order.push('resetDependencies')),
       resetLabelInput: vi.fn(() => order.push('resetLabelInput')),
@@ -82,7 +79,6 @@ describe('useTicketFormReset', () => {
     expect(order).toEqual([
       'clearCopyDisplay',
       'resetDecision',
-      'resetQuickActions',
       'resetComment',
       'resetDependencies',
       'resetLabelInput',

@@ -14,12 +14,10 @@ import {
  * toHaveClass だけでは「CSS が効いていない」失敗形をすり抜けるため、この層が必要。
  */
 
-const TICKET_TITLE = 'Fixture ticket bdboard-3tw.8';
 const ROW_Y_TOLERANCE_PX = 2;
 const EDGE_TOLERANCE_PX = 0.5;
 const FULL_WIDTH_RATIO = 0.9;
 const DEFER_ROW_FULL_WIDTH_RATIO = 0.95;
-const DETAIL_COMPLETE_FULL_WIDTH_RATIO = 0.5;
 const FIRST_ROW_RIGHT_GAP_MAX_PX = 8;
 const NON_CUSTOM_COMPLETE_MIN_WIDTH_RATIO = 0.2;
 // bdboard-rccf: コンテナ基準のはみ出し許容。clientWidth の整数丸めと
@@ -218,134 +216,6 @@ async function measureBulkButtonsLayout(page: import('@playwright/test').Page): 
   );
 }
 
-interface DetailQuickButtonsLayoutMetrics {
-  containerClientWidth: number;
-  containerScrollWidth: number;
-  rowCount: number;
-  completeButtonSharesRow: boolean;
-  completeButtonWidthRatio: number;
-  completeButtonNotSoloFullWidth: boolean;
-  deferGroupOverlapsAnySibling: boolean;
-  bodyScrollWidth: number;
-  viewportInnerWidth: number;
-  horizontalOverflow: boolean;
-}
-
-async function measureDetailQuickButtonsLayout(
-  page: import('@playwright/test').Page,
-): Promise<DetailQuickButtonsLayoutMetrics> {
-  return page.evaluate(
-    ({ rowTolerance, edgeTolerance, fullWidthRatio }) => {
-      const dialog = document.querySelector('[role="dialog"]');
-      const container = dialog?.querySelector('.quick-action-buttons');
-      if (!(container instanceof HTMLElement)) {
-        throw new Error('detail panel quick-action-buttons not found');
-      }
-
-      const childElements = Array.from(container.children).filter(
-        (node): node is HTMLElement => node instanceof HTMLElement,
-      );
-
-      const children = childElements.map((element) => {
-        const rect = element.getBoundingClientRect();
-        return {
-          rect: {
-            top: rect.top,
-            bottom: rect.bottom,
-            left: rect.left,
-            right: rect.right,
-            width: rect.width,
-          },
-          isDeferGroup: element.classList.contains('quick-action-defer-group'),
-          isCompleteButton:
-            element instanceof HTMLButtonElement && element.textContent?.trim() === '完了',
-        };
-      });
-
-      const deferGroupIndex = children.findIndex((child) => child.isDeferGroup);
-      const completeButtonIndex = children.findIndex((child) => child.isCompleteButton);
-
-      let deferGroupOverlapsAnySibling = false;
-      if (deferGroupIndex >= 0) {
-        const deferGroup = children[deferGroupIndex]!;
-        for (let index = 0; index < children.length; index += 1) {
-          if (index === deferGroupIndex) {
-            continue;
-          }
-          const sibling = children[index]!;
-          const overlaps =
-            deferGroup.rect.top < sibling.rect.bottom - edgeTolerance &&
-            sibling.rect.top < deferGroup.rect.bottom - edgeTolerance;
-          if (overlaps) {
-            deferGroupOverlapsAnySibling = true;
-          }
-        }
-      }
-
-      const completeButton =
-        completeButtonIndex >= 0 ? children[completeButtonIndex] : undefined;
-
-      let completeButtonSharesRow = false;
-      let completeButtonWidthRatio = 0;
-      let completeButtonNotSoloFullWidth = false;
-
-      if (completeButton !== undefined) {
-        completeButtonWidthRatio =
-          container.clientWidth > 0
-            ? completeButton.rect.width / container.clientWidth
-            : 0;
-
-        for (let index = 0; index < children.length; index += 1) {
-          if (index === completeButtonIndex) {
-            continue;
-          }
-          const sibling = children[index]!;
-          const sameRow =
-            Math.abs(sibling.rect.top - completeButton.rect.top) <= rowTolerance ||
-            (completeButton.rect.top < sibling.rect.bottom - edgeTolerance &&
-              sibling.rect.top < completeButton.rect.bottom - edgeTolerance);
-          if (sameRow) {
-            completeButtonSharesRow = true;
-            break;
-          }
-        }
-
-        completeButtonNotSoloFullWidth =
-          completeButtonSharesRow ||
-          completeButtonWidthRatio < fullWidthRatio;
-      }
-
-      const rowTops: number[] = [];
-      for (const child of children) {
-        const existing = rowTops.find(
-          (top) => Math.abs(top - child.rect.top) <= rowTolerance,
-        );
-        if (existing === undefined) {
-          rowTops.push(child.rect.top);
-        }
-      }
-
-      return {
-        containerClientWidth: container.clientWidth,
-        containerScrollWidth: container.scrollWidth,
-        rowCount: rowTops.length,
-        completeButtonSharesRow,
-        completeButtonWidthRatio,
-        completeButtonNotSoloFullWidth,
-        deferGroupOverlapsAnySibling,
-        bodyScrollWidth: document.body.scrollWidth,
-        viewportInnerWidth: window.innerWidth,
-        horizontalOverflow: document.body.scrollWidth > window.innerWidth,
-      };
-    },
-    {
-      rowTolerance: ROW_Y_TOLERANCE_PX,
-      edgeTolerance: EDGE_TOLERANCE_PX,
-      fullWidthRatio: DETAIL_COMPLETE_FULL_WIDTH_RATIO,
-    },
-  );
-}
-
 function assertBulkButtonsLayout(metrics: BulkButtonsLayoutMetrics, context: string): void {
   expect(
     metrics.deferGroupIndex,
@@ -496,99 +366,6 @@ test.describe('bulk action bar non-custom defer row @ 320x812', () => {
     ).toBe(false);
   });
 });
-
-for (const viewport of MOBILE_VIEWPORTS) {
-  // bdboard-53my 条件4: 詳細パネル側を実測した結果、症状は無かった。
-  // この describe はその状態を固定する回帰ガード。
-  test.describe(`ticket detail quick actions custom defer @ ${viewport.label}`, () => {
-    test.use({
-      viewport: { width: viewport.width, height: viewport.height },
-      isMobile: true,
-      hasTouch: true,
-    });
-
-    test('detail panel defer controls remain readable without solo full-width complete row', async ({
-      page,
-    }) => {
-      test.setTimeout(60_000);
-
-      // 詳細パネル (.quick-action-buttons) は BulkActionBar と異なり flex: 1 1 auto が無く、
-      // 完了ボタンが単独全幅行になる症状は再現しなかった (bdboard-53my 実測済み)。
-      await page.goto('/');
-
-      const card = page.locator('article', { hasText: TICKET_TITLE });
-      await expect(card).toBeVisible({ timeout: 15_000 });
-      await card.click();
-
-      const dialog = page.getByRole('dialog');
-      await expect(dialog).toBeVisible();
-      await expect(dialog.locator('#comment-text')).toBeVisible({ timeout: 15_000 });
-
-      const deferSelect = dialog.locator('select[aria-label="延期期間"]');
-      await expect(deferSelect).toBeVisible();
-      await deferSelect.selectOption('custom');
-      await expect(dialog.locator('input[type="date"]')).toBeVisible();
-
-      const metrics = await measureDetailQuickButtonsLayout(page);
-
-      // 実測 (2026-09-05): 375px → rowCount=3 / 480px → rowCount=2。行数そのものは
-      // ボタン本数とフォント次第で動くのでアサートしない。attach したメトリクスは
-      // 将来この画面のレイアウトを追うときの基準値。
-      await test.info().attach(`detail-panel-metrics-${viewport.label}`, {
-        body: JSON.stringify(metrics, null, 2),
-        contentType: 'application/json',
-      });
-
-      expect(
-        metrics.horizontalOverflow,
-        `${viewport.label} detail panel: body must not overflow horizontally ` +
-          `(body.scrollWidth=${metrics.bodyScrollWidth}, innerWidth=${metrics.viewportInnerWidth})`,
-      ).toBe(false);
-
-      // bdboard-h4xs.23: 上の horizontalOverflow (body 基準) は、このパネル内の溢れに
-      // 対して構造的に vacuous — 上の「320px カスタム状態について」コメント (bdboard-h4xs.22)
-      // が挙げるバー側の理由と同型のパターンで、複合の可能性がある:
-      //   1. .detail-panel は TicketDetailPanel.tsx の .overlay (position: fixed;
-      //      inset: 0) の子であり、fixed 内の溢れは body.scrollWidth に現れない
-      //      (バー側の理由1と同じ)。
-      //   2. .detail-panel は overflow-y: auto を持ち overflow-x を明示していない
-      //      ため、非 visible な overflow-y に揃えて overflow-x も auto へ計算され
-      //      (CSS Overflow 仕様どおり)、パネル自身がスクロールコンテナになる
-      //      (バー側の理由2と同じ)。
-      // 実測 (2026-09-19): 375px 幅で .quick-action-buttons 内に 2000px 幅のプローブ
-      // 要素を注入しても bodyScrollWidth は 375 のまま変わらず、containerScrollWidth
-      // だけ 342→2000 に変化 (bdboard-h4xs.23 の調査)。ただしこの実測はどちらの理由が
-      // 効いているかまでは切り分けていない — 1・2 のどちらか一方が変わっても、もう
-      // 一方だけで body への非伝播は成立し得る。したがって「.detail-panel の
-      // overflow-x を visible に変えれば body 基準で検出できるはず」という直し方は
-      // 誤り (理由1がまだ残る)。コンテナ自身の scrollWidth/clientWidth で測る必要が
-      // ある (バー側の bdboard-rccf と同じ手法)。
-      expect(
-        metrics.containerScrollWidth,
-        `${viewport.label} detail panel: quick-action-buttons must not overflow ` +
-          `horizontally (containerScrollWidth=${metrics.containerScrollWidth}, ` +
-          `containerClientWidth=${metrics.containerClientWidth}). body 基準では検出 ` +
-          `できないので、この2つで測ること。`,
-      ).toBeLessThanOrEqual(metrics.containerClientWidth);
-
-      // 詳細パネル側には BulkActionBar のような `.btn { flex: 1 1 auto }` が無いため、
-      // 完了ボタンは伸長せず単独全幅行にならない (実測: 375px で widthRatio=0.158 /
-      // 480px で 0.121、いずれも同一行に兄弟あり)。閾値 0.5 は実測の 3 倍以上の
-      // マージンを残し、「詳細パネルにも flex 伸長が入った」級の退行を捕まえる。
-      //
-      // 注意: BulkActionBar 側と違い取り除くべき CSS 規則がそもそも存在しないため、
-      // 等価な変異実験は作れない。閾値 0.5 でも実測 0.158/0.121 と余裕があるが、
-      // 旧 0.9 よりは検出力が高い (bdboard-53my 議長裁定 2026-09-05)。
-      expect(
-        metrics.completeButtonNotSoloFullWidth,
-        `${viewport.label} detail panel: complete button must not occupy a solo full-width row ` +
-          `(sharesRow=${metrics.completeButtonSharesRow}, ` +
-          `widthRatio=${metrics.completeButtonWidthRatio.toFixed(3)}, ` +
-          `containerClientWidth=${metrics.containerClientWidth})`,
-      ).toBe(true);
-    });
-  });
-}
 
 // bdboard-rccf: カスタム延期状態でのコンテナ基準はみ出し回帰ガード。
 // 上のコメントのとおり body 基準では検出できないので、コンテナの

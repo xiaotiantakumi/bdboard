@@ -1,20 +1,9 @@
 
 
-.quick-action-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
 .quick-action-defer-group {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-.quick-action-btn {
-  min-height: 30px;
 }
 
 .quick-action-confirm-panel {
