@@ -157,25 +157,18 @@ describe('*-test-support.ts(x) import guard (bdboard-7lrm)', () => {
   // 走査が空振りして素通しするのを防ぐ下限 (vitest-mock-cleanup-pairing.test.ts と同じ考え方)。
   // *-test-support ファイル/ディレクトリが全部リネーム/削除されると、上のテストは何もチェックしない
   // まま黙って緑になる。両方の走査対象ツリーに実在することと、ディレクトリ形態
-  // (agent-run-routes-test-support/ のような分割)も見つかることを固定する。
-  it('finds at least one *-test-support file, and at least one *-test-support/ directory, under the scanned roots', () => {
+  // (agent-run-routes-test-support/ の撤去後は実在しないため、ディレクトリ形態の存在は固定しない)。
+  it('finds at least one *-test-support file under each scanned root', () => {
     const rootsWithTestSupportFiles = new Set<string>();
-    let foundTestSupportDirectory = false;
 
     for (const root of SCAN_ROOTS) {
       for (const file of collectCodeFiles(path.join(REPO_ROOT, root))) {
-        const relativePath = toRepoRelativePosix(file);
         if (TEST_SUPPORT_SEGMENT_PATTERN.test(path.basename(file))) {
           rootsWithTestSupportFiles.add(root);
-        }
-        const directorySegments = relativePath.split('/').slice(0, -1);
-        if (directorySegments.some((segment) => TEST_SUPPORT_SEGMENT_PATTERN.test(segment))) {
-          foundTestSupportDirectory = true;
         }
       }
     }
 
     expect([...rootsWithTestSupportFiles].sort()).toEqual([...SCAN_ROOTS].sort());
-    expect(foundTestSupportDirectory).toBe(true);
   });
 });

@@ -136,9 +136,8 @@ test.describe('mobile input font-size', () => {
     // ブロックなので同一コミットで描画される。よってこの1行で待機は必要十分。
     //
     // ここに .loading の toHaveCount(0) を足さないこと。data があれば isLoading は必ず false
-    // なので本体ローディングに対しては空振りで、代わりに dialog 内の無関係なサブクエリ
-    // （ticketRuns は enabled ゲート無しで本体と並行発火する）の完了を待つ副作用だけが残る。
-    // font-size と無関係な /api/runs の遅延・リトライでこの spec が落ちるようになる。
+    // なので本体ローディングに対しては空振りで、dialog 内の無関係なサブクエリの完了を待つ
+    // 副作用だけが残る。
     // 上の settings ビューが .settings-panel-error を見ているのは「エラー状態を素通りしない」
     // ためで、ローディング待ちではない（同じ形に見えるが目的が違う）。
     // 本体 fetch がエラーなら #comment-text は現れず、ここが原因の明確なメッセージで落ちる。

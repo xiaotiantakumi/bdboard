@@ -5,7 +5,7 @@
  *
  * `envString`/`envInt`/`envFloat`(既定値ありの版) は複数ファイルで実装が完全に
  * 同一だったためここへ統合する。`src/bootstrap/wire-tunnel.ts` /
- * `wire-agent-run.ts` / `wire-chat.ts` / `wire-ai-quota-widget.ts` に生えていた
+ * `wire-chat.ts` / `wire-ai-quota-widget.ts` に生えていた
  * ローカル重複コピーもここへ寄せる。
  * `chat-agent-registry-builder.ts` 側の `envFloat` (既定値を持たず `undefined` を
  * 返す版) と `envStringList` は挙動が異なる/対応物が無いため統合せず、呼び出し元に

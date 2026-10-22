@@ -3,7 +3,6 @@ import { wireShutdown, type WireShutdownDeps } from './wire-shutdown.js';
 
 function createDeps(overrides: Partial<WireShutdownDeps> = {}): WireShutdownDeps {
   return {
-    runStore: { cancelAllAndWait: vi.fn(async () => {}) },
     watchHandle: { stop: vi.fn(async () => {}) },
     tunnelService: { shutdown: vi.fn(async () => ({ kind: 'off' as const })) },
     cache: { close: vi.fn() },
@@ -26,16 +25,11 @@ function createDeps(overrides: Partial<WireShutdownDeps> = {}): WireShutdownDeps
 }
 
 describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal を切り出したもの)', () => {
-  it('clears every interval timer, stops the reclaim scheduler and the external issue polling, then drains runStore/tunnel/watch/cache/chat before exiting', async () => {
+  it('clears every interval timer, stops the reclaim scheduler and the external issue polling, then drains tunnel/watch/cache/chat before exiting', async () => {
     vi.useFakeTimers();
     try {
       const order: string[] = [];
       const deps = createDeps({
-        runStore: {
-          cancelAllAndWait: vi.fn(async () => {
-            order.push('runStore.cancelAllAndWait');
-          }),
-        },
         tunnelService: {
           shutdown: vi.fn(async () => {
             order.push('tunnelService.shutdown');
@@ -96,7 +90,7 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
 
       await vi.advanceTimersByTimeAsync(0);
 
-      // drain 内部の順序 (application/board/shutdown-drain.ts 側の契約): runStore →
+      // drain 内部の順序 (application/board/shutdown-drain.ts 側の契約):
       // tunnelService → watchHandle → cache → chatRepositories。タイマー停止と
       // reclaimScheduler.stop() はその手前で既に呼ばれている。
       expect(order).toEqual([
@@ -106,7 +100,6 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
         'clearInterval(aiQuotaAlert)',
         'reclaimScheduler.stop',
         'externalIssues.stop',
-        'runStore.cancelAllAndWait',
         'tunnelService.shutdown',
         'watchHandle.stop',
         'cache.close',

@@ -120,10 +120,6 @@ async function main(): Promise<void> {
     commandRunner: infra.commandRunner,
     streamingCommandRunner: infra.streamingCommandRunner,
     writeAccess: auth.writeAccess,
-    issueWriter: bdServices.issueWriter,
-    packRegistry: harness.packRegistry,
-    harnessInjector: harness.harnessInjector,
-    harnessContractReader: boardApi.harnessContractReader,
     tunnelService: auth.tunnelService,
     authMode: auth.authMode,
     tunnelAccess: auth.tunnelAccess,
@@ -150,8 +146,6 @@ async function main(): Promise<void> {
     boardThresholdsRouter: misc.boardThresholdsRouter,
     dbStatsRouter: misc.dbStatsRouter,
     aiQuotaAlertRouter: misc.aiQuotaAlertRouter,
-    agentRunSettingsRouter: features.agentRunSettingsRouter,
-    agentRunRouter: features.agentRunRouter,
     tunnelRouter: features.tunnelRouter,
     updateCheckRouter: features.updateCheckRouter,
     aiQuotaRouter: features.aiQuotaRouter,
@@ -169,7 +163,6 @@ async function main(): Promise<void> {
   console.log(`Shutdown timeout: ${config.shutdownTimeoutMs}ms`);
 
   wireShutdown({
-    runStore: features.runStore,
     watchHandle: lifecycle.watchHandle,
     tunnelService: auth.tunnelService,
     cache: infra.cache,

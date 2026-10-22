@@ -1,9 +1,9 @@
 /**
  * bdboard-sso1.86: src/main.ts (composition root) から、mount 直前に残っていた
- * 独立系機能ルーター群 (agent-run / tunnel / update-check / ai-quota / chat) と
+ * 独立系機能ルーター群 (tunnel / update-check / ai-quota / chat) と
  * SPA 静的配信判定の組み立てをまとめて切り出したもの (move only, 挙動変更ゼロ)。
  *
- * それぞれは既存の wire-agent-run.ts / wire-ai-quota-widget.ts / wire-chat.ts /
+ * それぞれは既存の wire-ai-quota-widget.ts / wire-chat.ts /
  * wire-update-check.ts をそのまま呼ぶだけで独立しており、相互依存は無い
  * (main.ts 側の元の呼び出し順をこの関数内でも保つ)。1 ファイルずつに分けるほどの
  * 分岐・状態を持たないため、ここでは「mount 直前の残りの配線」という 1 つの
@@ -15,10 +15,6 @@ import type { ApplicationVersionProvider } from '../application/ports/applicatio
 import type { BoardCache } from '../application/ports/board-cache.js';
 import type { ChatSessionDiscoveryPort } from '../application/ports/chat-session-discovery.js';
 import type { CommandRunner } from '../application/ports/command-runner.js';
-import type { HarnessContractReaderPort } from '../application/ports/harness-contract-reader.js';
-import type { HarnessInjectorPort } from '../application/ports/harness-injector.js';
-import type { IssueWriterPort } from '../application/ports/issue-writer.js';
-import type { PackRegistryPort } from '../application/ports/pack-registry.js';
 import type { StreamingCommandRunner } from '../application/ports/streaming-command-runner.js';
 import type { TunnelAccessService } from '../application/tunnel/tunnel-access.js';
 import type { TunnelService } from '../application/tunnel/tunnel-service.js';
@@ -29,7 +25,6 @@ import type { WriteGuardDeps } from '../interface/http/write-guard.js';
 import { createTunnelRoutes } from '../interface/http/tunnel-routes.js';
 import { resolveWebDistDir } from '../infrastructure/web/resolve-web-dist-dir.js';
 import { envBool } from './env.js';
-import { wireAgentRun } from './wire-agent-run.js';
 import { wireUpdateCheck } from './wire-update-check.js';
 import { wireAiQuotaWidget } from './wire-ai-quota-widget.js';
 import { wireChat } from './wire-chat.js';
@@ -45,10 +40,6 @@ export interface WireFeatureRoutesDeps {
   readonly ghPath: string;
   readonly dbPath: string;
   readonly writeAccess: WriteGuardDeps;
-  readonly issueWriter: IssueWriterPort;
-  readonly packRegistry: PackRegistryPort;
-  readonly harnessInjector: HarnessInjectorPort;
-  readonly harnessContractReader: HarnessContractReaderPort;
   readonly tunnelService: TunnelService;
   readonly authMode: AuthMode;
   readonly tunnelAccess: TunnelAccessService;
@@ -61,20 +52,6 @@ export interface WireFeatureRoutesDeps {
 
 export async function wireFeatureRoutes(deps: WireFeatureRoutesDeps) {
   const log = deps.log ?? console.log;
-
-  const { agentRunSettingsRouter, agentRunRouter, runStore } = await wireAgentRun({
-    env: deps.env,
-    configFilePath: deps.configFilePath,
-    cache: deps.cache,
-    commandRunner: deps.commandRunner,
-    streamingCommandRunner: deps.streamingCommandRunner,
-    ghPath: deps.ghPath,
-    writeAccess: deps.writeAccess,
-    issueWriter: deps.issueWriter,
-    packRegistry: deps.packRegistry,
-    harnessInjector: deps.harnessInjector,
-    harnessContractReader: deps.harnessContractReader,
-  });
 
   const tunnelRouter = createTunnelRoutes({
     tunnelService: deps.tunnelService,
@@ -118,9 +95,6 @@ export async function wireFeatureRoutes(deps: WireFeatureRoutesDeps) {
   }
 
   return {
-    agentRunSettingsRouter,
-    agentRunRouter,
-    runStore,
     tunnelRouter,
     updateCheckRouter,
     aiQuotaRouter,
