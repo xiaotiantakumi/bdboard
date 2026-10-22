@@ -17,7 +17,6 @@ import {
   createBdCliIssueWriter,
   createBdCliLeaseReader,
   createBdCliLeaseReclaimer,
-  createBdCliMergeSlotReader,
   createBdCliSessionLinkWriter,
   createGhCliPrStatusReader,
   createGitWorktreeScanner,
@@ -34,7 +33,6 @@ export function wireBdServices(commandRunner: CommandRunner, options: WireBdServ
   return {
     repository: createBdCliIssueRepository(commandRunner, { bdPath }),
     leaseReader: createBdCliLeaseReader(commandRunner, { bdPath }),
-    mergeSlotReader: createBdCliMergeSlotReader(commandRunner, { bdPath }),
     leaseReclaimer: createBdCliLeaseReclaimer(commandRunner, { bdPath }),
     commentReader: createBdCliCommentReader(commandRunner),
     prStatusReader: createGhCliPrStatusReader(commandRunner, { ghPath }),

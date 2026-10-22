@@ -46,7 +46,6 @@ export function AppBody({ controller }: AppBodyProps) {
     nextUpBatchRun,
     epicFilterId,
     setEpicFilterId,
-    selectedTicketId,
     handleSelectTicket,
     overlays,
     projectNames,
@@ -127,7 +126,6 @@ export function AppBody({ controller }: AppBodyProps) {
             selectedProjectIds,
             selectedProjectIdsJoined,
           }}
-          selectedTicketId={selectedTicketId}
           onCardClick={handleSelectTicket}
           onSessionBadgeClick={overlays.handleOpenSessionList}
           nextUp={{

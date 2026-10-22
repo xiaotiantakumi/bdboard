@@ -49,7 +49,6 @@ const EXPECTED_VALUE_EXPORTS = [
   'fetchChatThreads',
   'fetchChatTurnStatus',
   'fetchDbStats',
-  'fetchDependencyGraph',
   'fetchDiscoveredChatSessions',
   'fetchHarnessPacks',
   'fetchPendingDecisions',

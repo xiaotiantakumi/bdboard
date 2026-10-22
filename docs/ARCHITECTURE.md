@@ -40,7 +40,7 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 
 - **`src/domain/`** — 値/エンティティ(`Ticket`, `Project`, `AgentSession`, `SessionLink`, `Run` 等)
   と導出ロジック(`readiness.ts` の ready/blocked 判定、`liveness.ts` のセッション生存度、
-  `dependency-graph.ts`、`board-notifications.ts` の通知遷移検出など)。外部I/Oを一切持たないため
+  `board-notifications.ts` の通知遷移検出など)。外部I/Oを一切持たないため
   フェイク不要でユニットテストが書ける。
 - **`src/application/`** — ユースケース(`board/refresh-projects.ts`、`lease/reclaim-scheduler.ts`、
   `runner/dispatch-run.ts` 等)と、`infrastructure` が実装すべき境界を定義する **ポート**

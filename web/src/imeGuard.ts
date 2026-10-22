@@ -4,7 +4,7 @@
  * 棚卸し (2026-09-05, bdboard-h4xs.14): web/src のテキスト入力上の Enter keydown ハンドラ
  * 7 箇所 (SearchPalette, TicketDetailPanel×2, BulkActionBar, PresetControl×2, ChatPanel)
  * と ChatPanel の ⌘/Ctrl+Enter 送信に本ガードを適用済み。カード/SVG の role="button" 上の
- * Enter/Space (LaneColumn, DependencyGraphView) は composition が起きないため対象外。
+ * Enter/Space (LaneColumn) は composition が起きないため対象外。
  * グローバル keydown (App.tsx ⌘K/?, PopoverCoordinator Escape, useFocusTrap Tab) は Enter 非対応。
  *
  * 判定は `isComposing` を主とし、`keyCode === 229` を古い環境向けのフォールバックとして

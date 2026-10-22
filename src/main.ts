@@ -79,9 +79,6 @@ async function main(): Promise<void> {
     dependencyWriter: bdServices.dependencyWriter,
     sessionLinkWriter: bdServices.sessionLinkWriter,
     writeAccess: auth.writeAccess,
-    leaseReader: bdServices.leaseReader,
-    mergeSlotReader: bdServices.mergeSlotReader,
-    reclaimScheduler: lifecycle.reclaimScheduler,
     reclaimHistory: lifecycle.reclaimHistory,
     dbPath: config.dbPath,
   });

@@ -22,7 +22,6 @@ export interface E2eServerEnvInputs {
   readonly listFixture: string;
   readonly gateListFixture: string;
   readonly leaseFixture: string;
-  readonly mergeSlotFixture: string;
   readonly webDist: string;
   readonly instanceNonce: string;
 }
@@ -98,7 +97,6 @@ export function buildE2eServerEnv(inputs: E2eServerEnvInputs): NodeJS.ProcessEnv
     // 完全に飾り。実物の出力形に寄せるためだけに置いてある。
     BDBOARD_E2E_BD_GATE_LIST_FIXTURE: inputs.gateListFixture,
     BDBOARD_E2E_BD_LEASE_FIXTURE: inputs.leaseFixture,
-    BDBOARD_E2E_BD_MERGE_SLOT_FIXTURE: inputs.mergeSlotFixture,
     BDBOARD_WEB_DIST: inputs.webDist,
     // per-run nonce: waitForHealth が同一ポートの他人サーバーと自分の子を区別する (bdboard-aokz)
     BDBOARD_INSTANCE_NONCE: inputs.instanceNonce,

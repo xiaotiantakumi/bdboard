@@ -10,11 +10,8 @@ import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
 import type { ResolvedBoardThresholds } from '../../domain/board-thresholds.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
-import type { LeaseReader } from '../../application/ports/lease-reader.js';
-import type { MergeSlotReader } from '../../application/ports/merge-slot-reader.js';
 import type { PrStatusReader } from '../../application/ports/pr-status-reader.js';
 import type { PrBadgeStatusCache } from '../../application/board/get-pr-badges.js';
-import type { ReclaimScheduler } from '../../application/lease/reclaim-scheduler.js';
 import type { ReclaimHistory } from '../../application/lease/reclaim-history.js';
 import type { AgentSession, SessionLink } from '../../domain/session.js';
 import type { EventHub } from '../sse/event-hub.js';
@@ -67,8 +64,6 @@ export interface ApiDeps {
   readonly dependencyWriter?: DependencyWriterPort;
   readonly sessionLinkWriter?: SessionLinkWriterPort;
   readonly sessionTail?: SessionTailReader;
-  readonly leaseReader?: LeaseReader;
-  readonly mergeSlotReader?: MergeSlotReader;
   readonly prStatusReader?: PrStatusReader;
   /**
    * bdboard-ye2p: サーバー再起動をまたいで terminal な gh 結果を残すための
@@ -77,7 +72,6 @@ export interface ApiDeps {
    * キャッシュにフォールバックする (テスト等)。
    */
   readonly prBadgeStatusCache?: PrBadgeStatusCache;
-  readonly reclaimScheduler?: ReclaimScheduler;
   /**
    * ハーネス KPI の reclaim 指標用。サーバー起動からの累積で永続化しない
    * (bdboard-pkr6.9)。省略時は reclaim 指標が空になるだけで、他の指標は出る。

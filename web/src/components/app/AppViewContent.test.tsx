@@ -29,11 +29,6 @@ vi.mock('../ActivityFeed', () => ({
     <div data-testid="activity-feed">{props.windowDays}</div>
   )),
 }));
-vi.mock('../DependencyGraphView', () => ({
-  DependencyGraphView: vi.fn((props: { focusTicketId?: string }) => (
-    <div data-testid="dependency-graph-view">{props.focusTicketId ?? ''}</div>
-  )),
-}));
 vi.mock('../SettingsPanel', () => ({
   SettingsPanel: vi.fn(() => <div data-testid="settings-panel" />),
 }));
@@ -49,7 +44,6 @@ const appBoardViewSwitchMock = vi.mocked(AppBoardViewSwitch);
 // ボード以外のリーフ view だけにする。
 const LEAF_TESTIDS = [
   'activity-feed',
-  'dependency-graph-view',
   'settings-panel',
 ];
 
@@ -95,7 +89,6 @@ function makeProps(overrides: Partial<AppViewContentProps> = {}): AppViewContent
       selectedProjectIds: [],
       selectedProjectIdsJoined: '',
     },
-    selectedTicketId: null,
     onCardClick: vi.fn(),
     onSessionBadgeClick: vi.fn(),
     nextUp: {
@@ -209,7 +202,6 @@ describe('AppViewContent', () => {
 
   const leafCases: { view: ViewMode; testid: string }[] = [
     { view: 'activity', testid: 'activity-feed' },
-    { view: 'graph', testid: 'dependency-graph-view' },
     { view: 'settings', testid: 'settings-panel' },
   ];
 
@@ -242,10 +234,5 @@ describe('AppViewContent', () => {
       />,
     );
     expect(screen.getByTestId('activity-feed')).toHaveTextContent('7');
-  });
-
-  it('forwards selectedTicketId as the graph focusTicketId', () => {
-    render(<AppViewContent {...makeProps({ view: 'graph', selectedTicketId: 'bdboard-xyz' })} />);
-    expect(screen.getByTestId('dependency-graph-view')).toHaveTextContent('bdboard-xyz');
   });
 });

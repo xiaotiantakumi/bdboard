@@ -139,7 +139,6 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const e2eBdFixturesDir = path.join(here, 'fixtures', 'bd');
   const gateListFixture = path.join(e2eBdFixturesDir, 'gate.list.json');
   const leaseFixture = path.join(e2eBdFixturesDir, 'lease.in-progress.json');
-  const mergeSlotFixture = path.join(e2eBdFixturesDir, 'merge-slot.list.json');
   const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
   const mainTs = path.join(repoRoot, 'src', 'main.ts');
 
@@ -192,7 +191,6 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       listFixture,
       gateListFixture,
       leaseFixture,
-      mergeSlotFixture,
       webDist: webDistSnapshot,
       instanceNonce,
     }),
