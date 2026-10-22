@@ -132,7 +132,8 @@ const MIN_TAP_TARGET_PX = 44;
 // 1px の差もなく同値 (198.8125) で、MAX_TIPS_BANNER_HEIGHT_PX の +24px は未使用の緩みという
 // 観察も折りたたみ後にそのまま成立している。
 // 旧値 649 は bdboard-qxt1 の折りたたみ導入前 (展開済み filter ~256px 前提) の実測だった。
-const MAX_CONTENT_START_EXCLUDING_TIPS_PX = 443;
+// bdboard-3vj3: スマホ幅の「確認待ちのみ」トグル行 (約 24px) ぶん 443 から +48 (実測 468)。
+const MAX_CONTENT_START_EXCLUDING_TIPS_PX = 491;
 //
 // MAX_TIPS_BANNER_HEIGHT_PX: .tips-banner の実測高さ。折り返し行数がフォント環境で動く唯一の
 // 要素なので +24px (≒ 折り返し 1 行ぶん) の余裕。1 行増えても赤くならないが 2 行以上ぶん
@@ -170,7 +171,8 @@ const MAX_TIPS_BANNER_HEIGHT_PX = 223;
 //
 // 折りたたみ導入後の実測 firstCardTop=625.4375 → ceil(625.4375)+16 = 642
 // 旧値 848 は展開済み filter ~256px 前提だった。
-const MAX_CONTENT_START_PX = 642;
+// bdboard-3vj3: 同トグル行ぶん 642 から +24 (実測 647.66 → ceil+16 = 664 に余裕を足した値)。
+const MAX_CONTENT_START_PX = 666;
 
 // これを超える変更を入れるときは、数字を黙って上げるのではなく、なぜ予算を増やしてよいかを
 // 根拠付きで書いてから上げること。前回より大きいから上げた、という形にすると次に本当の肥大が

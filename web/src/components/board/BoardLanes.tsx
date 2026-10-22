@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { usePersistedState } from '../../hooks/usePersistedState';
 import { type BoardDto, type Lane, type PrBadgeDto } from '../../api';
 import { useMatchMedia } from '../../hooks/useMatchMedia';
 import { MOBILE_LAYOUT_MEDIA_QUERY } from '../../mediaQueries';
@@ -34,8 +35,14 @@ interface BoardLanesProps {
   wipProjectId?: string;
 }
 
+const AWAITING_ONLY_STORAGE_KEY = 'bdboard.mobileAwaitingOnly';
+
+function parseBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
 function LanesRow({
-  lanes,
+  lanes: allLanes,
   board,
   stalledOnly,
   filter,
@@ -70,7 +77,14 @@ function LanesRow({
   const boardNav = useBoardKeyboardNav();
   const filterKey = boardFilterKey(filter);
   const lanesRowRef = useRef<HTMLDivElement>(null);
-  const showLaneIndicator = useMatchMedia(MOBILE_LAYOUT_MEDIA_QUERY);
+  const isMobile = useMatchMedia(MOBILE_LAYOUT_MEDIA_QUERY);
+  const showLaneIndicator = isMobile;
+  const [awaitingOnly, setAwaitingOnly] = usePersistedState(
+    AWAITING_ONLY_STORAGE_KEY,
+    true,
+    parseBoolean,
+  );
+  const lanes: Lane[] = isMobile && awaitingOnly ? ['awaiting_human'] : allLanes;
 
   const laneDerived = deriveLaneRowData(
     lanes,
@@ -114,6 +128,16 @@ function LanesRow({
 
   return (
     <div className="lanes-scroll-region">
+      {isMobile && (
+        <label className="awaiting-only-toggle">
+          <input
+            type="checkbox"
+            checked={awaitingOnly}
+            onChange={(event) => setAwaitingOnly(event.target.checked)}
+          />
+          確認待ちのみ ({board.lanes.awaiting_human?.length ?? 0})
+        </label>
+      )}
       <LaneScrollIndicator
         lanes={lanes}
         items={laneIndicatorItems}
