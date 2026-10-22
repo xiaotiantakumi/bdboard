@@ -40,8 +40,6 @@ export function AppBody({ controller }: AppBodyProps) {
     selectedProjectIdsJoined,
     activityWindowDays,
     setActivityWindowDays,
-    digestWindowDays,
-    setDigestWindowDays,
     statsWeeks,
     setStatsWeeks,
     tipsBannerDismissed,
@@ -141,8 +139,6 @@ export function AppBody({ controller }: AppBodyProps) {
           windows={{
             activityWindowDays,
             onActivityWindowDaysChange: setActivityWindowDays,
-            digestWindowDays,
-            onDigestWindowDaysChange: setDigestWindowDays,
             statsWeeks,
             onStatsWeeksChange: setStatsWeeks,
           }}

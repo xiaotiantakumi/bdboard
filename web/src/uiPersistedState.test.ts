@@ -57,8 +57,8 @@ describe('uiPersistedState', () => {
     expect(validateViewMode('graph')).toBe('graph');
   });
 
-  it('accepts digest as a view mode', () => {
-    expect(validateViewMode('digest')).toBe('digest');
+  it('maps the removed digest view to split', () => {
+    expect(validateViewMode('digest')).toBe('split');
   });
 
   it('accepts settings as a view mode', () => {
@@ -233,7 +233,7 @@ describe('uiPersistedState', () => {
 
   it('matches board filter preset state', () => {
     const state: BoardFilterPresetState = {
-      view: 'digest',
+      view: 'stats',
       selectedProjectIds: ['proj-1'],
       priorityCeiling: '1',
       issueTypes: ['bug', 'task'],
@@ -445,8 +445,8 @@ describe('describeBoardFilterPresetState', () => {
   it('always names the view and the project scope', () => {
     expect(describeBoardFilterPresetState(state)).toBe('ビュー: 分割 / 全プロジェクト');
     expect(
-      describeBoardFilterPresetState({ ...state, view: 'digest', selectedProjectIds: ['a', 'b'] }),
-    ).toBe('ビュー: ダイジェスト / プロジェクト2件');
+      describeBoardFilterPresetState({ ...state, view: 'stats', selectedProjectIds: ['a', 'b'] }),
+    ).toBe('ビュー: 統計 / プロジェクト2件');
   });
 
   it('lists only the filters that are actually set', () => {

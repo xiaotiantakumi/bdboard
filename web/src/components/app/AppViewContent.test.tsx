@@ -30,11 +30,6 @@ vi.mock('../ActivityFeed', () => ({
     <div data-testid="activity-feed">{props.windowDays}</div>
   )),
 }));
-vi.mock('../DailyDigest', () => ({
-  DailyDigest: vi.fn((props: { windowDays: number }) => (
-    <div data-testid="daily-digest">{props.windowDays}</div>
-  )),
-}));
 vi.mock('../ThroughputStats', () => ({
   ThroughputStats: vi.fn((props: { weeks: number }) => (
     <div data-testid="throughput-stats">{props.weeks}</div>
@@ -72,7 +67,6 @@ const appBoardViewSwitchMock = vi.mocked(AppBoardViewSwitch);
 // ボード以外のリーフ view だけにする。
 const LEAF_TESTIDS = [
   'activity-feed',
-  'daily-digest',
   'throughput-stats',
   'hygiene-panel',
   'dependency-graph-view',
@@ -147,8 +141,6 @@ function makeProps(overrides: Partial<AppViewContentProps> = {}): AppViewContent
     windows: {
       activityWindowDays: 1,
       onActivityWindowDaysChange: vi.fn(),
-      digestWindowDays: 1,
-      onDigestWindowDaysChange: vi.fn(),
       statsWeeks: 8,
       onStatsWeeksChange: vi.fn(),
     },
@@ -226,7 +218,7 @@ describe('AppViewContent', () => {
     // "view をそのまま渡すこと" を直接検証する: AppBoardViewSwitch はモック
     // されているため描画結果からは view の値を確認できない。呼び出し引数を
     // 直接見ることで、view がハードコードされていないことを保証する。
-    for (const view of ['split', 'digest'] as ViewMode[]) {
+    for (const view of ['split', 'stats'] as ViewMode[]) {
       const { unmount } = render(<AppViewContent {...makeProps({ view })} />);
       expect(appBoardViewSwitchMock.mock.calls.at(-1)?.[0]).toMatchObject({ view });
       unmount();
@@ -303,7 +295,6 @@ describe('AppViewContent', () => {
 
   const leafCases: { view: ViewMode; testid: string }[] = [
     { view: 'activity', testid: 'activity-feed' },
-    { view: 'digest', testid: 'daily-digest' },
     { view: 'stats', testid: 'throughput-stats' },
     { view: 'hygiene', testid: 'hygiene-panel' },
     { view: 'graph', testid: 'dependency-graph-view' },
@@ -328,7 +319,7 @@ describe('AppViewContent', () => {
     }
   });
 
-  it('forwards windows state to the matching view (activity/digest/stats)', () => {
+  it('forwards windows state to the matching view (activity/stats)', () => {
     const { rerender } = render(
       <AppViewContent
         {...makeProps({
@@ -336,8 +327,6 @@ describe('AppViewContent', () => {
           windows: {
             activityWindowDays: 7,
             onActivityWindowDaysChange: vi.fn(),
-            digestWindowDays: 1,
-            onDigestWindowDaysChange: vi.fn(),
             statsWeeks: 8,
             onStatsWeeksChange: vi.fn(),
           },
@@ -349,29 +338,10 @@ describe('AppViewContent', () => {
     rerender(
       <AppViewContent
         {...makeProps({
-          view: 'digest',
-          windows: {
-            activityWindowDays: 1,
-            onActivityWindowDaysChange: vi.fn(),
-            digestWindowDays: 7,
-            onDigestWindowDaysChange: vi.fn(),
-            statsWeeks: 8,
-            onStatsWeeksChange: vi.fn(),
-          },
-        })}
-      />,
-    );
-    expect(screen.getByTestId('daily-digest')).toHaveTextContent('7');
-
-    rerender(
-      <AppViewContent
-        {...makeProps({
           view: 'stats',
           windows: {
             activityWindowDays: 1,
             onActivityWindowDaysChange: vi.fn(),
-            digestWindowDays: 1,
-            onDigestWindowDaysChange: vi.fn(),
             statsWeeks: 4,
             onStatsWeeksChange: vi.fn(),
           },

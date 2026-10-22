@@ -12,7 +12,7 @@ describe('useAppUiPreferences', () => {
     localStorage.clear();
   });
 
-  it('starts with the same defaults the 9 individual usePersistedState calls had in App.tsx', () => {
+  it('starts with the same defaults the 8 individual usePersistedState calls had in App.tsx', () => {
     const { result } = renderHook(() => useAppUiPreferences());
 
     expect(result.current.view).toBe(DEFAULT_VIEW);
@@ -20,7 +20,6 @@ describe('useAppUiPreferences', () => {
     expect(result.current.lastChatProjectId).toBe('');
     expect(result.current.boardFilterPresets).toEqual([]);
     expect(result.current.activityWindowDays).toBe(1);
-    expect(result.current.digestWindowDays).toBe(1);
     expect(result.current.statsWeeks).toBe(8);
     expect(result.current.recentTickets).toEqual([]);
     expect(result.current.tipsBannerDismissed).toBe(DEFAULT_TIPS_BANNER_DISMISSED);
@@ -30,7 +29,7 @@ describe('useAppUiPreferences', () => {
     const { result } = renderHook(() => useAppUiPreferences());
 
     act(() => {
-      result.current.setView('digest');
+      result.current.setView('stats');
       result.current.setView('split');
       result.current.setSelectedProjectIds(['proj-1']);
       result.current.setLastChatProjectId('proj-1');
@@ -49,7 +48,6 @@ describe('useAppUiPreferences', () => {
         },
       ]);
       result.current.setActivityWindowDays(7);
-      result.current.setDigestWindowDays(3);
       result.current.setStatsWeeks(12);
       result.current.setRecentTickets([
         { id: 'bdboard-1', title: 'T', projectName: 'Project One' },
@@ -66,28 +64,9 @@ describe('useAppUiPreferences', () => {
     );
     expect(localStorage.getItem(UI_STORAGE_KEYS.boardFilterPresets)).not.toBeNull();
     expect(localStorage.getItem(UI_STORAGE_KEYS.activityWindowDays)).toBe(JSON.stringify(7));
-    expect(localStorage.getItem(UI_STORAGE_KEYS.digestWindowDays)).toBe(JSON.stringify(3));
     expect(localStorage.getItem(UI_STORAGE_KEYS.statsWeeks)).toBe(JSON.stringify(12));
     expect(localStorage.getItem(UI_STORAGE_KEYS.recentTickets)).not.toBeNull();
     expect(localStorage.getItem(UI_STORAGE_KEYS.tipsBannerDismissed)).toBe(JSON.stringify(true));
-  });
-
-  it('activityWindowDays and digestWindowDays are independent despite sharing a validator', () => {
-    const { result } = renderHook(() => useAppUiPreferences());
-
-    act(() => {
-      result.current.setActivityWindowDays(7);
-    });
-
-    expect(result.current.activityWindowDays).toBe(7);
-    expect(result.current.digestWindowDays).toBe(1);
-
-    act(() => {
-      result.current.setDigestWindowDays(3);
-    });
-
-    expect(result.current.activityWindowDays).toBe(7);
-    expect(result.current.digestWindowDays).toBe(3);
   });
 
   it('restores previously persisted values on mount, per key', () => {

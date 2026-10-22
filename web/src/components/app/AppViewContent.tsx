@@ -10,7 +10,6 @@ import {
 import { type WipLimitsOverrides } from '../../wip-limits';
 import { VIEW_LABELS } from '../../paletteActions';
 import { ActivityFeed } from '../ActivityFeed';
-import { DailyDigest } from '../DailyDigest';
 import { DependencyGraphView } from '../DependencyGraphView';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { EventCenterPanel } from '../EventCenterPanel';
@@ -39,7 +38,7 @@ import { AppBoardViewSwitch } from './AppBoardViewSwitch';
  *
  * ボード系ビュー(split)の JSX は ESLint の200行上限のため
  * ./AppBoardViewSwitch.tsx へさらに分けた。ここは ErrorBoundary と
- * ボード以外のビュー(activity/digest/stats/hygiene/graph/settings/events/issue-reports)
+ * ボード以外のビュー(activity/stats/hygiene/graph/settings/events/issue-reports)
  * の出し分けだけを持つ。
  */
 export interface AppViewContentProps {
@@ -71,8 +70,6 @@ export interface AppViewContentProps {
   windows: {
     activityWindowDays: ActivityWindowDays;
     onActivityWindowDaysChange: (days: ActivityWindowDays) => void;
-    digestWindowDays: ActivityWindowDays;
-    onDigestWindowDaysChange: (days: ActivityWindowDays) => void;
     statsWeeks: StatsWeeks;
     onStatsWeeksChange: (weeks: StatsWeeks) => void;
   };
@@ -120,13 +117,6 @@ export function AppViewContent({
           windowDays={windows.activityWindowDays}
           onWindowDaysChange={windows.onActivityWindowDaysChange}
           onSelectTicket={onCardClick}
-        />
-      )}
-      {view === 'digest' && (
-        <DailyDigest
-          projectIds={boardMeta.selectedProjectIds}
-          windowDays={windows.digestWindowDays}
-          onWindowDaysChange={windows.onDigestWindowDaysChange}
         />
       )}
       {view === 'stats' && (

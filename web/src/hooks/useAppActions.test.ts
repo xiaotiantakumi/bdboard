@@ -270,7 +270,7 @@ describe('useAppActions', () => {
       },
     );
 
-    it.each(['activity', 'digest', 'stats', 'hygiene', 'graph'] as const)(
+    it.each(['activity', 'stats', 'hygiene', 'graph'] as const)(
       'forces a switch to split when epicFilterId is set and the current view (%s) cannot show the filtered board',
       (view) => {
         const params = baseParams({ epicFilterId: 'epic-1', view });
