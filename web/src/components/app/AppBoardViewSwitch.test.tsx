@@ -133,12 +133,7 @@ describe('AppBoardViewSwitch', () => {
     const { rerender } = render(<AppBoardViewSwitch {...makeProps({ view: 'split' })} />);
     expect(screen.getByTestId('bulk-action-bar')).toBeInTheDocument();
 
-<<<<<<< HEAD
     rerender(<AppBoardViewSwitch {...makeProps({ view: 'settings' })} />);
-    expect(screen.queryByTestId('board-filter-bar')).not.toBeInTheDocument();
-=======
-    rerender(<AppBoardViewSwitch {...makeProps({ view: 'activity' })} />);
->>>>>>> 2e07242d (feat(bdboard-gyvv): one-row header with filter popover and overflow menu)
     expect(screen.queryByTestId('bulk-action-bar')).not.toBeInTheDocument();
   });
 

@@ -309,16 +309,7 @@
     gap: 12px;
   }
 
-<<<<<<< HEAD
-  /* Tier 3: 期間切替・ビュータブ・チャット以外の toggle-btn */
-  .view-switcher .toggle-btn {
-    min-height: 44px;
-  }
-
-=======
   /* Tier 3: 期間切替・チャット以外の toggle-btn */
-  .activity-window-group .toggle-btn,
->>>>>>> 2e07242d (feat(bdboard-gyvv): one-row header with filter popover and overflow menu)
   .session-list-tabs .toggle-btn,
   .filter-menu .toggle-btn {
     min-height: 44px;

@@ -63,11 +63,7 @@ describe('App view boundary (bdboard-yfq)', () => {
     renderApp();
 
     await screen.findByRole('alert');
-<<<<<<< HEAD
-    await user.click(screen.getByRole('button', { name: '設定' }));
-=======
-    await selectOverflowItem(user, 'アクティビティ');
->>>>>>> 2e07242d (feat(bdboard-gyvv): one-row header with filter popover and overflow menu)
+    await selectOverflowItem(user, '設定');
 
     // 境界から key={view} を外すと、壊れた状態を持ち越して別ビューでも
     // fallback が出たままになる。

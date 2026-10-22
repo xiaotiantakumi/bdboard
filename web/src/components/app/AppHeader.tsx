@@ -58,30 +58,9 @@ export interface AppHeaderProps {
 }
 
 /**
-<<<<<<< HEAD
- * bdboard-62p4 候補1「ヘッダー」。App.tsx の `<header>` 配下
- * (旧 L578-631、GlobalBar/ViewToolbar を ErrorBoundary でラップして値を
- * 橋渡しするだけの JSX) を丸ごと移した表示専用コンポーネント。
- * state・effect は一切ここに移さず App.tsx 側に残す。
- *
- * GlobalBar (26 props) と ViewToolbar (17 props) はどちらも既存の独立
- * コンポーネントで、ここでは変更していない — 渡している値・prop名は
- * 元の App.tsx から1文字も変えていない。呼び出し元 (App.tsx) 側の
- * props 爆発を避けるため、このコンポーネント自体は関心ごとにまとめた
- * オブジェクト (connection/sessions/statusDetail/projects/tipsBanner/
- * toolbar) を受け取り、GlobalBar/ViewToolbar 個別の平たい props へ展開する
- * (AppViewContent.tsx の board/boardMeta/nextUp と同じ手法)。
- *
- * onOpenSessionList は GlobalBar/ViewToolbar 双方で元々
- * `() => handleOpenSessionList()` という「呼び出し側からの引数を捨てて
- * 引数なしで呼ぶ」ラップだった。ここでも `sessions.onOpen` を同じ形で
- * ラップして呼ぶことで、GlobalBar/ViewToolbar 内部が将来 projectId を
- * 渡すように変わっても現状の(常に無引数で呼ぶ)挙動を維持する。
-=======
  * bdboard-62p4 候補1「ヘッダー」。GlobalBar を ErrorBoundary でラップして値を
  * 橋渡しするだけの表示専用コンポーネント。state・effect は持たない。
  * bdboard-gyvv: ビュー切替タブ行・ツールバー行を無くし、GlobalBar 1 行に集約した。
->>>>>>> 2e07242d (feat(bdboard-gyvv): one-row header with filter popover and overflow menu)
  */
 export function AppHeader({
   view,

@@ -97,13 +97,8 @@ describe('App error boundaries (bdboard-yfq)', () => {
     await user.click(checkbox);
     expect(checkbox).toBeChecked();
 
-<<<<<<< HEAD
-    await user.click(screen.getByRole('button', { name: '設定' }));
-    await user.click(screen.getByRole('button', { name: '分割' }));
-=======
-    await selectOverflowItem(user, 'アクティビティ');
+    await selectOverflowItem(user, '設定');
     await selectOverflowItem(user, 'ボードに戻る');
->>>>>>> 2e07242d (feat(bdboard-gyvv): one-row header with filter popover and overflow menu)
 
     // ビュー境界は key={view} で作り直される。選択プロバイダーをその内側に
     // 置くと再マウントが伝わり、ビューを往復しただけで選択が消える
