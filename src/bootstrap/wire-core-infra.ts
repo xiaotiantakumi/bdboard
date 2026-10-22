@@ -20,8 +20,6 @@ import {
   readBdVersion,
 } from '../infrastructure/index.js';
 import { runBdVersionStartupCheck } from '../application/bd/run-bd-version-startup-check.js';
-import { createBdVersionSnapshot } from '../application/bd/bd-version-snapshot.js';
-import type { BdVersionSource } from '../application/bd/bd-version-snapshot.js';
 import { createVisibleProjectsRegistry } from '../application/board/visible-projects-registry.js';
 import { envString } from './env.js';
 
@@ -49,7 +47,6 @@ export function wireCoreInfra(deps: WireCoreInfraDeps) {
     log: (message) => log.log(message),
   });
   const bdVersionRead = readBdVersion(commandRunner, deps.bdPath, deps.bdVersionCheckTimeoutMs, process.cwd());
-  const bdVersion: BdVersionSource = createBdVersionSnapshot(bdVersionRead);
   // 診断だけが目的なので、bd が未導入・壊れている場合も起動を止めない。
   void runBdVersionStartupCheck(() => bdVersionRead, log);
   const streamingCommandRunner = new NodeStreamingCommandRunner();
@@ -70,7 +67,6 @@ export function wireCoreInfra(deps: WireCoreInfraDeps) {
   return {
     cache,
     visibleProjects,
-    bdVersion,
     fsPort,
     commandRunner,
     streamingCommandRunner,

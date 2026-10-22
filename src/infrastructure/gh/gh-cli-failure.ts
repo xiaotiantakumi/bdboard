@@ -1,5 +1,5 @@
 // gh の失敗メッセージ文言の判定。PR バッジの reader (gh-cli-pr-status-reader.ts) と
-// open issue の reader (gh-cli-external-issue-source.ts) が共有する (bdboard-4y8q.9.2)。
+// open issue の reader が共有していた (bdboard-4y8q.9.2)。
 
 // gh の失敗メッセージ文言 (bdboard-7ln6 #1)。GraphQL/REST どちらの経路でも
 // 「rate limit」という語自体は共通して出てくる。HTTP 429 は他の意味を持たない

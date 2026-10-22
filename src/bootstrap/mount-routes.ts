@@ -22,8 +22,7 @@ import {
   type SecurityMountDeps,
 } from '../interface/http/app-security.js';
 import { createCompressionMiddleware } from '../interface/http/compression.js';
-import { createServerErrorCapture, serverErrorHandler } from '../interface/http/server-error-capture.js';
-import type { SelfErrorReporter } from '../application/issue-report/self-error-reporter.js';
+import { serverErrorHandler } from '../interface/http/server-error-handler.js';
 
 export interface StaticSpaDeps {
   readonly webDistDir: string;
@@ -49,20 +48,12 @@ export interface MountRoutesDeps {
   readonly agentRunRouter: Hono;
   readonly tunnelRouter: Hono;
   readonly updateCheckRouter: Hono;
-  /** 不具合報告の下書き API (bdboard-4y8q.1)。受け取りはローカル直アクセスのみ。 */
-  readonly issueReportsRouter: Hono;
   /** BDBOARD_AI_QUOTA_DISABLED のとき未登録 (undefined)。 */
   readonly aiQuotaRouter: Hono | undefined;
   /** BDBOARD_CHAT_DISABLED のとき未登録 (undefined)。 */
   readonly chatRouter: Hono | undefined;
   /** web/dist が存在しない (API only) 場合は undefined。 */
   readonly staticSpa: StaticSpaDeps | undefined;
-  /**
-   * 本体エラーの下書き (bdboard-4y8q.6.4)。API の 5xx と処理されなかった例外を `report()` へ渡す。
-   * BDBOARD_SELF_ERROR_DRAFTS=off のとき undefined で、その場合は 5xx を拾う middleware を mount しない (応答にヘッダーも付かない)。
-   * 省略可能。500 の JSON を返す `app.onError` は、この値に関わらず常に付く。
-   */
-  readonly selfErrorReporter?: Pick<SelfErrorReporter, 'report'> | undefined;
 }
 
 /**
@@ -72,10 +63,6 @@ export interface MountRoutesDeps {
 export function mountRoutes(app: Hono, deps: MountRoutesDeps): void {
   mountSecurityMiddleware(app, deps.security);
   app.use('*', createCompressionMiddleware());
-  // 圧縮の内側 (後から登録したものが内側): 圧縮前の本文が見える位置で 5xx を拾う。認証の後なので、認証で拒否された要求は拾わない (CSRF・書き込みのガードはルーターの中 = 内側だが、4xx なので拾わない)。
-  if (deps.selfErrorReporter !== undefined) {
-    app.use('*', createServerErrorCapture({ reporter: deps.selfErrorReporter }));
-  }
   // 処理されなかった例外は stack を入れない 500 の JSON にする (console.error は今までどおり)。
   app.onError(serverErrorHandler);
 
@@ -103,7 +90,6 @@ export function mountRoutes(app: Hono, deps: MountRoutesDeps): void {
   app.route('/', deps.agentRunRouter);
   app.route('/', deps.tunnelRouter);
   app.route('/', deps.updateCheckRouter);
-  app.route('/', deps.issueReportsRouter);
 
   if (deps.aiQuotaRouter !== undefined) {
     app.route('/', deps.aiQuotaRouter);

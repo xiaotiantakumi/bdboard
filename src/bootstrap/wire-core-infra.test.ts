@@ -1,6 +1,5 @@
 /**
- * bdboard-424g: 起動時に 1 回だけ読む bd の版 (readBdVersion) の結果を、起動時の診断 (runBdVersionStartupCheck) と
- * 下書きの envInfo (infra.bdVersion) が共有する。`bd version` を追加で起動しないことを、偽の bd の呼び出し回数で固定する。
+ * bdboard-424g: 起動時に 1 回だけ読む bd の版 (readBdVersion) の結果を、起動時の診断 (runBdVersionStartupCheck) に使う。
  */
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -12,7 +11,7 @@ function makeLog() {
   return { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
 }
 
-describe('wireCoreInfra bdVersion', () => {
+describe('wireCoreInfra bd version startup check', () => {
   let root = '';
   let cache: { close(): void } | undefined;
   afterEach(async () => {
@@ -41,16 +40,13 @@ describe('wireCoreInfra bdVersion', () => {
     });
     cache = infra.cache;
 
-    // wireCoreInfra は読み取りを待たずに返り、読み終わるまでは 'unknown'。
-    expect(infra.bdVersion()).toBe('unknown');
     // 既定の 1 秒は、負荷の高いときの sh の起動 + sleep 0.2 には短い (テストの既定の 5 秒には収める)。
-    await vi.waitFor(() => expect(infra.bdVersion()).toBe('9.9.9'), { timeout: 4_000 });
     // 起動時の診断も同じ読み取りの結果で動く (EXPECTED_BD_VERSION と違う 9.9.9 なので mismatch の警告が出る)。
     await vi.waitFor(() => expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('found 9.9.9')), { timeout: 4_000 });
     expect((await fs.readFile(calls, 'utf8')).trim().split('\n')).toHaveLength(1);
   });
 
-  it('keeps unknown when bd cannot be started', async () => {
+  it('logs the startup check when bd cannot be started', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'bdboard-core-infra-missing-'));
     const log = makeLog();
 
@@ -65,6 +61,5 @@ describe('wireCoreInfra bdVersion', () => {
 
     // 起動時の診断が終わった (= 読み取りが失敗で終わった) あとも 'unknown'。
     await vi.waitFor(() => expect(log.log).toHaveBeenCalled(), { timeout: 4_000 });
-    expect(infra.bdVersion()).toBe('unknown');
   });
 });

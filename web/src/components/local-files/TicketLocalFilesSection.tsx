@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { fetchTicketLocalFiles, type LocalFileRefDto } from '../../api/local-files';
-import { isLoopbackHostname } from '../issue-reports/manualDraftAccess';
+import { isLoopbackHostname } from './isLoopbackHostname';
 import { LOCAL_FILE_ACCESS_NOTICE, isLocalFileAccessDenied } from './localFileErrorMessage';
 import { formatByteSize } from '../TicketAttachments';
 import { LocalFileLabel } from './LocalFileLabel';

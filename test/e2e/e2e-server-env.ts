@@ -16,11 +16,6 @@ export interface E2eServerEnvInputs {
   /** スキャン対象のプロジェクトのルート (使い捨てディレクトリ)。 */
   readonly scanRoots: readonly string[];
   readonly scanRootsConfigPath: string;
-  /**
-   * 不具合報告の下書きの置き場 (使い捨てディレクトリの中の絶対パス)。省けない: サーバーの既定は <repoRoot>/data/issue-drafts で、
-   * main checkout から回すとメンテナの本物の下書きの置き場になる (bdboard-xpkz)。
-   */
-  readonly issueDraftsDir: string;
   /** bd / claude の stub を置いたディレクトリ。PATH の先頭に入れる。 */
   readonly binDir: string;
   readonly claudeStub: string;
@@ -44,21 +39,6 @@ export function buildE2eServerEnv(inputs: E2eServerEnvInputs): NodeJS.ProcessEnv
     // root so the e2e run never reads/writes the developer's real
     // ~/.config/bdboard/config.json (bdboard-3tw.102.2).
     BDBOARD_SCAN_ROOTS_CONFIG_PATH: inputs.scanRootsConfigPath,
-    // 不具合報告の下書きの置き場を、この実行の使い捨てディレクトリに向ける (bdboard-xpkz)。置き場の既定は
-    // <repoRoot>/data/issue-drafts (src/infrastructure/fs/resolve-issue-drafts-dir.ts。repoRoot は src/main.ts のある checkout で、
-    // .git があれば <repoRoot>/data、無ければ ~/.bdboard)。e2e を main checkout から回すと、そこはメンテナの本物の下書きの
-    // 置き場で、サーバーが次の 3 つで触る: (1) 本体エラーの下書き (API の 5xx・処理されなかった例外・画面の更新の失敗。
-    // 起動した時点では何も書かないが、spec がそれらを起こした時点で書く。合計容量の上限を超えるときは、古い終端の下書きを
-    // 消して空ける)、(2) 起動時の掃除 (保管期限を超えた終端の下書きの削除)、(3) ヘッダーのタブのバッジとデイリーダイジェストの
-    // 未処理件数 (読むだけ)。(3) は本物の件数が画面に出て、
-    // どこから回すかで e2e の画面が変わる。ここを向け直せば、この 3 つと、手書きの下書きの受け取り API など同じ置き場を使う
-    // 経路がすべて、実行が終わると global-setup が消す使い捨てディレクトリの中で閉じる。
-    // BDBOARD_SELF_ERROR_DRAFTS=off で本体エラーの下書きだけを止める手もあるが、それは (2) (3) と手書きの下書きの経路を
-    // 残し、本体エラーの配線 (5xx を拾う middleware など) も本番と違う形にしてしまう。置き場の向け直しだけで、書き込みの
-    // 行き先が使い捨てに閉じるので、止めずに残している (BDBOARD_SELF_ERROR_DRAFTS は親の env をそのまま引き継ぐ。
-    // 本体エラーの下書きを前提にする spec を足すときは、ここでその値も固定する)。
-    // 親の env に BDBOARD_ISSUE_DRAFTS_DIR が入っていても、ここで上書きする。
-    BDBOARD_ISSUE_DRAFTS_DIR: inputs.issueDraftsDir,
     // Auth is explicitly disabled (not "set fake creds and log in") so
     // this fixture never has to hold a username/password-shaped literal.
     BDBOARD_AUTH_DISABLED: '1',
@@ -67,16 +47,6 @@ export function buildE2eServerEnv(inputs: E2eServerEnvInputs): NodeJS.ProcessEnv
     // Chat stays enabled for chat-mobile e2e; smoke scenarios never open the panel.
     BDBOARD_CLAUDE_PATH: inputs.claudeStub,
     BDBOARD_AI_QUOTA_DISABLED: '1',
-    // 届いた issue (公開リポジトリに届いた issue) の定期確認を止める (bdboard-em45)。この確認は、サーバーの
-    // repoRoot (src/main.ts のある checkout) に .beads があるメンテナ環境だと、起動の 60 秒後に本物の gh
-    // (`gh api --method GET`) を呼び、その checkout の data/external-issues に写しを書く。e2e を main checkout から
-    // 回すとこれに当たり、常時稼働のサーバーとは別の lock・別の枠 (1 時間 12 回) で動いてしまう。worktree と CI には
-    // .beads が無いので元から動かない。止めておけば、どの場所から回しても同じ条件になる (いまの e2e の画面は、この確認の
-    // 結果を使わない。使う画面の e2e を足すときは、ここで止めたまま、その spec 用に別の手立てを考える)。
-    // BDBOARD_GH_PATH を失敗する stub に向ける手もあるが、それは PR の状態の読み取りなど他の gh も巻き込み、
-    // 確認の timer と写しの置き場は残る。
-    // 親の env に BDBOARD_EXTERNAL_ISSUES_DISABLED=0 などが入っていても、ここで '1' に上書きする。
-    BDBOARD_EXTERNAL_ISSUES_DISABLED: '1',
     // src/bootstrap/resolve-main-config.ts の envBoolDefaultTrue('BDBOARD_RECLAIM_ENABLED') を
     // 落として、自動 reclaim ループを e2e では止める。止めないと
     // web/src/components/hygiene/StaleLeaseSection.tsx の reclaimEnabled 分岐が

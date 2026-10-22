@@ -8,7 +8,6 @@ export type ViewMode =
   | 'stats'
   | 'graph'
   | 'hygiene'
-  | 'issue-reports'
   | 'settings';
 
 export const DEFAULT_VIEW: ViewMode = 'split';
@@ -23,7 +22,6 @@ export const VIEW_ITEMS: readonly { view: ViewMode; label: string }[] = [
   { view: 'stats', label: '統計' },
   { view: 'hygiene', label: '健全性' },
   { view: 'graph', label: '依存グラフ' },
-  { view: 'issue-reports', label: '不具合報告' },
   { view: 'settings', label: '設定' },
 ];
 
@@ -48,7 +46,8 @@ export function validateViewMode(value: unknown): ViewMode | null {
   // bdboard-i9g4.1: ダイジェストビュー削除。保存済み state・古い deep link・プリセットに残る
   // 'digest' も 'split' へ読み替える。
   // bdboard-i9g4.2: イベントビュー削除。残る 'events' も同様に 'split' へ読み替える。
-  if (value === 'next' || value === 'digest' || value === 'events') {
+  // bdboard-i9g4.3: 不具合報告ビュー削除。残る 'issue-reports' も同様に 'split' へ読み替える。
+  if (value === 'next' || value === 'digest' || value === 'events' || value === 'issue-reports') {
     return 'split';
   }
   if (
@@ -57,7 +56,6 @@ export function validateViewMode(value: unknown): ViewMode | null {
     value === 'stats' ||
     value === 'graph' ||
     value === 'hygiene' ||
-    value === 'issue-reports' ||
     value === 'settings'
   ) {
     return value;

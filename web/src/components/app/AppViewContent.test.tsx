@@ -45,12 +45,8 @@ vi.mock('../DependencyGraphView', () => ({
 vi.mock('../SettingsPanel', () => ({
   SettingsPanel: vi.fn(() => <div data-testid="settings-panel" />),
 }));
-vi.mock('../issue-reports/IssueReportsPanel', () => ({
-  IssueReportsPanel: vi.fn((props: { reportProject?: { name: string; path: string } }) => <div data-testid="issue-reports-panel">{props.reportProject?.name ?? 'none'}</div>),
-}));
 
 import { AppBoardViewSwitch } from './AppBoardViewSwitch';
-import { IssueReportsPanel } from '../issue-reports/IssueReportsPanel';
 
 const appBoardViewSwitchMock = vi.mocked(AppBoardViewSwitch);
 
@@ -66,7 +62,6 @@ const LEAF_TESTIDS = [
   'dependency-graph-view',
   'settings-panel',
   'event-center-panel',
-  'issue-reports-panel',
 ];
 
 function makeFilterState(): BoardFilterState {
@@ -142,52 +137,6 @@ describe('AppViewContent', () => {
     for (const view of ['split', 'activity', 'settings'] as ViewMode[]) {
       const { unmount } = render(<AppViewContent {...makeProps({ view })} />);
       expect(screen.getByTestId('board-view-switch')).toBeInTheDocument();
-      unmount();
-    }
-  });
-
-  // bdboard-4y8q.6.8: 「新しく報告」は、ボードでちょうど 1 つ選んでいるプロジェクトだけを { name, path } で渡す (選ぶ欄は無い)。
-  it('gives the issue reports panel the project name and path when exactly one project is selected', () => {
-    const base = makeProps();
-    render(
-      <AppViewContent
-        {...makeProps({
-          view: 'issue-reports',
-          boardMeta: {
-            ...base.boardMeta,
-            selectedProjectIds: ['p'],
-            projectNames: new Map([['p', 'Project']]),
-            projectRootPaths: new Map([['p', '/project']]),
-          },
-        })}
-      />,
-    );
-    expect(vi.mocked(IssueReportsPanel).mock.calls.at(-1)?.[0]?.reportProject).toEqual({
-      name: 'Project',
-      path: '/project',
-    });
-  });
-
-  it('gives the issue reports panel no project when none or several are selected', () => {
-    const base = makeProps();
-    const names = new Map([
-      ['p', 'Project'],
-      ['q', 'Other'],
-    ]);
-    const paths = new Map([
-      ['p', '/project'],
-      ['q', '/other'],
-    ]);
-    for (const selectedProjectIds of [[], ['p', 'q']]) {
-      const { unmount } = render(
-        <AppViewContent
-          {...makeProps({
-            view: 'issue-reports',
-            boardMeta: { ...base.boardMeta, selectedProjectIds, projectNames: names, projectRootPaths: paths },
-          })}
-        />,
-      );
-      expect(vi.mocked(IssueReportsPanel).mock.calls.at(-1)?.[0]?.reportProject).toBeUndefined();
       unmount();
     }
   });
@@ -277,7 +226,6 @@ describe('AppViewContent', () => {
     { view: 'hygiene', testid: 'hygiene-panel' },
     { view: 'graph', testid: 'dependency-graph-view' },
     { view: 'settings', testid: 'settings-panel' },
-    { view: 'issue-reports', testid: 'issue-reports-panel' },
   ];
 
   for (const { view, testid } of leafCases) {
