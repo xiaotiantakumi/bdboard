@@ -267,6 +267,7 @@ rebase 後には必ず `npm run check:file-size` を単体で再実行し、他 
 Playwright の e2e は**含まない** (`test/e2e/*.test.ts` の vitest 単体テスト — ポート採番などの補助 — だけは
 test:server に入る)。e2e は CI の別ジョブ `e2e` (`npm run test:e2e`) で走り、`verify` と
 並ぶ required status check になっている ([GIT-WORKFLOW.md](GIT-WORKFLOW.md))。
+spec は `smoke.spec.ts` の 1 本だけ (bdboard-5wxf。レイアウト等の回帰は単体テストで守る)。
 したがって:
 
 - **「verify が exit 0」は e2e が通った根拠にならない。** e2e の spec を足した・変えた PR、あるいは
