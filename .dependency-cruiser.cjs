@@ -71,9 +71,9 @@ module.exports = {
       name: 'no-child-process-outside-process-runners',
       severity: 'error',
       comment:
-        'child_process may only be imported from infrastructure/process or infrastructure/runners',
+        'child_process may only be imported from infrastructure/process',
       from: {
-        pathNot: '^src/infrastructure/(process|runners)/',
+        pathNot: '^src/infrastructure/process/',
       },
       to: {
         dependencyTypes: ['core'],

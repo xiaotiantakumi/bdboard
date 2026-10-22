@@ -44,8 +44,6 @@ export interface MountRoutesDeps {
   readonly boardThresholdsRouter: Hono;
   readonly dbStatsRouter: Hono;
   readonly aiQuotaAlertRouter: Hono;
-  readonly agentRunSettingsRouter: Hono;
-  readonly agentRunRouter: Hono;
   readonly tunnelRouter: Hono;
   readonly updateCheckRouter: Hono;
   /** BDBOARD_AI_QUOTA_DISABLED のとき未登録 (undefined)。 */
@@ -82,8 +80,6 @@ export function mountRoutes(app: Hono, deps: MountRoutesDeps): void {
   app.route('/', deps.boardThresholdsRouter);
   app.route('/', deps.dbStatsRouter);
   app.route('/', deps.aiQuotaAlertRouter);
-  app.route('/', deps.agentRunSettingsRouter);
-  app.route('/', deps.agentRunRouter);
   app.route('/', deps.tunnelRouter);
   app.route('/', deps.updateCheckRouter);
 

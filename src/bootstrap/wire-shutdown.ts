@@ -1,13 +1,13 @@
 /**
  * bdboard-sso1.86: src/main.ts (composition root) から SIGINT/SIGTERM の
  * shutdown 配線 (drain → graceful shutdown → タイマー停止 → signal ハンドラ登録) を
- * 切り出したもの。runStore/chatRepositories を必須化した点を除けば、main.ts に
+ * 切り出したもの。chatRepositories を必須化した点を除けば、main.ts に
  * あった配線ロジックそのものの移動で挙動は変えていない (レビュー指摘で必須化のみ追加)。
  *
  * shutdownForSignal 内の後始末順序 (refresh → session → transcript →
  * ai-quota-alert のタイマー停止 → reclaimScheduler.stop() → shutdown()) は元の
  * main.ts と完全に同じ (bdboard-4y8q.9.4: reclaimScheduler.stop() の次に、届いた issue の
- * 定期確認の停止 externalIssues.stop() を足した)。drain 内部の順序 (runStore → tunnelService → watchHandle →
+ * 定期確認の停止 externalIssues.stop() を足した)。drain 内部の順序 (tunnelService → watchHandle →
  * cache → chatRepositories) は application/board/shutdown-drain.ts 側の契約であり、
  * ここでは変えない。
  *
@@ -26,19 +26,13 @@ import {
 } from '../interface/http/graceful-shutdown.js';
 
 /**
- * bdboard-sso1.86 レビュー指摘: ShutdownDrainDeps 側の runStore/chatRepositories は
- * (in-memory 実装やテストの都合で) optional だが、main.ts の配線では両方とも必ず
+ * bdboard-sso1.86 レビュー指摘: ShutdownDrainDeps 側の chatRepositories は
+ * (in-memory 実装やテストの都合で) optional だが、main.ts の配線では必ず
  * 実体を持つ値が揃っている。ここで必須化しておくことで、将来 main.ts 側の呼び出しで
- * どちらかを渡し忘れても型エラーで即気づける (テストと tsc だけでは検知できなかった -
+ * 渡し忘れても型エラーで即気づける (テストと tsc だけでは検知できなかった -
  * 渡し忘れても drain 自体は残りのステップだけで正常終了してしまうため)。
  */
-export interface WireShutdownDeps extends Omit<ShutdownDrainDeps, 'runStore' | 'chatRepositories'> {
-  // NonNullable<ShutdownDrainDeps[...]> で必須化する: RunStore 型を直接 import すると
-  // runner-reachability.test.ts の「ランナー dispatch 経路への参照は
-  // interface/http/agent-run-routes.ts 経由の単一許可パスに限る」というトークン走査
-  // ガードに引っかかる (bdboard-sso1.86 review で実際に検知)。ShutdownDrainDeps 側が
-  // 既に持つ型をそのまま必須化するだけなら、新規 import を増やさずに済む。
-  readonly runStore: NonNullable<ShutdownDrainDeps['runStore']>;
+export interface WireShutdownDeps extends Omit<ShutdownDrainDeps, 'chatRepositories'> {
   readonly chatRepositories: NonNullable<ShutdownDrainDeps['chatRepositories']>;
   readonly server: GracefulShutdownServer;
   readonly shutdownTimeoutMs: number;

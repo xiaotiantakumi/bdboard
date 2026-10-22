@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createFileAgentRunConfigStore } from './agent-run-config-store.js';
+import { createFileScanRootsConfigStore } from './scan-roots-config-store.js';
 import { createFileBoardThresholdsConfigStore } from './board-thresholds-config-store.js';
 import { withConfigFileLock } from './config-file-write-lock.js';
 
@@ -69,17 +69,18 @@ describe('config file write lock integration', () => {
     tmpDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-config-lock-integration-'));
     const filePath = path.join(tmpDir, 'config.json');
 
-    const agentRunStore = createFileAgentRunConfigStore(filePath);
+    const scanRootsStore = createFileScanRootsConfigStore(filePath);
     const boardThresholdsStore = createFileBoardThresholdsConfigStore(filePath);
 
     await Promise.all([
-      agentRunStore.write({ allowRemoteAgentRuns: true }),
+      scanRootsStore.write({ scanRoots: ['/tmp/a'], excludePaths: [] }),
       boardThresholdsStore.write({ stalledAfterMs: 86_400_000 }),
     ]);
 
     const onDisk = JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, unknown>;
     expect(onDisk).toEqual({
-      allowRemoteAgentRuns: true,
+      scanRoots: ['/tmp/a'],
+      excludePaths: [],
       stalledAfterMs: 86_400_000,
     });
   });
