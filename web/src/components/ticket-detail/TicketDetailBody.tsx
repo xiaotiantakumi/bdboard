@@ -17,23 +17,17 @@ import { TicketLabelsSection } from './TicketLabelsSection';
 import { TicketDescriptionSection } from './TicketDescriptionSection';
 import { TicketNotesSection } from './TicketNotesSection';
 import { TicketLocalFilesSection } from '../local-files/TicketLocalFilesSection';
-import {
-  TicketAgentRunTrigger,
-  TicketAgentRunConfirm,
-} from './TicketAgentRunTriggerSection';
 import type { useTicketDetailController } from './useTicketDetailController';
 
 type Controller = ReturnType<typeof useTicketDetailController>;
 
 export interface TicketDetailBodyProps {
   data: TicketDetailDto;
-  ticketId: string;
   prLink?: PrBadgeDto;
   onChatAboutTicket?: (ctx: { projectId: string; ticketId: string }) => void;
   isTicketOnBoard: (ticketId: string) => boolean;
   onOpenTicket: (ticketId: string) => void;
   onFilterByEpic: (ticketId: string) => void;
-  agentRun: Controller['agentRun'];
   labels: Controller['labels'];
   inFlightOverlaps: Controller['inFlightOverlaps'];
   similarTickets: Controller['similarTickets'];
@@ -42,13 +36,11 @@ export interface TicketDetailBodyProps {
 
 export function TicketDetailBody({
   data,
-  ticketId,
   prLink,
   onChatAboutTicket,
   isTicketOnBoard,
   onOpenTicket,
   onFilterByEpic,
-  agentRun,
   labels,
   inFlightOverlaps,
   similarTickets,
@@ -71,24 +63,7 @@ export function TicketDetailBody({
             このチケットについてチャット
           </button>
         )}
-        <TicketAgentRunTrigger
-          agentRunActionsDisabled={agentRun.actionsDisabled}
-          runStartDisabled={agentRun.runStartDisabled}
-          harnessRunBlockReason={agentRun.harnessRunBlockReason}
-          hasActiveRun={agentRun.hasActiveRun}
-          onStartConfirm={() => agentRun.setConfirmingAgentRun(true)}
-        />
       </div>
-      <TicketAgentRunConfirm
-        ticketId={ticketId}
-        confirmingAgentRun={agentRun.confirmingAgentRun}
-        agentRunConfirmRef={agentRun.agentRunConfirmRef}
-        cancelAgentRunConfirmRef={agentRun.cancelAgentRunConfirmRef}
-        onCancelAgentRun={agentRun.handleCancelAgentRun}
-        onStartRun={() => agentRun.startRunMutation.mutate()}
-        startRunPending={agentRun.startRunMutation.isPending}
-        startRunError={agentRun.startRunMutation.error}
-      />
       <DetailField label="ID">{data.id}</DetailField>
       <DetailField label="Status">{data.status}</DetailField>
       <DetailField label="Priority">P{data.priority}</DetailField>

@@ -19,17 +19,12 @@ import {
 } from '../hooks/useResizableSidePanel';
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { type TicketDetailPanelProps } from './ticket-detail/types';
-import {
-  AGENT_RUN_LOG_LOCAL_ONLY_HELP,
-  AGENT_RUN_NEXT_STEP_LABEL,
-} from './ticket-detail/agentRun';
 import { TicketDetailHeaderSection } from './ticket-detail/TicketDetailHeaderSection';
 import { TicketDetailBody } from './ticket-detail/TicketDetailBody';
 import { TicketDetailSecondaryBody } from './ticket-detail/TicketDetailSecondaryBody';
 import { useTicketDetailController } from './ticket-detail/useTicketDetailController';
 
 export type { TicketDetailPanelProps };
-export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
 
 export function TicketDetailPanel({
   ticketId,
@@ -122,13 +117,11 @@ export function TicketDetailPanel({
           <>
             <TicketDetailBody
               data={controller.data}
-              ticketId={ticketId}
               prLink={prLink}
               onChatAboutTicket={onChatAboutTicket}
               isTicketOnBoard={isTicketOnBoard}
               onOpenTicket={onOpenTicket}
               onFilterByEpic={onFilterByEpic}
-              agentRun={controller.agentRun}
               labels={controller.labels}
               inFlightOverlaps={controller.inFlightOverlaps}
               similarTickets={controller.similarTickets}
@@ -147,7 +140,6 @@ export function TicketDetailPanel({
               timeline={controller.timeline}
               comment={controller.comment}
               quickActions={controller.quickActions}
-              agentRun={controller.agentRun}
               copy={controller.copy}
               commentTextareaRef={commentTextareaRef}
             />

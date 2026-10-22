@@ -5,7 +5,6 @@ import { type ViewMode } from '../../uiPersistedState';
 import { type WipLimitsOverrides } from '../../wip-limits';
 import { VIEW_LABELS } from '../../paletteActions';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { type NextUpRunLoopController } from '../nextUpRunLoop';
 import { SettingsPanel } from '../SettingsPanel';
 import { AppBoardViewSwitch } from './AppBoardViewSwitch';
 
@@ -51,9 +50,6 @@ export interface AppViewContentProps {
   };
   onCardClick: (ticketId: string) => void;
   onSessionBadgeClick: (projectId?: string) => void;
-  nextUp: {
-    batchRun: NextUpRunLoopController;
-  };
 }
 
 export function AppViewContent({
@@ -65,7 +61,6 @@ export function AppViewContent({
   boardMeta,
   onCardClick,
   onSessionBadgeClick,
-  nextUp,
 }: AppViewContentProps) {
   return (
     // view をキーにして、別ビューへ切り替えたら壊れた状態を持ち越さない。
@@ -86,7 +81,6 @@ export function AppViewContent({
         }}
         onCardClick={onCardClick}
         onSessionBadgeClick={onSessionBadgeClick}
-        nextUp={nextUp}
       />
       {view === 'settings' && <SettingsPanel />}
     </ErrorBoundary>

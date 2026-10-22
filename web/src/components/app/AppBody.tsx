@@ -41,7 +41,6 @@ export function AppBody({ controller }: AppBodyProps) {
     tipsBannerDismissed,
     setTipsBannerDismissed,
     boardFilterState,
-    nextUpBatchRun,
     epicFilterId,
     setEpicFilterId,
     handleSelectTicket,
@@ -126,9 +125,6 @@ export function AppBody({ controller }: AppBodyProps) {
           }}
           onCardClick={handleSelectTicket}
           onSessionBadgeClick={overlays.handleOpenSessionList}
-          nextUp={{
-            batchRun: nextUpBatchRun,
-          }}
         />
         </BulkSelectionProvider>
         </BoardDnDProvider>

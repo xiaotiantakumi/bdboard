@@ -15,7 +15,6 @@ import { TicketTimelineSection } from './TicketTimelineSection';
 import { TicketAttachments } from '../TicketAttachments';
 import { TicketCommentsSection } from './TicketCommentsSection';
 import { TicketQuickActionsSection } from './TicketQuickActionsSection';
-import { TicketAgentRunSection } from './TicketAgentRunSection';
 import { TicketBdCommandSection } from './TicketBdCommandSection';
 import type { useTicketDetailController } from './useTicketDetailController';
 
@@ -34,7 +33,6 @@ export interface TicketDetailSecondaryBodyProps {
   timeline: Controller['timeline'];
   comment: Controller['comment'];
   quickActions: Controller['quickActions'];
-  agentRun: Controller['agentRun'];
   copy: Controller['copy'];
   commentTextareaRef: RefObject<HTMLTextAreaElement | null>;
 }
@@ -52,7 +50,6 @@ export function TicketDetailSecondaryBody({
   timeline,
   comment,
   quickActions,
-  agentRun,
   copy,
   commentTextareaRef,
 }: TicketDetailSecondaryBodyProps) {
@@ -163,24 +160,6 @@ export function TicketDetailSecondaryBody({
         mutationPending={quickActions.mutationPending}
         onConfirmQuickAction={quickActions.handleConfirmQuickAction}
         mutationError={quickActions.mutationError}
-      />
-      <TicketAgentRunSection
-        polledRunDetail={agentRun.polledRunDetail}
-        activeRunMeta={agentRun.activeRunMeta}
-        runStatusUnavailable={agentRun.runStatusUnavailable}
-        copyFeedback={copy.copyFeedback}
-        onCopyNextStep={(target, nextStep) =>
-          void copy.handleCopyNextStep(target, nextStep)
-        }
-        cancelRunMutation={agentRun.cancelRunMutation}
-        ticketRunsLoading={agentRun.ticketRunsLoading}
-        ticketRunsError={agentRun.ticketRunsError}
-        ticketRunsData={agentRun.ticketRunsData}
-        selectedHistoryRunId={agentRun.selectedHistoryRunId}
-        onSelectHistoryRun={agentRun.setSelectedHistoryRunId}
-        selectedHistoryRunLoading={agentRun.selectedHistoryRunLoading}
-        selectedHistoryRunError={agentRun.selectedHistoryRunError}
-        selectedHistoryRun={agentRun.selectedHistoryRun}
       />
       <TicketBdCommandSection
         ticketId={data.id}

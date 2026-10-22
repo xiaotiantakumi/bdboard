@@ -10,7 +10,6 @@ import { type WipLimitsOverrides } from '../../wip-limits';
 import { BoardFilterBar } from '../BoardFilterBar';
 import { SplitBoard } from '../BoardView';
 import { BulkActionBar } from '../BulkActionBar';
-import { type NextUpRunLoopController } from '../nextUpRunLoop';
 
 /**
  * bdboard-62p4 PR-2: AppViewContent からボード系ビュー(split)の
@@ -43,9 +42,6 @@ export interface AppBoardViewSwitchProps {
   };
   onCardClick: (ticketId: string) => void;
   onSessionBadgeClick: (projectId?: string) => void;
-  nextUp: {
-    batchRun: NextUpRunLoopController;
-  };
 }
 
 export function AppBoardViewSwitch({
@@ -57,7 +53,6 @@ export function AppBoardViewSwitch({
   boardMeta,
   onCardClick,
   onSessionBadgeClick,
-  nextUp,
 }: AppBoardViewSwitchProps) {
   return (
     <>
@@ -100,11 +95,6 @@ export function AppBoardViewSwitch({
         <BulkActionBar
           cardsById={board.cardsById}
           availableLabels={board.availableLabels ?? []}
-          agentRun={{
-            batchRun: nextUp.batchRun,
-            board: board.query.data,
-            projectNames: boardMeta.projectNames,
-          }}
         />
       )}
       {board.query.data !== undefined && view === 'split' && (

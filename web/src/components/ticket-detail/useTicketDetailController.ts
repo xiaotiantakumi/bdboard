@@ -12,13 +12,10 @@
 //   より後でしか呼べない(TDZ)。かつ useFocusTrap の直前という元の位置を維持する
 //   こと(useTicketFormReset.ts 冒頭コメント参照。この制約は元の並びをそのまま
 //   保っているだけで、今回変更していない)。
-// - useTicketAgentRun (agentRun) は自分の ticketId/projectRootPath 変更リセットを
-//   内部の2つの effect の順序だけで保証しており、このフックの前後どちらに置いても
-//   影響しない(PR-L, c9fcb38 参照)。呼び出し位置は元のまま。
 //
 // 戻り値はセクションの関心事ごとにグループ化して返す
 // (title/description/labels/dependencies/comment/sessionLink/timeline/
-// similarTickets/inFlightOverlaps/quickActions/agentRun/decision/copy)。
+// similarTickets/inFlightOverlaps/quickActions/decision/copy)。
 // 各グループの中身は対応するフックの戻り値オブジェクトをそのまま(または
 // 表示に必要な派生値を足して spread した)もので、フィールド名は元の
 // TicketDetailPanel 内のローカル変数名/フックの戻り値フィールド名を変えていない。
@@ -29,12 +26,11 @@ import {
   type BdCommandKind,
   copyTextToClipboard,
 } from '../../bdCommands';
-import { type AgentRunNextStepDto, type PendingDecisionDto } from '../../api';
+import { type PendingDecisionDto } from '../../api';
 import { useAutoClearedValue } from '../../hooks/useAutoClearedValue';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { buildRunNextStepCommand } from '../agentRunShared';
 import { COPY_FEEDBACK_MS } from './constants';
-import { type CopyDisplay, type NextStepCopyTarget, EMPTY_COPY_DISPLAY } from './types';
+import { type CopyDisplay, EMPTY_COPY_DISPLAY } from './types';
 import { useTicketDetailQueries } from './useTicketDetailQueries';
 import { useTicketTitleEditing } from './useTicketTitleEditing';
 import { useTicketDescriptionEditing } from './useTicketDescriptionEditing';
@@ -43,7 +39,6 @@ import { useTicketDependencies } from './useTicketDependencies';
 import { useTicketComment } from './useTicketComment';
 import { useTicketSessionLink } from './useTicketSessionLink';
 import { useTicketQuickActions } from './useTicketQuickActions';
-import { useTicketAgentRun } from './useTicketAgentRun';
 import { useTicketFormReset } from './useTicketFormReset';
 import { useCommentFocusShortcut } from './useCommentFocusShortcut';
 
@@ -86,7 +81,6 @@ export function useTicketDetailController({
   const { queryClient, undoSnackbar, data, isLoading, error, projectRootPath, decision } =
     queries;
 
-  const agentRun = useTicketAgentRun(ticketId, data, projectRootPath);
   // bdboard-ty72: コピー表示は copyTextToClipboard の継続から出るので、素の
   // setTimeout だとアンマウント後にタイマーを仕掛けうる。
   const {
@@ -131,7 +125,7 @@ export function useTicketDetailController({
     containerRef: panelRef,
     initialFocusRef: closeButtonRef,
     onEscape: onClose,
-    enabled: quickActions.confirmingQuickAction === null && !agentRun.confirmingAgentRun,
+    enabled: quickActions.confirmingQuickAction === null,
   });
 
   // パネル外枠の 'c' キーボードショートカット (コメント入力欄へフォーカス)。
@@ -139,8 +133,7 @@ export function useTicketDetailController({
   // 確認中フラグ) は複数セクションのフックを跨ぐため、合成は親側に残す。
   const onCommentFocusShortcut = useCommentFocusShortcut({
     textareaRef: commentTextareaRef,
-    disabled:
-      quickActions.confirmingQuickAction !== null || agentRun.confirmingAgentRun,
+    disabled: quickActions.confirmingQuickAction !== null,
   });
 
   useEffect(() => {
@@ -181,35 +174,9 @@ export function useTicketDetailController({
     [projectRootPath, showCopyDisplay, ticketId],
   );
 
-  const handleCopyNextStep = useCallback(
-    async (target: NextStepCopyTarget, nextStep: AgentRunNextStepDto) => {
-      const command = buildRunNextStepCommand(nextStep);
-      try {
-        await copyTextToClipboard(command);
-        showCopyDisplay({
-          feedback: { kind: 'success', command: target },
-          aria: '次に実行するコマンドをコピーしました',
-        });
-      } catch (copyError) {
-        console.error('Failed to copy next step command', copyError);
-        showCopyDisplay({
-          feedback: { kind: 'error' },
-          aria: 'コピーできませんでした',
-        });
-      }
-    },
-    [showCopyDisplay],
-  );
-
   const quickActionsDisabled =
     quickActions.mutationPending ||
-    quickActions.confirmingQuickAction !== null ||
-    agentRun.confirmingAgentRun ||
-    agentRun.startRunMutation.isPending;
-  const agentRunActionsDisabled =
-    agentRun.startRunMutation.isPending ||
-    quickActions.confirmingQuickAction !== null ||
-    agentRun.confirmingAgentRun;
+    quickActions.confirmingQuickAction !== null;
 
   return {
     data,
@@ -226,9 +193,8 @@ export function useTicketDetailController({
     similarTickets: queries.similarTickets,
     inFlightOverlaps: queries.inFlightOverlaps,
     quickActions: { ...quickActions, disabled: quickActionsDisabled },
-    agentRun: { ...agentRun, actionsDisabled: agentRunActionsDisabled },
     decision,
-    copy: { copyFeedback, ariaLiveMessage, handleCopyCommand, handleCopyNextStep },
+    copy: { copyFeedback, ariaLiveMessage, handleCopyCommand },
     onCommentFocusShortcut,
   };
 }

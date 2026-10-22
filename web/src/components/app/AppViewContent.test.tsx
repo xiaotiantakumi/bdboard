@@ -4,7 +4,6 @@ import type { PrBadgeDto } from '../../api';
 import { EMPTY_BOARD_FILTER } from '../../boardFilter';
 import type { BoardFilterState } from '../../hooks/useBoardFilterState';
 import type { ViewMode } from '../../uiPersistedState';
-import type { NextUpRunLoopController } from '../nextUpRunLoop';
 import { AppViewContent, type AppViewContentProps } from './AppViewContent';
 
 // bdboard-62p4 PR-2: AppViewContent は「どの view のときにどの子コンポーネントを
@@ -85,9 +84,6 @@ function makeProps(overrides: Partial<AppViewContentProps> = {}): AppViewContent
     },
     onCardClick: vi.fn(),
     onSessionBadgeClick: vi.fn(),
-    nextUp: {
-      batchRun: {} as unknown as NextUpRunLoopController,
-    },
     ...overrides,
   };
 }
@@ -140,9 +136,6 @@ describe('AppViewContent', () => {
       cardsById: new Map(),
       availableLabels: ['marker-label'],
     };
-    const nextUp = {
-      batchRun: { id: 'marker-batch-run' } as unknown as NextUpRunLoopController,
-    };
     const onCardClick = vi.fn();
     const onSessionBadgeClick = vi.fn();
 
@@ -163,7 +156,6 @@ describe('AppViewContent', () => {
           },
           onCardClick,
           onSessionBadgeClick,
-          nextUp,
         })}
       />,
     );
@@ -173,7 +165,6 @@ describe('AppViewContent', () => {
       board,
       onCardClick,
       onSessionBadgeClick,
-      nextUp,
       boardMeta: {
         projectNames,
         projectActiveSessions,

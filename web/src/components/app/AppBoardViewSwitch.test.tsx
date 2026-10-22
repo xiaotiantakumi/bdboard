@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoardCardDto, BoardViewDto, PrBadgeDto } from '../../api';
 import { EMPTY_BOARD_FILTER } from '../../boardFilter';
 import type { BoardFilterState } from '../../hooks/useBoardFilterState';
-import type { NextUpRunLoopController } from '../nextUpRunLoop';
 import { AppBoardViewSwitch, type AppBoardViewSwitchProps } from './AppBoardViewSwitch';
 
 // bdboard-62p4 PR-2: このファイルは AppBoardViewSwitch が持つ「view に応じた
@@ -133,9 +132,6 @@ function makeProps(overrides: Partial<AppBoardViewSwitchProps> = {}): AppBoardVi
     },
     onCardClick: vi.fn(),
     onSessionBadgeClick: vi.fn(),
-    nextUp: {
-      batchRun: {} as unknown as NextUpRunLoopController,
-    },
     ...overrides,
   };
 }
@@ -451,29 +447,5 @@ describe('AppBoardViewSwitch', () => {
     );
     const props = bulkActionBarMock.mock.calls.at(-1)?.[0];
     expect(props).toMatchObject({ availableLabels });
-  });
-
-  it('passes the App-owned batchRun, board data and project names to BulkActionBar (bdboard-mkm1.2)', () => {
-    const batchRun = { id: 'marker-bulk-batch-run' } as unknown as NextUpRunLoopController;
-    const projectNames = new Map([['proj-1', 'Project One']]);
-    const data = makeBoardData();
-    render(
-      <AppBoardViewSwitch
-        {...makeProps({
-          view: 'split',
-          board: {
-            query: { data, isLoading: false, error: null },
-            cardsById: new Map(),
-            availableLabels: [],
-          },
-          boardMeta: { ...makeProps().boardMeta, projectNames },
-          nextUp: { ...makeProps().nextUp, batchRun },
-        })}
-      />,
-    );
-    const agentRun = bulkActionBarMock.mock.calls.at(-1)?.[0].agentRun;
-    expect(agentRun?.batchRun).toBe(batchRun);
-    expect(agentRun?.board).toBe(data);
-    expect(agentRun?.projectNames).toBe(projectNames);
   });
 });

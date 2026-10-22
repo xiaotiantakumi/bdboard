@@ -14,7 +14,6 @@ import {
   patchTicketTitle,
   patchTicketDescription,
   fetchPlatformSupport,
-  fetchTicketRuns,
   fetchTicketInFlightOverlaps,
   fetchProjectHarnessStatus,
 } from '../api';
@@ -32,7 +31,6 @@ vi.mock('../api', async (importOriginal) => {
     patchTicketTitle: vi.fn(),
     patchTicketDescription: vi.fn(),
     fetchPlatformSupport: vi.fn(),
-    fetchTicketRuns: vi.fn(),
     fetchTicketInFlightOverlaps: vi.fn(),
     fetchProjectHarnessStatus: vi.fn(),
   };
@@ -44,13 +42,11 @@ const mockFetchSimilarTickets = vi.mocked(fetchSimilarTickets);
 const mockPatchTicketTitle = vi.mocked(patchTicketTitle);
 const mockPatchTicketDescription = vi.mocked(patchTicketDescription);
 const mockFetchPlatformSupport = vi.mocked(fetchPlatformSupport);
-const mockFetchTicketRuns = vi.mocked(fetchTicketRuns);
 const mockFetchTicketInFlightOverlaps = vi.mocked(fetchTicketInFlightOverlaps);
 const mockFetchProjectHarnessStatus = vi.mocked(fetchProjectHarnessStatus);
 
 beforeEach(() => {
   mockFetchSimilarTickets.mockResolvedValue([]);
-  mockFetchTicketRuns.mockResolvedValue({ runs: [] });
   mockFetchTicketInFlightOverlaps.mockResolvedValue([]);
   resetPlatformSupportCache();
   mockFetchPlatformSupport.mockResolvedValue({ platform: 'darwin', limitations: [] });
