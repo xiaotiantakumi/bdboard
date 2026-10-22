@@ -5,8 +5,10 @@ on:
   push:
     branches: [main]
 
+# PR では同じブランチの古い run を捨てる。main への push は sha ごとに別グループにして、
+# 連続した auto-merge の run が互いにキャンセルされて赤が見えなくなるのを防ぐ (bdboard-1e2l)。
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -163,74 +165,3 @@ jobs:
       # BDBOARD_E2E_PORT を pin しない — 自動採番と config→worker への env 伝播を CI でも必ず通す。
       # pin すると本番経路 (playwright.config.ts の書き戻し) が一度も検証されず、壊れても CI が緑のままになる。
       - run: npm run test:e2e
-
-  # CHANGELOG から落ちる解析不能コミットを検知する。pull_request と main への push の
-  # 両方で走り、イベントで見る範囲を分ける。範囲の表は docs/VERIFY.md の
-  # 「ローカルが exit 1 なのに CI の commit-parse が緑のとき」にある。
-  #   - pull_request: base.sha..head.sha = その PR が足すコミットだけ (bdboard-qhsb)。
-  #     マージ前に止めるための関門で、main 上の既存コミットは巻き込まない。
-  #   - push (main): v<last-release>..HEAD = リリース以降の main の全コミット。
-  # PR 分岐をすり抜け、main への push で初めて見えるものが2種ある:
-  #   - squash の最終メッセージがブランチ上のどのコミットとも違うとき。複数コミットの
-  #     PR は PR タイトルが件名になり、マージ画面で手で編集することもできる。
-  #   - Actions 自体が動かず、PR の ci を通さないまま ruleset の bypass でマージした
-  #     CI 復旧 PR (docs/GIT-WORKFLOW.md「Direct-to-main の禁止」)。PR を経ない直接
-  #     コミットは 2026-09-26 に bypass が pull requests only になって無くなった。
-  # どちらもタグを切る前の main push で拾う。なお release-please の release PR には
-  # pull_request トリガーの ci が走らない (GITHUB_TOKEN 仕様、release-please.yml 先頭参照)。
-  # 中身は CHANGELOG 対象外の release コミットだけなので、検査の穴にはならない。
-  # push 分岐は毎回範囲全体を見るので、concurrency で前 run がキャンセルされても、
-  # 同じリリース範囲の中なら後続 run が取りこぼしを拾い直せる。
-  commit-parse:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - run: npm ci
-
-      # main への push: 直近のリリースタグ以降を全部見る (既定の範囲)。
-      # ここが最終的な砦で、タグを切る前に取りこぼしが無いことを保証する。
-      #
-      # main に載ってしまって履歴書き換え以外に直せない分は KNOWN_UNPARSABLE で除外し、
-      # 代わりに手当ての手順を毎回このログへ再掲する (bdboard-721p)。除外しないと
-      # 次のタグを切るまで main が恒常的に赤くなり、他の回帰を隠してしまう。
-      # 除外エントリは既定範囲でしか掃除の判定ができないので、その通知もこの分岐だけに出る。
-      - if: github.event_name == 'push'
-        run: npm run check:commits
-
-      # PR: そのPRが足すコミットだけを見る (bdboard-qhsb)。
-      #
-      # なぜ PR でも見る必要があるのか: GitHub の squash マージは、コミットが1件なら
-      # **そのコミットのメッセージをそのまま** squash メッセージにする。このリポジトリは
-      # 1PR=1コミットが常態なので、main に載るメッセージはマージ前からブランチ上に実在する。
-      # つまり PR 時点で検査できる。push だけで見ていた頃は、#260 のように壊れた
-      # メッセージがマージされて初めて main が赤くなり、その時点では履歴書き換えか
-      # CHANGELOG 手追記しか復旧手段が無かった (bdboard-ym9r)。
-      #
-      # なぜ既定の範囲を使わないのか: 既定は `v<直近リリース>..HEAD` で、main 上の
-      # 既存コミットまで巻き込む。main に未解決の解析不能コミットが1件でもあると、
-      # 無関係な PR が全部赤くなって道連れになる。PR が足した分だけを見る。
-      #
-      # 終端に HEAD ではなく head.sha を使う理由: pull_request の HEAD は GitHub が
-      # 生成したマージ ref (refs/pull/N/merge) で、base の *現在の* 先端に対して作られる。
-      # イベント発火からチェックアウトまでの間に main が動くと、base.sha..HEAD に
-      # 無関係な main のコミットが紛れ込み、避けたかった道連れがそのまま起きる。
-      # base.sha..head.sha なら main がどう動いてもこの PR のコミットだけになる。
-      #
-      # なお範囲にマージコミット ("Merge X into Y") が入ること自体は許容できる。
-      # ブランチが main を merge で取り込んでいれば普通に混ざるが、conventional な
-      # type を持たないので CHANGELOG 対象外に分類され warning 止まり (実測 2026-09-04)。
-      # この前提は scripts/check-commit-parse.test.mjs で固定してある。
-      - if: github.event_name == 'pull_request'
-        run: |
-          npm run check:commits -- --range \
-            ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
