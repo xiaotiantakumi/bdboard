@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { compareStrings } from '../../domain/compare.js';
 import type { BoardCache, CachedProject } from '../../application/ports/board-cache.js';
-import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../../application/ports/board-cache-fakes.js';
+import { createEmptyCacheStatsMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../../application/ports/board-cache-fakes.js';
 import type { HarnessContractReaderPort } from '../../application/ports/harness-contract-reader.js';
 import type { HarnessInjectorPort } from '../../application/ports/harness-injector.js';
 import type { PackRegistryPort } from '../../application/ports/pack-registry.js';
@@ -72,7 +72,7 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
       return [];
     },
     close(): void {},
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
   };

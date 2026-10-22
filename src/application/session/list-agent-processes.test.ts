@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compareStrings } from '../../domain/compare.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
-import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
+import { createEmptyCacheStatsMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
 import type { Project } from '../../domain/project.js';
 import type { ScannedProcess } from '../ports/process-scanner.js';
 import { listAgentProcesses } from './list-agent-processes.js';
@@ -41,7 +41,7 @@ function createFakeCache(entries: readonly CachedProject[]): BoardCache {
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close(): void {},

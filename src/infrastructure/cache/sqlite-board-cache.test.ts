@@ -577,7 +577,7 @@ describe('createSqliteBoardCache', () => {
     cache.close();
   });
 
-  it('deletes a project and clears all cached projects except cfd snapshots', () => {
+  it('deletes a project and clears all cached projects', () => {
     const cache = createSqliteBoardCache(':memory:');
 
     cache.putProject(
@@ -590,91 +590,12 @@ describe('createSqliteBoardCache', () => {
         project: { id: 'b', rootPath: '/b', name: 'B' },
       }),
     );
-    cache.putCfdSnapshot('2026-08-15', new Date('2026-08-15T09:00:00.000Z'), [
-      { projectId: 'a', status: 'open', count: 3 },
-    ]);
-
     cache.deleteProject('a');
     expect(cache.getProject('a')).toBeUndefined();
     expect(cache.getProject('b')).toBeDefined();
 
     cache.clear();
     expect(cache.listProjects()).toEqual([]);
-    expect(cache.listCfdSnapshots()).toEqual([
-      expect.objectContaining({
-        projectId: 'a',
-        status: 'open',
-        snapshotDate: '2026-08-15',
-        count: 3,
-      }),
-    ]);
-    cache.close();
-  });
-
-  it('stores and upserts cfd snapshots by project, status, and date', () => {
-    const cache = createSqliteBoardCache(':memory:');
-    const firstAt = new Date('2026-08-15T09:00:00.000Z');
-    const secondAt = new Date('2026-08-15T18:00:00.000Z');
-
-    cache.putCfdSnapshot('2026-08-15', firstAt, [
-      { projectId: 'proj-a', status: 'open', count: 2 },
-      { projectId: 'proj-a', status: 'blocked', count: 1 },
-    ]);
-    cache.putCfdSnapshot('2026-08-15', secondAt, [
-      { projectId: 'proj-a', status: 'open', count: 5 },
-    ]);
-    cache.putCfdSnapshot('2026-08-16', secondAt, [
-      { projectId: 'proj-a', status: 'open', count: 1 },
-    ]);
-
-    expect(cache.getLatestCfdSnapshotDate()).toBe('2026-08-16');
-    expect(cache.listCfdSnapshots()).toEqual([
-      {
-        projectId: 'proj-a',
-        status: 'blocked',
-        snapshotDate: '2026-08-15',
-        snapshottedAt: firstAt,
-        count: 1,
-      },
-      {
-        projectId: 'proj-a',
-        status: 'open',
-        snapshotDate: '2026-08-15',
-        snapshottedAt: secondAt,
-        count: 5,
-      },
-      {
-        projectId: 'proj-a',
-        status: 'open',
-        snapshotDate: '2026-08-16',
-        snapshottedAt: secondAt,
-        count: 1,
-      },
-    ]);
-    expect(cache.listCfdSnapshots(['proj-a'])).toHaveLength(3);
-    expect(cache.listCfdSnapshots([])).toEqual([]);
-    cache.close();
-  });
-
-  it('prunes cfd snapshots older than the cutoff date', () => {
-    const cache = createSqliteBoardCache(':memory:');
-    const snapshottedAt = new Date('2026-08-18T09:00:00.000Z');
-
-    cache.putCfdSnapshot('2025-08-17', snapshottedAt, [
-      { projectId: 'proj-a', status: 'open', count: 1 },
-    ]);
-    cache.putCfdSnapshot('2025-08-18', snapshottedAt, [
-      { projectId: 'proj-a', status: 'open', count: 2 },
-    ]);
-    cache.putCfdSnapshot('2026-08-18', snapshottedAt, [
-      { projectId: 'proj-a', status: 'open', count: 3 },
-    ]);
-
-    expect(cache.pruneCfdSnapshots('2025-08-18')).toBe(1);
-    expect(cache.listCfdSnapshots().map((row) => row.snapshotDate)).toEqual([
-      '2025-08-18',
-      '2026-08-18',
-    ]);
     cache.close();
   });
 
@@ -684,10 +605,6 @@ describe('createSqliteBoardCache', () => {
     const cache = createSqliteBoardCache(dbPath);
 
     cache.putProject(makeEntry({}));
-    cache.putCfdSnapshot('2026-08-18', new Date('2026-08-18T09:00:00.000Z'), [
-      { projectId: 'proj-a', status: 'open', count: 1 },
-      { projectId: 'proj-a', status: 'blocked', count: 2 },
-    ]);
 
     const stats = cache.getCacheStats();
     expect(stats.sizeBytes).toBeGreaterThan(0);
@@ -696,7 +613,7 @@ describe('createSqliteBoardCache', () => {
       { name: 'transcript_offsets', rowCount: 0 },
       { name: 'session_usage', rowCount: 0 },
       { name: 'meta', rowCount: 1 },
-      { name: 'cfd_snapshots', rowCount: 2 },
+      { name: 'cfd_snapshots', rowCount: 0 },
       { name: 'session_links', rowCount: 0 },
       { name: 'chat_sessions', rowCount: 0 },
       { name: 'chat_messages', rowCount: 0 },
@@ -1259,19 +1176,8 @@ describe('createSqliteBoardCache', () => {
       rawDb.close();
 
       const cache = createSqliteBoardCache(dbPath);
-      cache.putCfdSnapshot('2026-08-15', new Date('2026-08-15T09:00:00.000Z'), [
-        { projectId: 'kept', status: 'open', count: 4 },
-      ]);
 
       expect(cache.getProject('kept')?.project.name).toBe('Kept');
-      expect(cache.listCfdSnapshots()).toEqual([
-        expect.objectContaining({
-          projectId: 'kept',
-          status: 'open',
-          snapshotDate: '2026-08-15',
-          count: 4,
-        }),
-      ]);
       cache.close();
     });
 
@@ -1343,9 +1249,6 @@ describe('createSqliteBoardCache', () => {
       // v3->v4 は既存データを保ったまま session_links テーブルだけを追加する in-place
       // 移行であること(recreate されて projects/cfd_snapshots が消えないこと)を確認する。
       expect(cache.getProject('kept-v3')?.project.name).toBe('Kept V3');
-      expect(cache.listCfdSnapshots()).toEqual([
-        expect.objectContaining({ projectId: 'kept-v3', status: 'open', count: 2 }),
-      ]);
 
       cache.upsertSessionLinks([makeSessionLinkRow({ ticketId: 'pfx-new', projectId: 'kept-v3' })]);
       expect(cache.listSessionLinks()).toEqual([
@@ -1437,9 +1340,6 @@ describe('createSqliteBoardCache', () => {
       // 移行であること(recreate されて projects/cfd_snapshots/session_links が消えないこと)
       // を確認する。bdboard-3tw.83 の v3->v4 移行テストと同じ形。
       expect(cache.getProject('kept-v4')?.project.name).toBe('Kept V4');
-      expect(cache.listCfdSnapshots()).toEqual([
-        expect.objectContaining({ projectId: 'kept-v4', status: 'open', count: 3 }),
-      ]);
       expect(cache.listSessionLinks()).toEqual([
         makeSessionLinkRow({
           ticketId: 'pfx-kept',

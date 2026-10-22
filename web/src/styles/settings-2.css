@@ -1,14 +1,5 @@
 
 
-.model-stats-block {
-  margin-top: 8px;
-  padding-top: 16px;
-  border-top: 1px solid var(--color-border);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
 /*
   Horizontal scroll for wide model stats tables (bdboard-83tc AC3).
   AC3 edge fades on .model-stats-table-scroller provide the platform-independent

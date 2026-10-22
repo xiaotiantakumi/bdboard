@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { BoardThresholdsConfigPort } from '../../application/ports/board-thresholds-config.js';
 import type { HygieneThresholdsConfigPort } from '../../application/ports/hygiene-thresholds-config.js';
 import {
-  createEmptyCfdCacheMethods,
+  createEmptyCacheStatsMethods,
   createEmptyInteractionsCacheMethods,
   createEmptySessionLinksCacheMethods,
 } from '../../application/ports/board-cache-fakes.js';
@@ -25,7 +25,7 @@ function createMinimalBoardCache(): BoardCache {
     setTranscriptOffset: () => {},
     addSessionUsage: () => {},
     getSessionUsage: () => [],
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close: () => {},

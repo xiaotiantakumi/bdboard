@@ -19,14 +19,6 @@ export interface SessionLinkRow {
   readonly link: SessionLink;
 }
 
-export interface CfdSnapshotRow {
-  readonly projectId: string;
-  readonly status: string;
-  readonly snapshotDate: string;
-  readonly snapshottedAt: Date;
-  readonly count: number;
-}
-
 export interface CacheStats {
   readonly sizeBytes: number;
   readonly tables: readonly { readonly name: string; readonly rowCount: number }[];
@@ -79,18 +71,6 @@ export interface BoardCache {
   addSessionUsage(sessionId: string, usage: ModelUsageTotals): void;
   /** sessionId集合に対する集計usage(モデル別合計)を返す */
   getSessionUsage(sessionIds: readonly string[]): readonly ModelUsageTotals[];
-  /** 指定日付(YYYY-MM-DD, ローカル)の project×status カウントを冪等に記録(UPSERT)する */
-  putCfdSnapshot(
-    snapshotDate: string,
-    snapshottedAt: Date,
-    rows: readonly { projectId: string; status: string; count: number }[],
-  ): void;
-  /** 指定プロジェクト群(未指定なら全部)の過去スナップショットを日付昇順で返す */
-  listCfdSnapshots(projectIds?: readonly string[]): readonly CfdSnapshotRow[];
-  /** 直近のスナップショット日付(YYYY-MM-DD)。無ければ undefined */
-  getLatestCfdSnapshotDate(): string | undefined;
-  /** snapshot_date < olderThanDate (YYYY-MM-DD) の行を削除し、削除件数を返す */
-  pruneCfdSnapshots(olderThanDate: string): number;
   /** DBファイルサイズとテーブル別件数 */
   getCacheStats(): CacheStats;
   /**

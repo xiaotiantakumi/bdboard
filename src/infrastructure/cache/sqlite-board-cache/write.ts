@@ -17,8 +17,6 @@ export type BoardCacheWriteOperations = Pick<
   | 'clear'
   | 'setTranscriptOffset'
   | 'addSessionUsage'
-  | 'putCfdSnapshot'
-  | 'pruneCfdSnapshots'
   | 'upsertSessionLinks'
   | 'appendInteractions'
 >;
@@ -49,15 +47,6 @@ export function createWriteOperations(db: Database.Database, parseCache: ParseCa
       cache_creation_input_tokens = cache_creation_input_tokens + excluded.cache_creation_input_tokens,
       cache_read_input_tokens = cache_read_input_tokens + excluded.cache_read_input_tokens
   `);
-  const putCfdSnapshotStmt = db.prepare(`
-    INSERT OR REPLACE INTO cfd_snapshots (
-      project_id, status, snapshot_date, snapshotted_at, count
-    ) VALUES (?, ?, ?, ?, ?)
-  `);
-  const pruneCfdSnapshotsStmt = db.prepare(`
-    DELETE FROM cfd_snapshots WHERE snapshot_date < ?
-  `);
-
   const linksWriteOperations = createLinksWriteOperations(db);
 
   return {
@@ -123,33 +112,6 @@ export function createWriteOperations(db: Database.Database, parseCache: ParseCa
         usage.cacheCreationInputTokens,
         usage.cacheReadInputTokens,
       );
-    },
-
-    putCfdSnapshot(
-      snapshotDate: string,
-      snapshottedAt: Date,
-      rows: readonly { projectId: string; status: string; count: number }[],
-    ): void {
-      const snapshottedAtIso = snapshottedAt.toISOString();
-      const writeMany = db.transaction(
-        (entries: readonly { projectId: string; status: string; count: number }[]) => {
-          for (const row of entries) {
-            putCfdSnapshotStmt.run(
-              row.projectId,
-              row.status,
-              snapshotDate,
-              snapshottedAtIso,
-              row.count,
-            );
-          }
-        },
-      );
-      writeMany(rows);
-    },
-
-    pruneCfdSnapshots(olderThanDate: string): number {
-      const result = pruneCfdSnapshotsStmt.run(olderThanDate);
-      return result.changes;
     },
 
     upsertSessionLinks(rows: readonly SessionLinkRow[]): void {

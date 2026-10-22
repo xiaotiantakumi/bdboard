@@ -40,8 +40,6 @@ export function AppBody({ controller }: AppBodyProps) {
     selectedProjectIdsJoined,
     activityWindowDays,
     setActivityWindowDays,
-    statsWeeks,
-    setStatsWeeks,
     tipsBannerDismissed,
     setTipsBannerDismissed,
     boardFilterState,
@@ -138,8 +136,6 @@ export function AppBody({ controller }: AppBodyProps) {
           windows={{
             activityWindowDays,
             onActivityWindowDaysChange: setActivityWindowDays,
-            statsWeeks,
-            onStatsWeeksChange: setStatsWeeks,
           }}
         />
         </BulkSelectionProvider>

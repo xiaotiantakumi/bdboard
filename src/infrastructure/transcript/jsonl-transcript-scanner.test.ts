@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import type { BoardCache, CachedProject } from '../../application/ports/board-cache.js';
-import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../../application/ports/board-cache-fakes.js';
+import { createEmptyCacheStatsMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../../application/ports/board-cache-fakes.js';
 import type { ModelUsageTotals } from '../../application/transcript/extract-usage.js';
 import type { DirEntry, FileStat, FileSystemPort } from '../../application/ports/file-system.js';
 import { encodeCwdForTranscript } from '../../application/session/parse-session-file.js';
@@ -221,7 +221,7 @@ function createInMemoryBoardCache(
         compareStrings(left.model, right.model),
       );
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close(): void {},

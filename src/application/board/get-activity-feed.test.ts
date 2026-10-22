@@ -4,7 +4,7 @@ import type { InteractionRecord } from '../../domain/interaction.js';
 import type { Project } from '../../domain/project.js';
 import { makeTicket } from '../../domain/test-support.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
-import { createEmptyCfdCacheMethods, createEmptySessionLinksCacheMethods, createInMemoryInteractionsCacheMethods } from '../ports/board-cache-fakes.js';
+import { createEmptyCacheStatsMethods, createEmptySessionLinksCacheMethods, createInMemoryInteractionsCacheMethods } from '../ports/board-cache-fakes.js';
 import { getActivityFeed } from './get-activity-feed.js';
 
 const NOW = new Date('2026-06-01T12:00:00.000Z');
@@ -58,7 +58,7 @@ function createFakeBoardCache(): BoardCache & {
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...interactionsMethods,
     close(): void {},
@@ -100,7 +100,7 @@ function createFakeBoardCacheWithInteractions(): BoardCache & {
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...interactionsMethods,
     close(): void {},

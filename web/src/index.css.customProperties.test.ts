@@ -531,9 +531,8 @@ describe('index.css custom properties', () => {
     const referencedInCss = collectReferencedCustomProperties(sourceWithoutComments);
     // bdboard-wws5: index.css の中だけでなく web/src の .ts/.tsx (インラインスタイルや
     // 定数テーブルに埋め込まれた var(--...)) も未定義参照検査の対象にする。実例:
-    // ThroughputStats.tsx の CFD_STATUS_COLORS が var(--throughput-cfd-pinned, #hex) の
-    // ように未定義トークンを参照していても、CSS だけを見る検査では検出できなかった
-    // (bdboard-7g0a)。走査ロジックは向き2 (bdboard-kjn9) の
+    // TSX の定数テーブルが未定義トークンを参照していても、CSS だけを見る検査では
+    // 検出できなかった (bdboard-7g0a)。走査ロジックは向き2 (bdboard-kjn9) の
     // collectTsxCustomPropertyReferences をそのまま再利用する — 走査対象
     // (listAllTsxSourceFiles: テストファイルも除外しない) も含めて共有する設計は、その
     // 関数の JSDoc に明記済み。テストファイルを除外しない理由もここで両立する:
@@ -579,8 +578,8 @@ describe('index.css custom properties', () => {
     // ―― ライト/ダークの対を維持するコストだけが残る死んだ定義 ―― を検出する。
     //
     // CSS の参照だけを見ると TSX 専用トークンが全部死んで見える偽陽性になるため
-    // (実例: --color-purple / --throughput-cfd-pinned / --throughput-cfd-hooked は
-    // ThroughputStats.tsx からしか参照されない)、CSS の var() と web/src の .ts/.tsx の
+    // (実例: 統計ビュー削除前の CFD 系列色は
+    // TSX からしか参照されなかった)、CSS の var() と web/src の .ts/.tsx の
     // var() の両方を参照として数える。
     const sourceWithoutComments = stripCssComments(cssSource);
     const definedInBareRoot = collectDefinedCustomProperties(sourceWithoutComments);

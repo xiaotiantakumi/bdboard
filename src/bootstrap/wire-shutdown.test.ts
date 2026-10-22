@@ -16,7 +16,6 @@ function createDeps(overrides: Partial<WireShutdownDeps> = {}): WireShutdownDeps
     refreshIntervalTimer: setInterval(() => {}, 1_000_000),
     sessionIntervalTimer: setInterval(() => {}, 1_000_000),
     transcriptIntervalTimer: setInterval(() => {}, 1_000_000),
-    cfdSnapshotIntervalTimer: setInterval(() => {}, 1_000_000),
     aiQuotaAlertIntervalTimer: setInterval(() => {}, 1_000_000),
     reclaimScheduler: { stop: vi.fn() },
     exit: vi.fn(),
@@ -86,7 +85,6 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
         [deps.refreshIntervalTimer, 'clearInterval(refresh)'],
         [deps.sessionIntervalTimer, 'clearInterval(session)'],
         [deps.transcriptIntervalTimer, 'clearInterval(transcript)'],
-        [deps.cfdSnapshotIntervalTimer, 'clearInterval(cfdSnapshot)'],
         [deps.aiQuotaAlertIntervalTimer, 'clearInterval(aiQuotaAlert)'],
       ]);
       const clearIntervalSpy = vi.spyOn(global, 'clearInterval').mockImplementation((timer) => {
@@ -105,7 +103,6 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
         'clearInterval(refresh)',
         'clearInterval(session)',
         'clearInterval(transcript)',
-        'clearInterval(cfdSnapshot)',
         'clearInterval(aiQuotaAlert)',
         'reclaimScheduler.stop',
         'externalIssues.stop',
@@ -124,13 +121,12 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
     }
   });
 
-  it('tolerates undefined/null optional timers (transcript/CFD/ai-quota disabled, session-discovery unsupported)', async () => {
+  it('tolerates undefined/null optional timers (transcript/ai-quota disabled, session-discovery unsupported)', async () => {
     vi.useFakeTimers();
     try {
       const deps = createDeps({
         sessionIntervalTimer: null,
         transcriptIntervalTimer: undefined,
-        cfdSnapshotIntervalTimer: undefined,
         aiQuotaAlertIntervalTimer: undefined,
       });
       const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
@@ -183,7 +179,6 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
       clearInterval(deps.refreshIntervalTimer);
       if (deps.sessionIntervalTimer !== null) clearInterval(deps.sessionIntervalTimer);
       if (deps.transcriptIntervalTimer !== undefined) clearInterval(deps.transcriptIntervalTimer);
-      if (deps.cfdSnapshotIntervalTimer !== undefined) clearInterval(deps.cfdSnapshotIntervalTimer);
       if (deps.aiQuotaAlertIntervalTimer !== undefined) clearInterval(deps.aiQuotaAlertIntervalTimer);
     }
   });

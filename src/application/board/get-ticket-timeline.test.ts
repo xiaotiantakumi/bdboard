@@ -5,7 +5,7 @@ import type { Project } from '../../domain/project.js';
 import { makeTicket } from '../../domain/test-support.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import {
-  createEmptyCfdCacheMethods,
+  createEmptyCacheStatsMethods,
   createEmptySessionLinksCacheMethods,
   createInMemoryInteractionsCacheMethods,
 } from '../ports/board-cache-fakes.js';
@@ -62,7 +62,7 @@ function createFakeBoardCache(): BoardCache & {
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...interactionsMethods,
     close(): void {},

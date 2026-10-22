@@ -106,7 +106,7 @@ describe('useAppFilterPresets', () => {
     const { result } = renderHook(() => useAppFilterPresets(params));
 
     const preset = makePreset({
-      view: 'stats',
+      view: 'settings',
       selectedProjectIds: ['proj-marker-a', 'proj-marker-b'],
       priorityCeiling: '3',
       issueTypes: ['epic'],
@@ -118,7 +118,7 @@ describe('useAppFilterPresets', () => {
 
     result.current.handleApplyBoardFilterPreset(preset);
 
-    expect(vi.mocked(params.setView).mock.calls.at(-1)).toEqual(['stats']);
+    expect(vi.mocked(params.setView).mock.calls.at(-1)).toEqual(['settings']);
     expect(vi.mocked(params.setSelectedProjectIds).mock.calls.at(-1)).toEqual([
       ['proj-marker-a', 'proj-marker-b'],
     ]);
@@ -156,21 +156,21 @@ describe('useAppFilterPresets', () => {
       const defaultPreset = makePreset({
         id: 'preset-default',
         isDefault: true,
-        view: 'stats',
+        view: 'settings',
         filterText: 'default-marker-text',
       });
       const params = baseParams({ boardFilterPresets: [otherPreset, defaultPreset] });
 
       renderHook(() => useAppFilterPresets(params));
 
-      expect(vi.mocked(params.setView).mock.calls.at(-1)).toEqual(['stats']);
+      expect(vi.mocked(params.setView).mock.calls.at(-1)).toEqual(['settings']);
       expect(vi.mocked(params.setFilterText).mock.calls.at(-1)).toEqual(['default-marker-text']);
       expect(params.setView).toHaveBeenCalledTimes(1);
     });
 
     it('does not apply the default preset when this browser already has stored filter state', () => {
       localStorage.setItem(UI_STORAGE_KEYS.hideDone, JSON.stringify(true));
-      const defaultPreset = makePreset({ id: 'preset-default', isDefault: true, view: 'stats' });
+      const defaultPreset = makePreset({ id: 'preset-default', isDefault: true, view: 'settings' });
       const params = baseParams({ boardFilterPresets: [defaultPreset] });
 
       renderHook(() => useAppFilterPresets(params));
@@ -195,7 +195,7 @@ describe('useAppFilterPresets', () => {
       );
       expect(params.setView).not.toHaveBeenCalled();
 
-      const defaultPreset = makePreset({ id: 'preset-default', isDefault: true, view: 'stats' });
+      const defaultPreset = makePreset({ id: 'preset-default', isDefault: true, view: 'settings' });
       rerender({ ...params, boardFilterPresets: [defaultPreset] });
 
       expect(params.setView).not.toHaveBeenCalled();

@@ -8,7 +8,7 @@ import {
 import type { Project } from '../../domain/project.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import type { PendingDecision } from '../ports/human-decisions.js';
-import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
+import { createEmptyCacheStatsMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
 import { getBoard } from './get-board.js';
 
 const NOW = new Date('2026-06-01T12:00:00.000Z');
@@ -53,7 +53,7 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close(): void {},

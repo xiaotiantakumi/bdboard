@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useTicketDeepLink } from './useTicketDeepLink';
 
 function renderDeepLink(
-  initialView: 'split' | 'stats' = 'split',
+  initialView: 'split' | 'settings' = 'split',
   onViewChange = vi.fn(),
 ) {
   return renderHook(
@@ -39,15 +39,15 @@ describe('useTicketDeepLink', () => {
   });
 
   it('applies view from initial hash without overwriting it (AC3)', async () => {
-    window.history.replaceState(null, '', '/#view=stats');
+    window.history.replaceState(null, '', '/#view=settings');
     const onViewChange = vi.fn();
 
     renderDeepLink('split', onViewChange);
 
     await waitFor(() => {
-      expect(onViewChange).toHaveBeenCalledWith('stats');
+      expect(onViewChange).toHaveBeenCalledWith('settings');
     });
-    expect(window.location.hash).toBe('#view=stats');
+    expect(window.location.hash).toBe('#view=settings');
   });
 
   it('pushState on first selectTicket and sets hash', () => {
@@ -147,11 +147,11 @@ describe('useTicketDeepLink', () => {
     pushSpy.mockClear();
     replaceSpy.mockClear();
 
-    rerender({ view: 'stats' });
+    rerender({ view: 'settings' });
 
     expect(pushSpy).not.toHaveBeenCalled();
     expect(replaceSpy).toHaveBeenCalled();
-    expect(window.location.hash).toBe('#ticket=a&view=stats');
+    expect(window.location.hash).toBe('#ticket=a&view=settings');
   });
 
   // useHistoryBackClose keeps its panel token in history.state; a hash sync that

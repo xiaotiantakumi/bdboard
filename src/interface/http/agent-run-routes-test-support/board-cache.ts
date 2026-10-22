@@ -2,7 +2,7 @@
 // 切り出した、フェイク BoardCache とプロジェクト/チケットのフィクスチャ置き場。
 import type { BoardCache, CachedProject } from '../../../application/ports/board-cache.js';
 import {
-  createEmptyCfdCacheMethods,
+  createEmptyCacheStatsMethods,
   createEmptyInteractionsCacheMethods,
   createEmptySessionLinksCacheMethods,
 } from '../../../application/ports/board-cache-fakes.js';
@@ -51,7 +51,7 @@ export function createFakeBoardCache(): BoardCache & { readonly entries: Map<str
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close(): void {},

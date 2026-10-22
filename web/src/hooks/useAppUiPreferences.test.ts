@@ -20,7 +20,6 @@ describe('useAppUiPreferences', () => {
     expect(result.current.lastChatProjectId).toBe('');
     expect(result.current.boardFilterPresets).toEqual([]);
     expect(result.current.activityWindowDays).toBe(1);
-    expect(result.current.statsWeeks).toBe(8);
     expect(result.current.recentTickets).toEqual([]);
     expect(result.current.tipsBannerDismissed).toBe(DEFAULT_TIPS_BANNER_DISMISSED);
   });
@@ -29,7 +28,7 @@ describe('useAppUiPreferences', () => {
     const { result } = renderHook(() => useAppUiPreferences());
 
     act(() => {
-      result.current.setView('stats');
+      result.current.setView('settings');
       result.current.setView('split');
       result.current.setSelectedProjectIds(['proj-1']);
       result.current.setLastChatProjectId('proj-1');
@@ -48,7 +47,6 @@ describe('useAppUiPreferences', () => {
         },
       ]);
       result.current.setActivityWindowDays(7);
-      result.current.setStatsWeeks(12);
       result.current.setRecentTickets([
         { id: 'bdboard-1', title: 'T', projectName: 'Project One' },
       ]);
@@ -64,20 +62,17 @@ describe('useAppUiPreferences', () => {
     );
     expect(localStorage.getItem(UI_STORAGE_KEYS.boardFilterPresets)).not.toBeNull();
     expect(localStorage.getItem(UI_STORAGE_KEYS.activityWindowDays)).toBe(JSON.stringify(7));
-    expect(localStorage.getItem(UI_STORAGE_KEYS.statsWeeks)).toBe(JSON.stringify(12));
     expect(localStorage.getItem(UI_STORAGE_KEYS.recentTickets)).not.toBeNull();
     expect(localStorage.getItem(UI_STORAGE_KEYS.tipsBannerDismissed)).toBe(JSON.stringify(true));
   });
 
   it('restores previously persisted values on mount, per key', () => {
     localStorage.setItem(UI_STORAGE_KEYS.view, JSON.stringify('split'));
-    localStorage.setItem(UI_STORAGE_KEYS.statsWeeks, JSON.stringify(12));
     localStorage.setItem(UI_STORAGE_KEYS.tipsBannerDismissed, JSON.stringify(true));
 
     const { result } = renderHook(() => useAppUiPreferences());
 
     expect(result.current.view).toBe('split');
-    expect(result.current.statsWeeks).toBe(12);
     expect(result.current.tipsBannerDismissed).toBe(true);
     // Untouched keys still fall back to their documented defaults.
     expect(result.current.activityWindowDays).toBe(1);
@@ -100,11 +95,9 @@ describe('useAppUiPreferences', () => {
 
   it('falls back to the default when a persisted value fails validation', () => {
     localStorage.setItem(UI_STORAGE_KEYS.view, JSON.stringify('not-a-view'));
-    localStorage.setItem(UI_STORAGE_KEYS.statsWeeks, JSON.stringify(-5));
 
     const { result } = renderHook(() => useAppUiPreferences());
 
     expect(result.current.view).toBe(DEFAULT_VIEW);
-    expect(result.current.statsWeeks).toBe(8);
   });
 });

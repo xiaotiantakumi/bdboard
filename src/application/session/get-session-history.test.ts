@@ -3,7 +3,7 @@ import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import { makeSession, makeSessionLink, makeTicket } from '../../domain/test-support.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
-import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
+import { createEmptyCacheStatsMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
 import { getSessionHistory } from './get-session-history.js';
 
 function project(id: string, rootPath: string, name?: string): Project {
@@ -46,7 +46,7 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...createEmptyInteractionsCacheMethods(),
     close(): void {},

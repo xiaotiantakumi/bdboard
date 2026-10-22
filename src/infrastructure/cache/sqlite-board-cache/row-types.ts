@@ -39,14 +39,6 @@ export interface SessionLinkRowDb {
   readonly observed_at: string;
 }
 
-export interface CfdSnapshotRowDb {
-  readonly project_id: string;
-  readonly status: string;
-  readonly snapshot_date: string;
-  readonly snapshotted_at: string;
-  readonly count: number;
-}
-
 export interface InteractionRowDb {
   readonly id: string;
   readonly at: string;

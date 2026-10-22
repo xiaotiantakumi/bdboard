@@ -4,7 +4,6 @@ import type {
   BoardCache,
   CachedProject,
   CacheStats,
-  CfdSnapshotRow,
   SessionLinkRow,
 } from '../../../application/ports/board-cache.js';
 import type { ModelUsageTotals } from '../../../application/transcript/extract-usage.js';
@@ -12,9 +11,8 @@ import type { InteractionRecord } from '../../../domain/interaction.js';
 import type { Project } from '../../../domain/project.js';
 import { CACHE_TABLE_NAMES } from './schema.js';
 import { createYieldGate, yieldToEventLoop } from '../../../application/board/aggregation-yield.js';
-import { rowToCfdSnapshot, rowToInteraction, rowToSessionLink } from './convert.js';
+import { rowToInteraction, rowToSessionLink } from './convert.js';
 import type {
-  CfdSnapshotRowDb,
   InteractionRowDb,
   ProjectRow,
   SessionLinkRowDb,
@@ -35,8 +33,6 @@ export type BoardCacheReadOperations = Pick<
   | 'listProjectsChunked'
   | 'getTranscriptOffset'
   | 'getSessionUsage'
-  | 'listCfdSnapshots'
-  | 'getLatestCfdSnapshotDate'
   | 'getCacheStats'
   | 'listSessionLinks'
   | 'listInteractions'
@@ -52,10 +48,6 @@ export function createReadOperations(
   // (id, fingerprint の一括取得 → parseCache → 外れた分だけ getProjectStmt.get)。
   const listing = createProjectListing(db, getProjectStmt, parseCache);
   const getTranscriptOffsetStmt = db.prepare(`SELECT byte_offset FROM transcript_offsets WHERE file_path = ?`);
-  const listCfdSnapshotsAllStmt = db.prepare(
-    `SELECT project_id, status, snapshot_date, snapshotted_at, count FROM cfd_snapshots ORDER BY snapshot_date ASC, project_id ASC, status ASC`,
-  );
-  const getLatestCfdSnapshotDateStmt = db.prepare(`SELECT MAX(snapshot_date) AS snapshot_date FROM cfd_snapshots`);
   const countTableRowsStmts = Object.fromEntries(
     CACHE_TABLE_NAMES.map((tableName) => [
       tableName,
@@ -216,39 +208,6 @@ export function createReadOperations(
         cacheCreationInputTokens: row.cache_creation_input_tokens,
         cacheReadInputTokens: row.cache_read_input_tokens,
       }));
-    },
-
-    listCfdSnapshots(projectIds?: readonly string[]): readonly CfdSnapshotRow[] {
-      if (projectIds === undefined) {
-        const rows = listCfdSnapshotsAllStmt.all() as CfdSnapshotRowDb[];
-        return rows.map(rowToCfdSnapshot);
-      }
-
-      if (projectIds.length === 0) {
-        return [];
-      }
-
-      const placeholders = projectIds.map(() => '?').join(', ');
-      const rows = db
-        .prepare(
-          `SELECT project_id, status, snapshot_date, snapshotted_at, count
-          FROM cfd_snapshots
-          WHERE project_id IN (${placeholders})
-          ORDER BY snapshot_date ASC, project_id ASC, status ASC`,
-        )
-        .all(...projectIds) as CfdSnapshotRowDb[];
-
-      return rows.map(rowToCfdSnapshot);
-    },
-
-    getLatestCfdSnapshotDate(): string | undefined {
-      const row = getLatestCfdSnapshotDateStmt.get() as
-        | { readonly snapshot_date: string | null }
-        | undefined;
-      if (row?.snapshot_date === undefined || row.snapshot_date === null) {
-        return undefined;
-      }
-      return row.snapshot_date;
     },
 
     getCacheStats(): CacheStats {

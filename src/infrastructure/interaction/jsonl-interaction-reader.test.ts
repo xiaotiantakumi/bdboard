@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Project } from '../../domain/project.js';
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import {
-  createEmptyCfdCacheMethods,
+  createEmptyCacheStatsMethods,
   createEmptySessionLinksCacheMethods,
   createInMemoryInteractionsCacheMethods,
 } from '../../application/ports/board-cache-fakes.js';
@@ -180,7 +180,7 @@ function createInMemoryBoardCache(): BoardCache & {
     getSessionUsage(): readonly never[] {
       return [];
     },
-    ...createEmptyCfdCacheMethods(),
+    ...createEmptyCacheStatsMethods(),
     ...createEmptySessionLinksCacheMethods(),
     ...interactionsMethods,
     close(): void {},

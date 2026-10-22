@@ -19,7 +19,7 @@ const STYLES_DIR = fileURLToPath(new NodeUrl('./styles', import.meta.url));
  */
 const EXPECTED_IMPORT_ORDER = [
   'tokens.css', 'base.css', 'header.css', 'base-2.css', 'help.css', 'insights.css', 'settings.css',
-  'hygiene.css', 'tokens-2.css', 'hygiene-2.css', 'insights-3.css', 'settings-2.css',
+  'hygiene.css', 'tokens-2.css', 'hygiene-2.css', 'settings-2.css',
   'ticket-detail.css', 'board.css', 'board-2.css', 'base-3.css', 'ticket-detail-2.css', 'board-3.css',
   'base-4.css', 'hygiene-3.css', 'ticket-detail-3.css', 'board-4.css', 'ticket-detail-4.css',
   'header-2.css', 'settings-3.css', 'help-2.css', 'ticket-detail-5.css', 'sessions.css', 'settings-4.css',

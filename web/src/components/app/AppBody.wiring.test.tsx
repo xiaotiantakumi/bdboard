@@ -119,14 +119,8 @@ function makeController(overrides: Record<string, unknown> = {}): Controller {
     setLastChatProjectId: vi.fn(),
     boardFilterPresets: [],
     setBoardFilterPresets: vi.fn(),
-    // activityWindowDays/statsWeeks share a type (number), so a silent
-    // swap between them in AppBody's `windows={{...}}` wiring wouldn't be
-    // caught by TypeScript. Giving them distinct values here (not just
-    // distinct setters) lets the assertions below catch that swap.
     activityWindowDays: 7,
     setActivityWindowDays: vi.fn(),
-    statsWeeks: 12,
-    setStatsWeeks: vi.fn(),
     recentTickets: [],
     setRecentTickets: vi.fn(),
     tipsBannerDismissed: true,
@@ -243,7 +237,7 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     );
   });
 
-  it('does not swap activityWindowDays/statsWeeks (share a type)', async () => {
+  it('wires activityWindowDays into windows', async () => {
     capturedViewContentProps.length = 0;
     const { AppBody } = await import('./AppBody');
     const controller = makeController();
@@ -255,8 +249,6 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     expect(viewContent?.windows.onActivityWindowDaysChange).toBe(
       controller.setActivityWindowDays,
     );
-    expect(viewContent?.windows.statsWeeks).toBe(12);
-    expect(viewContent?.windows.onStatsWeeksChange).toBe(controller.setStatsWeeks);
   });
 
   it('resolves ticketDetail.pendingDecision/prLink from the controller Maps for the selected ticket', async () => {
