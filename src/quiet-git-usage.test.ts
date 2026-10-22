@@ -72,11 +72,11 @@ describe('temp git repo tests stop git auto maintenance (bdboard-5py8)', () => {
 
   // 走査が空振りして素通しするのを防ぐ下限と、判定の正規表現が腐っていないことの確認。
   it('still finds the temp repo tests, and tells a quiet one from a forgetful one', () => {
-    // src と scripts のどちらかが丸ごと走査から落ちても気づけるよう、下限はディレクトリごとに持つ (bdboard-5py8 時点で src 4 / scripts 8)。
+    // src と scripts のどちらかが丸ごと走査から落ちても気づけるよう、下限はディレクトリごとに持つ (bdboard-5py8 時点で src 3 (agent-run 撤去後) / scripts 8)。
     // 合計の下限 8 だと、scripts だけで 8 に届くので src 側の脱落 (SCAN_DIRS や TEST_FILE の .ts が外れる) を素通しする。
     const countIn = (dir: string): number =>
       gitWriters.filter((file) => path.relative(REPO_ROOT, file).split(path.sep)[0] === dir).length;
-    expect(countIn('src')).toBeGreaterThanOrEqual(4);
+    expect(countIn('src')).toBeGreaterThanOrEqual(3);
     expect(countIn('scripts')).toBeGreaterThanOrEqual(8);
     const forgetful = "await git(['init', '-q']);\nawait git(['commit', '-m', 'x']);\n";
     expect(runsGitWrites(forgetful)).toBe(true);

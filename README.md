@@ -222,12 +222,6 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_AGY_MODEL` | (同上)agy のモデル。未設定時はアカウント既定。`agy models` の id (例: `gemini-3.7-flash-medium`) を指定 | (未設定) |
 | `BDBOARD_SCAN_ROOTS_CONFIG_PATH` | scan roots のユーザー設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
 | `BDBOARD_BOARD_THRESHOLDS_CONFIG_PATH` | ボードしきい値のユーザー設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
-| `BDBOARD_AGENT_RUN_CONFIG_PATH` | agent run 設定のユーザー設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
-| `BDBOARD_MAX_CONCURRENT_RUNS` | 同時に実行できる agent run の上限。増やすと verify スロットを圧迫する | `1` |
-| `BDBOARD_MAX_MANAGED_WORKTREES` | bdboard が管理できる Git worktree 数の上限 | `20` |
-| `BDBOARD_RUN_ALLOWED_TOOLS` | Claude agent run のツール allowlist を JSON 文字列配列で上書きする。空文字は allowlist 指定を外す | `Glob`, `Grep`, `Bash(bd show:*)`, `Bash(bd list:*)`, `Bash(bd comment:*)`, `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git add:*)`, `Bash(git commit:*)` |
-| `BDBOARD_RUN_PERMISSION_MODE` | Claude agent run の permission mode。`default` / `acceptEdits` / `bypassPermissions` / `plan` のみ | `default` |
-| `BDBOARD_RUN_TIMEOUT_MS` | Claude agent run のタイムアウト(ミリ秒)。正の有限数のみ有効 | `3600000`(1時間) |
 | `BDBOARD_TIMEZONE` | ボードで defer 日付を扱う IANA タイムゾーン | ホスト OS のタイムゾーン |
 | `BDBOARD_WEB_DIST` | ビルド済み Web UI(`web/dist`)の配信元ディレクトリ。主用途は e2e で、`test/e2e/global-setup.ts` が使い捨てディレクトリへコピーしたスナップショットを指すために使う。`npm run test:e2e` と `npm run verify` が同じ `web/dist` を同時に作り直すレースから e2e を守るためのもの。相対パスは起動時に一度だけ起動ディレクトリ基準で解決される | `<リポジトリルート>/web/dist` |
 
