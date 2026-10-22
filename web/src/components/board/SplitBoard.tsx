@@ -41,6 +41,11 @@ export function SplitBoard({
     hasVisibleCards(entry.board, hideDone, stalledOnly, filter),
   );
 
+  // bdboard-hipq.3: 上位3件の動画保存は、確認待ちのカードがある最初のプロジェクトにだけ出す。
+  const topAwaitingProjectId = visibleProjects.find(
+    (entry) => (entry.board.lanes.awaiting_human?.length ?? 0) > 0,
+  )?.project.id;
+
   if (visibleProjects.length === 0) {
     return (
       <p className="empty-message">
@@ -85,6 +90,7 @@ export function SplitBoard({
             onToggleLaneCollapse={onToggleLaneCollapse}
             wipLimitsOverrides={wipLimitsOverrides}
             wipProjectId={entry.project.id}
+            showTopAwaitingControls={entry.project.id === topAwaitingProjectId}
           />
         </section>
       ))}

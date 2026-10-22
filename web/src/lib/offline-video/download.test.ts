@@ -184,6 +184,15 @@ describe('downloadOfflineVideo', () => {
     );
   });
 
+  it('auto never downgrades manual', async () => {
+    const store = createStore();
+    await downloadOfflineVideo(downloadInput(store, createFetch(successfulDownload()).fetch));
+    const script = createFetch([]);
+    const result = await downloadOfflineVideo(downloadInput(store, script.fetch, { origin: 'auto' }));
+    expect(result.origin).toBe('manual');
+    expect(script.calls).toHaveLength(0);
+  });
+
   it('restarts from offset 0 when the second response changes ETag', async () => {
     await expectRestartThenSuccess(() =>
       chunkResponse(REST, PART.length, TOTAL, '"etag-2"'),
