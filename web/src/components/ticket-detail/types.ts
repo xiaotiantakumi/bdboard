@@ -44,15 +44,7 @@ export interface TicketDetailPanelProps {
   availableLabels?: readonly string[];
 }
 
-/**
- * 「次に実行」のコピーは現在の run と履歴の run で別々に出るので、コピー完了
- * バッジもその 2 箇所を区別する (bdboard-pkr6.11)。
- */
-export type NextStepCopyTarget = 'next-step-current' | 'next-step-history';
-
-type CopyFeedback =
-  | { kind: 'success'; command: NextStepCopyTarget }
-  | { kind: 'error' };
+type CopyFeedback = { kind: 'error' };
 
 /**
  * コピー結果の表示。ボタン脇のバッジ (feedback) と読み上げ (aria) は必ず一緒に

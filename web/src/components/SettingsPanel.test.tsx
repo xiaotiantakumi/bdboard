@@ -3,7 +3,6 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  fetchAgentRunConfig,
   fetchAiQuotaAlertConfig,
   fetchBoardThresholdsConfig,
   fetchDbStats,
@@ -13,9 +12,7 @@ import {
   putAiQuotaAlertConfig,
   putBoardThresholdsConfig,
   putScanRootsConfig,
-  saveAgentRunConfig,
   ApiError,
-  type AgentRunConfigDto,
   type AiQuotaAlertConfigDto,
   type BoardThresholdsConfigDto,
   type DbStatsDto,
@@ -33,12 +30,10 @@ vi.mock('../api', async (importOriginal) => {
     fetchDbStats: vi.fn(),
     fetchProjects: vi.fn(),
     fetchAiQuotaAlertConfig: vi.fn(),
-    fetchAgentRunConfig: vi.fn(),
     postRefresh: vi.fn(),
     putScanRootsConfig: vi.fn(),
     putBoardThresholdsConfig: vi.fn(),
     putAiQuotaAlertConfig: vi.fn(),
-    saveAgentRunConfig: vi.fn(),
   };
 });
 
@@ -47,12 +42,10 @@ const fetchBoardThresholdsConfigMock = vi.mocked(fetchBoardThresholdsConfig);
 const fetchDbStatsMock = vi.mocked(fetchDbStats);
 const fetchProjectsMock = vi.mocked(fetchProjects);
 const fetchAiQuotaAlertConfigMock = vi.mocked(fetchAiQuotaAlertConfig);
-const fetchAgentRunConfigMock = vi.mocked(fetchAgentRunConfig);
 const postRefreshMock = vi.mocked(postRefresh);
 const putScanRootsConfigMock = vi.mocked(putScanRootsConfig);
 const putBoardThresholdsConfigMock = vi.mocked(putBoardThresholdsConfig);
 const putAiQuotaAlertConfigMock = vi.mocked(putAiQuotaAlertConfig);
-const saveAgentRunConfigMock = vi.mocked(saveAgentRunConfig);
 function makeDbStats(overrides: Partial<DbStatsDto> = {}): DbStatsDto {
   return {
     sizeBytes: 12_800_000,
@@ -68,14 +61,6 @@ function makeAiQuotaAlertConfig(overrides: Partial<AiQuotaAlertConfigDto> = {}):
     thresholdPercent: 20,
     version: 'ai-quota-alert-v1',
     defaults: { thresholdPercent: 20 },
-    ...overrides,
-  };
-}
-function makeAgentRunConfig(overrides: Partial<AgentRunConfigDto> = {}): AgentRunConfigDto {
-  return {
-    allowRemoteAgentRuns: false,
-    version: 'agent-runs-v1',
-    defaults: { allowRemoteAgentRuns: false },
     ...overrides,
   };
 }
@@ -125,12 +110,10 @@ describe('SettingsPanel', () => {
     fetchDbStatsMock.mockReset();
     fetchProjectsMock.mockReset();
     fetchAiQuotaAlertConfigMock.mockReset();
-    fetchAgentRunConfigMock.mockReset();
     postRefreshMock.mockReset();
     putScanRootsConfigMock.mockReset();
     putBoardThresholdsConfigMock.mockReset();
     putAiQuotaAlertConfigMock.mockReset();
-    saveAgentRunConfigMock.mockReset();
     fetchScanRootsConfigMock.mockResolvedValue(makeConfig());
     fetchBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig());
     fetchDbStatsMock.mockResolvedValue(makeDbStats());
@@ -138,12 +121,10 @@ describe('SettingsPanel', () => {
       { id: 'proj-a', name: 'Project Alpha', rootPath: '/alpha', prefixes: [], incompleteTicketCount: 0 },
     ]);
     fetchAiQuotaAlertConfigMock.mockResolvedValue(makeAiQuotaAlertConfig());
-    fetchAgentRunConfigMock.mockResolvedValue(makeAgentRunConfig());
     postRefreshMock.mockResolvedValue(undefined);
     putScanRootsConfigMock.mockResolvedValue({ scanRoots: ['/configured'], excludePaths: ['/excluded'], version: 'v2' });
     putBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig({ version: 'thresholds-v2' }));
     putAiQuotaAlertConfigMock.mockResolvedValue(makeAiQuotaAlertConfig({ version: 'ai-quota-alert-v2' }));
-    saveAgentRunConfigMock.mockResolvedValue(makeAgentRunConfig({ version: 'agent-runs-v2' }));
   });
   it('has no a11y violations in the default loaded state', async () => {
     const { container } = renderSettings();
@@ -747,62 +728,6 @@ describe('SettingsPanel', () => {
     await user.click(within(section).getByRole('button', { name: '閾値を保存' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'thresholdPercent は 1〜99 の整数で指定してください',
-    );
-  });
-
-  it('shows the agent runs section with the fetched allowRemoteAgentRuns value', async () => {
-    fetchAgentRunConfigMock.mockResolvedValue(makeAgentRunConfig({ allowRemoteAgentRuns: true }));
-    renderSettings();
-    const section = await screen.findByRole('region', { name: 'エージェント実行' });
-    expect(
-      within(section).getByLabelText('リモート(トンネル経由)からのエージェント実行を許可する'),
-    ).toBeChecked();
-  });
-
-  it('shows a restart note in the agent runs section', async () => {
-    renderSettings();
-    const section = await screen.findByRole('region', { name: 'エージェント実行' });
-    expect(within(section).getByText(/再起動/)).toBeInTheDocument();
-  });
-
-  it('saves edited agent runs config without refreshing the board', async () => {
-    const user = userEvent.setup();
-    renderSettings();
-    const section = await screen.findByRole('region', { name: 'エージェント実行' });
-    const checkbox = within(section).getByLabelText('リモート(トンネル経由)からのエージェント実行を許可する');
-    const saveButton = within(section).getByRole('button', { name: '設定を保存' });
-    expect(checkbox).not.toBeChecked();
-    expect(saveButton).toBeDisabled();
-
-    await user.click(checkbox);
-    expect(saveButton).toBeEnabled();
-    await user.click(saveButton);
-
-    await waitFor(() =>
-      expect(saveAgentRunConfigMock).toHaveBeenCalledWith({
-        allowRemoteAgentRuns: true,
-        version: 'agent-runs-v1',
-      }),
-    );
-    expect(postRefreshMock).not.toHaveBeenCalled();
-    expect(await screen.findByText('エージェント実行設定を保存しました')).toBeInTheDocument();
-  });
-
-  it('shows a conflict message after a 409 agent runs save failure', async () => {
-    const user = userEvent.setup();
-    saveAgentRunConfigMock.mockRejectedValue(
-      new ApiError(409, 'agent run config changed since read', {
-        errorMessage: 'agent run config changed since read',
-      }),
-    );
-    renderSettings();
-    const section = await screen.findByRole('region', { name: 'エージェント実行' });
-    await user.click(
-      within(section).getByLabelText('リモート(トンネル経由)からのエージェント実行を許可する'),
-    );
-    await user.click(within(section).getByRole('button', { name: '設定を保存' }));
-    expect(within(section).getByRole('alert')).toHaveTextContent(
-      '他のセッションが先に変更したため保存できませんでした。入力内容は最新の設定で置き換えられました。内容を確認してからやり直してください。',
     );
   });
 

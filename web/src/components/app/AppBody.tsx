@@ -41,7 +41,6 @@ export function AppBody({ controller }: AppBodyProps) {
     tipsBannerDismissed,
     setTipsBannerDismissed,
     boardFilterState,
-    nextUpBatchRun,
     epicFilterId,
     setEpicFilterId,
     handleSelectTicket,
@@ -123,9 +122,6 @@ export function AppBody({ controller }: AppBodyProps) {
             selectedProjectIdsJoined,
           }}
           onCardClick={handleSelectTicket}
-          nextUp={{
-            batchRun: nextUpBatchRun,
-          }}
         />
         </BulkSelectionProvider>
         </BoardDnDProvider>

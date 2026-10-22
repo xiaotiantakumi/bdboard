@@ -13,10 +13,6 @@ import type { TicketDetailDto } from '../../api';
 // 「空配列同士は toEqual では区別が付かない」という2つの見逃しパターンを指摘された。
 // 対策として: (1) 同じ Section 呼び出しに渡る boolean は互いに異なる値にする、
 // (2) 空配列ではなく要素内容で識別できる配列を使う。
-vi.mock('./TicketAgentRunTriggerSection', () => ({
-  TicketAgentRunTrigger: vi.fn(() => <div data-testid="agent-run-trigger" />),
-  TicketAgentRunConfirm: vi.fn(() => <div data-testid="agent-run-confirm" />),
-}));
 vi.mock('./TicketChildrenSection', () => ({
   TicketChildrenSection: vi.fn(() => <div data-testid="children-section" />),
 }));
@@ -36,7 +32,6 @@ vi.mock('../local-files/TicketLocalFilesSection', () => ({
   TicketLocalFilesSection: vi.fn(() => null),
 }));
 
-import { TicketAgentRunTrigger, TicketAgentRunConfirm } from './TicketAgentRunTriggerSection';
 import { TicketChildrenSection } from './TicketChildrenSection';
 import { TicketInFlightOverlapsSection } from './TicketInFlightOverlapsSection';
 import { TicketSimilarTicketsSection } from './TicketSimilarTicketsSection';
@@ -45,8 +40,6 @@ import { TicketDescriptionSection } from './TicketDescriptionSection';
 import { TicketLocalFilesSection } from '../local-files/TicketLocalFilesSection';
 import { TicketDetailBody, type TicketDetailBodyProps } from './TicketDetailBody';
 
-const triggerMock = vi.mocked(TicketAgentRunTrigger);
-const confirmMock = vi.mocked(TicketAgentRunConfirm);
 const childrenMock = vi.mocked(TicketChildrenSection);
 const inFlightMock = vi.mocked(TicketInFlightOverlapsSection);
 const similarMock = vi.mocked(TicketSimilarTicketsSection);
@@ -87,7 +80,6 @@ function makeData(overrides: Partial<TicketDetailDto> = {}): TicketDetailDto {
 function makeProps(overrides: Partial<TicketDetailBodyProps> = {}): TicketDetailBodyProps {
   return {
     data: makeData(),
-    ticketId: 'MARK-ticket-id',
     prLink: {
       ticketId: 'MARK-ticket-id',
       projectId: 'MARK-project',
@@ -99,26 +91,6 @@ function makeProps(overrides: Partial<TicketDetailBodyProps> = {}): TicketDetail
     isTicketOnBoard: vi.fn(() => true),
     onOpenTicket: vi.fn(),
     onFilterByEpic: vi.fn(),
-    agentRun: {
-      // trigger に同時に渡る2つの boolean (agentRunActionsDisabled/hasActiveRun) は
-      // 取り違えを検出できるよう異なる値にする。
-      actionsDisabled: true,
-      runStartDisabled: { disabled: true, reason: 'MARK-run-block' },
-      harnessRunBlockReason: 'MARK-harness-block',
-      hasActiveRun: false,
-      // confirm に同時に渡る2つの boolean (confirmingAgentRun/startRunPending) も同様。
-      confirmingAgentRun: true,
-      setConfirmingAgentRun: vi.fn(),
-      // { current: null } 同士は toEqual で構造的に等しいため、2つの ref を
-      // 取り違えても検出できない(opus レビュー2巡目 finding A)。固有の current を
-      // 入れて区別する(モック越しなので実要素は不要)。
-      agentRunConfirmRef: { current: 'MARK-agent-run-confirm-ref' },
-      cancelAgentRunConfirmRef: { current: 'MARK-cancel-agent-run-confirm-ref' },
-      handleCancelAgentRun: vi.fn(),
-      // error: null のままだと「配線を忘れて null を固定で渡す」バグと本来の値が
-      // 一致してしまい検出できない(finding C)。null ではない値にしておく。
-      startRunMutation: { mutate: vi.fn(), isPending: false, error: 'MARK-start-run-error' },
-    } as unknown as TicketDetailBodyProps['agentRun'],
     labels: {
       currentLabels: ['MARK-label-1'],
       labelInputQuery: 'MARK-label-query',
@@ -169,30 +141,6 @@ describe('TicketDetailBody', () => {
   // (AppBoardViewSwitch.test.tsx と同じパターン)。
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  it('forwards agentRun trigger/confirm props with distinct marker values', () => {
-    const props = makeProps();
-    render(<TicketDetailBody {...props} />);
-
-    expect(triggerMock.mock.calls.at(-1)?.[0]).toEqual({
-      agentRunActionsDisabled: true,
-      runStartDisabled: props.agentRun.runStartDisabled,
-      harnessRunBlockReason: 'MARK-harness-block',
-      hasActiveRun: false,
-      onStartConfirm: expect.any(Function) as unknown,
-    });
-
-    expect(confirmMock.mock.calls.at(-1)?.[0]).toEqual({
-      ticketId: 'MARK-ticket-id',
-      confirmingAgentRun: true,
-      agentRunConfirmRef: props.agentRun.agentRunConfirmRef,
-      cancelAgentRunConfirmRef: props.agentRun.cancelAgentRunConfirmRef,
-      onCancelAgentRun: props.agentRun.handleCancelAgentRun,
-      onStartRun: expect.any(Function) as unknown,
-      startRunPending: false,
-      startRunError: 'MARK-start-run-error',
-    });
   });
 
   it('forwards labels/in-flight-overlaps/similar-tickets/description with marker values, including non-empty arrays', () => {

@@ -35,9 +35,6 @@ vi.mock('../TicketAttachments', () => ({
 vi.mock('./TicketCommentsSection', () => ({
   TicketCommentsSection: vi.fn(() => <div data-testid="comments-section" />),
 }));
-vi.mock('./TicketAgentRunSection', () => ({
-  TicketAgentRunSection: vi.fn(() => <div data-testid="agent-run-section" />),
-}));
 
 import { TicketIdListSection } from './TicketIdListSection';
 import { TicketDependenciesSection } from './TicketDependenciesSection';
@@ -47,7 +44,6 @@ import { TicketDecisionSection } from './TicketDecisionSection';
 import { TicketTimelineSection } from './TicketTimelineSection';
 import { TicketAttachments } from '../TicketAttachments';
 import { TicketCommentsSection } from './TicketCommentsSection';
-import { TicketAgentRunSection } from './TicketAgentRunSection';
 import {
   TicketDetailSecondaryBody,
   type TicketDetailSecondaryBodyProps,
@@ -61,7 +57,6 @@ const decisionMock = vi.mocked(TicketDecisionSection);
 const timelineMock = vi.mocked(TicketTimelineSection);
 const attachmentsMock = vi.mocked(TicketAttachments);
 const commentsMock = vi.mocked(TicketCommentsSection);
-const agentRunMock = vi.mocked(TicketAgentRunSection);
 
 function makeData(overrides: Partial<TicketDetailDto> = {}): TicketDetailDto {
   return {
@@ -135,26 +130,6 @@ function makeProps(
       canSubmitComment: 'MARK-can-submit-comment' as unknown as boolean,
       mutation: { mutate: vi.fn(), isPending: true, error: null },
     } as unknown as TicketDetailSecondaryBodyProps['comment'],
-    agentRun: {
-      polledRunDetail: { id: 'MARK-run-1' },
-      activeRunMeta: { id: 'MARK-active-run' },
-      // runStatusUnavailable/ticketRunsLoading も同値 boolean の衝突(finding B)。
-      runStatusUnavailable: 'MARK-run-status-unavailable' as unknown as boolean,
-      cancelRunMutation: { mutate: vi.fn(), isPending: true, error: null },
-      ticketRunsLoading: true,
-      ticketRunsError: 'MARK-ticket-runs-error',
-      ticketRunsData: [{ id: 'MARK-ticket-run-1' }],
-      selectedHistoryRunId: 'MARK-history-run-id',
-      setSelectedHistoryRunId: vi.fn(),
-      selectedHistoryRunLoading: false,
-      selectedHistoryRunError: 'MARK-history-run-error',
-      selectedHistoryRun: { id: 'MARK-history-run' },
-    } as unknown as TicketDetailSecondaryBodyProps['agentRun'],
-    copy: {
-      copyFeedback: { kind: 'success', command: 'claim' },
-      ariaLiveMessage: 'MARK-aria-live',
-      handleCopyNextStep: vi.fn(),
-    } as unknown as TicketDetailSecondaryBodyProps['copy'],
     commentTextareaRef: { current: null },
     ...overrides,
   };
@@ -344,34 +319,6 @@ describe('TicketDetailSecondaryBody', () => {
       expect(
         container.querySelectorAll('[data-testid="attachments-section"]'),
       ).toHaveLength(1);
-    });
-  });
-
-  it('forwards agent-run props with marker values, including copy-handler wiring', () => {
-    const props = makeProps();
-    render(<TicketDetailSecondaryBody {...props} />);
-
-    expect(agentRunMock.mock.calls.at(-1)?.[0]).toEqual({
-      polledRunDetail: props.agentRun.polledRunDetail,
-      activeRunMeta: props.agentRun.activeRunMeta,
-      runStatusUnavailable: 'MARK-run-status-unavailable',
-      copyFeedback: props.copy.copyFeedback,
-      onCopyNextStep: expect.any(Function) as unknown,
-      cancelRunMutation: props.agentRun.cancelRunMutation,
-      ticketRunsLoading: true,
-      ticketRunsError: 'MARK-ticket-runs-error',
-      ticketRunsData: props.agentRun.ticketRunsData,
-      selectedHistoryRunId: 'MARK-history-run-id',
-      onSelectHistoryRun: props.agentRun.setSelectedHistoryRunId,
-      selectedHistoryRunLoading: false,
-      selectedHistoryRunError: 'MARK-history-run-error',
-      selectedHistoryRun: props.agentRun.selectedHistoryRun,
-    });
-    const onCopyNextStep = agentRunMock.mock.calls.at(-1)?.[0]
-      .onCopyNextStep as (target: string, nextStep: unknown) => void;
-    onCopyNextStep('next-step-current', { command: 'MARK-next-step' });
-    expect(props.copy.handleCopyNextStep).toHaveBeenCalledWith('next-step-current', {
-      command: 'MARK-next-step',
     });
   });
 });

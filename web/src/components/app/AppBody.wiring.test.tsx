@@ -131,7 +131,6 @@ function makeController(overrides: Record<string, unknown> = {}): Controller {
       stalledOnly: false,
     },
     handleApplyBoardFilterPreset: vi.fn(),
-    nextUpBatchRun: { __marker_next_up_batch_run__: true },
     epicFilterId: undefined,
     setEpicFilterId: vi.fn(),
     selectedTicketId: null,
@@ -356,26 +355,6 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     renderAppBody(AppBody, controller);
     expect(capturedOverlayGroupProps.at(-1)?.search.recentTickets).toBe(recentTicketsMarker);
     expect(capturedOverlayGroupProps.at(-1)?.search.actions).toBe(paletteActionsMarker);
-  });
-
-  it('passes the same nextUpBatchRun controller to the header progress chip (bdboard-mkm1.2)', async () => {
-    capturedHeaderProps.length = 0;
-    capturedViewContentProps.length = 0;
-    const { AppBody } = await import('./AppBody');
-    const controller = makeController();
-    renderAppBody(AppBody, controller);
-    // ヘッダーのチップと、ビュー側(一括操作バー)が同じループを見ること
-    // (bdboard-mkm1.3: Next Up 自体は削除、この配線だけ残る)。
-    expect(capturedHeaderProps.at(-1)?.batchRun).toBe(controller.nextUpBatchRun);
-    expect(capturedViewContentProps.at(-1)?.nextUp.batchRun).toBe(controller.nextUpBatchRun);
-  });
-
-  it('passes nextUp.batchRun by reference into AppViewContent', async () => {
-    capturedViewContentProps.length = 0;
-    const { AppBody } = await import('./AppBody');
-    const controller = makeController();
-    renderAppBody(AppBody, controller);
-    expect(capturedViewContentProps.at(-1)?.nextUp.batchRun).toBe(controller.nextUpBatchRun);
   });
 
   it('wires AlertBar onOpenDetails to overlays.handleOpenStatusDetail', async () => {

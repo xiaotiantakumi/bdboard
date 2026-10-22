@@ -37,7 +37,6 @@ export function AppHeaderSection({ controller }: AppHeaderSectionProps) {
     handleRefresh,
     isRefreshing,
     chatAvailable,
-    nextUpBatchRun,
   } = controller;
 
   return (
@@ -88,7 +87,6 @@ export function AppHeaderSection({ controller }: AppHeaderSectionProps) {
         chatAvailable,
         onOpenChat: overlays.handleOpenChat,
       }}
-      batchRun={nextUpBatchRun}
     />
   );
 }

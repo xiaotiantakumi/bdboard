@@ -1,9 +1,4 @@
-import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import {
-  createTicketRunsInvalidator,
-  useNextUpRunLoopController,
-} from '../nextUpRunLoop';
 import { useHeaderHeightVar } from '../../hooks/useHeaderHeightVar';
 import { useAppUiPreferences } from '../../hooks/useAppUiPreferences';
 import { useBoardFilterState } from '../../hooks/useBoardFilterState';
@@ -58,10 +53,6 @@ export function useAppController() {
 
   const boardFilterState = useBoardFilterState();
 
-  const queryClient = useQueryClient();
-  const nextUpBatchRun = useNextUpRunLoopController({
-    onTicketRunsChanged: createTicketRunsInvalidator(queryClient),
-  });
 
   const [epicFilterId, setEpicFilterId] = useState<string | undefined>(undefined);
   const {
@@ -157,7 +148,6 @@ export function useAppController() {
     boardFilterState,
     boardFilterPresetState,
     handleApplyBoardFilterPreset,
-    nextUpBatchRun,
     epicFilterId,
     setEpicFilterId,
     selectedProjectIdsJoined,

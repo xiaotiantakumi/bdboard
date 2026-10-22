@@ -77,13 +77,6 @@ export function describeAiQuotaAlertWriteError(error: unknown): ReactNode {
   return describeWriteError(error, 'AIクォータ通知閾値を保存できませんでした');
 }
 
-export function describeAgentRunWriteError(error: unknown): ReactNode {
-  if (error instanceof ApiError && error.status === 409) {
-    return CONFLICT_WRITE_MESSAGE;
-  }
-  return describeWriteError(error, 'エージェント実行設定を保存できませんでした');
-}
-
 function isRejectedScanRootDetails(
   details: unknown,
 ): details is { rejected: string[] } {

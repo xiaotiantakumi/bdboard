@@ -8,7 +8,6 @@ export * from './api/tickets-write';
 export * from './api/decisions';
 export * from './api/attachments';
 export * from './api/harness';
-export * from './api/agent-run';
 export * from './api/settings';
 export * from './api/tunnel';
 export * from './api/chat';
