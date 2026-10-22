@@ -7,6 +7,7 @@ import { TicketLocalFileLinksProvider } from './local-files/TicketLocalFileLinks
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.resetAllMocks();
   vi.restoreAllMocks();
 });
 
