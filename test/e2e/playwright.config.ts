@@ -30,16 +30,6 @@ export default defineConfig({
   globalSetup: path.join(here, 'global-setup.ts'),
   use: {
     baseURL,
-    // スマホ幅の「確認待ちのみ」トグルは既定オン (全レーンを前提にする spec のため e2e では既定オフにする)
-    storageState: {
-      cookies: [],
-      origins: [
-        {
-          origin: baseURL,
-          localStorage: [{ name: 'bdboard.mobileAwaitingOnly', value: 'false' }],
-        },
-      ],
-    },
     trace: 'retain-on-failure',
   },
   projects: [

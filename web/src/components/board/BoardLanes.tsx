@@ -1,13 +1,12 @@
-import { useRef } from 'react';
 import { usePersistedState } from '../../hooks/usePersistedState';
-import { type BoardDto, type Lane, type PrBadgeDto } from '../../api';
+import { type BoardDto, type Lane, LANES, type PrBadgeDto } from '../../api';
 import { useMatchMedia } from '../../hooks/useMatchMedia';
 import { MOBILE_LAYOUT_MEDIA_QUERY } from '../../mediaQueries';
 import { type BoardFilter, boardFilterKey } from '../../boardFilter';
 import { useBoardDnD } from '../BoardDnDProvider';
 import { BoardKeyboardNavProvider, useBoardKeyboardNav } from '../BoardKeyboardNavProvider';
 import { LaneColumn } from '../LaneColumn';
-import { LaneScrollIndicator } from '../LaneScrollIndicator';
+import { LanePicker } from '../LanePicker';
 import { type WipLimitsOverrides } from '../../wip-limits';
 import {
   deriveLaneRowData,
@@ -35,10 +34,12 @@ interface BoardLanesProps {
   wipProjectId?: string;
 }
 
-const AWAITING_ONLY_STORAGE_KEY = 'bdboard.mobileAwaitingOnly';
+/** bdboard-pj9e: スマホ幅で表示する 1 レーン (端末ごとに保存)。 */
+const MOBILE_LANE_STORAGE_KEY = 'bdboard.mobileLane';
+const DEFAULT_MOBILE_LANE: Lane = 'awaiting_human';
 
-function parseBoolean(value: unknown): boolean | null {
-  return typeof value === 'boolean' ? value : null;
+function parseLane(value: unknown): Lane | null {
+  return LANES.find((lane) => lane === value) ?? null;
 }
 
 function LanesRow({
@@ -76,18 +77,17 @@ function LanesRow({
 }) {
   const boardNav = useBoardKeyboardNav();
   const filterKey = boardFilterKey(filter);
-  const lanesRowRef = useRef<HTMLDivElement>(null);
   const isMobile = useMatchMedia(MOBILE_LAYOUT_MEDIA_QUERY);
-  const showLaneIndicator = isMobile;
-  const [awaitingOnly, setAwaitingOnly] = usePersistedState(
-    AWAITING_ONLY_STORAGE_KEY,
-    true,
-    parseBoolean,
+  const [storedMobileLane, setMobileLane] = usePersistedState(
+    MOBILE_LANE_STORAGE_KEY,
+    DEFAULT_MOBILE_LANE,
+    parseLane,
   );
-  const lanes: Lane[] = isMobile && awaitingOnly ? ['awaiting_human'] : allLanes;
+  // 保存済みのレーンが今は非表示 (例: 完了を隠している) なら既定へ戻す
+  const mobileLane = allLanes.includes(storedMobileLane) ? storedMobileLane : DEFAULT_MOBILE_LANE;
 
-  const laneDerived = deriveLaneRowData(
-    lanes,
+  const allLaneDerived = deriveLaneRowData(
+    allLanes,
     board,
     stalledOnly,
     filter,
@@ -95,7 +95,10 @@ function LanesRow({
     wipProjectId,
   );
 
-  const laneIndicatorItems = laneIndicatorItemsFrom(laneDerived);
+  const laneIndicatorItems = laneIndicatorItemsFrom(allLaneDerived);
+  const laneDerived = isMobile
+    ? allLaneDerived.filter(({ lane }) => lane === mobileLane)
+    : allLaneDerived;
 
   const laneColumns = laneDerived.map(
     ({ lane, filteredCards, afterStalled, wipStatusForColumn }) => (
@@ -115,9 +118,9 @@ function LanesRow({
             ? Math.max(0, board.closedTotal - (board.lanes.done?.length ?? 0))
             : undefined
         }
-        collapsed={collapsedLanes?.has(lane) ?? false}
+        collapsed={!isMobile && (collapsedLanes?.has(lane) ?? false)}
         onToggleCollapse={
-          onToggleLaneCollapse !== undefined
+          !isMobile && onToggleLaneCollapse !== undefined
             ? () => onToggleLaneCollapse(lane)
             : undefined
         }
@@ -128,26 +131,13 @@ function LanesRow({
 
   return (
     <div className="lanes-scroll-region">
-      {isMobile && (
-        <label className="awaiting-only-toggle">
-          <input
-            type="checkbox"
-            checked={awaitingOnly}
-            onChange={(event) => setAwaitingOnly(event.target.checked)}
-          />
-          確認待ちのみ ({board.lanes.awaiting_human?.length ?? 0})
-        </label>
-      )}
-      <LaneScrollIndicator
-        lanes={lanes}
+      <LanePicker
         items={laneIndicatorItems}
-        scrollContainerRef={lanesRowRef}
-        enabled={showLaneIndicator}
-        collapsedLanes={collapsedLanes}
-        onToggleCollapse={onToggleLaneCollapse}
+        selectedLane={mobileLane}
+        onSelect={setMobileLane}
+        enabled={isMobile}
       />
       <div
-        ref={lanesRowRef}
         className="lanes-row"
         onKeyDown={boardNav?.onContainerKeyDown}
       >

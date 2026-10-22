@@ -48,7 +48,7 @@
    scroll-behavior: CSS 由来の smooth はここで拾える。拾えないのは JS が
    scrollIntoView({ behavior: 'smooth' }) と明示した場合だけで、そのときは
    ScrollOptions.behavior が優先される（CSSOM View は behavior: 'auto' のときにのみ
-   計算値 scroll-behavior を参照する）ため LaneScrollIndicator で個別対応している。
+   計算値 scroll-behavior を参照する）ため、そうする箇所は JS 側で個別に対応する。
    behavior を省略した scrollIntoView は 'auto' 扱いなのでここが効く。
    animation 系は現状 0 箇所だが、今後の @keyframes もここで拾う。
    scroll-snap は位置決めのため無効化しない。 */

@@ -2,8 +2,8 @@ import { expect, test, type Page } from '@playwright/test';
 
 /**
  * bdboard-6y5b: モバイルで `.lane-header` (レーン名・件数・折りたたみトグル) を
- * 丸ごと描画せず、`.lane-indicator-strip` (レーンスクロールインジケータ) 側に
- * 折りたたみトグルを移す方式の回帰ガード。
+ * 丸ごと描画しない方式の回帰ガード。bdboard-pj9e でストリップはレーン選択
+ * (1 レーンだけを表示) になり、折りたたみトグルはモバイルから無くなった。
  *
  * 背景 (bdboard-knrx / bdboard-t0hx): モバイルでページを最下端まで送ると、レーン箱の
  * 上端が sticky な `.lane-indicator-strip` の下に潜り込み、`.lane-header` が隠れて
@@ -16,8 +16,7 @@ import { expect, test, type Page } from '@playwright/test';
  * 証明している:
  * - モバイル幅の統合ビュー・分割ビュー双方で `.lane-header` のラベル部が描画されない
  *   (描画されない = そもそも隠れようがなく、症状が構造的に起きえないことの根拠)
- * - 折りたたみトグルがストリップ側 (`.lane-indicator-collapse-toggle`) に存在し、
- *   実際に押して開閉が効く (到達性)
+ * - ストリップで選んだ 1 レーンだけが描画され、選択がリロード後も残る (bdboard-pj9e)
  * - デスクトップ幅では従来どおり `.lane-header` にラベル部・件数・トグルがある
  *
  * 証明していない:
@@ -57,57 +56,22 @@ test.describe('mobile: lane-header suppressed, toggle moved to the strip (bdboar
     await expect(page.locator('.lane-indicator-strip')).toBeVisible();
   });
 
-  test('merged view: the collapse toggle lives in the strip and actually opens/closes the lane', async ({
+  test('the strip picks the single rendered lane and the choice survives a reload (bdboard-pj9e)', async ({
     page,
   }) => {
-    await gotoBoard(page);
-
+    await page.goto('/');
     const strip = page.locator('.lane-indicator-strip');
-    await expect(strip).toBeVisible();
+    await expect(strip).toBeVisible({ timeout: 15_000 });
+    await expect(strip.locator('.lane-indicator-collapse-toggle')).toHaveCount(0);
 
-    const toggle = strip.locator('.lane-indicator-collapse-toggle').first();
-    await expect(toggle).toBeVisible();
+    await strip.getByRole('button', { name: /^進行中 / }).click();
+    await expect(page.locator('.lanes-row .lane')).toHaveCount(1);
+    await expect(page.locator('.lanes-row .lane')).toHaveAttribute('data-lane', 'in_progress');
 
-    const firstLane = page.locator('.lanes-row .lane').first();
-    await expect(firstLane).not.toHaveClass(/lane-collapsed/);
-    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-
-    await toggle.click();
-    await expect(firstLane).toHaveClass(/lane-collapsed/);
-    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-
-    // 到達性: 折りたたんだ後も同じボタンが押せて、再展開できる
-    // (レーンヘッダー無しでも操作が行き止まりにならないことの確認)。
-    await toggle.click();
-    await expect(firstLane).not.toHaveClass(/lane-collapsed/);
-    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  });
-
-  test('split view: same lane-header suppression and working strip toggle', async ({ page }) => {
-    await gotoBoard(page);
-
-    await page.getByRole('button', { name: '分割' }).click();
-    await expect(page.locator('.board-section .lane').first()).toBeVisible({
+    await page.reload();
+    await expect(page.locator('.lanes-row .lane')).toHaveAttribute('data-lane', 'in_progress', {
       timeout: 15_000,
     });
-
-    // 分割ビューでも同じ症状 (bdboard-knrx notes の分割ビュー 28.23px 残存) が消えていること。
-    // 本方式は .lane の減算式に触れないため、.board-section の margin-bottom は無関係になる —
-    // .lane-header 自体が描画されないので、そもそも潜り込む対象が無い。
-    await expect(page.locator('.board-section .lane-header').first()).toBeHidden();
-
-    const firstSection = page.locator('.board-section').first();
-    const toggle = firstSection.locator('.lane-indicator-collapse-toggle').first();
-    await expect(toggle).toBeVisible();
-
-    const firstLane = firstSection.locator('.lane').first();
-    await expect(firstLane).not.toHaveClass(/lane-collapsed/);
-
-    await toggle.click();
-    await expect(firstLane).toHaveClass(/lane-collapsed/);
-
-    await toggle.click();
-    await expect(firstLane).not.toHaveClass(/lane-collapsed/);
   });
 });
 
@@ -123,7 +87,7 @@ test.describe('desktop: lane-header keeps its label, count and toggle (bdboard-6
     await expect(header.locator('.lane-count')).toBeVisible();
 
     // デスクトップ幅ではストリップ自体が描画されない
-    // (LaneScrollIndicator は useMatchMedia(MOBILE_LAYOUT_MEDIA_QUERY) が false だと null を返す)。
+    // (LanePicker は useMatchMedia(MOBILE_LAYOUT_MEDIA_QUERY) が false だと null を返す)。
     await expect(page.locator('.lane-indicator-strip')).toHaveCount(0);
 
     // 既存どおり、レーンヘッダー自身のクリックで折りたたみが効く。
