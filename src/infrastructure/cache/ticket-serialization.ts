@@ -32,7 +32,6 @@ interface SerializedTicket {
   readonly acceptanceCriteria?: string;
   readonly closeReason?: string;
   readonly labels?: readonly string[];
-  readonly manualSessionId?: string;
   readonly models?: readonly { readonly stage: string; readonly model: string }[];
   readonly complexity?: string;
   readonly reviewAfter?: readonly TicketId[];
@@ -88,9 +87,6 @@ function serializeTicket(ticket: Ticket): SerializedTicket {
       : {}),
     ...(ticket.closeReason !== undefined ? { closeReason: ticket.closeReason } : {}),
     ...(ticket.labels !== undefined ? { labels: ticket.labels } : {}),
-    ...(ticket.manualSessionId !== undefined
-      ? { manualSessionId: ticket.manualSessionId }
-      : {}),
     ...(ticket.models !== undefined ? { models: ticket.models } : {}),
     ...(ticket.complexity !== undefined ? { complexity: ticket.complexity } : {}),
     ...(ticket.reviewAfter !== undefined ? { reviewAfter: ticket.reviewAfter } : {}),
@@ -123,9 +119,6 @@ function deserializeTicket(raw: SerializedTicket): Ticket {
       : {}),
     ...(raw.closeReason !== undefined ? { closeReason: raw.closeReason } : {}),
     ...(raw.labels !== undefined ? { labels: raw.labels } : {}),
-    ...(raw.manualSessionId !== undefined
-      ? { manualSessionId: raw.manualSessionId }
-      : {}),
     ...(raw.models !== undefined ? { models: raw.models } : {}),
     ...(raw.complexity !== undefined ? { complexity: raw.complexity } : {}),
     ...(raw.reviewAfter !== undefined ? { reviewAfter: raw.reviewAfter } : {}),

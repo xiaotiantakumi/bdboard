@@ -20,8 +20,6 @@ function makeCard(id: string, lane: BoardCardDto['lane'] = 'ready'): BoardCardDt
     blockedBy: [],
     blocks: [],
     unblocksCount: 0,
-    liveness: null,
-    sessions: [],
     stalled: false,
     epicProgress: null,
     deferDays: null,

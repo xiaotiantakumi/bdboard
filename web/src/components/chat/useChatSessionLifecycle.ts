@@ -1,14 +1,11 @@
 import { useCallback, type MutableRefObject } from 'react';
 import {
-  fetchChatThreads,
   type ChatThreadDto,
   type ChatSessionMessagesDto,
-  type SessionTailMessageDto,
 } from '../../api';
 import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { dropGoneFromPersistedOpen } from './dropGoneFromPersistedOpen';
-import { toAdoptionSeedMessages, toChatMessages } from './messages';
-import { pruneDeadOpenThreads } from './pruneDeadOpenThreads';
+import { toChatMessages } from './messages';
 import { planRecoveredTurn } from './recoveredTurnPlan';
 import { takeUnobservedOrigin, withHistoryLoaded, withoutKey, type ReplacedThreadMarks } from './replacedThread';
 import type { UseChatAgentModelStateResult } from './useChatAgentModelState';
@@ -20,7 +17,7 @@ export interface UseChatSessionLifecycleParams
   extends Pick<UseConversationKeyResult, 'selectedThreadIdsRef' | 'setSelectedThreadIds' | 'draftNoncesRef'>,
     Pick<
       UseChatConversationsStateResult,
-      'historyRequestIdRef' | 'setConversations' | 'setHistoryLoadedFor' | 'setLoadingHistoryFor' | 'setThreadModelIds'
+      'setConversations' | 'setHistoryLoadedFor' | 'setThreadModelIds'
     >,
     Pick<
       UseChatThreadListsResult,
@@ -30,7 +27,6 @@ export interface UseChatSessionLifecycleParams
   selectedProjectId: string;
   /** bdboard-w9hv: 回収が返すセッションの送信元(置き換えられたスレッド)を辿る印。 */
   replacedMarksRef: MutableRefObject<ReplacedThreadMarks>;
-  cancelThreadConfirmDelete: () => void;
   /** chat/useDraftThreadLauncher.ts の 23u nonce 前進(第14b段)。 */
   advanceDraftNonceAfterSessionGone: (projectId: string) => void;
 }
@@ -44,7 +40,6 @@ export interface UseChatSessionLifecycleParams
  *   chat/threadViewRestore.ts の規則で永続化から復元する(bdboard-tsen)。ドラフト表示中はこの選択切り替えを抑止する(bdboard-cemi)。
  * - handleHistorySessionGone: 履歴ローダー(chat/useChatHistoryLoader.ts、E12)が
  *   404/unknown session を見たときに呼ぶ(bdboard-23u の prune)。
- * - handleResumeDiscoveredSession: ドロワーの「CLIセッションを再開」から呼ぶ。
  * effect は持たない(useCallback 2つと、元どおり毎レンダー作り直す関数1つ)。
  * 本体・依存配列・読み取り方式(ref で読む/prev で読む/render の値で読む)は
  * 元のまま。ただし applyRecoveredTurn の open・選択の決定(置き換えられたスレッドを外す
@@ -55,9 +50,9 @@ export interface UseChatSessionLifecycleParams
  */
 export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
   const { selectedProjectId, selectedThreadIdsRef, setSelectedThreadIds } = params;
-  const { historyRequestIdRef, setConversations, setHistoryLoadedFor, setLoadingHistoryFor, setThreadModelIds } = params;
+  const { setConversations, setHistoryLoadedFor, setThreadModelIds } = params;
   const { openThreadIdsRef, restoredProjectsRef, provisionalEntries, setThreadLists, setOpenThreadIds, threadListOrder } = params;
-  const { setSelectedAgentId, cancelThreadConfirmDelete, advanceDraftNonceAfterSessionGone, draftNoncesRef } = params;
+  const { setSelectedAgentId, advanceDraftNonceAfterSessionGone, draftNoncesRef } = params;
   const { replacedMarksRef } = params;
 
   const applyRecoveredTurn = useCallback(
@@ -251,134 +246,5 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     ],
   );
 
-  /**
-   * bdboard-3tw.104.3 レビュー MF2: adopt 直後は `selectedThreadIds[projectId]` を
-   * 新しいセッションIDに向け、`openThreadIds`/`threadLists` を更新し、
-   * `writePersistedChatThreadState` で永続化する(104.2 のマルチスレッド化前は
-   * `conversations[selectedProjectId]` に直書きしていたが、会話キーはスレッド
-   * (sessionId)単位になったのでプロジェクトIDキーでは合わなくなっていた)。
-   *
-   * M1(レビュー再指摘): 履歴シードは `/api/sessions/:id/tail`(ライブセッション
-   * インデックス由来、実測10件程度)を別途叩くのではなく、adopt レスポンスに
-   * 同梱された `seedMessages`(discovery が local-only ガード配下で既に読んだ
-   * トランスクリプト末尾)をそのまま使う。終了済みセッション(この機能の主用途)は
-   * ライブインデックスにまず載らないため、以前の実装(`fetchSessionTail` 呼び出し)
-   * はほぼ確実に 404 していた。取れる会話が無ければ簡単な説明メッセージ1行に
-   * フォールバックする。
-   *
-   * S4(レビュー指摘): `writePersistedChatThreadState`(localStorage への書き込み)は
-   * `setOpenThreadIds` の updater 関数の中では呼ばない — React の StrictMode は
-   * updater を2回呼び得るため、副作用がその中にあると二重発火する。ここでは
-   * 復元済みのプロジェクトなら `openThreadIdsRef.current[projectId]`(bdboard-d7on 以降。
-   * render スコープの `openThreads` ではなく、useLiveMirroredState で常に最新の ref)、
-   * 未復元なら永続化済みの activeSessionIds から次の配列を計算し、
-   * `setOpenThreadIds` には具体値を渡したうえで、副作用は updater の外側で呼ぶ
-   * (`handleCloseThread` と同じパターン)。
-   *
-   * bdboard-oaak: 未復元の基点はサーバー一覧で絞れていない永続化 id なので、採用の後の
-   * 一覧 fetch が届いたとき、その基点のうち一覧に無い id を open と永続化から落とす
-   * (chat/pruneDeadOpenThreads.ts。復元の経路 restoreThreadView と同じ規則)。
-   *
-   * threadModelIds との関係(レビュー指摘: 意図された挙動): 下で
-   * `historyLoadedFor[sessionId] = true` を先回りしてセットし、通常の
-   * ChatMessageRepository 由来の履歴読み込み effect(`payload.model` から
-   * `threadModelIds` を埋める側)を抑止している。そのため adopt したスレッドは
-   * `threadModelIds` に何も入らず、モデルセレクトは選択中エージェントの既定モデルに
-   * フォールバックする(= CLI セッション側が最後に使っていたモデルとは限らない)。
-   * これはこの実装の既知の制約であり、修正対象ではない — 是正するには adopt
-   * レスポンスにモデルIDも含めて `threadModelIds` を明示的に設定する追加変更が
-   * 必要だが、現状スコープ外。
-   *
-   * S5(レビュー指摘・既知の制約): シードした会話は `conversations`(メモリ上の
-   * state)にしか置かれず、`writePersistedChatThreadState` が永続化するのは
-   * スレッドの開閉状態(`activeSessionIds`/`selectedSessionId`)だけでメッセージ
-   * 本文は含まない。そのためページをリロードすると、スレッドタブ自体は
-   * 復元されるがシードした会話内容は失われ、通常の履歴読み込み effect が
-   * ChatMessageRepository(adopt 直後はまだ空)から読み直して「まだメッセージは
-   * ありません」に戻る。M1 はサーバー側のデータソースの問題(ライブインデックス
-   * vs トランスクリプト全体)を解決するもので、クライアント側の永続化範囲とは
-   * 別の話であり、ここには畳み込めない。会話メッセージ全体をクライアント
-   * ストレージへ永続化する設計変更は現状スコープ外のため、既知の制約として
-   * 明文化するに留める。
-   */
-  const handleResumeDiscoveredSession = (
-    sessionId: string,
-    agentId: string,
-    seedMessages: readonly SessionTailMessageDto[],
-  ) => {
-    const projectId = selectedProjectId;
-    // bdboard-z9mn: 取り込み用の変換は chat/messages.ts へ移した(このファイルの max-lines のため。挙動は同じ)。
-    const seeded = toAdoptionSeedMessages(seedMessages);
-
-    // bdboard-2n8 レビュー should-fix: handleAgentChange と同じ理由でここでも
-    // historyRequestIdRef を進める。resume したセッションIDが現在選択中の
-    // 会話キーと同じ(=既にそのスレッドが開かれていて履歴フェッチが in-flight)
-    // だった場合、キー自体は変わらないので通常の invalidation(currentConversationKey
-    // の変化に伴う effect cleanup)が働かない。increment しないと、下でセットする
-    // seeded conversation / agentId を、後から解決する古い履歴フェッチの `.then` が
-    // (サーバー側の別内容で)上書きしてしまう。
-    historyRequestIdRef.current += 1;
-    setSelectedAgentId(agentId);
-    setConversations((prev) => ({ ...prev, [sessionId]: { messages: seeded, sessionId, agentId } }));
-    // 履歴は上で seedMessages から取り込み済みなので、通常の(常に空の)
-    // ChatMessageRepository 由来の自動読み込み effect は動かさない。
-    setHistoryLoadedFor((prev) => ({ ...prev, [sessionId]: true }));
-
-    // bdboard-oaak: 未復元(初回の一覧 fetch が in-flight)のときだけ、基点が「サーバー一覧で
-    // まだ絞っていない永続化 id」になる。下の fetch が届いたら、その基点のうち一覧に無い id を落とす。
-    const usedPersistedBase = !restoredProjectsRef.current.has(projectId);
-    // bdboard-rt6i: 未復元で最初の永続化エントリを書く採用は仮のエントリ(chat/provisionalEntry.ts)。印の判定は
-    // restoredProjectsRef を読むので、下の restoredProjectsRef.current.add より前に呼ぶ。
-    provisionalEntries.markIfFirstEntry(projectId);
-    provisionalEntries.noteReopened(projectId, sessionId);
-    const baseOpenThreads = [...(usedPersistedBase
-      ? (readPersistedChatThreads()[projectId]?.activeSessionIds ?? [])
-      : (openThreadIdsRef.current[projectId] ?? []))];
-    const nextOpenThreads = baseOpenThreads.includes(sessionId)
-      ? baseOpenThreads
-      : [...baseOpenThreads, sessionId];
-    setOpenThreadIds((prev) => ({ ...prev, [projectId]: nextOpenThreads }));
-    restoredProjectsRef.current.add(projectId);
-    writePersistedChatThreadState(projectId, {
-      activeSessionIds: nextOpenThreads,
-      selectedSessionId: sessionId,
-    });
-
-    setSelectedThreadIds((prev) => ({ ...prev, [projectId]: sessionId }));
-    cancelThreadConfirmDelete();
-    setLoadingHistoryFor((prev) => (prev === sessionId ? null : prev));
-
-    // bdboard-z9mn: 取り直しの開始順序番号。E7・回収の一覧より後に始まったなら、先に始まった(古い)
-    // それらの一覧が後から届いても、この一覧を上書きしない。逆に、あとから始まった取り直し・回収の一覧が
-    // 先に当たっていれば、この一覧は古いので書かない(採用が 2 回続いたときの 1 回目の取り直しなど)。
-    // threadListRequestIdRef は進めない — 進めると回収の hydrate が止まる(chat/useTurnStatusRecovery.ts)。
-    const listFetchSeq = threadListOrder.begin(projectId);
-    void fetchChatThreads(projectId)
-      .then((threads) => {
-        const orderedThreads = threadListOrder.admit(projectId, listFetchSeq, threads);
-        if (orderedThreads !== undefined) {
-          setThreadLists((prev) => ({ ...prev, [projectId]: orderedThreads }));
-        }
-        // 古い一覧でも、基点の永続化 id のうち一覧に無いものが落ちたこと自体は新しい一覧にも当てはまるので、
-        // 下の prune は応答の新旧に関わらず行う(基点の id はこの採用より前から存在していた)。
-        if (!usedPersistedBase) return;
-        // bdboard-oaak: 採用は restoredProjectsRef を立てるので、この後に届く E7 の応答は open を
-        // 復元し直さない。サーバーがもう持たない永続化 id を残すと「(無題)」タブになるため落とす。
-        pruneDeadOpenThreads({
-          projectId,
-          adoptedSessionId: sessionId,
-          baseOpenThreads,
-          threads,
-          openThreadIdsRef,
-          setOpenThreadIds,
-          selectedThreadIdsRef,
-          setSelectedThreadIds,
-        });
-      })
-      .catch(() => {
-        // 一覧の更新に失敗してもタブ表示が「(無題)」になるだけで再開自体は成立している。
-      });
-  };
-
-  return { applyRecoveredTurn, handleHistorySessionGone, handleResumeDiscoveredSession };
+  return { applyRecoveredTurn, handleHistorySessionGone };
 }

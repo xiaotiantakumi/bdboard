@@ -22,7 +22,6 @@ vi.mock('../api', async (importOriginal) => {
     fetchChatThreads: vi.fn(() => Promise.resolve<ChatThreadDto[]>([])),
     fetchChatTurnStatus: vi.fn(() => Promise.resolve<ChatTurnStatusDto>({ state: 'idle' })),
     acknowledgeChatTurn: vi.fn(() => Promise.resolve()),
-    fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     fetchPlatformSupport: vi.fn(() => Promise.resolve({ platform: 'darwin', limitations: [] })),
   };
 });
@@ -32,7 +31,6 @@ import {
   fetchChatThreads,
   fetchChatTurnStatus,
   acknowledgeChatTurn,
-  fetchDiscoveredChatSessions,
   fetchPlatformSupport,
 } from '../api';
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
@@ -42,7 +40,6 @@ const fetchChatAgentsMock = vi.mocked(fetchChatAgents);
 const fetchChatThreadsMock = vi.mocked(fetchChatThreads);
 const fetchChatTurnStatusMock = vi.mocked(fetchChatTurnStatus);
 const acknowledgeChatTurnMock = vi.mocked(acknowledgeChatTurn);
-const fetchDiscoveredChatSessionsMock = vi.mocked(fetchDiscoveredChatSessions);
 const fetchPlatformSupportMock = vi.mocked(fetchPlatformSupport);
 
 function thread(sessionId: string, title: string): ChatThreadDto {
@@ -126,7 +123,6 @@ describe('ChatPanel: recovery hydrate overlapping the initial thread-list fetch 
     fetchChatThreadsMock.mockResolvedValue([]);
     fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
     acknowledgeChatTurnMock.mockResolvedValue();
-    fetchDiscoveredChatSessionsMock.mockResolvedValue({ sessions: [] });
   });
 
   afterEach(() => {

@@ -27,7 +27,6 @@ const mockTicketDetail: TicketDetailDto = {
   dependencies: [],
   blockedBy: [],
   blocks: [],
-  sessionLinks: [],
   models: [],
   children: [],
 };

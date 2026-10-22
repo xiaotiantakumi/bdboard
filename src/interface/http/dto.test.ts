@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildBoard } from '../../domain/board.js';
 import { LANES } from '../../domain/readiness.js';
-import { makeSession, makeTicket } from '../../domain/test-support.js';
+import { makeTicket } from '../../domain/test-support.js';
 import type { BoardView } from '../../application/board/get-board.js';
-import { DEFAULT_LIVENESS_THRESHOLDS } from '../../domain/liveness.js';
 import {
   countIncompleteTicketsFromBoard,
   countIncompleteTicketsFromTickets,
@@ -12,7 +11,6 @@ import {
   toBoardViewDto,
   toActivityEventDto,
   toProjectDto,
-  toSessionDto,
   toTicketDetailDto,
   toTicketSimilarResultDto,
   toTicketSummaryDto,
@@ -47,21 +45,10 @@ describe('dto', () => {
       closedAt: NOW,
       deferUntil: NOW,
     });
-    const session = makeSession({ lastActivityAt: NOW, startedAt: NOW });
     const board = buildBoard({
       projectId: '/projects/a',
       tickets: [ticket],
       now: NOW,
-      sessions: [session],
-      links: [
-        {
-          ticketId: ticket.id,
-          sessionId: session.sessionId,
-          source: 'metadata',
-          confidence: 1,
-          observedAt: NOW,
-        },
-      ],
     });
 
     const view: BoardView = {
@@ -86,7 +73,7 @@ describe('dto', () => {
       mergedTruncatedClosedIds: [],
     };
 
-    const dto = toBoardViewDto(view, DEFAULT_LIVENESS_THRESHOLDS);
+    const dto = toBoardViewDto(view);
     assertNoDates(dto);
     expect(dto.generatedAt).toBe(NOW.toISOString());
   });
@@ -104,7 +91,7 @@ describe('dto', () => {
     });
     const card = board.cards[0];
 
-    const dto = toBoardCardDto(card, NOW, DEFAULT_LIVENESS_THRESHOLDS);
+    const dto = toBoardCardDto(card);
 
     expect(dto.stalled).toBe(true);
   });
@@ -129,13 +116,9 @@ describe('dto', () => {
 
     const epicDto = toBoardCardDto(
       board.cards.find((c) => c.ticket.id === 'bdboard-epic-dto')!,
-      NOW,
-      DEFAULT_LIVENESS_THRESHOLDS,
     );
     const deferDto = toBoardCardDto(
       board.cards.find((c) => c.ticket.id === 'bdboard-defer-dto')!,
-      NOW,
-      DEFAULT_LIVENESS_THRESHOLDS,
     );
 
     expect(epicDto.epicProgress).toEqual({ total: 1, done: 1 });
@@ -171,7 +154,7 @@ describe('dto', () => {
       (c) => c.ticket.id === 'bdboard-dto-blocker',
     )!;
 
-    const dto = toBoardCardDto(blockerCard, NOW, DEFAULT_LIVENESS_THRESHOLDS);
+    const dto = toBoardCardDto(blockerCard);
 
     expect(dto.effectivePriority).toBe(0);
     expect(dto.priorityInheritedFrom).toBe('bdboard-dto-blocked');
@@ -184,7 +167,7 @@ describe('dto', () => {
       now: NOW,
     });
 
-    const dto = toBoardDto(board, NOW, DEFAULT_LIVENESS_THRESHOLDS);
+    const dto = toBoardDto(board);
 
     for (const lane of LANES) {
       expect(lane in dto.lanes).toBe(true);
@@ -200,7 +183,7 @@ describe('dto', () => {
       now: NOW,
     });
 
-    const dto = toBoardDto(board, NOW, DEFAULT_LIVENESS_THRESHOLDS);
+    const dto = toBoardDto(board);
 
     expect(dto.closedTotal).toBe(1);
   });
@@ -213,7 +196,7 @@ describe('dto', () => {
     });
 
     // 呼び出し元(getBoard)がclosedLimitで切った後、切る前の総件数を渡すケースを模す
-    const dto = toBoardDto(board, NOW, DEFAULT_LIVENESS_THRESHOLDS, { closedTotal: 42 });
+    const dto = toBoardDto(board, { closedTotal: 42 });
 
     expect(dto.lanes.done).toHaveLength(1);
     expect(dto.closedTotal).toBe(42);
@@ -226,7 +209,7 @@ describe('dto', () => {
       now: NOW,
     });
 
-    const dto = toBoardDto(board, NOW, DEFAULT_LIVENESS_THRESHOLDS);
+    const dto = toBoardDto(board);
 
     expect(dto.truncatedClosedIds).toEqual([]);
   });
@@ -239,7 +222,7 @@ describe('dto', () => {
     });
 
     // 呼び出し元(getBoard)がcloseLimitで切り捨てたIDを渡すケースを模す
-    const dto = toBoardDto(board, NOW, DEFAULT_LIVENESS_THRESHOLDS, {
+    const dto = toBoardDto(board, {
       closedTotal: 42,
       truncatedClosedIds: ['bdboard-old-1', 'bdboard-old-2'],
     });
@@ -274,7 +257,7 @@ describe('dto', () => {
     }
 
     it('empties projects in merged mode so tickets are not sent twice', () => {
-      const dto = toBoardViewDto(makeView('merged'), DEFAULT_LIVENESS_THRESHOLDS);
+      const dto = toBoardViewDto(makeView('merged'));
 
       expect(dto.projects).toEqual([]);
       expect(dto.merged?.lanes.ready.map((c) => c.ticket.id)).toEqual([
@@ -283,7 +266,7 @@ describe('dto', () => {
     });
 
     it('keeps projects populated in split mode', () => {
-      const dto = toBoardViewDto(makeView('split'), DEFAULT_LIVENESS_THRESHOLDS);
+      const dto = toBoardViewDto(makeView('split'));
 
       expect(dto.projects).toHaveLength(1);
       expect(
@@ -303,7 +286,7 @@ describe('dto', () => {
         mergedTruncatedClosedIds: ['bdboard-old-1', 'bdboard-old-2'],
       };
 
-      const dto = toBoardViewDto(viewWithTruncation, DEFAULT_LIVENESS_THRESHOLDS);
+      const dto = toBoardViewDto(viewWithTruncation);
 
       expect(dto.merged?.truncatedClosedIds).toEqual(['bdboard-old-1', 'bdboard-old-2']);
     });
@@ -318,7 +301,7 @@ describe('dto', () => {
         })),
       };
 
-      const dto = toBoardViewDto(viewWithTruncation, DEFAULT_LIVENESS_THRESHOLDS);
+      const dto = toBoardViewDto(viewWithTruncation);
 
       expect(dto.projects[0]?.board.truncatedClosedIds).toEqual(['bdboard-old-3']);
     });
@@ -361,8 +344,8 @@ describe('dto', () => {
     const beforeDto = {
       mode: 'merged',
       generatedAt: NOW.toISOString(),
-      projects: [{ project: projectDto, board: toBoardDto(fullBoard, NOW, DEFAULT_LIVENESS_THRESHOLDS) }],
-      merged: toBoardDto(fullBoard, NOW, DEFAULT_LIVENESS_THRESHOLDS),
+      projects: [{ project: projectDto, board: toBoardDto(fullBoard) }],
+      merged: toBoardDto(fullBoard),
     };
     const beforeSize = JSON.stringify(beforeDto).length;
 
@@ -397,7 +380,7 @@ describe('dto', () => {
       mergedClosedTotal: CLOSED_COUNT,
       mergedTruncatedClosedIds: truncatedClosedIds,
     };
-    const afterDto = toBoardViewDto(afterView, DEFAULT_LIVENESS_THRESHOLDS);
+    const afterDto = toBoardViewDto(afterView);
     const afterSize = JSON.stringify(afterDto).length;
 
     // 削減効果を数値でログに残す(議長のレビュー用。bdboard-3tw.86)。
@@ -446,7 +429,7 @@ describe('dto', () => {
     const summary = toTicketSummaryDto(ticket);
     expect(summary.labels).toEqual(['human', 'needs-review']);
 
-    const cardDto = toBoardCardDto(card, NOW, DEFAULT_LIVENESS_THRESHOLDS);
+    const cardDto = toBoardCardDto(card);
     expect(cardDto.ticket.labels).toEqual(['human', 'needs-review']);
   });
 
@@ -471,7 +454,7 @@ describe('dto', () => {
     const card = board.cards.find((entry) => entry.ticket.id === 'bdboard-detail');
     expect(card).toBeDefined();
 
-    const dto = toTicketDetailDto(card!, [], [], [
+    const dto = toTicketDetailDto(card!, [], [
       { id: 'bdboard-child', title: 'Child ticket', lane: 'in_progress' },
     ]);
 
@@ -506,7 +489,7 @@ describe('dto', () => {
       (entry) => entry.ticket.id === 'bdboard-complex',
     );
     expect(cardWithComplexity).toBeDefined();
-    expect(toTicketDetailDto(cardWithComplexity!, [], [], []).complexity).toBe('high');
+    expect(toTicketDetailDto(cardWithComplexity!, [], []).complexity).toBe('high');
 
     const withoutComplexity = makeTicket({ id: 'bdboard-no-complex' });
     const boardWithoutComplexity = buildBoard({
@@ -519,7 +502,7 @@ describe('dto', () => {
     );
     expect(cardWithoutComplexity).toBeDefined();
     expect(
-      toTicketDetailDto(cardWithoutComplexity!, [], [], []).complexity,
+      toTicketDetailDto(cardWithoutComplexity!, [], []).complexity,
     ).toBeUndefined();
   });
 
@@ -558,111 +541,7 @@ describe('dto', () => {
     });
   });
 
-  it('omits optional session name when absent', () => {
-    const dto = toSessionDto(
-      makeSession({ startedAt: NOW, lastActivityAt: NOW }),
-      NOW,
-      DEFAULT_LIVENESS_THRESHOLDS,
-    );
-
-    expect('name' in dto).toBe(false);
-    expect(dto.startedAt).toBe(NOW.toISOString());
-    expect(dto.liveness).toBe('active');
-  });
-
-  it('toSessionDto returns liveness based on now and lastActivityAt', () => {
-    const recent = makeSession({
-      alive: true,
-      lastActivityAt: NOW,
-    });
-    const idle = makeSession({
-      alive: true,
-      lastActivityAt: new Date(NOW.getTime() - 10 * 60_000),
-    });
-    const stale = makeSession({
-      alive: true,
-      lastActivityAt: new Date(NOW.getTime() - 2 * 60 * 60_000),
-    });
-    const dormant = makeSession({
-      alive: false,
-      lastActivityAt: NOW,
-    });
-
-    expect(toSessionDto(recent, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('active');
-    expect(toSessionDto(idle, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('idle');
-    expect(toSessionDto(stale, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('stale');
-    expect(toSessionDto(dormant, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('dormant');
-  });
-
-  it('toSessionDto honors the resolved liveness thresholds', () => {
-    /*
-     * bdboard-3tw.102.5: 引数を渡さないと常に既定値 (5分/30分/24時間) になり、
-     * Settings で閾値を変えてもボードのバッジだけが追随してセッション一覧は
-     * 古いまま、という食い違いが起きる。既定値では 'active' になる経過時間で、
-     * 上書き後は 'idle' に変わることを見る (逆向きも 1 件)。
-     */
-    const thresholds = {
-      activeMs: 60_000,
-      idleMs: 10 * 60_000,
-      staleMs: 60 * 60_000,
-    };
-    const twoMinutesIdle = makeSession({
-      alive: true,
-      lastActivityAt: new Date(NOW.getTime() - 2 * 60_000),
-    });
-    const twoHoursOld = makeSession({
-      alive: true,
-      lastActivityAt: new Date(NOW.getTime() - 2 * 60 * 60_000),
-    });
-
-    expect(toSessionDto(twoMinutesIdle, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('active');
-    expect(toSessionDto(twoMinutesIdle, NOW, thresholds).liveness).toBe('idle');
-    // 既定では stale (24時間以内)、上書き後は dormant (1時間超)。
-    expect(toSessionDto(twoHoursOld, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('stale');
-    expect(toSessionDto(twoHoursOld, NOW, thresholds).liveness).toBe('dormant');
-  });
-
-  it('toProjectDto counts active sessions with the resolved thresholds', () => {
-    // ヘッダーの「稼働中 N」がここから出る。件数と各セッションの liveness が
-    // 同じ閾値を見ていないと、同じ画面の中で食い違う (bdboard-3tw.102.5)。
-    const project = {
-      id: '/projects/a',
-      name: 'a',
-      rootPath: '/projects/a',
-      prefixes: ['bdboard'],
-      aliasPaths: [],
-    };
-    const justNow = makeSession({
-      sessionId: 'session-now',
-      alive: true,
-      startedAt: NOW,
-      lastActivityAt: NOW,
-    });
-    const twoMinutesIdle = makeSession({
-      sessionId: 'session-2m',
-      alive: true,
-      startedAt: NOW,
-      lastActivityAt: new Date(NOW.getTime() - 2 * 60_000),
-    });
-
-    const sessions = [justNow, twoMinutesIdle];
-    const withDefaults = toProjectDto(project, NOW, DEFAULT_LIVENESS_THRESHOLDS, { sessions });
-    const withOverride = toProjectDto(
-      project,
-      NOW,
-      { activeMs: 60_000, idleMs: 10 * 60_000, staleMs: 60 * 60_000 },
-      { sessions },
-    );
-
-    expect(withDefaults.activeSessionCount).toBe(2);
-    expect(withOverride.activeSessionCount).toBe(1);
-    expect(withOverride.sessions.map((s) => s.liveness)).toEqual([
-      'active',
-      'idle',
-    ]);
-  });
-
-  it('toProjectDto without sessions returns empty sessions and zero counts', () => {
+  it('toProjectDto omits aliasPaths and defaults incompleteTicketCount to 0', () => {
     const project = {
       id: '/projects/a',
       name: 'a',
@@ -671,124 +550,10 @@ describe('dto', () => {
       aliasPaths: [],
     };
 
-    const dto = toProjectDto(project, NOW, DEFAULT_LIVENESS_THRESHOLDS);
+    const dto = toProjectDto(project);
 
-    expect(dto.sessionCount).toBe(0);
-    expect(dto.activeSessionCount).toBe(0);
     expect(dto.incompleteTicketCount).toBe(0);
-    expect(dto.sessions).toEqual([]);
     expect(Object.keys(dto)).not.toContain('aliasPaths');
-  });
-
-  it('toProjectDto counts liveness active sessions and preserves order', () => {
-    const project = {
-      id: '/projects/a',
-      name: 'a',
-      rootPath: '/projects/a',
-      prefixes: ['bdboard'],
-      aliasPaths: [],
-    };
-    const activeSession = makeSession({
-      sessionId: 'session-active',
-      alive: true,
-      startedAt: NOW,
-      lastActivityAt: NOW,
-    });
-    const idleSession = makeSession({
-      sessionId: 'session-idle',
-      alive: true,
-      startedAt: NOW,
-      lastActivityAt: new Date(NOW.getTime() - 30 * 60_000),
-    });
-    const staleSession = makeSession({
-      sessionId: 'session-stale',
-      alive: true,
-      startedAt: NOW,
-      lastActivityAt: new Date(NOW.getTime() - 60 * 60_000),
-    });
-    const dormantSession = makeSession({
-      sessionId: 'session-dormant',
-      alive: false,
-      startedAt: NOW,
-      lastActivityAt: NOW,
-    });
-
-    const dto = toProjectDto(project, NOW, DEFAULT_LIVENESS_THRESHOLDS, {
-      sessions: [activeSession, idleSession, staleSession, dormantSession],
-    });
-
-    expect(dto.sessionCount).toBe(4);
-    expect(dto.activeSessionCount).toBe(1);
-    expect(dto.sessions).toHaveLength(4);
-    expect(dto.sessions[0]?.sessionId).toBe('session-active');
-    expect(dto.sessions[1]?.sessionId).toBe('session-idle');
-    expect(dto.sessions[2]?.sessionId).toBe('session-stale');
-    expect(dto.sessions[3]?.sessionId).toBe('session-dormant');
-  });
-
-  it('toProjectDto does not count alive-but-stale sessions as active', () => {
-    const project = {
-      id: '/projects/a',
-      name: 'a',
-      rootPath: '/projects/a',
-      prefixes: ['bdboard'],
-      aliasPaths: [],
-    };
-    const staleButAlive = makeSession({
-      sessionId: 'session-stale-alive',
-      alive: true,
-      startedAt: NOW,
-      lastActivityAt: new Date(NOW.getTime() - 60 * 60_000),
-    });
-
-    const dto = toProjectDto(project, NOW, DEFAULT_LIVENESS_THRESHOLDS, { sessions: [staleButAlive] });
-
-    expect(dto.sessionCount).toBe(1);
-    expect(dto.activeSessionCount).toBe(0);
-    expect(dto.sessions[0]?.liveness).toBe('stale');
-  });
-
-  it('toBoardViewDto includes activeSessionCount from sessionsByProject map', () => {
-    const ticket = makeTicket();
-    const board = buildBoard({
-      projectId: '/projects/a',
-      tickets: [ticket],
-      now: NOW,
-    });
-    const project = {
-      id: '/projects/a',
-      name: 'a',
-      rootPath: '/projects/a',
-      prefixes: ['bdboard'],
-      aliasPaths: [],
-    };
-    const view: BoardView = {
-      mode: 'split',
-      generatedAt: NOW,
-      projects: [
-        { project, board, closedTotal: board.lanes.done.length, truncatedClosedIds: [] },
-      ],
-      merged: null,
-      mergedClosedTotal: null,
-      mergedTruncatedClosedIds: null,
-    };
-    const aliveSession = makeSession({
-      sessionId: 'session-alive',
-      alive: true,
-      startedAt: NOW,
-      lastActivityAt: NOW,
-    });
-    const sessionsByProject = new Map<string, readonly typeof aliveSession[]>([
-      [project.id, [aliveSession]],
-    ]);
-
-    const dto = toBoardViewDto(view, DEFAULT_LIVENESS_THRESHOLDS, sessionsByProject);
-
-    expect(dto.projects[0]?.project.activeSessionCount).toBe(1);
-    expect(dto.projects[0]?.project.sessionCount).toBe(1);
-    expect(dto.projects[0]?.project.incompleteTicketCount).toBe(1);
-    expect(dto.projects[0]?.project.sessions).toHaveLength(1);
-    expect(dto.projects[0]?.project.sessions[0]?.liveness).toBe('active');
   });
 
   it('countIncompleteTicketsFromTickets excludes closed tickets', () => {
@@ -825,7 +590,7 @@ describe('dto', () => {
       aliasPaths: [],
     };
 
-    expect(toProjectDto(project, NOW, DEFAULT_LIVENESS_THRESHOLDS, { incompleteTicketCount: 7 }).incompleteTicketCount).toBe(7);
+    expect(toProjectDto(project, { incompleteTicketCount: 7 }).incompleteTicketCount).toBe(7);
   });
 
   it('toActivityEventDto omits optional interaction fields when absent', () => {

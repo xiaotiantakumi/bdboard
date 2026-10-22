@@ -11,9 +11,6 @@ import type { AppOverlayGroupProps } from './AppOverlayGroup';
 vi.mock('./AppTicketDetailOverlay', () => ({
   AppTicketDetailOverlay: vi.fn(() => <div data-testid="ticket-detail-overlay" />),
 }));
-vi.mock('./AppSessionListOverlay', () => ({
-  AppSessionListOverlay: vi.fn(() => <div data-testid="session-list-overlay" />),
-}));
 vi.mock('./AppShortcutsOverlay', () => ({
   AppShortcutsOverlay: vi.fn(() => <div data-testid="shortcuts-overlay" />),
 }));
@@ -31,7 +28,6 @@ vi.mock('./AppChatOverlay', () => ({
 }));
 
 import { AppTicketDetailOverlay } from './AppTicketDetailOverlay';
-import { AppSessionListOverlay } from './AppSessionListOverlay';
 import { AppShortcutsOverlay } from './AppShortcutsOverlay';
 import { AppHelpOverlay } from './AppHelpOverlay';
 import { AppSearchOverlay } from './AppSearchOverlay';
@@ -40,7 +36,6 @@ import { AppChatOverlay } from './AppChatOverlay';
 import { AppOverlayGroup } from './AppOverlayGroup';
 
 const ticketDetailMock = vi.mocked(AppTicketDetailOverlay);
-const sessionListMock = vi.mocked(AppSessionListOverlay);
 const shortcutsMock = vi.mocked(AppShortcutsOverlay);
 const helpMock = vi.mocked(AppHelpOverlay);
 const searchMock = vi.mocked(AppSearchOverlay);
@@ -64,11 +59,6 @@ function makeProps(): AppOverlayGroupProps {
       onFilterByEpic: vi.fn(),
       onTicketViewed: vi.fn(),
       availableLabels: ['label-marker'],
-    },
-    sessionList: {
-      open: true,
-      projectId: 'session-project-marker',
-      onClose: vi.fn(),
     },
     shortcuts: {
       open: true,
@@ -109,13 +99,6 @@ describe('AppOverlayGroup', () => {
     render(<AppOverlayGroup {...props} />);
 
     expect(ticketDetailMock.mock.calls.at(-1)?.[0]).toEqual(props.ticketDetail);
-  });
-
-  it('forwards sessionList through unchanged', () => {
-    const props = makeProps();
-    render(<AppOverlayGroup {...props} />);
-
-    expect(sessionListMock.mock.calls.at(-1)?.[0]).toEqual(props.sessionList);
   });
 
   it('forwards shortcuts through unchanged', () => {

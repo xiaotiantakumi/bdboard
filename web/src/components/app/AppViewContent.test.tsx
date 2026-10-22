@@ -75,7 +75,6 @@ function makeProps(overrides: Partial<AppViewContentProps> = {}): AppViewContent
     },
     boardMeta: {
       projectNames: new Map(),
-      projectActiveSessions: new Map(),
       projectRootPaths: new Map(),
       pendingDecisionIds: new Set(),
       prLinksById: new Map(),
@@ -124,11 +123,10 @@ describe('AppViewContent', () => {
   it('re-picks the boardMeta subset passed to AppBoardViewSwitch without dropping or defaulting any field', () => {
     // opus レビュー指摘の変異「boardMeta の再ピックで pendingDecisionIds が
     // 空の Set にすり替わる」を直接検知する。区別可能なマーカー値を使い、
-    // AppViewContent.tsx の個別コピー(projectNames/projectActiveSessions/
+    // AppViewContent.tsx の個別コピー(projectNames/
     // pendingDecisionIds/prLinksById/wipLimitsOverrides/selectedProjectIdsJoined)
     // が実際に転送されることを確認する。
     const projectNames = new Map([['proj-1', 'Project One']]);
-    const projectActiveSessions = new Map([['proj-1', 3]]);
     const pendingDecisionIds = new Set(['bdboard-pending-marker']);
     const prLinksById = new Map<string, PrBadgeDto>([
       ['bdboard-pr-marker', { ticketId: 'bdboard-pr-marker', projectId: 'proj-1', url: 'https://example.test/9', state: 'open', checkStatus: null }],
@@ -151,7 +149,6 @@ describe('AppViewContent', () => {
           board,
           boardMeta: {
             projectNames,
-            projectActiveSessions,
             projectRootPaths: new Map([['proj-1', '/should/not/reach/board-meta']]),
             pendingDecisionIds,
             prLinksById,
@@ -172,7 +169,6 @@ describe('AppViewContent', () => {
       nextUp,
       boardMeta: {
         projectNames,
-        projectActiveSessions,
         pendingDecisionIds,
         prLinksById,
         wipLimitsOverrides,

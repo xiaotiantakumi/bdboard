@@ -8,7 +8,6 @@ import { parseTicketComplexity } from '../../domain/ticket-complexity.js';
 import { parseTicketReviewAfter } from '../../domain/ticket-review-after.js';
 import { parseTicketId } from '../../domain/ticket-id.js';
 import { parseTicketModelRecords } from '../../domain/ticket-model.js';
-import { parseTicketManualSessionId } from '../../domain/ticket-session-link.js';
 import { bdIssueSchema, type BdIssue } from './bd-issue-schema.js';
 
 const MAX_ZOD_ISSUES = 5;
@@ -36,7 +35,6 @@ type OptionalTicketFields = {
     | 'acceptanceCriteria'
     | 'closeReason'
     | 'labels'
-    | 'manualSessionId'
     | 'models'
     | 'complexity'
     | 'reviewAfter']?: Ticket[K];
@@ -140,10 +138,6 @@ export function mapBdIssueToTicket(raw: BdIssue, projectId: string): Ticket {
   }
   if (raw.labels !== undefined) {
     optionalFields.labels = raw.labels;
-  }
-  const manualSessionId = parseTicketManualSessionId(raw.metadata);
-  if (manualSessionId !== undefined) {
-    optionalFields.manualSessionId = manualSessionId;
   }
   const models = parseTicketModelRecords(raw.metadata);
   if (models.length > 0) {

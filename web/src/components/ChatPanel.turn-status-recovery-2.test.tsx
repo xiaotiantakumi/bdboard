@@ -28,7 +28,6 @@ vi.mock('../api', async (importOriginal) => {
         updatedAt: '2026-01-01T00:00:00Z',
       }),
     ),
-    fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     fetchPlatformSupport: vi.fn(() => Promise.resolve({ platform: 'darwin', limitations: [] })),
   };
 });

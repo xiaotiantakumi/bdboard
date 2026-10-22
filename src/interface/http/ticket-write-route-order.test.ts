@@ -28,8 +28,6 @@ const EXPECTED_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'PATCH', path: '/api/tickets/:id/description' },
   { method: 'POST', path: '/api/tickets/:id/labels' },
   { method: 'DELETE', path: '/api/tickets/:id/labels/:label{.+}' },
-  { method: 'POST', path: '/api/tickets/:id/session-link' },
-  { method: 'DELETE', path: '/api/tickets/:id/session-link' },
   { method: 'POST', path: '/api/tickets/:id/comment' },
 ];
 

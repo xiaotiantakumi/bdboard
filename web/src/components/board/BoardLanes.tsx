@@ -23,7 +23,6 @@ interface BoardLanesProps {
   filter: BoardFilter;
   showProjectName: boolean;
   projectNames: Map<string, string>;
-  projectActiveSessions: Map<string, number>;
   pendingDecisionIds: ReadonlySet<string>;
   prLinksById: ReadonlyMap<string, PrBadgeDto>;
   sectionKey: string;
@@ -62,7 +61,6 @@ function LanesRow({
   filter,
   showProjectName,
   projectNames,
-  projectActiveSessions,
   pendingDecisionIds,
   prLinksById,
   sectionKey,
@@ -108,7 +106,6 @@ function LanesRow({
         unfilteredCount={afterStalled.length}
         showProjectName={showProjectName}
         projectNames={projectNames}
-        projectActiveSessions={projectActiveSessions}
         pendingDecisionIds={pendingDecisionIds}
         prLinksById={prLinksById}
         onCardClick={onCardClick}
@@ -154,7 +151,6 @@ export function BoardLanes({
   filter,
   showProjectName,
   projectNames,
-  projectActiveSessions,
   pendingDecisionIds,
   prLinksById,
   sectionKey,
@@ -186,7 +182,6 @@ export function BoardLanes({
           filter={filter}
           showProjectName={showProjectName}
           projectNames={projectNames}
-          projectActiveSessions={projectActiveSessions}
           pendingDecisionIds={pendingDecisionIds}
           prLinksById={prLinksById}
           sectionKey={sectionKey}

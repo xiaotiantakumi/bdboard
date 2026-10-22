@@ -37,11 +37,9 @@ function relayEventName(
   name: string,
 ): name is
   | 'board.changed'
-  | 'session.changed'
   | 'notification' {
   return (
     name === 'board.changed' ||
-    name === 'session.changed' ||
     name === 'notification'
   );
 }

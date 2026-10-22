@@ -6,7 +6,6 @@ export interface TicketWatchSnapshot {
   readonly source: 'board' | 'detail';
   readonly lane: string | null;
   readonly commentCount: number;
-  readonly sessionIds: readonly string[];
   readonly title?: string;
   readonly projectId?: string;
 }
@@ -23,12 +22,6 @@ export type TicketWatchEvent =
       readonly ticketId: string;
       readonly fromCount: number;
       readonly toCount: number;
-    }
-  | {
-      readonly kind: 'session_links_changed';
-      readonly ticketId: string;
-      readonly addedSessionIds: readonly string[];
-      readonly removedSessionIds: readonly string[];
     };
 
 export function ticketWatchSnapshotFromBoardCard(card: BoardCardDto): TicketWatchSnapshot {
@@ -37,7 +30,6 @@ export function ticketWatchSnapshotFromBoardCard(card: BoardCardDto): TicketWatc
     source: 'board',
     lane: card.lane,
     commentCount: card.ticket.commentCount,
-    sessionIds: card.sessions.map((session) => session.sessionId).sort(),
     title: card.ticket.title,
     projectId: card.projectId,
   };
@@ -49,7 +41,6 @@ export function ticketWatchSnapshotFromTicketDetail(detail: TicketDetailDto): Ti
     source: 'detail',
     lane: null,
     commentCount: detail.commentCount,
-    sessionIds: detail.sessionLinks.map((link) => link.sessionId).sort(),
     title: detail.title,
     projectId: detail.projectId,
   };
@@ -69,17 +60,6 @@ export function buildTicketWatchSnapshot(
     return ticketWatchSnapshotFromTicketDetail(detail);
   }
   return null;
-}
-
-function diffSessionIdSets(
-  prev: readonly string[],
-  next: readonly string[],
-): { addedSessionIds: string[]; removedSessionIds: string[] } {
-  const prevSet = new Set(prev);
-  const nextSet = new Set(next);
-  const addedSessionIds = next.filter((sessionId) => !prevSet.has(sessionId));
-  const removedSessionIds = prev.filter((sessionId) => !nextSet.has(sessionId));
-  return { addedSessionIds, removedSessionIds };
 }
 
 export function diffTicketWatchSnapshots(
@@ -109,21 +89,6 @@ export function diffTicketWatchSnapshots(
       fromCount: prev.commentCount,
       toCount: next.commentCount,
     });
-  }
-
-  if (prev.source === next.source) {
-    const { addedSessionIds, removedSessionIds } = diffSessionIdSets(
-      prev.sessionIds,
-      next.sessionIds,
-    );
-    if (addedSessionIds.length > 0 || removedSessionIds.length > 0) {
-      events.push({
-        kind: 'session_links_changed',
-        ticketId,
-        addedSessionIds,
-        removedSessionIds,
-      });
-    }
   }
 
   return events;

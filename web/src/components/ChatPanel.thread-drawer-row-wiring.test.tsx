@@ -29,7 +29,6 @@ vi.mock('../api', async (importOriginal) => {
     acknowledgeChatTurn: vi.fn(() => Promise.resolve()),
     deleteChatThread: vi.fn(() => Promise.resolve()),
     updateChatThread: vi.fn(),
-    fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     fetchPlatformSupport: vi.fn(() => Promise.resolve({ platform: 'darwin', limitations: [] })),
   };
 });

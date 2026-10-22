@@ -1,6 +1,4 @@
 import type { ReactNode, RefObject } from 'react';
-import { DiscoveredSessionsPanel } from '../DiscoveredSessionsPanel';
-import type { SessionTailMessageDto } from '../../api';
 
 interface ChatThreadDrawerProps {
   open: boolean;
@@ -13,16 +11,6 @@ interface ChatThreadDrawerProps {
   openRows: ReactNode;
   hasVisibleClosedThreads: boolean;
   closedRows: ReactNode;
-  selectedProjectId: string;
-  showDiscoveredSessions: boolean;
-  onToggleDiscoveredSessions: () => void;
-  isSending: boolean;
-  onCloseDiscoveredSessions: () => void;
-  onResumeDiscoveredSession: (
-    sessionId: string,
-    agentId: string,
-    seedMessages: SessionTailMessageDto[],
-  ) => void;
 }
 
 /**
@@ -41,12 +29,6 @@ export function ChatThreadDrawer({
   openRows,
   hasVisibleClosedThreads,
   closedRows,
-  selectedProjectId,
-  showDiscoveredSessions,
-  onToggleDiscoveredSessions,
-  isSending,
-  onCloseDiscoveredSessions,
-  onResumeDiscoveredSession,
 }: ChatThreadDrawerProps) {
   if (!open) {
     return null;
@@ -103,32 +85,6 @@ export function ChatThreadDrawer({
               履歴は残っています。選ぶと一覧の上に戻ります。
             </p>
             {closedRows}
-          </div>
-        )}
-
-        {selectedProjectId !== '' && (
-          <div className="chat-thread-drawer-section">
-            <p className="chat-thread-drawer-section-title">
-              bdboard 外で動いていた CLI セッション
-            </p>
-            <p className="chat-thread-drawer-section-hint">
-              ターミナルの Claude Code の会話。選ぶと続きから話せます。
-            </p>
-            <button
-              type="button"
-              className="btn chat-discovered-sessions-toggle"
-              onClick={onToggleDiscoveredSessions}
-              disabled={isSending}
-            >
-              CLIセッションを再開
-            </button>
-            {showDiscoveredSessions && (
-              <DiscoveredSessionsPanel
-                projectId={selectedProjectId}
-                onClose={onCloseDiscoveredSessions}
-                onResume={onResumeDiscoveredSession}
-              />
-            )}
           </div>
         )}
       </div>

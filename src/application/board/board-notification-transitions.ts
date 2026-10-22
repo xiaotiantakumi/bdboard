@@ -2,7 +2,6 @@ import type { CachedProject } from '../ports/board-cache.js';
 import {
   diffBoardNotificationSnapshots,
   type BoardNotificationSnapshot,
-  type SessionDiedEvent,
 } from '../../domain/board-notifications.js';
 
 export interface BoardNotificationPayload {
@@ -10,15 +9,6 @@ export interface BoardNotificationPayload {
   readonly ticketId: string;
   readonly title?: string;
   readonly projectId?: string;
-  readonly occurredAt: string;
-}
-
-export interface SessionDiedNotificationPayload {
-  readonly kind: 'session_died';
-  readonly sessionId: string;
-  readonly cwd: string;
-  readonly name?: string;
-  readonly lastActivityAt: string;
   readonly occurredAt: string;
 }
 
@@ -44,20 +34,6 @@ export function buildBoardNotificationPayload(
     kind: transition.kind,
     ticketId: transition.ticketId,
     ...(meta !== undefined ? { title: meta.title, projectId: meta.projectId } : {}),
-    occurredAt: occurredAt.toISOString(),
-  };
-}
-
-export function buildSessionDiedNotificationPayload(
-  diedEvent: SessionDiedEvent,
-  occurredAt: Date,
-): SessionDiedNotificationPayload {
-  return {
-    kind: 'session_died',
-    sessionId: diedEvent.sessionId,
-    cwd: diedEvent.cwd,
-    ...(diedEvent.name !== undefined ? { name: diedEvent.name } : {}),
-    lastActivityAt: diedEvent.lastActivityAt.toISOString(),
     occurredAt: occurredAt.toISOString(),
   };
 }

@@ -15,10 +15,7 @@ function project(id: string, name: string, incompleteTicketCount = 0): ProjectDt
     name,
     rootPath: `/tmp/${id}`,
     prefixes: [id],
-    sessionCount: 0,
-    activeSessionCount: 0,
     incompleteTicketCount,
-    sessions: [],
   };
 }
 

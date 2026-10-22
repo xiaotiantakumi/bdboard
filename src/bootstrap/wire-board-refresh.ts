@@ -70,9 +70,6 @@ export interface WireBoardRefreshDeps {
 /**
  * main() の discovery + refreshRunner + 初期リフレッシュ +
  * watcher + refresh インターバルを、元のコードと同じ順序でまとめて行う。
- * `sessionDiscoverySupported ? sessionLivenessTracker.refresh() ...` (board-sessions
- * 側) は初期リフレッシュのログの直後・通知スナップショット seed の直前に走る
- * (main.ts 側で挟む — このファイルの対象外)。
  */
 export async function wireBoardRefresh(deps: WireBoardRefreshDeps) {
   const log = deps.log ?? console.log;

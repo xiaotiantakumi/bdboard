@@ -17,8 +17,6 @@ export interface ThreadDrawerActions {
   startConfirmDelete: (sessionId: string) => void;
   cancelConfirmDelete: () => void;
   cancelInteractionsForSession: (sessionId: string) => void;
-  toggleDiscoveredSessions: () => void;
-  closeDiscoveredSessions: () => void;
 }
 
 export interface UseThreadDrawerStateResult extends ThreadDrawerActions {
@@ -65,14 +63,6 @@ export function useThreadDrawerState(): UseThreadDrawerStateResult {
     (sessionId: string) => dispatch({ type: 'cancelInteractionsForSession', sessionId }),
     [],
   );
-  const toggleDiscoveredSessions = useCallback(
-    () => dispatch({ type: 'toggleDiscoveredSessions' }),
-    [],
-  );
-  const closeDiscoveredSessions = useCallback(
-    () => dispatch({ type: 'closeDiscoveredSessions' }),
-    [],
-  );
 
   return {
     state,
@@ -87,7 +77,5 @@ export function useThreadDrawerState(): UseThreadDrawerStateResult {
     startConfirmDelete,
     cancelConfirmDelete,
     cancelInteractionsForSession,
-    toggleDiscoveredSessions,
-    closeDiscoveredSessions,
   };
 }

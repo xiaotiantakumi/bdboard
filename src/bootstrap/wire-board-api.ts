@@ -18,8 +18,6 @@ import type { DependencyWriterPort } from '../application/ports/dependency-write
 import type { HumanDecisionsPort } from '../application/ports/human-decisions.js';
 import type { IssueWriterPort } from '../application/ports/issue-writer.js';
 import type { PrStatusReader } from '../application/ports/pr-status-reader.js';
-import type { ProcessScanner } from '../application/ports/process-scanner.js';
-import type { SessionLinkWriterPort } from '../application/ports/session-link-writer.js';
 import type { WorktreeScanner } from '../application/ports/worktree-scanner.js';
 import { PrBadgeStatusCache } from '../application/board/get-pr-badges.js';
 import { readProjectRefs } from '../application/board/read-cached-projects.js';
@@ -35,7 +33,7 @@ import { createApiRoutes } from '../interface/http/routes.js';
 import type { WriteGuardDeps } from '../interface/http/write-guard.js';
 import type { VisibleProjectsRegistry } from '../application/board/visible-projects-registry.js';
 import type { BoardRefreshServices } from './wire-board-refresh.js';
-import type { BoardSessionServices } from './wire-board-sessions.js';
+import type { BoardTranscriptServices } from './wire-board-transcripts.js';
 
 export interface WireBoardApiDeps {
   readonly cache: BoardCache;
@@ -45,18 +43,13 @@ export interface WireBoardApiDeps {
   readonly boardRefreshServices: Pick<BoardRefreshServices, 'getStatus' | 'runRefresh'>;
   readonly events: EventHub;
   readonly boardThresholdsConfigStore: BoardThresholdsConfigPort;
-  readonly boardSessionServices: Pick<
-    BoardSessionServices,
-    'sessionLivenessTracker' | 'transcriptLinkTracker' | 'sessionTailReader'
-  >;
+  readonly boardTranscriptServices: Pick<BoardTranscriptServices, 'transcriptLinkTracker'>;
   readonly commentReader: CommentReader;
   readonly prStatusReader: PrStatusReader;
-  readonly processScanner: ProcessScanner;
   readonly humanDecisions: HumanDecisionsPort;
   readonly worktreeScanner: WorktreeScanner;
   readonly issueWriter: IssueWriterPort;
   readonly dependencyWriter: DependencyWriterPort;
-  readonly sessionLinkWriter: SessionLinkWriterPort;
   readonly writeAccess: WriteGuardDeps;
   readonly reclaimHistory: ReclaimHistory;
   /** PR バッジ terminal エントリの永続化先を決めるための board cache DB パス (bdboard-ye2p)。 */
@@ -123,12 +116,10 @@ export function wireBoardApi(deps: WireBoardApiDeps) {
         deps.boardRefreshServices.runRefresh(true, projectIds),
       events: deps.events,
       boardThresholdsConfigStore: deps.boardThresholdsConfigStore,
-      sessions: () => deps.boardSessionServices.sessionLivenessTracker.current(),
-      links: () => deps.boardSessionServices.transcriptLinkTracker.list(),
+      links: () => deps.boardTranscriptServices.transcriptLinkTracker.list(),
       commentReader: deps.commentReader,
       prStatusReader: deps.prStatusReader,
       prBadgeStatusCache,
-      processScanner: deps.processScanner,
       humanDecisions: deps.humanDecisions,
       worktreeScanner: deps.worktreeScanner,
       // 失敗時の握りつぶしは /api/hygiene 側 (既定の候補順へフォールバック) が持つ。
@@ -136,8 +127,6 @@ export function wireBoardApi(deps: WireBoardApiDeps) {
         readProjectMainBranch(harnessContractReader, rootPath),
       issueWriter: deps.issueWriter,
       dependencyWriter: deps.dependencyWriter,
-      sessionLinkWriter: deps.sessionLinkWriter,
-      sessionTail: deps.boardSessionServices.sessionTailReader,
       writeAccess: deps.writeAccess,
       reclaimHistory: deps.reclaimHistory,
     }),

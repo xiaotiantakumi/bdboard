@@ -12,7 +12,6 @@ import type {
   PendingDecisionDto,
   ProjectDto,
   ProjectBoardDto,
-  SessionDto,
   StatusDto,
   TicketDetailDto,
 } from './api';
@@ -39,7 +38,6 @@ vi.mock('./api', async (importOriginal) => {
   return {
     ...actual,
     fetchProjects: vi.fn(),
-    fetchSessions: vi.fn(),
     fetchStatus: vi.fn(),
     fetchBoard: vi.fn(),
     fetchPendingDecisions: vi.fn(),
@@ -59,7 +57,6 @@ import {
   fetchChatAvailability,
   fetchPendingDecisions,
   fetchProjects,
-  fetchSessions,
   fetchStatus,
   fetchTicket,
   fetchTicketComments,
@@ -68,7 +65,6 @@ import {
 } from './api';
 
 const fetchProjectsMock = vi.mocked(fetchProjects);
-const fetchSessionsMock = vi.mocked(fetchSessions);
 const fetchStatusMock = vi.mocked(fetchStatus);
 const fetchBoardMock = vi.mocked(fetchBoard);
 const fetchPendingDecisionsMock = vi.mocked(fetchPendingDecisions);
@@ -118,7 +114,6 @@ const sampleTicket: TicketDetailDto = {
   blockedBy: [],
   blocks: [],
   commentCount: 0,
-  sessionLinks: [],
   models: [],
   children: [],
 };
@@ -140,10 +135,7 @@ const filterSampleProject: ProjectDto = {
   name: 'Project One',
   rootPath: '/projects/a',
   prefixes: ['bdboard'],
-  sessionCount: 0,
-  activeSessionCount: 0,
   incompleteTicketCount: 0,
-  sessions: [],
 };
 
 function makeFilterCard(
@@ -178,8 +170,6 @@ function makeFilterCard(
     blockedBy: [],
     blocks: [],
     unblocksCount: 0,
-    liveness: null,
-    sessions: [],
     stalled: options.stalled ?? false,
     epicProgress: null,
     deferDays: null,
@@ -382,13 +372,9 @@ describe('App ticket deep link', () => {
         name: 'Project One',
         rootPath: '/projects/a',
         prefixes: ['bdboard'],
-        sessionCount: 0,
-        activeSessionCount: 0,
         incompleteTicketCount: 0,
-        sessions: [],
       } satisfies ProjectDto,
     ]);
-    fetchSessionsMock.mockResolvedValue([] satisfies SessionDto[]);
     fetchStatusMock.mockResolvedValue({
       lastRefreshAt: '2026-01-01T00:00:00.000Z',
       errors: [],
@@ -494,7 +480,6 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
     window.history.replaceState(null, '', '/');
     localStorage.clear();
 
-    fetchSessionsMock.mockResolvedValue([] satisfies SessionDto[]);
     fetchStatusMock.mockResolvedValue({
       lastRefreshAt: '2026-01-01T00:00:00.000Z',
       errors: [],
@@ -637,7 +622,6 @@ describe('board filter presets (bdboard-3tw.112)', () => {
     window.history.replaceState(null, '', '/');
     localStorage.clear();
 
-    fetchSessionsMock.mockResolvedValue([] satisfies SessionDto[]);
     fetchStatusMock.mockResolvedValue({
       lastRefreshAt: '2026-01-01T00:00:00.000Z',
       errors: [],
@@ -866,7 +850,6 @@ describe('header help overlays', () => {
     window.history.replaceState(null, '', '/');
     localStorage.clear();
 
-    fetchSessionsMock.mockResolvedValue([] satisfies SessionDto[]);
     fetchStatusMock.mockResolvedValue({
       lastRefreshAt: '2026-01-01T00:00:00.000Z',
       errors: [],
@@ -1035,13 +1018,9 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
         name: 'Project One',
         rootPath: '/projects/a',
         prefixes: ['bdboard'],
-        sessionCount: 0,
-        activeSessionCount: 0,
         incompleteTicketCount: 0,
-        sessions: [],
       } satisfies ProjectDto,
     ]);
-    fetchSessionsMock.mockResolvedValue([] satisfies SessionDto[]);
     fetchStatusMock.mockResolvedValue({
       lastRefreshAt: '2026-01-01T00:00:00.000Z',
       errors: [],
