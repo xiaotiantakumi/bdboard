@@ -219,6 +219,8 @@ test.describe('board filter chip for a label that left the board', () => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await seedFilterState(page);
     await page.goto('/');
+    // bdboard-gyvv: フィルタはヘッダーの「フィルタ」ボタンのポップオーバーの中にある。
+    await page.locator('.filter-menu-button').click();
     await expect(page.locator('.board-filter-label-group')).toBeVisible({ timeout: 15_000 });
 
     const missing = page.getByRole('button', { name: MISSING_LABEL });
@@ -315,8 +317,9 @@ test.describe('board filter chip for a label that left the board', () => {
       await installAiQuotaRoute(page);
       await seedFilterState(page);
       await page.goto('/');
-      await expect(page.locator('.board-filter-toggle')).toBeVisible({ timeout: 15_000 });
-      await page.locator('.board-filter-toggle').click();
+      // モバイルのフィルタは ⋯ メニューのシートから開く (bdboard-gyvv)。
+      await page.getByRole('button', { name: 'その他のメニュー' }).click({ timeout: 15_000 });
+      await page.getByRole('menuitem', { name: /^フィルタ/ }).click();
 
       const missing = page.getByRole('button', { name: MISSING_LABEL });
       const liveControl = liveLabelChip(page);

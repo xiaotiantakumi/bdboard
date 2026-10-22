@@ -18,7 +18,6 @@ interface SplitBoardProps {
   prLinksById: ReadonlyMap<string, PrBadgeDto>;
   sectionKeyPrefix: string;
   onCardClick: (ticketId: string) => void;
-  onSessionBadgeClick?: (projectId: string) => void;
   collapsedLanes?: ReadonlySet<Lane>;
   onToggleLaneCollapse?: (lane: Lane) => void;
   wipLimitsOverrides?: WipLimitsOverrides;
@@ -33,7 +32,6 @@ export function SplitBoard({
   prLinksById,
   sectionKeyPrefix,
   onCardClick,
-  onSessionBadgeClick,
   collapsedLanes,
   onToggleLaneCollapse,
   wipLimitsOverrides,
@@ -67,24 +65,7 @@ export function SplitBoard({
       {visibleProjects.map((entry) => (
         <section key={entry.project.id} className="board-section">
           <h2 className="board-section-title">
-            {entry.project.name} ({entry.board.cardCount} 件)
-            {entry.project.sessionCount > 0 && (
-              onSessionBadgeClick !== undefined ? (
-                <button
-                  type="button"
-                  className="session-badge session-badge-btn"
-                  onClick={() => onSessionBadgeClick(entry.project.id)}
-                >
-                  ● {entry.project.sessionCount} セッション（稼働中{' '}
-                  {entry.project.activeSessionCount}）
-                </button>
-              ) : (
-                <span className="session-badge">
-                  ● {entry.project.sessionCount} セッション（稼働中{' '}
-                  {entry.project.activeSessionCount}）
-                </span>
-              )
-            )}
+            {entry.project.name} · {entry.board.cardCount} 件
             <ProjectHarnessBadges projectId={entry.project.id} />
           </h2>
           <BoardLanes

@@ -1,15 +1,11 @@
 import type { ProjectDto } from '../../api';
 import type { StreamState } from '../../useBoardStream';
-import type {
-  BoardFilterPreset,
-  BoardFilterPresetState,
-  ViewMode,
-} from '../../uiPersistedState';
+import type { ViewMode } from '../../uiPersistedState';
 import { BatchRunProgressChip } from '../batch-run/BatchRunProgressChip';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { GlobalBar } from '../GlobalBar';
+import type { HeaderFilterProps } from '../header/HeaderFilterMenu';
 import type { NextUpRunLoopController } from '../nextUpRunLoop';
-import { ViewToolbar } from '../ViewToolbar';
 
 export interface AppHeaderProps {
   view: ViewMode;
@@ -39,7 +35,6 @@ export interface AppHeaderProps {
     onClearAll: () => void;
     onSaveCombination: () => void;
   };
-  onOpenSettings: () => void;
   onOpenTunnel: () => void;
   onOpenHelp: () => void;
   onOpenShortcuts: () => void;
@@ -47,20 +42,13 @@ export interface AppHeaderProps {
     dismissed: boolean;
     onShow: () => void;
   };
+  /** フィルタ (優先度/種別/ラベル/プリセット/done・滞留) と検索欄の文字。 */
+  filter: HeaderFilterProps;
   toolbar: {
-    boardFilterPresets: BoardFilterPreset[];
-    onBoardFilterPresetsChange: (presets: BoardFilterPreset[]) => void;
-    boardFilterPresetState: BoardFilterPresetState;
-    onApplyBoardFilterPreset: (preset: BoardFilterPreset) => void;
-    hideDone: boolean;
-    onHideDoneChange: (value: boolean) => void;
-    stalledOnly: boolean;
-    onStalledOnlyChange: (value: boolean) => void;
     onRefresh: () => void;
     isRefreshing: boolean;
     chatAvailable: boolean;
     onOpenChat: () => void;
-    presetSaveIntentToken: number;
   };
   /**
    * エージェントの一括実行ループ (App が持つ)。進捗と停止をヘッダーのチップに出す
@@ -70,6 +58,7 @@ export interface AppHeaderProps {
 }
 
 /**
+<<<<<<< HEAD
  * bdboard-62p4 候補1「ヘッダー」。App.tsx の `<header>` 配下
  * (旧 L578-631、GlobalBar/ViewToolbar を ErrorBoundary でラップして値を
  * 橋渡しするだけの JSX) を丸ごと移した表示専用コンポーネント。
@@ -88,6 +77,11 @@ export interface AppHeaderProps {
  * 引数なしで呼ぶ」ラップだった。ここでも `sessions.onOpen` を同じ形で
  * ラップして呼ぶことで、GlobalBar/ViewToolbar 内部が将来 projectId を
  * 渡すように変わっても現状の(常に無引数で呼ぶ)挙動を維持する。
+=======
+ * bdboard-62p4 候補1「ヘッダー」。GlobalBar を ErrorBoundary でラップして値を
+ * 橋渡しするだけの表示専用コンポーネント。state・effect は持たない。
+ * bdboard-gyvv: ビュー切替タブ行・ツールバー行を無くし、GlobalBar 1 行に集約した。
+>>>>>>> 2e07242d (feat(bdboard-gyvv): one-row header with filter popover and overflow menu)
  */
 export function AppHeader({
   view,
@@ -97,11 +91,11 @@ export function AppHeader({
   sessions,
   statusDetail,
   projects,
-  onOpenSettings,
   onOpenTunnel,
   onOpenHelp,
   onOpenShortcuts,
   tipsBanner,
+  filter,
   toolbar,
   batchRun,
 }: AppHeaderProps) {
@@ -112,55 +106,41 @@ export function AppHeader({
           view={view}
           onViewChange={onViewChange}
           onOpenSearch={onOpenSearch}
-          streamState={connection.streamState}
-          connectStalled={connection.connectStalled}
-          lastContactAtMs={connection.lastContactAtMs}
-          generatedAt={connection.generatedAt}
-          lastRefreshAt={connection.lastRefreshAt}
-          totalSessionCount={sessions.total}
-          activeSessionCount={sessions.active}
-          onOpenSessionList={() => sessions.onOpen()}
-          statusDetailOpen={statusDetail.open}
-          onStatusDetailOpenChange={statusDetail.onOpenChange}
+          status={{
+            streamState: connection.streamState,
+            connectStalled: connection.connectStalled,
+            lastContactAtMs: connection.lastContactAtMs,
+            generatedAt: connection.generatedAt,
+            lastRefreshAt: connection.lastRefreshAt,
+            totalSessionCount: sessions.total,
+            activeSessionCount: sessions.active,
+            onOpenSessionList: () => sessions.onOpen(),
+            open: statusDetail.open,
+            onOpenChange: statusDetail.onOpenChange,
+          }}
           projects={projects.list}
           selectedProjectIds={projects.selectedIds}
           onToggleProject={projects.onToggle}
           onSelectAllProjects={projects.onSelectAll}
           onClearAllProjects={projects.onClearAll}
           onSaveProjectCombination={projects.onSaveCombination}
-          onOpenSettings={onOpenSettings}
+          filter={filter}
           onOpenTunnel={onOpenTunnel}
-          onOpenHelp={onOpenHelp}
-          onOpenShortcuts={onOpenShortcuts}
-          tipsBannerDismissed={tipsBanner.dismissed}
-          onShowTipsBanner={tipsBanner.onShow}
+          chatAvailable={toolbar.chatAvailable}
+          onOpenChat={toolbar.onOpenChat}
+          menu={{
+            onRefresh: toolbar.onRefresh,
+            isRefreshing: toolbar.isRefreshing,
+            onOpenHelp,
+            onOpenShortcuts,
+            tipsBannerDismissed: tipsBanner.dismissed,
+            onShowTipsBanner: tipsBanner.onShow,
+          }}
         />
       </ErrorBoundary>
 
       <ErrorBoundary label="一括実行の進捗">
         <BatchRunProgressChip batchRun={batchRun} />
-      </ErrorBoundary>
-
-      <ErrorBoundary label="ツールバー">
-        <ViewToolbar
-          view={view}
-          boardFilterPresets={toolbar.boardFilterPresets}
-          onBoardFilterPresetsChange={toolbar.onBoardFilterPresetsChange}
-          boardFilterPresetState={toolbar.boardFilterPresetState}
-          onApplyBoardFilterPreset={toolbar.onApplyBoardFilterPreset}
-          hideDone={toolbar.hideDone}
-          onHideDoneChange={toolbar.onHideDoneChange}
-          stalledOnly={toolbar.stalledOnly}
-          onStalledOnlyChange={toolbar.onStalledOnlyChange}
-          totalSessionCount={sessions.total}
-          activeSessionCount={sessions.active}
-          onOpenSessionList={() => sessions.onOpen()}
-          onRefresh={toolbar.onRefresh}
-          isRefreshing={toolbar.isRefreshing}
-          chatAvailable={toolbar.chatAvailable}
-          onOpenChat={toolbar.onOpenChat}
-          presetSaveIntentToken={toolbar.presetSaveIntentToken}
-        />
       </ErrorBoundary>
     </header>
   );

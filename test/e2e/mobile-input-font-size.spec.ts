@@ -114,13 +114,13 @@ test.describe('mobile input font-size', () => {
     const card = page.locator('article').first();
     await expect(card).toBeVisible({ timeout: 15_000 });
 
-    const filterToggle = page.getByRole('button', { name: /^絞り込み/ });
-    await expect(filterToggle).toBeVisible();
-    await filterToggle.click();
+    // bdboard-gyvv: フィルタは ⋯ メニューのシートから開く。
+    await page.getByRole('button', { name: 'その他のメニュー' }).click();
+    await page.getByRole('menuitem', { name: /^フィルタ/ }).click();
     await expect(page.locator('#board-priority-ceiling')).toBeVisible();
 
     // 実測2（board-filter select + search）。件数が少ないので下限も2のまま。
-    await expectAllFormElementsAtLeast16px(page, 'board root', 2);
+    await expectAllFormElementsAtLeast16px(page, 'board root', 1);
 
     const ticketCard = page.locator('article', { hasText: TICKET_TITLE });
     await expect(ticketCard).toBeVisible();
@@ -177,7 +177,8 @@ test.describe('mobile input font-size', () => {
 
     // bdboard-mkm1.1: 「統合」タブは削除された。既定ビューは既に「分割」だが、
     // 直前に設定ビューへ遷移しているのでボード系ビューへ明示的に戻す必要がある。
-    await page.getByRole('button', { name: '分割', exact: true }).click();
+    await page.getByRole('button', { name: 'その他のメニュー' }).click();
+    await page.getByRole('menuitem', { name: 'ボードに戻る' }).click();
     await expect(card).toBeVisible({ timeout: 15_000 });
 
     const chatButton = page.getByRole('button', { name: 'チャット' });

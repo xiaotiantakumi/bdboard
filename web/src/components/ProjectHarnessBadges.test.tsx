@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api';
 import { TUNNEL_WRITE_HELP } from '../writeAccessMessage';
-import { ProjectHarnessBadges } from './ProjectHarnessBadges';
+import { ProjectHarnessBadges, ProjectHarnessVersion } from './ProjectHarnessBadges';
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
@@ -206,11 +206,20 @@ describe('ProjectHarnessBadges', () => {
       ],
     });
 
-    renderBadges();
+    const { container } = renderBadges();
 
-    expect(await screen.findByText('v0.2.0')).toBeInTheDocument();
+    // 見出しには警告だけを出す。正常なバージョン表示は ⋯ メニュー側 (ProjectHarnessVersion)。
+    await waitFor(() => expect(fetchProjectHarnessStatusMock).toHaveBeenCalled());
+    expect(container).toBeEmptyDOMElement();
     expect(screen.queryByRole('button', { name: '注入' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '更新' })).not.toBeInTheDocument();
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProjectHarnessVersion projectId="/tmp/example-project" />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('bdboard-harness v0.2.0')).toBeInTheDocument();
   });
 
   it('shows success feedback after inject succeeds', async () => {
@@ -305,9 +314,11 @@ describe('ProjectHarnessBadges', () => {
       ],
     });
 
-    renderBadges();
+    const { container } = renderBadges();
 
-    expect(await screen.findByText('検証: npm run verify')).toBeInTheDocument();
+    // 正常なコントラクトは見出しに出さない (警告だけを出す)。
+    await waitFor(() => expect(fetchProjectHarnessStatusMock).toHaveBeenCalled());
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('warns when an injected project declares no verification loop', async () => {

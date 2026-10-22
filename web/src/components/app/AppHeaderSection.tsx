@@ -30,6 +30,7 @@ export function AppHeaderSection({ controller }: AppHeaderSectionProps) {
     handleClearAll,
     tipsBannerDismissed,
     setTipsBannerDismissed,
+    availableLabels,
     boardFilterPresets,
     setBoardFilterPresets,
     boardFilterPresetState,
@@ -70,7 +71,6 @@ export function AppHeaderSection({ controller }: AppHeaderSectionProps) {
         onClearAll: handleClearAll,
         onSaveCombination: overlays.handleSaveProjectCombination,
       }}
-      onOpenSettings={() => setView('settings')}
       onOpenTunnel={overlays.handleOpenTunnel}
       onOpenHelp={overlays.handleOpenHelp}
       onOpenShortcuts={overlays.handleOpenShortcuts}
@@ -78,20 +78,22 @@ export function AppHeaderSection({ controller }: AppHeaderSectionProps) {
         dismissed: tipsBannerDismissed,
         onShow: () => setTipsBannerDismissed(false),
       }}
+      filter={{
+        filterState: boardFilterState,
+        availableLabels,
+        presets: {
+          list: boardFilterPresets,
+          onChange: setBoardFilterPresets,
+          state: boardFilterPresetState,
+          onApply: handleApplyBoardFilterPreset,
+          saveIntentToken: overlays.presetSaveIntentToken,
+        },
+      }}
       toolbar={{
-        boardFilterPresets,
-        onBoardFilterPresetsChange: setBoardFilterPresets,
-        boardFilterPresetState,
-        onApplyBoardFilterPreset: handleApplyBoardFilterPreset,
-        hideDone: boardFilterState.hideDone,
-        onHideDoneChange: boardFilterState.setHideDone,
-        stalledOnly: boardFilterState.stalledOnly,
-        onStalledOnlyChange: boardFilterState.setStalledOnly,
         onRefresh: handleRefresh,
         isRefreshing,
         chatAvailable,
         onOpenChat: overlays.handleOpenChat,
-        presetSaveIntentToken: overlays.presetSaveIntentToken,
       }}
       batchRun={nextUpBatchRun}
     />

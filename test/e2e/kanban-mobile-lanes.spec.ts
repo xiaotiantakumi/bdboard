@@ -204,7 +204,6 @@ test.describe('kanban mobile lanes', () => {
       timeout: 15_000,
     });
 
-    await page.getByRole('button', { name: '分割' }).click();
     await expect(page.locator('.board-section .lane').first()).toBeVisible({
       timeout: 15_000,
     });
