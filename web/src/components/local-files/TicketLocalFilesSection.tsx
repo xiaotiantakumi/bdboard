@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { fetchTicketLocalFiles, type LocalFileRefDto } from '../../api/local-files';
+import { isLoopbackHostname } from '../issue-reports/manualDraftAccess';
+import { LOCAL_FILE_ACCESS_NOTICE, isLocalFileAccessDenied } from './localFileErrorMessage';
 import { formatByteSize } from '../TicketAttachments';
 import { LocalFileLabel } from './LocalFileLabel';
 import { localFileKindLabel } from './localFileKindLabel';
@@ -9,21 +11,30 @@ import { openLocalFileViewer } from './openLocalFileViewer';
 
 export interface TicketLocalFilesSectionProps {
   readonly ticketId: string;
+  /** 既定は window.location.hostname。403 の案内を出すかどうか (ローカルでは出さない) だけに使う。テストから差し替えられる。 */
+  readonly hostname?: string;
 }
 
 /**
  * bdboard-teir: ホスト名では出し分けない。ローカルでも、強いパスワードで認可済みのトンネルセッションでも
  * サーバーが 200 を返し、それ以外は 403 になる (チャット・添付と同じ「まず送ってサーバーの 403 を見る」形)。
- * 403 のときは何も出さない (ファイルがあるかを知らないまま案内を出すと全チケットに出てしまう)。
- * 案内はファイルを開く画面 (LocalFileViewerPage) が出す。
+ * 403 (トンネルで未認可) のときは、ローカルでない場合だけ 1 行の案内を出す (スマホの利用者に理由を伝える)。ローカルの 403 は異常なので何も出さない。
  */
-export function TicketLocalFilesSection({ ticketId }: TicketLocalFilesSectionProps) {
+export function TicketLocalFilesSection({
+  ticketId,
+  hostname = window.location.hostname,
+}: TicketLocalFilesSectionProps) {
   const filesQuery = useQuery({
     queryKey: ['ticket-local-files', ticketId],
     queryFn: () => fetchTicketLocalFiles(ticketId),
+    // 403 はポリシーの答えで一時的な失敗ではない。バックオフ付きで再試行すると 1 チケットを開くたびに 4 回送る (useTunnelStatus と同じ形)。
+    retry: (failureCount, error) => !isLocalFileAccessDenied(error) && failureCount < 3,
   });
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
 
+  if (filesQuery.isError && isLocalFileAccessDenied(filesQuery.error) && !isLoopbackHostname(hostname)) {
+    return <p className="local-file-note">{LOCAL_FILE_ACCESS_NOTICE}</p>;
+  }
   if (filesQuery.isPending || filesQuery.isError || filesQuery.data === undefined) {
     return null;
   }

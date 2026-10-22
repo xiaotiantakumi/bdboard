@@ -8,6 +8,10 @@ import { ApiError } from '../../api/http';
 export const LOCAL_FILE_ACCESS_HELP =
   'このファイルは開けません。スマホから開くには、PCの「スマホ公開」パネルで発行するQRコードから開き直してください。トンネルのパスワードが12文字未満のときは読み取り専用になり、ファイルも開けません。';
 
+/** チケット詳細の「ファイル」欄に出す 1 行 (403 のとき)。 */
+export const LOCAL_FILE_ACCESS_NOTICE =
+  'ファイルはPCの「スマホ公開」のQRコードから開いたときだけ表示できます。';
+
 export function isLocalFileAccessDenied(error: unknown): boolean {
   return error instanceof ApiError && error.status === 403;
 }

@@ -27,9 +27,8 @@ function jsonResponse(body: unknown): Response {
 }
 
 function renderPage(route: LocalFileViewerRoute) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  // retry は既定のまま: 403 のプローブが再試行されないことも、このテストで固定する。
+  const client = new QueryClient();
   return render(
     <QueryClientProvider client={client}>
       <LocalFileViewerPage route={route} />
@@ -56,6 +55,7 @@ describe('LocalFileViewerPage', () => {
 
   it('shows an access notice and no viewer when the server denies the session (403)', async () => {
     document.title = 'stale';
+    // 既定の QueryClient (retry あり) でも 403 は 1 回で止まる。
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ error: 'local access only' }), {
         status: 403,
@@ -67,15 +67,14 @@ describe('LocalFileViewerPage', () => {
 
     expect(await screen.findByText(LOCAL_FILE_ACCESS_HELP)).toBeInTheDocument();
     expect(document.querySelector('img.local-file-viewer-image')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(document.title).toBe('bdboard'));
   });
 
-  it('plays a video through a tunnel session the server accepts', async () => {
+  it('mounts the video player once the access probe is accepted', async () => {
     const path = 'out/13-demo/reading-review.mp4';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => jsonResponse({ files: [] })),
-    );
+    const fetchMock = vi.fn(async (_url: string) => jsonResponse({ path: '.', entries: [], truncated: false }));
+    vi.stubGlobal('fetch', fetchMock);
     renderPage({ ticketId: TICKET_ID, path, kind: 'video', size: 4096 });
 
     const video = await waitFor(() => {
@@ -84,6 +83,7 @@ describe('LocalFileViewerPage', () => {
       return el as HTMLVideoElement;
     });
     expect(video).toHaveAttribute('src', localFileRawUrl(TICKET_ID, path));
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/local-files/list?');
     expect(screen.queryByText(LOCAL_FILE_ACCESS_HELP)).not.toBeInTheDocument();
   });
 
@@ -122,7 +122,8 @@ describe('LocalFileViewerPage', () => {
     );
   });
 
-  it('renders a video element and an audio element with the raw url', () => {
+  it('renders a video element and an audio element with the raw url', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ path: '.', entries: [], truncated: false })));
     const videoPath = 'out/13-demo/reading-review.mp4';
     const { container, unmount } = renderPage({
       ticketId: TICKET_ID,
@@ -130,6 +131,7 @@ describe('LocalFileViewerPage', () => {
       kind: 'video',
       size: 4096,
     });
+    await waitFor(() => expect(container.querySelector('video')).not.toBeNull());
     const video = container.querySelector('video');
     expect(video).toHaveAttribute('src', localFileRawUrl(TICKET_ID, videoPath));
     expect(video).toHaveAttribute('controls');
@@ -137,6 +139,7 @@ describe('LocalFileViewerPage', () => {
     unmount();
     const audioPath = 'out/13-demo/reading.m4a';
     const audioView = renderPage({ ticketId: TICKET_ID, path: audioPath, kind: 'audio', size: 512 });
+    await waitFor(() => expect(audioView.container.querySelector('audio')).not.toBeNull());
     const audio = audioView.container.querySelector('audio');
     expect(audio).toHaveAttribute('src', localFileRawUrl(TICKET_ID, audioPath));
     expect(audio).toHaveAttribute('controls');

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LocalFileListDto, LocalFileRefDto } from '../../api/local-files';
 import { localFileRawUrl } from '../../api/local-files';
+import { LOCAL_FILE_ACCESS_NOTICE } from './localFileErrorMessage';
 import { TicketLocalFilesSection } from './TicketLocalFilesSection';
 
 const TICKET_ID = 'video-p4q.38';
@@ -18,13 +19,12 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-function renderSection() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+// retry は既定のまま (コンポーネントの retry 述語を効かせる)。失敗を待つテストは述語で 403 を止めるので遅くならない。
+function renderSection(hostname = 'localhost') {
+  const client = new QueryClient();
   return render(
     <QueryClientProvider client={client}>
-      <TicketLocalFilesSection ticketId={TICKET_ID} />
+      <TicketLocalFilesSection ticketId={TICKET_ID} hostname={hostname} />
     </QueryClientProvider>,
   );
 }
@@ -65,15 +65,14 @@ describe('TicketLocalFilesSection', () => {
   });
 
   it('lists the files on a tunnel host too (the server guard decides)', async () => {
-    vi.stubGlobal('location', { ...window.location, hostname: 'example.trycloudflare.com' });
     installFetch([{ path: 'projects/demo/thumbnail.json', kind: 'json', size: 10 }]);
-    renderSection();
+    renderSection('example.trycloudflare.com');
 
     expect(await screen.findByRole('heading', { name: 'ファイル' })).toBeInTheDocument();
     expect(screen.getByText('projects/demo/thumbnail.json')).toBeInTheDocument();
   });
 
-  it('renders nothing when the server denies the session (403)', async () => {
+  function stub403() {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ error: 'local access only' }), {
         status: 403,
@@ -81,10 +80,24 @@ describe('TicketLocalFilesSection', () => {
       }),
     );
     vi.stubGlobal('fetch', fetchMock);
-    const { container } = renderSection();
+    return fetchMock;
+  }
+
+  it('shows a one-line notice on a tunnel host when the server denies the session (403), without retrying', async () => {
+    const fetchMock = stub403();
+    renderSection('example.trycloudflare.com');
+
+    expect(await screen.findByText(LOCAL_FILE_ACCESS_NOTICE)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders nothing on loopback when the server denies the session (403)', async () => {
+    const fetchMock = stub403();
+    const { container } = renderSection('localhost');
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(container).toBeEmptyDOMElement();
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('renders nothing when the ticket has no local files', async () => {

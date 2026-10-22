@@ -37,6 +37,8 @@ function tunnelRequest(app: Hono, url: string, headers: Record<string, string> =
 const open: WriteGuardDeps = { isTunnelWriteAllowed: () => true, hasTunnelSession: () => true };
 const urls = [raw('clip.mp4'), COLLECTION, LIST] as const;
 
+// 拒否のテストが Sec-Fetch-Site を付けないのは、CSRF 層ではなく認可 (セッション・パスワード強度) の拒否だけを
+// 見るため。ヘッダ無しは CSRF 層を通る (古いブラウザ向け) ので、403 は認可から来る。
 describe.each(urls)('tunnel access %s', (url) => {
   it('allows a strong-password tunnel with a session cookie', async () => {
     const res = await tunnelRequest(appWith(open), url, { 'Sec-Fetch-Site': 'same-origin' });
@@ -87,6 +89,6 @@ describe('tunnel video playback', () => {
     const res = await tunnelRequest(appWith(open), raw('../secret.txt'), {
       'Sec-Fetch-Site': 'same-origin',
     });
-    expect(res.status).not.toBe(200);
+    expect([400, 404]).toContain(res.status);
   });
 });

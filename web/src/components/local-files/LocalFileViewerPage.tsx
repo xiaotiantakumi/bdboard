@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
-import { fetchTicketLocalFiles, type LocalFileKind, type LocalFileListEntryDto } from '../../api/local-files';
+import { fetchLocalFileList, type LocalFileKind, type LocalFileListEntryDto } from '../../api/local-files';
 import { buildLocalFileViewerUrl, localFileNameOf, type LocalFileViewerRoute } from '../../localFileViewerRoute';
 import { formatByteSize } from '../TicketAttachments';
 import { LOCAL_FILE_ACCESS_HELP, isLocalFileAccessDenied } from './localFileErrorMessage';
@@ -24,12 +24,22 @@ interface ShownFile {
 /**
  * bdboard-teir: ホスト名では止めない。ローカル直と、強いパスワードで認可済みのトンネルセッション
  * (チャット・添付と同じ資格) をサーバーのガードが通す。ガードが 403 を返したときだけ案内を出す。
- * 画像・動画は <img>/<video> がそのまま取りに行き失敗の理由が見えないので、ガードが掛かる一覧を先に 1 回引いて判定する。
+ * 画像・動画は <img>/<video> がそのまま取りに行き失敗の理由が見えないので、ガードが掛かる安い呼び出し (/list。bd を呼ばない) を先に 1 回引いて判定し、
+ * 結果が出るまでビューアを載せない (403 の前に壊れた <img>/<video> を見せない)。403 以外の失敗はビューア側の表示に任せる。
  */
 export function LocalFileViewerPage({ route }: LocalFileViewerPageProps) {
   const accessProbe = useQuery({
-    queryKey: ['ticket-local-files', route.ticketId],
-    queryFn: () => fetchTicketLocalFiles(route.ticketId),
+    queryKey: ['ticket-local-file-list', route.ticketId, 'access-probe'],
+    queryFn: async () => {
+      try {
+        await fetchLocalFileList(route.ticketId, '.');
+      } catch (error) {
+        // ガード通過後の 400 (パス不正) などはここでは関係ない。403 だけを失敗として扱う。
+        if (isLocalFileAccessDenied(error)) throw error;
+      }
+      return true;
+    },
+    retry: false,
   });
   const denied = accessProbe.isError && isLocalFileAccessDenied(accessProbe.error);
   const [shown, setShown] = useState<ShownFile>({
@@ -71,6 +81,10 @@ export function LocalFileViewerPage({ route }: LocalFileViewerPageProps) {
         {LOCAL_FILE_ACCESS_HELP}
       </p>
     );
+  }
+
+  if (accessProbe.isPending) {
+    return null;
   }
 
   return (
