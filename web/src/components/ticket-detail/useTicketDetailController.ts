@@ -41,7 +41,6 @@ import { useTicketDescriptionEditing } from './useTicketDescriptionEditing';
 import { useTicketLabels } from './useTicketLabels';
 import { useTicketDependencies } from './useTicketDependencies';
 import { useTicketComment } from './useTicketComment';
-import { useTicketSessionLink } from './useTicketSessionLink';
 import { useTicketQuickActions } from './useTicketQuickActions';
 import { useTicketAgentRun } from './useTicketAgentRun';
 import { useTicketFormReset } from './useTicketFormReset';
@@ -107,7 +106,6 @@ export function useTicketDetailController({
   const labels = useTicketLabels(ticketId, currentLabels, availableLabels);
   const dependencies = useTicketDependencies(ticketId, data);
   const comment = useTicketComment(ticketId);
-  const sessionLink = useTicketSessionLink(ticketId);
   const prevCommentCountRef = useRef<number | undefined>(undefined);
 
   // ticketId/projectRootPath 変更時の各セクション横断リセットは
@@ -124,7 +122,6 @@ export function useTicketDetailController({
     resetLabelInput: labels.reset,
     resetTitleEditing: title.reset,
     resetDescriptionEditing: description.reset,
-    resetSessionLink: sessionLink.reset,
   });
 
   useFocusTrap({
@@ -221,7 +218,6 @@ export function useTicketDetailController({
     labels: { currentLabels, ...labels },
     dependencies,
     comment: { ...queries.comment, ...comment },
-    sessionLink,
     timeline: queries.timeline,
     similarTickets: queries.similarTickets,
     inFlightOverlaps: queries.inFlightOverlaps,

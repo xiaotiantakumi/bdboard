@@ -206,22 +206,6 @@
   font-size: 0.75rem;
 }
 
-.status-pill-session-btn {
-  background: none;
-  border: none;
-  color: var(--color-accent);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 0.75rem;
-  padding: 0;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.status-pill-session-btn:hover {
-  color: var(--color-text);
-}
-
 .alert-bar {
   display: flex;
   flex-wrap: wrap;

@@ -13,8 +13,6 @@ describe('useAppOverlays', () => {
     expect(result.current.chatOpen).toBe(false);
     expect(result.current.chatContext).toBeUndefined();
     expect(result.current.chatContextToken).toBe(0);
-    expect(result.current.sessionListOpen).toBe(false);
-    expect(result.current.sessionListProjectId).toBeUndefined();
     expect(result.current.tunnelModalOpen).toBe(false);
     expect(result.current.statusDetailOpen).toBe(false);
     expect(result.current.presetSaveIntentToken).toBe(0);
@@ -150,27 +148,6 @@ describe('useAppOverlays', () => {
     expect(result.current.chatOpen).toBe(false);
     expect(result.current.chatContext).toBeUndefined();
     expect(result.current.chatContextToken).toBe(1);
-  });
-
-  it('handleOpenSessionList sets sessionListProjectId from its argument (or clears it when omitted)', () => {
-    const { result } = renderHook(() => useAppOverlays(null));
-
-    act(() => {
-      result.current.handleOpenSessionList('proj-9');
-    });
-    expect(result.current.sessionListOpen).toBe(true);
-    expect(result.current.sessionListProjectId).toBe('proj-9');
-
-    act(() => {
-      result.current.handleCloseSessionList();
-    });
-    expect(result.current.sessionListOpen).toBe(false);
-    expect(result.current.sessionListProjectId).toBeUndefined();
-
-    act(() => {
-      result.current.handleOpenSessionList();
-    });
-    expect(result.current.sessionListProjectId).toBeUndefined();
   });
 
   it('handleOpenTunnel/handleCloseTunnel toggle tunnelModalOpen', () => {

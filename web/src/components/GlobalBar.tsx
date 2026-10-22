@@ -17,9 +17,6 @@ export interface GlobalBarProps {
   lastContactAtMs: number | null | undefined;
   generatedAt: string | null | undefined;
   lastRefreshAt: string | null | undefined;
-  totalSessionCount: number;
-  activeSessionCount: number;
-  onOpenSessionList: () => void;
   statusDetailOpen: boolean;
   onStatusDetailOpenChange: (open: boolean) => void;
   projects: ProjectDto[];
@@ -45,9 +42,6 @@ export function GlobalBar({
   lastContactAtMs,
   generatedAt,
   lastRefreshAt,
-  totalSessionCount,
-  activeSessionCount,
-  onOpenSessionList,
   statusDetailOpen,
   onStatusDetailOpenChange,
   projects,
@@ -175,9 +169,6 @@ export function GlobalBar({
         lastContactAtMs={lastContactAtMs}
         generatedAt={generatedAt}
         lastRefreshAt={lastRefreshAt}
-        totalSessionCount={totalSessionCount}
-        activeSessionCount={activeSessionCount}
-        onOpenSessionList={onOpenSessionList}
         open={statusDetailOpen}
         onOpenChange={onStatusDetailOpenChange}
       />

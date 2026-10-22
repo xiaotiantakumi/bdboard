@@ -291,10 +291,6 @@
     max-width: 90%;
   }
 
-  .session-tail-message {
-    max-width: 90%;
-  }
-
   /* bdboard-h4xs.15: モバイル幅で固定チャンクを圧縮し、会話領域 (.chat-messages) を確保する。
      デスクトップ (>=701px) の見た目は触らない。 */
   .detail-panel.chat-panel {

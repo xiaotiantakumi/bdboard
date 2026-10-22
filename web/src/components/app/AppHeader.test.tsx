@@ -51,11 +51,6 @@ function makeProps(overrides: Partial<AppHeaderProps> = {}): AppHeaderProps {
       generatedAt: '2026-09-24T00:00:00.000Z',
       lastRefreshAt: '2026-09-24T00:00:01.000Z',
     },
-    sessions: {
-      total: 11,
-      active: 3,
-      onOpen: vi.fn(),
-    },
     statusDetail: {
       open: true,
       onOpenChange: vi.fn(),
@@ -120,8 +115,6 @@ describe('AppHeader', () => {
     expect(globalBarProps.lastContactAtMs).toBe(12345);
     expect(globalBarProps.generatedAt).toBe('2026-09-24T00:00:00.000Z');
     expect(globalBarProps.lastRefreshAt).toBe('2026-09-24T00:00:01.000Z');
-    expect(globalBarProps.totalSessionCount).toBe(11);
-    expect(globalBarProps.activeSessionCount).toBe(3);
     expect(globalBarProps.statusDetailOpen).toBe(true);
     expect(globalBarProps.onStatusDetailOpenChange).toBe(props.statusDetail.onOpenChange);
     expect(globalBarProps.projects).toBe(props.projects.list);
@@ -146,21 +139,6 @@ describe('AppHeader', () => {
     expect(batchRunChipMock.mock.calls.at(-1)![0].batchRun).toBe(props.batchRun);
   });
 
-  it('discards any argument GlobalBar/ViewToolbar would pass to onOpenSessionList (always calls sessions.onOpen with none)', () => {
-    const props = makeProps();
-    render(<AppHeader {...props} />);
-
-    const globalBarProps = globalBarMock.mock.calls.at(-1)![0];
-    const viewToolbarProps = viewToolbarMock.mock.calls.at(-1)![0];
-
-    globalBarProps.onOpenSessionList();
-    viewToolbarProps.onOpenSessionList();
-
-    expect(props.sessions.onOpen).toHaveBeenCalledTimes(2);
-    expect(props.sessions.onOpen).toHaveBeenNthCalledWith(1);
-    expect(props.sessions.onOpen).toHaveBeenNthCalledWith(2);
-  });
-
   it('forwards the grouped props to ViewToolbar under their original flat prop names', () => {
     const props = makeProps();
     render(<AppHeader {...props} />);
@@ -180,8 +158,6 @@ describe('AppHeader', () => {
     expect(viewToolbarProps.onHideDoneChange).toBe(props.toolbar.onHideDoneChange);
     expect(viewToolbarProps.stalledOnly).toBe(false);
     expect(viewToolbarProps.onStalledOnlyChange).toBe(props.toolbar.onStalledOnlyChange);
-    expect(viewToolbarProps.totalSessionCount).toBe(11);
-    expect(viewToolbarProps.activeSessionCount).toBe(3);
     expect(viewToolbarProps.onRefresh).toBe(props.toolbar.onRefresh);
     expect(viewToolbarProps.isRefreshing).toBe(false);
     expect(viewToolbarProps.chatAvailable).toBe(true);

@@ -181,12 +181,4 @@
   .view-toolbar-right {
     display: contents;
   }
-
-  /* セッション件数は状態ピルのポップオーバー内の
-     `.status-pill-session-btn` (同じ onOpenSessionList / 同じラベル) と完全な重複。
-     縦幅が最も貴重な画面では常設せず、状態ピル経由に一本化する
-     (AC2「畳んだ先からでよい」)。docs/help-content.json の sessions 節も追従済み。 */
-  .view-toolbar .meta-text-btn {
-    display: none;
-  }
 }

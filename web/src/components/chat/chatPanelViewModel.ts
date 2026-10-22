@@ -49,8 +49,7 @@ export function buildChatPanelViewModel(
     selectedProjectId, isSending, projectSelectionHintId, handleProjectSelectChange,
     selectedProject, projectSelectionHint, ticketProjectFallbackNotice, threadDrawerOpen,
     toggleThreadDrawer, currentThreadTitle, openThreads, closeThreadDrawer, handleNewThread,
-    displayedOpenThreads, hasClosedThreads, showDiscoveredSessions, toggleShowDiscoveredSessions,
-    closeShowDiscoveredSessions, handleResumeDiscoveredSession, threadError, agents,
+    displayedOpenThreads, hasClosedThreads, threadError, agents,
     selectedAgentId, handleAgentChange, selectedAgent, showModelSelect, effectiveModelId,
     handleModelChange, handleMessagesScroll, currentMessages, currentConversationKey,
     loadingHistoryFor, backgroundTurnProjectId, backgroundTurnStatus, activeStreamingText,
@@ -109,15 +108,6 @@ export function buildChatPanelViewModel(
       openRows: openThreadDrawerRows,
       hasVisibleClosedThreads,
       closedRows: closedThreadDrawerRows,
-      selectedProjectId,
-      showDiscoveredSessions,
-      onToggleDiscoveredSessions: toggleShowDiscoveredSessions,
-      isSending,
-      onCloseDiscoveredSessions: closeShowDiscoveredSessions,
-      onResumeDiscoveredSession: (sessionId, agentId, seedMessages) => {
-        handleResumeDiscoveredSession(sessionId, agentId, seedMessages);
-        closeThreadDrawer();
-      },
     },
     settings: {
       summaryParts: chatSettingsSummaryParts,

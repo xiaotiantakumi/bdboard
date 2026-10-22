@@ -1,5 +1,3 @@
-import type { SessionTailMessageDto } from '../sessions';
-
 /** src/application/ports/chat-agent.ts の ChatAgentAvailability と同形の二重定義。 */
 export type ChatAgentAvailability = 'available' | 'unknown' | 'unavailable';
 
@@ -106,26 +104,3 @@ export type ChatTurnStatusDto =
       agentId: string;
       failedAt: string;
     };
-
-export interface DiscoveredChatSessionDto {
-  sessionId: string;
-  lastActivityAt: string;
-  alreadyAdopted: boolean;
-  firstMessagePreview?: string;
-  lastMessagePreview?: string;
-}
-
-export interface DiscoveredChatSessionsDto {
-  sessions: DiscoveredChatSessionDto[];
-}
-
-export interface AdoptChatSessionResponseDto {
-  sessionId: string;
-  agentId: string;
-  /**
-   * adopt 直後にチャット履歴をシードするための、トランスクリプト末尾の会話
-   * (bdboard-3tw.104.3 レビュー M1)。discovery が local-only ガード配下で既に読んだ
-   * トランスクリプトから返るので、別途 `/api/sessions/:id/tail` を叩き直す必要はない。
-   */
-  seedMessages: SessionTailMessageDto[];
-}

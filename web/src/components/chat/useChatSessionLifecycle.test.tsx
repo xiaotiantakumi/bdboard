@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSessionMessagesDto, ChatThreadDto } from '../../api';
 import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
@@ -56,10 +56,8 @@ function setup(overrides: Partial<UseChatSessionLifecycleParams> = {}) {
     selectedThreadIdsRef,
     draftNoncesRef: { current: {} },
     setSelectedThreadIds,
-    historyRequestIdRef: { current: 0 },
     setConversations: vi.fn(),
     setHistoryLoadedFor: vi.fn(),
-    setLoadingHistoryFor: vi.fn(),
     setThreadModelIds: vi.fn(),
     openThreads: [],
     openThreadIdsRef,
@@ -69,7 +67,6 @@ function setup(overrides: Partial<UseChatSessionLifecycleParams> = {}) {
     setThreadLists: vi.fn(),
     setOpenThreadIds,
     setSelectedAgentId: vi.fn(),
-    cancelThreadConfirmDelete: vi.fn(),
     advanceDraftNonceAfterSessionGone: vi.fn(),
     replacedMarksRef: { current: createReplacedThreadMarks() },
     ...overrides,
@@ -762,43 +759,6 @@ describe('useChatSessionLifecycle', () => {
       expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-a', 'sess-b', 'sess-new', 'sess-rec'] });
     });
 
-    it('marks the first entry an adoption writes before the project is restored', () => {
-      const { result, params } = setup();
-      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-      expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(true);
-      // bdboard-521p: 印は保存エントリにも立つ(リロード・パネルを閉じても残る)。
-      expect(readPersistedChatThreads()['project-a']).toEqual({
-        activeSessionIds: ['sess-new'],
-        selectedSessionId: 'sess-new',
-        provisional: true,
-      });
-    });
-
-    it('takes an adopted id off the closed ids, so a list that lands later does not subtract it', () => {
-      const { result, params } = setup();
-      params.provisionalEntries.markIfFirstEntry('project-a');
-      params.provisionalEntries.noteClosed('project-a', 'sess-new');
-      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-      expect(params.provisionalEntries.closedIds('project-a').has('sess-new')).toBe(false);
-      // bdboard-521p: 保存エントリの閉じた id からも外れ、印は残る。
-      expect(readPersistedChatThreads()['project-a']).toEqual({
-        activeSessionIds: ['sess-new'], selectedSessionId: 'sess-new', provisional: true,
-      });
-    });
-
-    it('does not mark an adoption on a revisit (an entry already existed)', () => {
-      writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-1'], selectedSessionId: 'sess-1' });
-      const { result, params } = setup();
-      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-      expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(false);
-    });
-
-    it('does not mark an adoption after the project is restored (an agent change\'s explicit empty, or E7)', () => {
-      const { result, params } = setup({ restoredProjectsRef: { current: new Set(['project-a']) } });
-      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-      expect(params.provisionalEntries.isProvisional('project-a', readPersistedChatThreads()['project-a'])).toBe(false);
-    });
-
     it('marks the first entry the dead-selected-session branch of handleHistorySessionGone writes before the project is restored', () => {
       const { result, params } = setup({
         selectedThreadIdsRef: { current: { 'project-a': 'sess-dead' } },
@@ -1005,37 +965,6 @@ describe('useChatSessionLifecycle', () => {
         });
       });
 
-      it('does not bring the dead session back through an adoption refresh that started before the prune, and admits it once', async () => {
-        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
-        fetchChatThreadsMock.mockReturnValue(
-          new Promise<ChatThreadDto[]>((resolve) => {
-            resolveThreads = resolve;
-          }),
-        );
-        const threadListOrder = createThreadListFetchOrder();
-        const admit = vi.spyOn(threadListOrder, 'admit');
-        const { result, params } = setup({
-          selectedThreadIdsRef: { current: { 'project-a': 'sess-live' } },
-          openThreadIdsRef: { current: { 'project-a': ['sess-live', 'sess-dead'] } },
-          restoredProjectsRef: { current: new Set(['project-a']) },
-          threadListOrder,
-        });
-        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-        await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
-        // 取り直しの途中で、履歴の取得が「セッションは死んでいる」と分かった。
-        act(() => result.current.handleHistorySessionGone('sess-dead'));
-        await act(async () => {
-          resolveThreads([thread('sess-live'), thread('sess-dead'), thread('sess-new')]);
-          await Promise.resolve();
-        });
-
-        expect(lastUpdate(params.setThreadLists as ReturnType<typeof vi.fn>, {})).toEqual({
-          'project-a': [thread('sess-live'), thread('sess-new')],
-        });
-        // 取り直しは 1 fetch につき admit を 1 回だけ呼ぶ(同じ番号の二重 admit が起きない)。
-        expect(admit.mock.calls.map((call) => call[1])).toEqual([1]);
-      });
-
       it('trusts a list that started after the prune', () => {
         const threadListOrder = createThreadListFetchOrder();
         const { result, params } = setup({
@@ -1057,170 +986,9 @@ describe('useChatSessionLifecycle', () => {
   });
 
   describe('handleResumeDiscoveredSession', () => {
-    it('seeds the conversation, opens and selects the session, and refreshes the thread list', async () => {
-      vi.useFakeTimers({ now: 1_000, toFake: ['Date'] });
-      const refreshed = [thread('sess-new', 'refreshed')];
-      fetchChatThreadsMock.mockResolvedValue(refreshed);
-      const historyRequestIdRef = { current: 4 };
-      // bdboard-d7on: handleResumeDiscoveredSession はもう render 時点の
-      // openThreads prop を読まない(E7 の初回 fetch 解決前は stale/[] になり
-      // 得るため)。restoredProjectsRef が未マークのこのケースでは persisted
-      // storage を基点にする — 「前回訪問で sess-1 を開いたまま永続化されている」
-      // を再現する。
-      writePersistedChatThreadState('project-a', {
-        activeSessionIds: ['sess-1'],
-        selectedSessionId: 'sess-1',
-      });
-      const { result, params } = setup({ historyRequestIdRef });
-      act(() =>
-        result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', [
-          { role: 'user', text: 'with time', timestamp: '2026-08-16T11:00:00.000Z' },
-          { role: 'assistant', text: 'without time' },
-        ]),
-      );
-
-      expect(historyRequestIdRef.current).toBe(5);
-      expect(params.setSelectedAgentId).toHaveBeenCalledWith('agent-b');
-      expect(lastUpdate(params.setConversations as ReturnType<typeof vi.fn>, {})).toEqual({
-        'sess-new': {
-          sessionId: 'sess-new',
-          agentId: 'agent-b',
-          messages: [
-            { role: 'user', text: 'with time', at: Date.parse('2026-08-16T11:00:00.000Z') },
-            { role: 'assistant', text: 'without time', at: 1_001 },
-          ],
-        },
-      });
-      expect(lastUpdate(params.setHistoryLoadedFor as ReturnType<typeof vi.fn>, {})).toEqual({ 'sess-new': true });
-      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, { other: ['x'] })).toEqual({
-        other: ['x'],
-        'project-a': ['sess-1', 'sess-new'],
-      });
-      expect(readPersistedChatThreads()['project-a']).toEqual({
-        activeSessionIds: ['sess-1', 'sess-new'],
-        selectedSessionId: 'sess-new',
-      });
-      expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
-        'project-a': 'sess-new',
-      });
-      expect(params.cancelThreadConfirmDelete).toHaveBeenCalledOnce();
-      expect(lastUpdate(params.setLoadingHistoryFor as ReturnType<typeof vi.fn>, 'sess-new')).toBeNull();
-      expect(lastUpdate(params.setLoadingHistoryFor as ReturnType<typeof vi.fn>, 'sess-other')).toBe('sess-other');
-      expect(fetchChatThreadsMock).toHaveBeenCalledWith('project-a');
-      vi.useRealTimers();
-      await waitFor(() => {
-        expect(lastUpdate(params.setThreadLists as ReturnType<typeof vi.fn>, {})).toEqual({ 'project-a': refreshed });
-      });
-    });
-
-    it('does not duplicate an already-open session', () => {
-      // bdboard-d7on: 同上の理由で persisted storage に既存の open 状態を
-      // 用意する(render prop の openThreads はもう読まれない)。
-      writePersistedChatThreadState('project-a', {
-        activeSessionIds: ['sess-new', 'sess-1'],
-        selectedSessionId: 'sess-1',
-      });
-      const { result, params } = setup();
-      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
-        'project-a': ['sess-new', 'sess-1'],
-      });
-    });
-
-    it('bdboard-d7on: once the project is marked restored, bases the next open list on openThreadIdsRef (not persisted storage)', () => {
-      // このプロジェクトは既に E7/applyRecoveredTurn 等で復元済み。持続化には
-      // 古い('stale-persisted')値しか無いが、restoredProjectsRef が立っている
-      // 間は openThreadIdsRef.current の方を信頼するべき — persisted の方は
-      // in-flight の別経路から取り残された、参照すべきでない古い値かもしれない。
-      writePersistedChatThreadState('project-a', {
-        activeSessionIds: ['stale-persisted'],
-        selectedSessionId: 'stale-persisted',
-      });
-      const { result, params } = setup({
-        restoredProjectsRef: { current: new Set(['project-a']) },
-        openThreadIdsRef: { current: { 'project-a': ['sess-live'] } },
-      });
-      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
-        'project-a': ['sess-live', 'sess-new'],
-      });
-      expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-live', 'sess-new'] });
-      expect(readPersistedChatThreads()['project-a']).toEqual({
-        activeSessionIds: ['sess-live', 'sess-new'],
-        selectedSessionId: 'sess-new',
-      });
-    });
 
     describe('thread-list fetch order (bdboard-z9mn)', () => {
-      it('does not write a refresh that started before an already-applied list', async () => {
-        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
-        fetchChatThreadsMock.mockReturnValue(
-          new Promise<ChatThreadDto[]>((resolve) => {
-            resolveThreads = resolve;
-          }),
-        );
-        const threadListOrder = createThreadListFetchOrder();
-        const { result, params } = setup({ threadListOrder });
-        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-        await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
-        // 取り直しの途中で、あとから始まった別の取り直し(2 回目の採用など)の一覧が先に当たった。
-        const later = threadListOrder.begin('project-a');
-        expect(threadListOrder.admit('project-a', later, [thread('sess-new'), thread('sess-newer')])).toBeDefined();
-        await act(async () => {
-          resolveThreads([thread('sess-new')]);
-          await Promise.resolve();
-        });
 
-        expect(params.setThreadLists).not.toHaveBeenCalled();
-      });
-
-      it('lays a rename made after the refresh started over the refreshed list', async () => {
-        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
-        fetchChatThreadsMock.mockReturnValue(
-          new Promise<ChatThreadDto[]>((resolve) => {
-            resolveThreads = resolve;
-          }),
-        );
-        const threadListOrder = createThreadListFetchOrder();
-        const { result, params } = setup({ threadListOrder });
-        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-        await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
-        threadListOrder.noteEntryWrite('project-a', thread('sess-new', 'renamed'), 'replace');
-        await act(async () => {
-          resolveThreads([thread('sess-new', 'old title')]);
-          await Promise.resolve();
-        });
-
-        expect(lastUpdate(params.setThreadLists as ReturnType<typeof vi.fn>, {})).toEqual({
-          'project-a': [thread('sess-new', 'renamed')],
-        });
-      });
-
-      it('still prunes the persisted ids the server no longer lists when its own list is the stale one', async () => {
-        writePersistedChatThreadState('project-a', {
-          activeSessionIds: ['sess-dead', 'sess-1'],
-          selectedSessionId: 'sess-1',
-        });
-        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
-        fetchChatThreadsMock.mockReturnValue(
-          new Promise<ChatThreadDto[]>((resolve) => {
-            resolveThreads = resolve;
-          }),
-        );
-        const threadListOrder = createThreadListFetchOrder();
-        const { result, params } = setup({ threadListOrder });
-        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-        await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
-        const later = threadListOrder.begin('project-a');
-        expect(threadListOrder.admit('project-a', later, [thread('sess-1'), thread('sess-new')])).toBeDefined();
-        await act(async () => {
-          resolveThreads([thread('sess-1'), thread('sess-new')]);
-          await Promise.resolve();
-        });
-
-        expect(params.setThreadLists).not.toHaveBeenCalled();
-        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1', 'sess-new'] });
-      });
     });
 
     describe('adopting before the project list is restored (bdboard-oaak)', () => {
@@ -1230,187 +998,8 @@ describe('useChatSessionLifecycle', () => {
       // タイトルの引けない「(無題)」タブになる(採用が restoredProjectsRef を立てるので
       // E7 の応答は open を復元し直さない)。一覧が届いたら、復元の経路
       // (restoreThreadView)と同じ規則で、基点にした永続化 id のうち一覧に無いものを落とす。
-      it('drops a persisted id the server no longer lists once the refreshed thread list arrives, and persists the pruned open list', async () => {
-        writePersistedChatThreadState('project-a', {
-          activeSessionIds: ['sess-dead', 'sess-1'],
-          selectedSessionId: 'sess-1',
-        });
-        fetchChatThreadsMock.mockResolvedValue([thread('sess-1', 'live'), thread('sess-new', 'resumed')]);
-        const { result, params } = setup();
-        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-        // 同期の段階では一覧が無いので、永続化 id をそのまま基点にする(従来どおり)。
-        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-dead', 'sess-1', 'sess-new'] });
 
-        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
-        await act(async () => {
-          await Promise.resolve();
-        });
-
-        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1', 'sess-new'] });
-        expect(params.selectedThreadIdsRef.current).toEqual({ 'project-a': 'sess-new' });
-        expect(readPersistedChatThreads()['project-a']).toEqual({
-          activeSessionIds: ['sess-1', 'sess-new'],
-          selectedSessionId: 'sess-new',
-        });
-      });
-
-      it('keeps the adopted session open even when the refreshed list does not contain it yet', async () => {
-        writePersistedChatThreadState('project-a', {
-          activeSessionIds: ['sess-dead', 'sess-1'],
-          selectedSessionId: 'sess-1',
-        });
-        fetchChatThreadsMock.mockResolvedValue([thread('sess-1', 'live')]);
-        const { result, params } = setup();
-        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-
-        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
-        await act(async () => {
-          await Promise.resolve();
-        });
-
-        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1', 'sess-new'] });
-        expect(readPersistedChatThreads()['project-a']).toEqual({
-          activeSessionIds: ['sess-1', 'sess-new'],
-          selectedSessionId: 'sess-new',
-        });
-      });
-
-      it('does not drop a session opened after the adoption (it was never part of the persisted base)', async () => {
-        writePersistedChatThreadState('project-a', {
-          activeSessionIds: ['sess-dead', 'sess-1'],
-          selectedSessionId: 'sess-1',
-        });
-        // 一覧の取得が走っている間に、別経路(送信成功など)が sess-fresh を open へ足した。
-        // sess-fresh は採用時の基点(永続化 id)に含まれないので、一覧に載っていなくても落とさない。
-        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
-        fetchChatThreadsMock.mockReturnValue(
-          new Promise<ChatThreadDto[]>((resolve) => {
-            resolveThreads = resolve;
-          }),
-        );
-        const { result, params } = setup();
-        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-        act(() => {
-          params.setOpenThreadIds((prev) => ({
-            ...prev,
-            'project-a': [...(prev['project-a'] ?? []), 'sess-fresh'],
-          }));
-        });
-
-        await act(async () => {
-          resolveThreads([thread('sess-1', 'live'), thread('sess-new', 'resumed')]);
-          await Promise.resolve();
-        });
-        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
-
-        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1', 'sess-new', 'sess-fresh'] });
-      });
-
-      it('moves the selection to the adopted session when the user selected an id that turned out to be dead', async () => {
-        writePersistedChatThreadState('project-a', {
-          activeSessionIds: ['sess-dead', 'sess-1'],
-          selectedSessionId: 'sess-1',
-        });
-        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
-        fetchChatThreadsMock.mockReturnValue(
-          new Promise<ChatThreadDto[]>((resolve) => {
-            resolveThreads = resolve;
-          }),
-        );
-        const { result, params } = setup();
-        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-        act(() => {
-          params.setSelectedThreadIds((prev) => ({ ...prev, 'project-a': 'sess-dead' }));
-        });
-
-        await act(async () => {
-          resolveThreads([thread('sess-1', 'live'), thread('sess-new', 'resumed')]);
-          await Promise.resolve();
-        });
-        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
-
-        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1', 'sess-new'] });
-        expect(params.selectedThreadIdsRef.current).toEqual({ 'project-a': 'sess-new' });
-        expect(readPersistedChatThreads()['project-a']).toEqual({
-          activeSessionIds: ['sess-1', 'sess-new'],
-          selectedSessionId: 'sess-new',
-        });
-      });
-
-      it('moves the selection to the first remaining open thread when the adopted tab was closed before the refreshed list arrived', async () => {
-        writePersistedChatThreadState('project-a', {
-          activeSessionIds: ['sess-dead', 'sess-1'],
-          selectedSessionId: 'sess-1',
-        });
-        let resolveThreads: (threads: ChatThreadDto[]) => void = () => undefined;
-        fetchChatThreadsMock.mockReturnValue(
-          new Promise<ChatThreadDto[]>((resolve) => {
-            resolveThreads = resolve;
-          }),
-        );
-        const { result, params } = setup();
-        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-        // 取り直しが届く前に採用したタブを閉じた: closeThread の代わりの選択は open の先頭 (死んだ id)。
-        act(() => {
-          params.setOpenThreadIds((prev) => ({ ...prev, 'project-a': ['sess-dead', 'sess-1'] }));
-          params.setSelectedThreadIds((prev) => ({ ...prev, 'project-a': 'sess-dead' }));
-        });
-
-        await act(async () => {
-          resolveThreads([thread('sess-1', 'live'), thread('sess-new', 'resumed')]);
-          await Promise.resolve();
-        });
-        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
-
-        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-1'] });
-        expect(params.selectedThreadIdsRef.current).toEqual({ 'project-a': 'sess-1' });
-        expect(readPersistedChatThreads()['project-a']).toEqual({
-          activeSessionIds: ['sess-1'],
-          selectedSessionId: 'sess-1',
-        });
-      });
-
-      it('does not prune anything when the project was already restored (the open list was filtered at restore time)', async () => {
-        fetchChatThreadsMock.mockResolvedValue([thread('sess-new', 'resumed')]);
-        const { result, params } = setup({
-          restoredProjectsRef: { current: new Set(['project-a']) },
-          openThreadIdsRef: { current: { 'project-a': ['sess-live'] } },
-        });
-        act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-
-        await waitFor(() => expect(params.setThreadLists).toHaveBeenCalled());
-        await act(async () => {
-          await Promise.resolve();
-        });
-
-        expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-live', 'sess-new'] });
-      });
     });
 
-    it('falls back to an explanatory note when there are no seed messages', () => {
-      const { result, params } = setup();
-      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-      const conversations = lastUpdate(params.setConversations as ReturnType<typeof vi.fn>, {}) as Record<
-        string,
-        { messages: { role: string; text: string }[] }
-      >;
-      expect(conversations['sess-new'].messages).toEqual([
-        expect.objectContaining({
-          role: 'assistant',
-          text: 'このCLIセッションの直近の会話をここに表示できませんでした。続きから会話できます。',
-        }),
-      ]);
-    });
-
-    it('swallows a failed thread-list refresh', async () => {
-      fetchChatThreadsMock.mockRejectedValue(new Error('threads down'));
-      const { result, params } = setup();
-      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
-      await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
-      await act(async () => {
-        await Promise.resolve();
-      });
-      expect(params.setThreadLists).not.toHaveBeenCalled();
-    });
   });
 });

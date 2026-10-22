@@ -29,8 +29,6 @@ function makeCard(
     blockedBy: [],
     blocks: [],
     unblocksCount: 0,
-    liveness: null,
-    sessions: [],
     stalled: false,
     epicProgress: null,
     deferDays: null,
@@ -59,7 +57,6 @@ function makeBoard(): BoardDto {
 }
 
 const projectNames = new Map([['proj-1', 'Project One']]);
-const projectActiveSessions = new Map([['proj-1', 0]]);
 
 function renderBoardLanes(onCardClick = vi.fn()) {
   render(
@@ -72,7 +69,6 @@ function renderBoardLanes(onCardClick = vi.fn()) {
         filter={EMPTY_BOARD_FILTER}
         showProjectName
         projectNames={projectNames}
-        projectActiveSessions={projectActiveSessions}
         pendingDecisionIds={new Set()}
         prLinksById={new Map()}
         sectionKey="test"
@@ -208,7 +204,6 @@ describe('BoardKeyboardNav', () => {
           filter={EMPTY_BOARD_FILTER}
           showProjectName
           projectNames={projectNames}
-          projectActiveSessions={projectActiveSessions}
           pendingDecisionIds={new Set()}
           prLinksById={new Map()}
           sectionKey="test"
@@ -248,7 +243,6 @@ describe('BoardKeyboardNav', () => {
           filter={EMPTY_BOARD_FILTER}
           showProjectName
           projectNames={projectNames}
-          projectActiveSessions={projectActiveSessions}
           pendingDecisionIds={new Set()}
           prLinksById={new Map()}
           sectionKey="test"
@@ -274,7 +268,6 @@ describe('BoardKeyboardNav', () => {
           filter={EMPTY_BOARD_FILTER}
           showProjectName
           projectNames={projectNames}
-          projectActiveSessions={projectActiveSessions}
           pendingDecisionIds={new Set()}
           prLinksById={new Map()}
           sectionKey="test"
@@ -310,7 +303,6 @@ describe('BoardKeyboardNav', () => {
           filter={EMPTY_BOARD_FILTER}
           showProjectName
           projectNames={projectNames}
-          projectActiveSessions={projectActiveSessions}
           pendingDecisionIds={new Set()}
           prLinksById={new Map()}
           sectionKey="test"
@@ -466,7 +458,6 @@ describe('BoardKeyboardNav', () => {
             filter={EMPTY_BOARD_FILTER}
             showProjectName
             projectNames={projectNames}
-            projectActiveSessions={projectActiveSessions}
             pendingDecisionIds={new Set()}
             prLinksById={new Map()}
             sectionKey="test"
@@ -529,7 +520,6 @@ describe('BoardKeyboardNav', () => {
           filter={EMPTY_BOARD_FILTER}
           showProjectName
           projectNames={projectNames}
-          projectActiveSessions={projectActiveSessions}
           pendingDecisionIds={new Set()}
           prLinksById={new Map()}
           sectionKey="test"
@@ -565,7 +555,6 @@ describe('BoardKeyboardNav', () => {
           filter={EMPTY_BOARD_FILTER}
           showProjectName
           projectNames={projectNames}
-          projectActiveSessions={projectActiveSessions}
           pendingDecisionIds={new Set()}
           prLinksById={new Map()}
           sectionKey="test"

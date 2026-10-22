@@ -35,7 +35,6 @@ export interface AppActionsParams {
   hideDone: boolean;
   setStalledOnly: PersistedSetter<boolean>;
   stalledOnly: boolean;
-  handleOpenSessionList: (projectId?: string) => void;
   handleOpenHelp: () => void;
   chatAvailable: boolean;
 
@@ -101,7 +100,6 @@ export function useAppActions(params: AppActionsParams): AppActionsResult {
     hideDone,
     setStalledOnly,
     stalledOnly,
-    handleOpenSessionList,
     handleOpenHelp,
     chatAvailable,
     setEpicFilterId,
@@ -167,7 +165,6 @@ export function useAppActions(params: AppActionsParams): AppActionsResult {
         hideDone,
         onToggleStalledOnly: () => setStalledOnly((current) => !current),
         stalledOnly,
-        onOpenSessionList: () => handleOpenSessionList(),
         onOpenHelp: handleOpenHelp,
         onRefresh: handleRefresh,
         chatAvailable,
@@ -176,8 +173,7 @@ export function useAppActions(params: AppActionsParams): AppActionsResult {
       chatAvailable,
       handleOpenChat,
       handleOpenHelp,
-      handleOpenSessionList,
-      handleRefresh,
+        handleRefresh,
       hideDone,
       setHideDone,
       setStalledOnly,

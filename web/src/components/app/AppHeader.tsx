@@ -22,11 +22,6 @@ export interface AppHeaderProps {
     generatedAt: string | null | undefined;
     lastRefreshAt: string | null | undefined;
   };
-  sessions: {
-    total: number;
-    active: number;
-    onOpen: () => void;
-  };
   statusDetail: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -79,22 +74,15 @@ export interface AppHeaderProps {
  * コンポーネントで、ここでは変更していない — 渡している値・prop名は
  * 元の App.tsx から1文字も変えていない。呼び出し元 (App.tsx) 側の
  * props 爆発を避けるため、このコンポーネント自体は関心ごとにまとめた
- * オブジェクト (connection/sessions/statusDetail/projects/tipsBanner/
+ * オブジェクト (connection/statusDetail/projects/tipsBanner/
  * toolbar) を受け取り、GlobalBar/ViewToolbar 個別の平たい props へ展開する
  * (AppViewContent.tsx の board/boardMeta/nextUp と同じ手法)。
- *
- * onOpenSessionList は GlobalBar/ViewToolbar 双方で元々
- * `() => handleOpenSessionList()` という「呼び出し側からの引数を捨てて
- * 引数なしで呼ぶ」ラップだった。ここでも `sessions.onOpen` を同じ形で
- * ラップして呼ぶことで、GlobalBar/ViewToolbar 内部が将来 projectId を
- * 渡すように変わっても現状の(常に無引数で呼ぶ)挙動を維持する。
  */
 export function AppHeader({
   view,
   onViewChange,
   onOpenSearch,
   connection,
-  sessions,
   statusDetail,
   projects,
   onOpenSettings,
@@ -117,9 +105,6 @@ export function AppHeader({
           lastContactAtMs={connection.lastContactAtMs}
           generatedAt={connection.generatedAt}
           lastRefreshAt={connection.lastRefreshAt}
-          totalSessionCount={sessions.total}
-          activeSessionCount={sessions.active}
-          onOpenSessionList={() => sessions.onOpen()}
           statusDetailOpen={statusDetail.open}
           onStatusDetailOpenChange={statusDetail.onOpenChange}
           projects={projects.list}
@@ -152,9 +137,6 @@ export function AppHeader({
           onHideDoneChange={toolbar.onHideDoneChange}
           stalledOnly={toolbar.stalledOnly}
           onStalledOnlyChange={toolbar.onStalledOnlyChange}
-          totalSessionCount={sessions.total}
-          activeSessionCount={sessions.active}
-          onOpenSessionList={() => sessions.onOpen()}
           onRefresh={toolbar.onRefresh}
           isRefreshing={toolbar.isRefreshing}
           chatAvailable={toolbar.chatAvailable}

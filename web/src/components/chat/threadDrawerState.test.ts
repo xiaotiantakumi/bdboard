@@ -75,16 +75,14 @@ describe('threadDrawerReducer (bdboard-sso1.83)', () => {
         renamingSessionId: 'session-2',
         renameDraft: 'draft',
         confirmingDeleteSessionId: 'session-3',
-        showDiscoveredSessions: true,
       };
       const next = threadDrawerReducer(busy, { type: 'selectThread' });
       expect(next.drawerOpen).toBe(false);
       expect(next.menuSessionId).toBeNull();
       expect(next.renamingSessionId).toBeNull();
       expect(next.confirmingDeleteSessionId).toBeNull();
-      // renameDraft (text) and showDiscoveredSessions are not part of this combo.
+      // renameDraft (text) is not part of this combo.
       expect(next.renameDraft).toBe('draft');
-      expect(next.showDiscoveredSessions).toBe(true);
     });
 
     it('is a no-op (same reference) when nothing to clear', () => {
@@ -242,29 +240,6 @@ describe('threadDrawerReducer (bdboard-sso1.83)', () => {
       });
       expect(next.renamingSessionId).toBeNull();
       expect(next.confirmingDeleteSessionId).toBe('session-2');
-    });
-  });
-
-  describe('toggleDiscoveredSessions / closeDiscoveredSessions', () => {
-    it('toggles the discovered-sessions panel open and closed', () => {
-      const opened = threadDrawerReducer(initialThreadDrawerState, {
-        type: 'toggleDiscoveredSessions',
-      });
-      expect(opened.showDiscoveredSessions).toBe(true);
-      const closed = threadDrawerReducer(opened, { type: 'toggleDiscoveredSessions' });
-      expect(closed.showDiscoveredSessions).toBe(false);
-    });
-
-    it('closeDiscoveredSessions closes it unconditionally', () => {
-      const opened: ThreadDrawerState = { ...initialThreadDrawerState, showDiscoveredSessions: true };
-      expect(
-        threadDrawerReducer(opened, { type: 'closeDiscoveredSessions' }).showDiscoveredSessions,
-      ).toBe(false);
-    });
-
-    it('closeDiscoveredSessions is a no-op (same reference) when already closed', () => {
-      const next = threadDrawerReducer(initialThreadDrawerState, { type: 'closeDiscoveredSessions' });
-      expect(next).toBe(initialThreadDrawerState);
     });
   });
 });

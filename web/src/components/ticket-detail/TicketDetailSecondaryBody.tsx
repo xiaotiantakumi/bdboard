@@ -8,7 +8,6 @@ import type { PendingDecisionDto, TicketDetailDto } from '../../api';
 import { TicketIdListSection } from './TicketIdListSection';
 import { TicketDependenciesSection } from './TicketDependenciesSection';
 import { TicketModelsSection } from './TicketModelsSection';
-import { TicketSessionLinkSection } from './TicketSessionLinkSection';
 import { TicketUsageSection } from './TicketUsageSection';
 import { TicketDecisionSection } from './TicketDecisionSection';
 import { TicketTimelineSection } from './TicketTimelineSection';
@@ -29,7 +28,6 @@ export interface TicketDetailSecondaryBodyProps {
   isTicketOnBoard: (ticketId: string) => boolean;
   onOpenTicket: (ticketId: string) => void;
   dependencies: Controller['dependencies'];
-  sessionLink: Controller['sessionLink'];
   decision: Controller['decision'];
   timeline: Controller['timeline'];
   comment: Controller['comment'];
@@ -47,7 +45,6 @@ export function TicketDetailSecondaryBody({
   isTicketOnBoard,
   onOpenTicket,
   dependencies,
-  sessionLink,
   decision,
   timeline,
   comment,
@@ -95,17 +92,6 @@ export function TicketDetailSecondaryBody({
         onOpenTicket={onOpenTicket}
       />
       <TicketModelsSection models={data.models} />
-      <TicketSessionLinkSection
-        sessionLinks={data.sessionLinks}
-        pickerOpen={sessionLink.sessionLinkPickerOpen}
-        onTogglePicker={sessionLink.togglePicker}
-        isLoadingSessions={sessionLink.isLoadingSessions}
-        activeSessionCandidates={sessionLink.activeSessionCandidates}
-        mutationPending={sessionLink.sessionLinkMutationPending}
-        mutationError={sessionLink.sessionLinkMutationError}
-        onLinkSession={sessionLink.onLinkSession}
-        onUnlinkSession={sessionLink.onUnlinkSession}
-      />
       <TicketUsageSection usage={data.usage} />
       {pendingDecision !== undefined && attachmentsSection}
       <TicketDecisionSection

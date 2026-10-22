@@ -5,7 +5,7 @@ import { sanitizeProjectFilter } from '../uiPersistedState';
 
 /**
  * bdboard-62p4 PR-3: App.tsx から `projects` クエリと、その `data` から導出する
- * 4つの useMemo (chatProjects/projectNames/projectActiveSessions/
+ * 4つの useMemo (chatProjects/projectNames/
  * projectRootPaths)、および選択中プロジェクトIDをボードに実在するものへ
  * 正規化する useEffect を集約した。queryKey/queryFn/各 useMemo の依存配列と
  * 本体、sanitize effect の中身は元の App.tsx から1文字も変えていない
@@ -44,14 +44,6 @@ export function useProjectsData({ setSelectedProjectIds }: UseProjectsDataParams
     return map;
   }, [projectsQuery.data]);
 
-  const projectActiveSessions = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const project of projectsQuery.data ?? []) {
-      map.set(project.id, project.activeSessionCount);
-    }
-    return map;
-  }, [projectsQuery.data]);
-
   const projectRootPaths = useMemo(() => {
     const map = new Map<string, string>();
     for (const project of projectsQuery.data ?? []) {
@@ -75,7 +67,6 @@ export function useProjectsData({ setSelectedProjectIds }: UseProjectsDataParams
     projectsQuery,
     chatProjects,
     projectNames,
-    projectActiveSessions,
     projectRootPaths,
   };
 }

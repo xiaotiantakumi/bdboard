@@ -11,7 +11,6 @@ export function CardItem({
   lane,
   showProjectName,
   projectName,
-  activeSessionCount,
   hasPendingDecision,
   prLink,
   onClick,
@@ -128,11 +127,6 @@ export function CardItem({
       {showProjectName && (
         <div className="card-project">
           {projectName || projectNameFallback(card.projectId)}
-          {activeSessionCount > 0 && (
-            <span className="session-badge" title="稼働中セッション数">
-              ● {activeSessionCount}
-            </span>
-          )}
         </div>
       )}
       <CardBadges

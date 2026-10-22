@@ -7,7 +7,6 @@ import { BoardLanes } from './BoardLanes';
 import { hasVisibleCards } from './boardLanesHelpers';
 
 const EMPTY_PROJECT_NAMES = new Map<string, string>();
-const EMPTY_SESSION_COUNTS = new Map<string, number>();
 
 interface SplitBoardProps {
   projects: ProjectBoardDto[];
@@ -18,7 +17,6 @@ interface SplitBoardProps {
   prLinksById: ReadonlyMap<string, PrBadgeDto>;
   sectionKeyPrefix: string;
   onCardClick: (ticketId: string) => void;
-  onSessionBadgeClick?: (projectId: string) => void;
   collapsedLanes?: ReadonlySet<Lane>;
   onToggleLaneCollapse?: (lane: Lane) => void;
   wipLimitsOverrides?: WipLimitsOverrides;
@@ -33,7 +31,6 @@ export function SplitBoard({
   prLinksById,
   sectionKeyPrefix,
   onCardClick,
-  onSessionBadgeClick,
   collapsedLanes,
   onToggleLaneCollapse,
   wipLimitsOverrides,
@@ -68,23 +65,6 @@ export function SplitBoard({
         <section key={entry.project.id} className="board-section">
           <h2 className="board-section-title">
             {entry.project.name} ({entry.board.cardCount} 件)
-            {entry.project.sessionCount > 0 && (
-              onSessionBadgeClick !== undefined ? (
-                <button
-                  type="button"
-                  className="session-badge session-badge-btn"
-                  onClick={() => onSessionBadgeClick(entry.project.id)}
-                >
-                  ● {entry.project.sessionCount} セッション（稼働中{' '}
-                  {entry.project.activeSessionCount}）
-                </button>
-              ) : (
-                <span className="session-badge">
-                  ● {entry.project.sessionCount} セッション（稼働中{' '}
-                  {entry.project.activeSessionCount}）
-                </span>
-              )
-            )}
             <ProjectHarnessBadges projectId={entry.project.id} />
           </h2>
           <BoardLanes
@@ -94,7 +74,6 @@ export function SplitBoard({
             filter={filter}
             showProjectName={false}
             projectNames={EMPTY_PROJECT_NAMES}
-            projectActiveSessions={EMPTY_SESSION_COUNTS}
             pendingDecisionIds={pendingDecisionIds}
             prLinksById={prLinksById}
             sectionKey={`${sectionKeyPrefix}-${entry.project.id}`}

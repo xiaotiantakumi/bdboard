@@ -28,8 +28,6 @@ function makeCard(id: string, priority = 2): BoardCardDto {
     blockedBy: [],
     blocks: [],
     unblocksCount: 0,
-    liveness: null,
-    sessions: [],
     stalled: false,
     epicProgress: null,
     deferDays: null,

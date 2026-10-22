@@ -17,9 +17,6 @@ export interface StatusPillProps {
   lastContactAtMs: number | null | undefined;
   generatedAt: string | null | undefined;
   lastRefreshAt: string | null | undefined;
-  totalSessionCount: number;
-  activeSessionCount: number;
-  onOpenSessionList: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -45,9 +42,6 @@ export function StatusPill({
   lastContactAtMs,
   generatedAt,
   lastRefreshAt,
-  totalSessionCount,
-  activeSessionCount,
-  onOpenSessionList,
   open,
   onOpenChange,
 }: StatusPillProps) {
@@ -115,15 +109,6 @@ export function StatusPill({
               サーバーのbd取込: {formatIsoAge(lastRefreshAt, nowMs)}
             </p>
           )}
-          <button
-            type="button"
-            className="status-pill-session-btn"
-            onClick={() => {
-              onOpenSessionList();
-            }}
-          >
-            セッション: {totalSessionCount}（稼働中 {activeSessionCount}）
-          </button>
         </div>
       )}
     </div>

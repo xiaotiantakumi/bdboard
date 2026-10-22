@@ -14,9 +14,6 @@ export interface ViewToolbarProps {
   onHideDoneChange: (value: boolean) => void;
   stalledOnly: boolean;
   onStalledOnlyChange: (value: boolean) => void;
-  totalSessionCount: number;
-  activeSessionCount: number;
-  onOpenSessionList: () => void;
   onRefresh: () => void;
   isRefreshing: boolean;
   chatAvailable: boolean;
@@ -56,9 +53,6 @@ export function ViewToolbar({
   onHideDoneChange,
   stalledOnly,
   onStalledOnlyChange,
-  totalSessionCount,
-  activeSessionCount,
-  onOpenSessionList,
   onRefresh,
   isRefreshing,
   chatAvailable,
@@ -95,14 +89,6 @@ export function ViewToolbar({
       </div>
 
       <div className="view-toolbar-right">
-        <button
-          type="button"
-          className="meta-text meta-text-btn"
-          onClick={() => onOpenSessionList()}
-        >
-          セッション: {totalSessionCount}（稼働中 {activeSessionCount}）
-        </button>
-
         <AiQuotaWidget />
 
         <button type="button" className="btn" onClick={onRefresh} disabled={isRefreshing}>

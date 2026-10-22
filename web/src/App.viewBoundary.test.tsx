@@ -7,7 +7,6 @@ vi.mock('./api', async (importOriginal) => {
   return {
     ...actual,
     fetchProjects: vi.fn(),
-    fetchSessions: vi.fn(),
     fetchStatus: vi.fn(),
     fetchBoard: vi.fn(),
     fetchPendingDecisions: vi.fn(),

@@ -9,7 +9,6 @@ import { createPrLinksRoutes } from './pr-links-routes.js';
 import { createTicketReadRoutes } from './ticket-read-routes.js';
 import { createTicketWriteRoutes } from './ticket-write-routes.js';
 import { createCommentRoutes } from './comment-routes.js';
-import { createSessionProcessRoutes } from './session-process-routes.js';
 import { createRefreshEventsRoutes } from './refresh-events-routes.js';
 
 // このファイルはリソース別のルートモジュールを元の登録順で束ねる合成レイヤ
@@ -59,7 +58,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
   // 元の routes.ts の登録順そのまま: health/status → board/projects/search →
   // hygiene 系 → tickets 読み取り (catch-all含む) → tickets 書き込み →
-  // comments → sessions/processes → refresh/events(SSE)。
+  // comments → refresh/events(SSE)。
   app.route('/', createHealthStatusRoutes(deps));
   app.route('/', createBoardRoutes(deps));
   app.route(
@@ -73,7 +72,6 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   app.route('/', createTicketReadRoutes(deps, inFlightOverlapMemo));
   app.route('/', createTicketWriteRoutes(deps));
   app.route('/', createCommentRoutes(deps));
-  app.route('/', createSessionProcessRoutes(deps));
   app.route('/', createRefreshEventsRoutes(deps));
 
   return app;

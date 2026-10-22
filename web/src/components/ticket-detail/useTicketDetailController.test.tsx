@@ -18,7 +18,6 @@ vi.mock('./useTicketDescriptionEditing');
 vi.mock('./useTicketLabels');
 vi.mock('./useTicketDependencies');
 vi.mock('./useTicketComment');
-vi.mock('./useTicketSessionLink');
 vi.mock('./useTicketFormReset');
 vi.mock('../../hooks/useFocusTrap');
 vi.mock('./useCommentFocusShortcut');
@@ -32,7 +31,6 @@ import { useTicketDescriptionEditing } from './useTicketDescriptionEditing';
 import { useTicketLabels } from './useTicketLabels';
 import { useTicketDependencies } from './useTicketDependencies';
 import { useTicketComment } from './useTicketComment';
-import { useTicketSessionLink } from './useTicketSessionLink';
 import { useTicketFormReset } from './useTicketFormReset';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useCommentFocusShortcut } from './useCommentFocusShortcut';
@@ -50,7 +48,6 @@ const descriptionMock = vi.mocked(useTicketDescriptionEditing);
 const labelsMock = vi.mocked(useTicketLabels);
 const dependenciesMock = vi.mocked(useTicketDependencies);
 const commentMock = vi.mocked(useTicketComment);
-const sessionLinkMock = vi.mocked(useTicketSessionLink);
 const formResetMock = vi.mocked(useTicketFormReset);
 const focusTrapMock = vi.mocked(useFocusTrap);
 const commentFocusShortcutMock = vi.mocked(useCommentFocusShortcut);
@@ -144,11 +141,6 @@ function setupMocks(overrides: {
     shared: 'MARK-from-comment',
     reset: commentReset,
   } as unknown as ReturnType<typeof useTicketComment>);
-  const sessionLinkReset = vi.fn();
-  sessionLinkMock.mockReturnValue({
-    MARK: 'session-link',
-    reset: sessionLinkReset,
-  } as unknown as ReturnType<typeof useTicketSessionLink>);
   formResetMock.mockReturnValue(undefined);
   focusTrapMock.mockReturnValue(undefined);
   commentFocusShortcutMock.mockReturnValue(shortcutHandler);
@@ -165,7 +157,6 @@ function setupMocks(overrides: {
     labelsReset,
     dependenciesReset,
     commentReset,
-    sessionLinkReset,
   };
 }
 
@@ -213,10 +204,6 @@ describe('useTicketDetailController', () => {
     });
     expect(result.current.dependencies).toEqual({
       MARK: 'dependencies',
-      reset: expect.any(Function) as unknown,
-    });
-    expect(result.current.sessionLink).toEqual({
-      MARK: 'session-link',
       reset: expect.any(Function) as unknown,
     });
     expect(result.current.decision).toBe(decision);
@@ -335,7 +322,6 @@ describe('useTicketDetailController', () => {
     );
     expect(dependenciesMock).toHaveBeenCalledWith('MARK-ticket-id', MARK_DATA);
     expect(commentMock).toHaveBeenCalledWith('MARK-ticket-id');
-    expect(sessionLinkMock).toHaveBeenCalledWith('MARK-ticket-id');
 
     expect(focusTrapMock).toHaveBeenCalledWith({
       containerRef: params.panelRef,
@@ -381,7 +367,6 @@ describe('useTicketDetailController', () => {
       labelsReset,
       dependenciesReset,
       commentReset,
-      sessionLinkReset,
     } = setupMocks();
     const params = makeParams();
     renderHook(() => useTicketDetailController(params));
@@ -397,7 +382,6 @@ describe('useTicketDetailController', () => {
       resetLabelInput: labelsReset,
       resetTitleEditing: titleReset,
       resetDescriptionEditing: descriptionReset,
-      resetSessionLink: sessionLinkReset,
     });
   });
 });

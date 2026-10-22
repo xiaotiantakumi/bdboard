@@ -32,7 +32,6 @@ vi.mock('../api', async (importOriginal) => {
         updatedAt: '2026-01-01T00:00:00Z',
       }),
     ),
-    fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     fetchPlatformSupport: vi.fn(() => Promise.resolve({ platform: 'darwin', limitations: [] })),
   };
 });
@@ -44,7 +43,6 @@ import {
   acknowledgeChatTurn,
   deleteChatThread,
   updateChatThread,
-  fetchDiscoveredChatSessions,
   fetchPlatformSupport,
 } from '../api';
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
@@ -55,7 +53,6 @@ const fetchChatTurnStatusMock = vi.mocked(fetchChatTurnStatus);
 const acknowledgeChatTurnMock = vi.mocked(acknowledgeChatTurn);
 const deleteChatThreadMock = vi.mocked(deleteChatThread);
 const updateChatThreadMock = vi.mocked(updateChatThread);
-const fetchDiscoveredChatSessionsMock = vi.mocked(fetchDiscoveredChatSessions);
 const fetchPlatformSupportMock = vi.mocked(fetchPlatformSupport);
 const defaultWindowInnerWidth = window.innerWidth;
 
@@ -246,18 +243,6 @@ describe('ChatPanel', () => {
     expect(panel).toHaveStyle({ width: '500px' });
   });
 
-  it('opens the CLI session discovery panel', async () => {
-    const user = userEvent.setup();
-    fetchDiscoveredChatSessionsMock.mockResolvedValue({ sessions: [] });
-    const { container } = renderChatPanel([PROJECT_A]);
-
-    openThreadDrawer(container);
-    const drawer = getThreadDrawer(container);
-    await user.click(within(drawer).getByRole('button', { name: 'CLIセッションを再開' }));
-    expect(await screen.findByText('再開できるCLIセッションはありません。')).toBeInTheDocument();
-    expect(fetchDiscoveredChatSessionsMock).toHaveBeenCalledWith('proj-a');
-  });
-
   it('focuses the header close button when the panel opens (bdboard-sso1.83 第7段: closeButtonRef 同一性の回帰ガード)', () => {
     // ChatPanelHeader 抽出時、closeButtonRef が ChatPanel の useRef と同一の
     // ものでなくなると(新しい ref を作ってしまうと)、useFocusTrap の
@@ -285,37 +270,6 @@ describe('ChatPanel', () => {
     await within(drawer).findByRole('button', { name: 'first thread' });
 
     expect(within(drawer).getByRole('button', { name: '閉じる' })).toHaveFocus();
-  });
-
-  it('traps Tab focus inside the thread drawer', async () => {
-    fetchChatThreadsMock.mockResolvedValue([
-      {
-        sessionId: 'sess-first',
-        agentId: 'claude',
-        title: 'first thread',
-        pinned: false,
-        updatedAt: '2026-01-02T00:00:00Z',
-      },
-      {
-        sessionId: 'sess-second',
-        agentId: 'claude',
-        title: 'second thread',
-        pinned: false,
-        updatedAt: '2026-01-01T00:00:00Z',
-      },
-    ]);
-
-    const { container } = renderChatPanel([PROJECT_A]);
-    openThreadDrawer(container);
-    const drawer = getThreadDrawer(container);
-    await within(drawer).findByRole('button', { name: 'second thread' });
-
-    const lastFocusable = within(drawer).getByRole('button', { name: 'CLIセッションを再開' });
-    lastFocusable.focus();
-    fireEvent.keyDown(lastFocusable, { key: 'Tab' });
-
-    expect(within(drawer).getByRole('button', { name: '閉じる' })).toHaveFocus();
-    expect(screen.getByLabelText('メッセージ')).not.toHaveFocus();
   });
 
   it('closes the thread drawer on Escape without closing the chat panel', async () => {
@@ -594,62 +548,6 @@ describe('ChatPanel', () => {
       ]);
     });
 
-    it('puts a thread whose record has not arrived yet at the bottom (PR#133 レビュー minor-2)', async () => {
-      // CLIセッションを再開した直後は、openThreadIds に sessionId が入っている
-      // のにスレッド一覧の再取得がまだ返ってきていない窓がある。この窓では
-      // threadById に記録が無く、更新日時が読めない。最新扱いにすると、まだ
-      // 何も分かっていないスレッドが先頭に居座る。
-      const user = userEvent.setup();
-      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
-      fetchChatThreadsMock.mockReset();
-      fetchChatThreadsMock
-        .mockResolvedValueOnce([threads[0], threads[2]])
-        // 再開後の再取得は返さない = 記録が届いていない窓を開けたままにする。
-        .mockImplementation(() => new Promise(() => {}));
-      fetchDiscoveredChatSessionsMock.mockResolvedValue({
-        sessions: [
-          { sessionId: 'discovered-1', lastActivityAt: '2026-08-16T12:00:00.000Z', alreadyAdopted: false },
-        ],
-      });
-      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-        if (
-          url === '/api/chat/projects/proj-a/discovered-sessions/discovered-1/adopt' &&
-          init?.method === 'POST'
-        ) {
-          return jsonResponse({
-            sessionId: 'discovered-1',
-            agentId: 'claude',
-            seedMessages: [
-              { role: 'user', text: 'seeded question', timestamp: '2026-08-16T11:00:00.000Z' },
-            ],
-          });
-        }
-        if (url.includes('/api/chat/sessions/')) {
-          return jsonResponse({ sessionId: 'sess-new', agentId: 'claude', messages: [] });
-        }
-        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
-      });
-      writePersistedChatThreadState('proj-a', {
-        activeSessionIds: ['sess-new', 'sess-old'],
-        selectedSessionId: 'sess-new',
-      });
-
-      const { container } = renderChatPanel([PROJECT_A]);
-      openThreadDrawer(container);
-      await within(getThreadDrawer(container)).findByText('newest thread');
-      await user.click(
-        within(getThreadDrawer(container)).getByRole('button', { name: 'CLIセッションを再開' }),
-      );
-      await user.click(await screen.findByRole('button', { name: 'セッション discovered-1 を再開' }));
-      await screen.findByText('seeded question');
-
-      openThreadDrawer(container);
-      expect(drawerSectionTitles(container, '開いているスレッド')).toEqual([
-        'newest thread',
-        'oldest thread',
-        '(無題)',
-      ]);
-    });
   });
 
   describe('T10: API call-order fingerprint (bdboard-sso1.83 特性テスト, §4 4b-4)', () => {

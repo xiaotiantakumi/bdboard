@@ -37,7 +37,6 @@ function makeParams(
     resetLabelInput: vi.fn(),
     resetTitleEditing: vi.fn(),
     resetDescriptionEditing: vi.fn(),
-    resetSessionLink: vi.fn(),
     ...overrides,
   };
 }
@@ -58,7 +57,6 @@ describe('useTicketFormReset', () => {
     expect(params.resetLabelInput).toHaveBeenCalledTimes(1);
     expect(params.resetTitleEditing).toHaveBeenCalledTimes(1);
     expect(params.resetDescriptionEditing).toHaveBeenCalledTimes(1);
-    expect(params.resetSessionLink).toHaveBeenCalledTimes(1);
   });
 
   it('calls the resets in the original resetFormState order', () => {
@@ -74,7 +72,6 @@ describe('useTicketFormReset', () => {
       resetDescriptionEditing: vi.fn(() =>
         order.push('resetDescriptionEditing'),
       ),
-      resetSessionLink: vi.fn(() => order.push('resetSessionLink')),
     });
 
     renderHook(() => useTicketFormReset(params));
@@ -88,7 +85,6 @@ describe('useTicketFormReset', () => {
       'resetLabelInput',
       'resetTitleEditing',
       'resetDescriptionEditing',
-      'resetSessionLink',
     ]);
   });
 
@@ -110,11 +106,11 @@ describe('useTicketFormReset', () => {
       { initialProps: params },
     );
 
-    expect(params.resetSessionLink).toHaveBeenCalledTimes(1);
+    expect(params.resetDescriptionEditing).toHaveBeenCalledTimes(1);
 
     rerender({ ...params, ticketId: 'bd-2' });
 
-    expect(params.resetSessionLink).toHaveBeenCalledTimes(2);
+    expect(params.resetDescriptionEditing).toHaveBeenCalledTimes(2);
   });
 
   it('re-runs the reset when only projectRootPath changes (ticketId unchanged)', () => {

@@ -20,8 +20,6 @@ function Probe() {
     'startConfirmDelete',
     'cancelConfirmDelete',
     'cancelInteractionsForSession',
-    'toggleDiscoveredSessions',
-    'closeDiscoveredSessions',
   ] as const;
   // レビュー指摘(bdboard-sso1.83): 各レンダーの不一致だけを保持すると、途中の
   // レンダーで起きた参照崩れが直後のレンダーで上書きされ、最終 DOM の
@@ -44,7 +42,6 @@ function Probe() {
       <p data-testid="renaming-session">{drawer.state.renamingSessionId ?? ''}</p>
       <p data-testid="rename-draft">{drawer.state.renameDraft}</p>
       <p data-testid="confirming-delete">{drawer.state.confirmingDeleteSessionId ?? ''}</p>
-      <p data-testid="discovered-sessions">{String(drawer.state.showDiscoveredSessions)}</p>
       <p data-testid="identity-mismatches">{allMismatchesRef.current.join(',')}</p>
       <button type="button" onClick={drawer.toggleDrawer}>
         toggleDrawer
@@ -79,12 +76,6 @@ function Probe() {
       <button type="button" onClick={() => drawer.cancelInteractionsForSession('session-1')}>
         cancelInteractionsForSession
       </button>
-      <button type="button" onClick={drawer.toggleDiscoveredSessions}>
-        toggleDiscoveredSessions
-      </button>
-      <button type="button" onClick={drawer.closeDiscoveredSessions}>
-        closeDiscoveredSessions
-      </button>
     </div>
   );
 }
@@ -102,7 +93,6 @@ describe('useThreadDrawerState (bdboard-sso1.83)', () => {
     expect(screen.getByTestId('menu-session')).toBeEmptyDOMElement();
     expect(screen.getByTestId('renaming-session')).toBeEmptyDOMElement();
     expect(screen.getByTestId('confirming-delete')).toBeEmptyDOMElement();
-    expect(screen.getByTestId('discovered-sessions')).toHaveTextContent('false');
   });
 
   it('toggles the drawer open and closed', () => {
@@ -171,14 +161,6 @@ describe('useThreadDrawerState (bdboard-sso1.83)', () => {
     expect(screen.getByTestId('drawer-open')).toHaveTextContent('false');
     expect(screen.getByTestId('menu-session')).toBeEmptyDOMElement();
     expect(screen.getByTestId('confirming-delete')).toBeEmptyDOMElement();
-  });
-
-  it('toggles and closes the discovered-sessions panel', () => {
-    render(<Probe />);
-    click('toggleDiscoveredSessions');
-    expect(screen.getByTestId('discovered-sessions')).toHaveTextContent('true');
-    click('closeDiscoveredSessions');
-    expect(screen.getByTestId('discovered-sessions')).toHaveTextContent('false');
   });
 
   it('keeps every returned action function referentially stable across re-renders', () => {

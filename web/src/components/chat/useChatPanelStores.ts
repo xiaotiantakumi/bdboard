@@ -78,7 +78,6 @@ export function useChatPanelStores(params: ChatPanelControllerParams) {
       renamingSessionId,
       renameDraft,
       confirmingDeleteSessionId,
-      showDiscoveredSessions,
     },
     toggleDrawer: toggleThreadDrawer,
     closeDrawer: closeThreadDrawer,
@@ -91,8 +90,6 @@ export function useChatPanelStores(params: ChatPanelControllerParams) {
     startConfirmDelete: startThreadConfirmDelete,
     cancelConfirmDelete: cancelThreadConfirmDelete,
     cancelInteractionsForSession: cancelThreadInteractionsForSession,
-    toggleDiscoveredSessions: toggleShowDiscoveredSessions,
-    closeDiscoveredSessions: closeShowDiscoveredSessions,
   } = useThreadDrawerState();
   // bdboard-sso1.83 第3段: threadError/ticketProjectFallbackNotice を
   // chat/useChatNotifications.ts へ抜き出した(詳細はそちら参照)。
@@ -241,10 +238,10 @@ export function useChatPanelStores(params: ChatPanelControllerParams) {
     currentConversationKey, send, isSending, streamingReply,
     turnRecoveryGeneration, unresolvedSends, clearUnresolvedSend, clearStreamingReplyForKey,
     detachedStreamSendRef, requestAbortControllerRef, threadDrawerOpen, threadActionMenuSessionId,
-    renamingSessionId, renameDraft, confirmingDeleteSessionId, showDiscoveredSessions,
+    renamingSessionId, renameDraft, confirmingDeleteSessionId,
     toggleThreadDrawer, closeThreadDrawer, toggleThreadActionMenu, closeThreadActionMenu,
     startThreadRename, setRenameDraft, cancelThreadRename, startThreadConfirmDelete,
-    cancelThreadConfirmDelete, toggleShowDiscoveredSessions, closeShowDiscoveredSessions,
+    cancelThreadConfirmDelete,
     threadError, setThreadError, ticketProjectFallbackNotice, setTicketProjectFallbackNotice,
     setThreadLists, openThreadIds, setOpenThreadIds, openThreadIdsRef, restoredProjectsRef, provisionalEntries,
     threadListOrder, openThreads, threadById,

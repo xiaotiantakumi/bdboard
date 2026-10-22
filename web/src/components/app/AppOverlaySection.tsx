@@ -54,11 +54,6 @@ export function AppOverlaySection({ controller }: AppOverlaySectionProps) {
         onTicketViewed: handleRecordRecentTicket,
         availableLabels: availableLabels ?? [],
       }}
-      sessionList={{
-        open: overlays.sessionListOpen,
-        projectId: overlays.sessionListProjectId,
-        onClose: overlays.handleCloseSessionList,
-      }}
       shortcuts={{ open: overlays.shortcutsOpen, onClose: overlays.handleCloseShortcuts }}
       help={{ open: overlays.helpOpen, onClose: overlays.handleCloseHelp }}
       search={{

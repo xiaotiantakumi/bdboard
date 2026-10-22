@@ -17,7 +17,6 @@ import {
   createBdCliIssueWriter,
   createBdCliLeaseReader,
   createBdCliLeaseReclaimer,
-  createBdCliSessionLinkWriter,
   createGhCliPrStatusReader,
   createGitWorktreeScanner,
 } from '../infrastructure/index.js';
@@ -40,7 +39,6 @@ export function wireBdServices(commandRunner: CommandRunner, options: WireBdServ
     worktreeScanner: createGitWorktreeScanner(commandRunner),
     issueWriter: createBdCliIssueWriter(commandRunner),
     dependencyWriter: createBdCliDependencyWriter(commandRunner),
-    sessionLinkWriter: createBdCliSessionLinkWriter(commandRunner),
   };
 }
 

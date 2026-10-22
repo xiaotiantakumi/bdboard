@@ -135,7 +135,7 @@ describe('SettingsPanel', () => {
     fetchBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig());
     fetchDbStatsMock.mockResolvedValue(makeDbStats());
     fetchProjectsMock.mockResolvedValue([
-      { id: 'proj-a', name: 'Project Alpha', rootPath: '/alpha', prefixes: [], sessionCount: 0, activeSessionCount: 0, incompleteTicketCount: 0, sessions: [] },
+      { id: 'proj-a', name: 'Project Alpha', rootPath: '/alpha', prefixes: [], incompleteTicketCount: 0 },
     ]);
     fetchAiQuotaAlertConfigMock.mockResolvedValue(makeAiQuotaAlertConfig());
     fetchAgentRunConfigMock.mockResolvedValue(makeAgentRunConfig());

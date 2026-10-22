@@ -5,7 +5,6 @@ import { Hono } from 'hono';
 import { createPackageJsonVersionProvider, isLinkedWorktreeCheckout } from './infrastructure/index.js';
 import {
   describePlatformSupport,
-  isPlatformFeatureSupported,
   unrestrictedPlatformSupport,
 } from './domain/platform-support.js';
 import { envBool } from './bootstrap/env.js';
@@ -38,10 +37,6 @@ async function main(): Promise<void> {
   const platformSupport = envBool('BDBOARD_IGNORE_PLATFORM_LIMITS')
     ? unrestrictedPlatformSupport(process.platform)
     : describePlatformSupport(process.platform);
-  const sessionDiscoverySupported = isPlatformFeatureSupported(
-    platformSupport,
-    'session-discovery',
-  );
 
   const lifecycle = await wireBoardLifecycle({
     env: process.env,
@@ -51,8 +46,6 @@ async function main(): Promise<void> {
     repository: bdServices.repository,
     cache: infra.cache,
     humanDecisions: bdServices.humanDecisions,
-    platformSupport,
-    sessionDiscoverySupported,
     leaseReclaimer: bdServices.leaseReclaimer,
     leaseReader: bdServices.leaseReader,
     worktreeScanner: bdServices.worktreeScanner,
@@ -69,15 +62,13 @@ async function main(): Promise<void> {
     boardRefreshServices: lifecycle.boardRefreshServices,
     events: lifecycle.events,
     boardThresholdsConfigStore: infra.boardThresholdsConfigStore,
-    boardSessionServices: lifecycle.boardSessionServices,
+    boardTranscriptServices: lifecycle.boardTranscriptServices,
     commentReader: bdServices.commentReader,
     prStatusReader: bdServices.prStatusReader,
-    processScanner: lifecycle.processScanner,
     humanDecisions: bdServices.humanDecisions,
     worktreeScanner: bdServices.worktreeScanner,
     issueWriter: bdServices.issueWriter,
     dependencyWriter: bdServices.dependencyWriter,
-    sessionLinkWriter: bdServices.sessionLinkWriter,
     writeAccess: auth.writeAccess,
     reclaimHistory: lifecycle.reclaimHistory,
     dbPath: config.dbPath,
@@ -129,7 +120,6 @@ async function main(): Promise<void> {
     applicationVersion,
     events: lifecycle.events,
     aiQuotaAlertConfigStore: infra.aiQuotaAlertConfigStore,
-    chatSessionDiscovery: lifecycle.boardSessionServices.chatSessionDiscovery,
     ...config,
   });
 
@@ -187,7 +177,6 @@ async function main(): Promise<void> {
     },
     shutdownTimeoutMs: config.shutdownTimeoutMs,
     refreshIntervalTimer: lifecycle.refreshIntervalTimer,
-    sessionIntervalTimer: lifecycle.sessionIntervalTimer,
     transcriptIntervalTimer: lifecycle.transcriptIntervalTimer,
     aiQuotaAlertIntervalTimer: features.aiQuotaAlertIntervalTimer,
     reclaimScheduler: lifecycle.reclaimScheduler,

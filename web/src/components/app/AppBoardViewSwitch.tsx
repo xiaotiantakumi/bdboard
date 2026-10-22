@@ -35,14 +35,12 @@ export interface AppBoardViewSwitchProps {
   };
   boardMeta: {
     projectNames: Map<string, string>;
-    projectActiveSessions: Map<string, number>;
     pendingDecisionIds: ReadonlySet<string>;
     prLinksById: ReadonlyMap<string, PrBadgeDto>;
     wipLimitsOverrides: WipLimitsOverrides;
     selectedProjectIdsJoined: string;
   };
   onCardClick: (ticketId: string) => void;
-  onSessionBadgeClick: (projectId?: string) => void;
   nextUp: {
     batchRun: NextUpRunLoopController;
   };
@@ -56,7 +54,6 @@ export function AppBoardViewSwitch({
   board,
   boardMeta,
   onCardClick,
-  onSessionBadgeClick,
   nextUp,
 }: AppBoardViewSwitchProps) {
   return (
@@ -117,7 +114,6 @@ export function AppBoardViewSwitch({
           prLinksById={boardMeta.prLinksById}
           sectionKeyPrefix={boardMeta.selectedProjectIdsJoined}
           onCardClick={onCardClick}
-          onSessionBadgeClick={onSessionBadgeClick}
           collapsedLanes={filterState.collapsedLanesSet}
           onToggleLaneCollapse={filterState.onToggleLaneCollapse}
           wipLimitsOverrides={boardMeta.wipLimitsOverrides}

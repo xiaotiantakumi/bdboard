@@ -1,12 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { ChatAgentPort } from '../../application/ports/chat-agent.js';
-import type { ChatSessionDiscoveryPort } from '../../application/ports/chat-session-discovery.js';
 import { createChatAgentRegistry } from '../../application/chat/chat-agent-registry.js';
 import {
   CHAT_CSRF_DENIED,
   CHAT_NOT_AUTHORIZED,
-  CHAT_SESSION_DISCOVERY_LOCAL_ONLY,
 } from './chat-routes.js';
 import { CHAT_RATE_LIMITED } from './chat-rate-limit.js';
 import type { WriteGuardDeps } from './write-guard.js';
@@ -342,11 +340,8 @@ describe('chat over the tunnel uses the same authorization as writes (bdboard-cu
   // エンドポイントを足しても、ガードの掛け忘れで無防備に出荷されることはない。
   // GET と POST の両方を見るのは、cu4 でガードがメソッド判定を持たない版に変わったため。
   it('guards chat sub-paths that no route handles yet', async () => {
-    // bdboard-3tw.104.3 レビュー SF7後半: 未実装の作り物パスだけでなく、実在する深い
-    // 動的セグメント付きパス(discovered-sessions/adopt)も同じループで固定する。
     // '/api/chat/*' の前方一致が多段のネストしたパスでも効くことの回帰テスト。
-    const deepAdoptPath = '/api/chat/projects/proj-a/discovered-sessions/session-1/adopt';
-    for (const requestPath of ['/api/chat/not-implemented-yet', deepAdoptPath]) {
+    for (const requestPath of ['/api/chat/not-implemented-yet', '/api/chat/deep/nested/not-implemented-yet']) {
       for (const init of [
         { method: 'POST', headers: TUNNEL_HEADERS, body: '{}' },
         { method: 'GET', headers: { 'CF-Ray': 'abc123-NRT' } },
@@ -673,39 +668,6 @@ describe('chat tunnel rate limit (bdboard-b7n)', () => {
 });
 
 describe('chat routes DNS rebinding resistance', () => {
-  // discoverySessionsLocalOnlyGuard はトンネル経由を一切許さずローカル直
-  // アクセスのみを要求する。ここでは外側の chatGuard をトンネル資格で通した
-  // 上で、CF-Ray ヘッダを付けないループバック+Host偽装リクエストが
-  // discoverySessionsLocalOnlyGuard 自身でも「ローカルではない」と判定される
-  // ことを固定する(修正前は isLocalControlRequest が Host を見ないため、
-  // ここが誤ってローカル扱いになり discovered-sessions が漏れていた)。
-  it('does not treat loopback with a spoofed Host as local for discovered-sessions even when a tunnel session would otherwise authorize the request', async () => {
-    const cache = createFakeBoardCache([cachedProject(project('proj-a', '/projects/a'))]);
-    const discovery: ChatSessionDiscoveryPort = {
-      listDiscoveredSessions: vi.fn(async () => []),
-      verifySessionExists: vi.fn(async () => true),
-      readAdoptSeedMessages: vi.fn(async () => []),
-    };
-    const app = createApp({
-      cache,
-      sessionDiscovery: discovery,
-      writeAccess: { isTunnelWriteAllowed: () => true, hasTunnelSession: () => true },
-    });
-    const res = await app.request(
-      '/api/chat/projects/proj-a/discovered-sessions',
-      {
-        headers: {
-          Host: 'attacker.example:8787',
-          Cookie: 'bdboard_tunnel_session=example-session-value',
-        },
-      },
-      LOCAL_ENV,
-    );
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: CHAT_SESSION_DISCOVERY_LOCAL_ONLY });
-    expect(discovery.listDiscoveredSessions).not.toHaveBeenCalled();
-  });
-
   // availability のレート制限スキップ判定も同じ理由で狙われうる: CF-Ray無し・
   // ループバック・Host偽装のリクエストをトンネル資格で通した場合、修正前の
   // isLocalControlRequest ベースの判定だと「ローカル」と誤判定してレート制限を

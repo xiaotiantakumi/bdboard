@@ -16,8 +16,6 @@ export const UI_STORAGE_KEYS = {
   chatModelSelections: 'bdboard.ui.chatModelSelections',
   chatPanelWidth: 'bdboard.ui.chatPanelWidth',
   ticketDetailPanelWidth: 'bdboard.ui.ticketDetailPanelWidth',
-  sessionListPanelWidth: 'bdboard.ui.sessionListPanelWidth',
-  sessionTailPanelWidth: 'bdboard.ui.sessionTailPanelWidth',
   notificationEvents: 'bdboard.ui.notificationEvents',
   notificationLastReadAt: 'bdboard.ui.notificationLastReadAt',
   notificationsEnabled: 'bdboard.ui.notificationsEnabled',

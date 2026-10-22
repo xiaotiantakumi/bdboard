@@ -6,7 +6,6 @@ export interface CardItemProps {
   lane: Lane;
   showProjectName: boolean;
   projectName: string;
-  activeSessionCount: number;
   hasPendingDecision: boolean;
   prLink?: PrBadgeDto;
   onClick: (ticketId: string) => void;
@@ -21,7 +20,6 @@ export interface LaneColumnProps {
   unfilteredCount?: number;
   showProjectName: boolean;
   projectNames: Map<string, string>;
-  projectActiveSessions: Map<string, number>;
   pendingDecisionIds: ReadonlySet<string>;
   prLinksById: ReadonlyMap<string, PrBadgeDto>;
   onCardClick: (ticketId: string) => void;

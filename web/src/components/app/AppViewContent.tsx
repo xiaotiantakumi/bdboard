@@ -41,7 +41,6 @@ export interface AppViewContentProps {
   };
   boardMeta: {
     projectNames: Map<string, string>;
-    projectActiveSessions: Map<string, number>;
     projectRootPaths: Map<string, string>;
     pendingDecisionIds: ReadonlySet<string>;
     prLinksById: ReadonlyMap<string, PrBadgeDto>;
@@ -50,7 +49,6 @@ export interface AppViewContentProps {
     selectedProjectIdsJoined: string;
   };
   onCardClick: (ticketId: string) => void;
-  onSessionBadgeClick: (projectId?: string) => void;
   nextUp: {
     batchRun: NextUpRunLoopController;
   };
@@ -64,7 +62,6 @@ export function AppViewContent({
   board,
   boardMeta,
   onCardClick,
-  onSessionBadgeClick,
   nextUp,
 }: AppViewContentProps) {
   return (
@@ -78,14 +75,12 @@ export function AppViewContent({
         board={board}
         boardMeta={{
           projectNames: boardMeta.projectNames,
-          projectActiveSessions: boardMeta.projectActiveSessions,
           pendingDecisionIds: boardMeta.pendingDecisionIds,
           prLinksById: boardMeta.prLinksById,
           wipLimitsOverrides: boardMeta.wipLimitsOverrides,
           selectedProjectIdsJoined: boardMeta.selectedProjectIdsJoined,
         }}
         onCardClick={onCardClick}
-        onSessionBadgeClick={onSessionBadgeClick}
         nextUp={nextUp}
       />
       {view === 'settings' && <SettingsPanel />}

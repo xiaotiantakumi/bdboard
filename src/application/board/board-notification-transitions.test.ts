@@ -2,13 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { CachedProject } from '../ports/board-cache.js';
 import type { Project } from '../../domain/project.js';
 import {
-  diffSessionLiveness,
   type BoardNotificationSnapshot,
   type ProjectNotificationSnapshot,
 } from '../../domain/board-notifications.js';
-import { makeSession, makeTicket } from '../../domain/test-support.js';
+import { makeTicket } from '../../domain/test-support.js';
 import {
-  buildSessionDiedNotificationPayload,
   createBoardNotificationPublisher,
   findTicketMeta,
 } from './board-notification-transitions.js';
@@ -227,79 +225,5 @@ describe('createBoardNotificationPublisher', () => {
         occurredAt: OCCURRED_AT.toISOString(),
       },
     ]);
-  });
-});
-
-describe('buildSessionDiedNotificationPayload', () => {
-  it('includes name when the session has one', () => {
-    const diedEvent = {
-      kind: 'session_died' as const,
-      sessionId: 'session-1',
-      cwd: '/projects/a',
-      name: 'agent-a',
-      lastActivityAt: new Date('2026-08-17T11:00:00.000Z'),
-    };
-
-    expect(buildSessionDiedNotificationPayload(diedEvent, OCCURRED_AT)).toEqual({
-      kind: 'session_died',
-      sessionId: 'session-1',
-      cwd: '/projects/a',
-      name: 'agent-a',
-      lastActivityAt: '2026-08-17T11:00:00.000Z',
-      occurredAt: OCCURRED_AT.toISOString(),
-    });
-  });
-
-  it('omits name when the session has no name', () => {
-    const diedEvent = {
-      kind: 'session_died' as const,
-      sessionId: 'session-2',
-      cwd: '/projects/b',
-      lastActivityAt: new Date('2026-08-17T11:30:00.000Z'),
-    };
-
-    const payload = buildSessionDiedNotificationPayload(diedEvent, OCCURRED_AT);
-
-    expect(payload).toEqual({
-      kind: 'session_died',
-      sessionId: 'session-2',
-      cwd: '/projects/b',
-      lastActivityAt: '2026-08-17T11:30:00.000Z',
-      occurredAt: OCCURRED_AT.toISOString(),
-    });
-    expect(payload).not.toHaveProperty('name');
-  });
-
-  it('matches diffSessionLiveness output shape', () => {
-    const prev = [
-      makeSession({
-        sessionId: 'session-1',
-        alive: true,
-        cwd: '/projects/a',
-        name: 'agent-a',
-        lastActivityAt: new Date('2026-08-17T11:00:00.000Z'),
-      }),
-    ];
-    const next = [
-      makeSession({
-        sessionId: 'session-1',
-        alive: false,
-        cwd: '/projects/a',
-        name: 'agent-a',
-        lastActivityAt: new Date('2026-08-17T11:00:00.000Z'),
-      }),
-    ];
-
-    const [diedEvent] = diffSessionLiveness(prev, next);
-    expect(diedEvent).toBeDefined();
-
-    expect(buildSessionDiedNotificationPayload(diedEvent!, OCCURRED_AT)).toEqual({
-      kind: 'session_died',
-      sessionId: 'session-1',
-      cwd: '/projects/a',
-      name: 'agent-a',
-      lastActivityAt: '2026-08-17T11:00:00.000Z',
-      occurredAt: OCCURRED_AT.toISOString(),
-    });
   });
 });

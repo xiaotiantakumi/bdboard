@@ -10,13 +10,11 @@ import {
   selectInFlightWorktrees,
   type InFlightOverlap,
 } from '../../domain/in-flight-overlap.js';
-import { compareStrings } from '../../domain/compare.js';
 import { buildDirectChildrenIndex } from '../../domain/epic-progress.js';
 import {
   getTicketTokenUsage,
   hasTicketTokenUsage,
 } from '../../application/board/get-ticket-token-usage.js';
-import type { SessionLink } from '../../domain/session.js';
 import {
   toActivityEventDto,
   toTicketDetailDto,
@@ -24,7 +22,6 @@ import {
   toTicketSimilarResultDto,
   toTicketTokenUsageDto,
   type TicketChildDto,
-  type TicketSessionLinkDto,
 } from './dto.js';
 import {
   buildGetBoardDeps,
@@ -52,36 +49,6 @@ function parseSimilarLimit(raw: string | undefined): number {
     max: SIMILAR_MAX_LIMIT,
     defaultValue: SIMILAR_DEFAULT_LIMIT,
   });
-}
-
-/**
- * トランスクリプト自動推定リンク(source:'transcript')に、bdboard.session
- * メタデータ経由の手動リンクがあれば source:'metadata' として重ね書きする。
- * 同じセッションIDが両方から来た場合は手動リンクを優先する。
- */
-function buildTicketSessionLinkDtos(
-  transcriptLinks: readonly SessionLink[],
-  manualSessionId: string | undefined,
-): TicketSessionLinkDto[] {
-  const bySessionId = new Map<string, TicketSessionLinkDto>();
-
-  for (const link of transcriptLinks) {
-    bySessionId.set(link.sessionId, {
-      sessionId: link.sessionId,
-      source: link.source,
-    });
-  }
-
-  if (manualSessionId !== undefined) {
-    bySessionId.set(manualSessionId, {
-      sessionId: manualSessionId,
-      source: 'metadata',
-    });
-  }
-
-  return [...bySessionId.values()].sort((a, b) =>
-    compareStrings(a.sessionId, b.sessionId),
-  );
 }
 
 export function createTicketReadRoutes(deps: ApiDeps, memo: InFlightOverlapMemo): Hono {
@@ -193,12 +160,6 @@ export function createTicketReadRoutes(deps: ApiDeps, memo: InFlightOverlapMemo)
       return c.json({ error: 'ticket not found', id }, 404);
     }
 
-    const transcriptLinks = (links ?? []).filter((link) => link.ticketId === id);
-    const sessionLinks = buildTicketSessionLinkDtos(
-      transcriptLinks,
-      card.ticket.manualSessionId,
-    );
-
     const cardsById = new Map(view.merged?.cards.map((entry) => [entry.ticket.id, entry]) ?? []);
     const childrenIndex = buildDirectChildrenIndex(
       view.merged?.cards.map((entry) => entry.ticket) ?? [],
@@ -212,7 +173,7 @@ export function createTicketReadRoutes(deps: ApiDeps, memo: InFlightOverlapMemo)
         lane: child.lane,
       }));
 
-    const detail = toTicketDetailDto(card, sessionLinks, card.ticket.models ?? [], children);
+    const detail = toTicketDetailDto(card, card.ticket.models ?? [], children);
     if (links !== undefined) {
       const usage = getTicketTokenUsage(id, links, deps.cache);
       if (hasTicketTokenUsage(usage)) {

@@ -3,7 +3,6 @@
 // re-export 入口としてのみ残す。挙動・型は一切変えていない (移動のみ)。
 export { ApiError } from './api/http';
 export * from './api/board';
-export * from './api/sessions';
 export * from './api/tickets-read';
 export * from './api/tickets-write';
 export * from './api/decisions';

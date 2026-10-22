@@ -44,15 +44,11 @@ vi.mock('../BoardView', () => ({
     (props: {
       sectionKeyPrefix: string;
       onCardClick: (ticketId: string) => void;
-      onSessionBadgeClick?: (projectId?: string) => void;
     }) => (
       <div data-testid="split-board">
         {props.sectionKeyPrefix}
         <button type="button" onClick={() => props.onCardClick('t-1')}>
           card
-        </button>
-        <button type="button" onClick={() => props.onSessionBadgeClick?.('proj-1')}>
-          session
         </button>
       </div>
     ),
@@ -125,14 +121,12 @@ function makeProps(overrides: Partial<AppBoardViewSwitchProps> = {}): AppBoardVi
     },
     boardMeta: {
       projectNames: new Map(),
-      projectActiveSessions: new Map(),
       pendingDecisionIds: new Set(),
       prLinksById: new Map(),
       wipLimitsOverrides: {},
       selectedProjectIdsJoined: '',
     },
     onCardClick: vi.fn(),
-    onSessionBadgeClick: vi.fn(),
     nextUp: {
       batchRun: {} as unknown as NextUpRunLoopController,
     },
@@ -282,7 +276,6 @@ describe('AppBoardViewSwitch', () => {
           },
           boardMeta: {
             projectNames: new Map(),
-            projectActiveSessions: new Map(),
             pendingDecisionIds: new Set(),
             prLinksById: new Map(),
             wipLimitsOverrides: {},
@@ -304,7 +297,6 @@ describe('AppBoardViewSwitch', () => {
       ['bdboard-pr-1', { ticketId: 'bdboard-pr-1', projectId: 'proj-1', url: 'https://example.test/1', state: 'open', checkStatus: null }],
     ]);
     const projectNames = new Map([['proj-1', 'Project One']]);
-    const projectActiveSessions = new Map([['proj-1', 2]]);
     const wipLimitsOverrides = { inProgressWipLimit: 7 };
     const collapsedLanesSet = new Set(['in_progress' as const]);
     const onToggleLaneCollapse = vi.fn();
@@ -329,7 +321,6 @@ describe('AppBoardViewSwitch', () => {
           },
           boardMeta: {
             projectNames,
-            projectActiveSessions,
             pendingDecisionIds,
             prLinksById,
             wipLimitsOverrides,
@@ -355,10 +346,9 @@ describe('AppBoardViewSwitch', () => {
     });
   });
 
-  it('renders SplitBoard for the split view and forwards onCardClick/onSessionBadgeClick unchanged', async () => {
+  it('renders SplitBoard for the split view and forwards onCardClick unchanged', async () => {
     const user = userEvent.setup();
     const onCardClick = vi.fn();
-    const onSessionBadgeClick = vi.fn();
     render(
       <AppBoardViewSwitch
         {...makeProps({
@@ -370,22 +360,18 @@ describe('AppBoardViewSwitch', () => {
           },
           boardMeta: {
             projectNames: new Map(),
-            projectActiveSessions: new Map(),
             pendingDecisionIds: new Set(),
             prLinksById: new Map(),
             wipLimitsOverrides: {},
             selectedProjectIdsJoined: 'proj-2',
           },
           onCardClick,
-          onSessionBadgeClick,
         })}
       />,
     );
     expect(screen.getByTestId('split-board')).toHaveTextContent('proj-2');
     await user.click(screen.getByRole('button', { name: 'card' }));
     expect(onCardClick).toHaveBeenCalledWith('t-1');
-    await user.click(screen.getByRole('button', { name: 'session' }));
-    expect(onSessionBadgeClick).toHaveBeenCalledWith('proj-1');
   });
 
   it('forwards all SplitBoard-specific props unchanged (metadata maps, lane-collapse wiring)', () => {
@@ -414,7 +400,6 @@ describe('AppBoardViewSwitch', () => {
           },
           boardMeta: {
             projectNames: new Map(),
-            projectActiveSessions: new Map(),
             pendingDecisionIds,
             prLinksById,
             wipLimitsOverrides,

@@ -2,18 +2,15 @@ import type { ApplicationVersionProvider } from '../../application/ports/applica
 import type { VisibleProjectsRegistry } from '../../application/board/visible-projects-registry.js';
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import type { CommentReader } from '../../application/ports/comment-reader.js';
-import type { ProcessScanner } from '../../application/ports/process-scanner.js';
 import type { HumanDecisionsPort } from '../../application/ports/human-decisions.js';
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
 import type { DependencyWriterPort } from '../../application/ports/dependency-writer.js';
 import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
-import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
 import type { ResolvedBoardThresholds } from '../../domain/board-thresholds.js';
-import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
 import type { PrStatusReader } from '../../application/ports/pr-status-reader.js';
 import type { PrBadgeStatusCache } from '../../application/board/get-pr-badges.js';
 import type { ReclaimHistory } from '../../application/lease/reclaim-history.js';
-import type { AgentSession, SessionLink } from '../../domain/session.js';
+import type { SessionLink } from '../../domain/session.js';
 import type { EventHub } from '../sse/event-hub.js';
 import type { WriteGuardDeps } from './write-guard.js';
 
@@ -52,18 +49,14 @@ export interface ApiDeps {
   /** bdboard-o1e5: 指定したプロジェクト ID だけを強制リフレッシュする (1 回にまとめる)。 */
   readonly refreshProjects?: (projectIds: readonly string[]) => Promise<void>;
   readonly events: EventHub;
-  readonly sessions?: () => readonly AgentSession[];
   readonly links?: () => readonly SessionLink[];
   readonly commentReader?: CommentReader;
-  readonly processScanner?: ProcessScanner;
   readonly humanDecisions?: HumanDecisionsPort;
   readonly worktreeScanner?: WorktreeScanner;
   /** 注入先の検証コントラクトから mainBranch を読む。失敗時は undefined。 */
   readonly getProjectMainBranch?: (rootPath: string) => Promise<string | undefined>;
   readonly issueWriter?: IssueWriterPort;
   readonly dependencyWriter?: DependencyWriterPort;
-  readonly sessionLinkWriter?: SessionLinkWriterPort;
-  readonly sessionTail?: SessionTailReader;
   readonly prStatusReader?: PrStatusReader;
   /**
    * bdboard-ye2p: サーバー再起動をまたいで terminal な gh 結果を残すための

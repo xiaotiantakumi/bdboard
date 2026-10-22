@@ -14,7 +14,6 @@ export function LaneColumn({
   unfilteredCount,
   showProjectName,
   projectNames,
-  projectActiveSessions,
   pendingDecisionIds,
   prLinksById,
   onCardClick,
@@ -101,7 +100,6 @@ export function LaneColumn({
                 lane={lane}
                 showProjectName={showProjectName}
                 projectName={projectNames.get(card.projectId) ?? projectNameFallback(card.projectId)}
-                activeSessionCount={projectActiveSessions.get(card.projectId) ?? 0}
                 hasPendingDecision={pendingDecisionIds.has(card.ticket.id)}
                 prLink={prLinksById.get(card.ticket.id)}
                 onClick={onCardClick}

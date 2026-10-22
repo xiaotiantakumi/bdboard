@@ -1,4 +1,4 @@
-import type { AgentSession, SessionLink } from './session.js';
+import type { SessionLink } from './session.js';
 import type { Ticket } from './ticket.js';
 
 const DEFAULT_DATE = new Date('2026-01-01T00:00:00.000Z');
@@ -21,22 +21,6 @@ export function makeTicket(overrides: Partial<Ticket> = {}): Ticket {
     ...defaultTicket(),
     ...overrides,
     dependencies: overrides.dependencies ?? defaultTicket().dependencies,
-  };
-}
-
-const defaultSession = (): AgentSession => ({
-  sessionId: 'session-1',
-  pid: 12345,
-  cwd: '/projects/bdboard',
-  startedAt: DEFAULT_DATE,
-  lastActivityAt: DEFAULT_DATE,
-  alive: true,
-});
-
-export function makeSession(overrides: Partial<AgentSession> = {}): AgentSession {
-  return {
-    ...defaultSession(),
-    ...overrides,
   };
 }
 

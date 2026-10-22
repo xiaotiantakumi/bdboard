@@ -1,5 +1,4 @@
 import type { BoardCardDto, Lane, PrBadgeDto } from '../../api';
-import { livenessClass } from '../../liveness';
 import { PrLinkBadge } from '../PrLinkBadge';
 import {
   deferCountdownClass,
@@ -36,8 +35,6 @@ export function CardBadges({
     ticket,
     blockedBy,
     unblocksCount,
-    sessions,
-    liveness,
     deferDays,
     deferUrgency,
     effectivePriority,
@@ -111,12 +108,6 @@ export function CardBadges({
       {showDeferCountdown && deferDays !== null && deferUrgency !== null && (
         <span className={deferCountdownClass(deferUrgency)}>
           {formatDeferCountdown(deferDays, deferUrgency)}
-        </span>
-      )}
-      {sessions.length > 0 && (
-        <span className="badge">
-          <span className={`liveness-dot ${livenessClass(liveness)}`} />
-          {sessions.length} session{sessions.length > 1 ? 's' : ''}
         </span>
       )}
     </div>
