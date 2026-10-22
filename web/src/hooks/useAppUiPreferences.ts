@@ -33,6 +33,8 @@ export interface AppUiPreferences {
   setRecentTickets: PersistedSetter<RecentTicketEntry[]>;
   tipsBannerDismissed: boolean;
   setTipsBannerDismissed: PersistedSetter<boolean>;
+  autoTopAwaitingVideos: boolean;
+  setAutoTopAwaitingVideos: PersistedSetter<boolean>;
 }
 
 /**
@@ -92,6 +94,9 @@ export function useAppUiPreferences(): AppUiPreferences {
     DEFAULT_TIPS_BANNER_DISMISSED,
     validateBoolean,
   );
+  const [autoTopAwaitingVideos, setAutoTopAwaitingVideos] = usePersistedState(
+    UI_STORAGE_KEYS.autoTopAwaitingVideos, false, validateBoolean,
+  );
 
   return {
     view,
@@ -108,5 +113,7 @@ export function useAppUiPreferences(): AppUiPreferences {
     setRecentTickets,
     tipsBannerDismissed,
     setTipsBannerDismissed,
+    autoTopAwaitingVideos,
+    setAutoTopAwaitingVideos,
   };
 }

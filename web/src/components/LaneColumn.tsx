@@ -22,6 +22,7 @@ export function LaneColumn({
   collapsed = false,
   onToggleCollapse = () => {},
   wipStatus,
+  headerAddon,
 }: LaneColumnProps) {
   const boardDnD = useBoardDnD();
   const boardNav = useBoardKeyboardNav();
@@ -82,6 +83,7 @@ export function LaneColumn({
         </span>
         <span className="lane-count">{countLabel}</span>
       </button>
+      {headerAddon}
       {!collapsed && (
         <>
           <div

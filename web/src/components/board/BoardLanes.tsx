@@ -9,6 +9,8 @@ import { BoardKeyboardNavProvider, useBoardKeyboardNav } from '../BoardKeyboardN
 import { LaneColumn } from '../LaneColumn';
 import { LaneScrollIndicator } from '../LaneScrollIndicator';
 import { type WipLimitsOverrides } from '../../wip-limits';
+import { topAwaitingAddon } from './TopAwaitingVideoControls';
+import { useAppUiPreferences } from '../../hooks/useAppUiPreferences';
 import {
   deriveLaneRowData,
   laneIndicatorItemsFrom,
@@ -33,6 +35,11 @@ interface BoardLanesProps {
   wipLimitsOverrides?: WipLimitsOverrides;
   /** SplitBoard ではプロジェクト ID、全体ビューでは undefined */
   wipProjectId?: string;
+  /**
+   * bdboard-hipq.3: 上位3件の動画保存の操作を出すか。SplitBoard はプロジェクトごとに
+   * BoardLanes を並べるので、1 つだけに出す (複数あると互いの自動保存を整理し合う)。
+   */
+  showTopAwaitingControls?: boolean;
 }
 
 const AWAITING_ONLY_STORAGE_KEY = 'bdboard.mobileAwaitingOnly';
@@ -40,6 +47,12 @@ const AWAITING_ONLY_STORAGE_KEY = 'bdboard.mobileAwaitingOnly';
 function parseBoolean(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null;
 }
+
+type LanesRowProps = Omit<BoardLanesProps, 'hideDone' | 'showDndError' | 'showTopAwaitingControls'> & {
+  lanes: Lane[];
+  autoTopAwaitingVideos: boolean | null;
+  setAutoTopAwaitingVideos: (enabled: boolean) => void;
+};
 
 function LanesRow({
   lanes: allLanes,
@@ -57,23 +70,9 @@ function LanesRow({
   onToggleLaneCollapse,
   wipLimitsOverrides,
   wipProjectId,
-}: {
-  lanes: Lane[];
-  board: BoardDto;
-  stalledOnly: boolean;
-  filter: BoardFilter;
-  showProjectName: boolean;
-  projectNames: Map<string, string>;
-  projectActiveSessions: Map<string, number>;
-  pendingDecisionIds: ReadonlySet<string>;
-  prLinksById: ReadonlyMap<string, PrBadgeDto>;
-  sectionKey: string;
-  onCardClick: (ticketId: string) => void;
-  collapsedLanes?: ReadonlySet<Lane>;
-  onToggleLaneCollapse?: (lane: Lane) => void;
-  wipLimitsOverrides?: WipLimitsOverrides;
-  wipProjectId?: string;
-}) {
+  autoTopAwaitingVideos,
+  setAutoTopAwaitingVideos,
+}: LanesRowProps) {
   const boardNav = useBoardKeyboardNav();
   const filterKey = boardFilterKey(filter);
   const lanesRowRef = useRef<HTMLDivElement>(null);
@@ -122,6 +121,7 @@ function LanesRow({
             : undefined
         }
         wipStatus={wipStatusForColumn}
+        headerAddon={topAwaitingAddon(lane, filteredCards, autoTopAwaitingVideos, setAutoTopAwaitingVideos)}
       />
     ),
   );
@@ -174,8 +174,10 @@ export function BoardLanes({
   onToggleLaneCollapse,
   wipLimitsOverrides,
   wipProjectId,
+  showTopAwaitingControls = false,
 }: BoardLanesProps) {
   const boardDnD = useBoardDnD();
+  const { autoTopAwaitingVideos, setAutoTopAwaitingVideos } = useAppUiPreferences();
   const lanes = visibleLanes(hideDone);
 
   return (
@@ -203,6 +205,8 @@ export function BoardLanes({
           onToggleLaneCollapse={onToggleLaneCollapse}
           wipLimitsOverrides={wipLimitsOverrides}
           wipProjectId={wipProjectId}
+          autoTopAwaitingVideos={showTopAwaitingControls ? autoTopAwaitingVideos : null}
+          setAutoTopAwaitingVideos={setAutoTopAwaitingVideos}
         />
       </BoardKeyboardNavProvider>
     </>

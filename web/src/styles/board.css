@@ -478,3 +478,8 @@
 .card:has(.card-bulk-checkbox) {
   padding-right: 40px;
 }
+
+/* 確認待ちレーンの「自動ダウンロード（上位3件）」(bdboard-hipq.3)。狭い画面でも折り返す。 */
+.top-awaiting-video-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 14px; border-bottom: 1px solid var(--color-border); font-size: 0.8125rem; min-width: 0; }
+.top-awaiting-video-controls label { display: inline-flex; align-items: center; gap: 4px; }
+.top-awaiting-video-controls small { flex-basis: 100%; color: var(--color-text-secondary); }

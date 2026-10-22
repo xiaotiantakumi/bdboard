@@ -22,6 +22,7 @@ describe('useAppUiPreferences', () => {
     expect(result.current.activityWindowDays).toBe(1);
     expect(result.current.recentTickets).toEqual([]);
     expect(result.current.tipsBannerDismissed).toBe(DEFAULT_TIPS_BANNER_DISMISSED);
+    expect(result.current.autoTopAwaitingVideos).toBe(false);
   });
 
   it('persists each field under its own UI_STORAGE_KEYS entry, unchanged from before bundling', () => {
@@ -51,6 +52,7 @@ describe('useAppUiPreferences', () => {
         { id: 'bdboard-1', title: 'T', projectName: 'Project One' },
       ]);
       result.current.setTipsBannerDismissed(true);
+    result.current.setAutoTopAwaitingVideos(true);
     });
 
     expect(localStorage.getItem(UI_STORAGE_KEYS.view)).toBe(JSON.stringify('split'));
@@ -64,6 +66,7 @@ describe('useAppUiPreferences', () => {
     expect(localStorage.getItem(UI_STORAGE_KEYS.activityWindowDays)).toBe(JSON.stringify(7));
     expect(localStorage.getItem(UI_STORAGE_KEYS.recentTickets)).not.toBeNull();
     expect(localStorage.getItem(UI_STORAGE_KEYS.tipsBannerDismissed)).toBe(JSON.stringify(true));
+    expect(localStorage.getItem(UI_STORAGE_KEYS.autoTopAwaitingVideos)).toBe(JSON.stringify(true));
   });
 
   it('restores previously persisted values on mount, per key', () => {
