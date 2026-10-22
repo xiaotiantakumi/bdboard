@@ -229,17 +229,6 @@
   align-self: flex-start;
 }
 
-.bd-command-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.bd-command-btn {
-  width: 100%;
-  text-align: left;
-}
-
 .sr-only {
   position: absolute;
   width: 1px;
