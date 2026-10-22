@@ -1,5 +1,5 @@
 // bdboard-sso1.35: TunnelControl.tsx の「公開中(on)」パネル(書き込み可否表示 +
-// QR表示/非表示 + 停止ボタン)を移動しただけの表示専用コンポーネント。
+// QR + 停止ボタン)を移動しただけの表示専用コンポーネント。
 // state・mutation は useTunnelQr / useTunnelStop (親で呼び出し) に残し、
 // 値とハンドラを props で受け取る。JSX・className・aria属性・文言・DOM構造は
 // 移動前から変えていない。
@@ -10,7 +10,6 @@ import { accessTokenErrorMessage } from './tunnelHelpers';
 export interface TunnelOnPanelProps {
   writeAccess: boolean | undefined;
   qrVisible: boolean;
-  onQrToggle: () => void;
   tokenPending: boolean;
   tokenIsError: boolean;
   tokenError: unknown;
@@ -24,7 +23,6 @@ export interface TunnelOnPanelProps {
 export function TunnelOnPanel({
   writeAccess,
   qrVisible,
-  onQrToggle,
   tokenPending,
   tokenIsError,
   tokenError,
@@ -50,26 +48,16 @@ export function TunnelOnPanel({
             </p>
           ) : (
             <p className="tunnel-write-access tunnel-write-access-off">
-              読み取り専用です。パスワードが12文字未満のためチケットの変更・コメント・チャットはできません。変更もしたい場合は、いったん公開を停止して、パスワード欄を空欄（自動生成）にするか12文字以上のパスワードで公開し直してください。
+              読み取り専用です。パスワードが12文字未満のためチケットの変更・コメント・チャットはできません。変更もしたい場合は、いったん停止して、「詳細」でパスワードを空欄（自動生成）にするか12文字以上にして公開し直してください。
             </p>
           )}
         </div>
       )}
       <div className="tunnel-field">
         <span className="tunnel-field-label">スマホで開く</span>
-        <div className="tunnel-field-row">
-          <button
-            type="button"
-            className="btn btn-small"
-            onClick={onQrToggle}
-            aria-expanded={qrVisible}
-          >
-            {qrVisible ? 'QRを隠す' : 'QRを表示'}
-          </button>
-          <span className="tunnel-qr-hint">
-            カメラで読むとログイン済みの状態で開けます（変更操作もこの入口からのみ）
-          </span>
-        </div>
+        <span className="tunnel-qr-hint">
+          カメラで読むとログイン済みの状態で開けます（変更操作もこの入口からのみ）
+        </span>
         {qrVisible && (
           <div className="tunnel-qr">
             {tokenPending && <p className="tunnel-qr-status">準備中…</p>}
@@ -101,7 +89,7 @@ export function TunnelOnPanel({
         onClick={onStop}
         disabled={stopDisabled}
       >
-        {stopPending ? '停止中…' : '公開を停止'}
+        {stopPending ? '停止中…' : '停止'}
       </button>
     </div>
   );

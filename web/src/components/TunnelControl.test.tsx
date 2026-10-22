@@ -30,12 +30,8 @@ function renderTunnelControl(onClose: () => void = vi.fn()) {
   };
 }
 
-describe('TunnelControl publish confirmation', () => {
+describe('TunnelControl one-click publish', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    fetchMock = installTunnelFetchMock();
-  });
 
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -43,107 +39,25 @@ describe('TunnelControl publish confirmation', () => {
     vi.restoreAllMocks();
   });
 
-  it('does not start the tunnel when only opening the confirmation step', async () => {
-    const user = userEvent.setup();
+  // bdboard-y2qx: ダイアログを開くだけで、自動生成パスワードで公開が始まる。
+  it('starts the tunnel once, without a password, as soon as the dialog opens', async () => {
+    fetchMock = installTunnelFetchMock();
     renderTunnelControl();
-
-    await screen.findByRole('button', { name: 'スマホ用に公開' });
-    await user.click(screen.getByRole('button', { name: 'スマホ用に公開' }));
-
-    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
-    expect(countTunnelStartPosts(fetchMock)).toBe(0);
-  });
-
-  it('starts the tunnel only after confirming publish', async () => {
-    const user = userEvent.setup();
-    renderTunnelControl();
-
-    await screen.findByRole('button', { name: 'スマホ用に公開' });
-    await user.click(screen.getByRole('button', { name: 'スマホ用に公開' }));
-    await user.click(screen.getByRole('button', { name: '公開する' }));
 
     await waitFor(() => {
       expect(countTunnelStartPosts(fetchMock)).toBe(1);
     });
-  });
-
-  it('cancels confirmation without starting the tunnel', async () => {
-    const user = userEvent.setup();
-    renderTunnelControl();
-
-    await screen.findByRole('button', { name: 'スマホ用に公開' });
-    await user.click(screen.getByRole('button', { name: 'スマホ用に公開' }));
-    await user.click(screen.getByRole('button', { name: 'キャンセル' }));
-
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    expect(countTunnelStartPosts(fetchMock)).toBe(0);
-  });
-
-  it('dismisses confirmation on Escape without starting the tunnel', async () => {
-    const user = userEvent.setup();
-    renderTunnelControl();
-
-    await screen.findByRole('button', { name: 'スマホ用に公開' });
-    await user.click(screen.getByRole('button', { name: 'スマホ用に公開' }));
-    await user.keyboard('{Escape}');
-
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    expect(countTunnelStartPosts(fetchMock)).toBe(0);
-  });
-
-  it('dismisses confirmation when the password input changes', async () => {
-    const user = userEvent.setup();
-    renderTunnelControl();
-
-    await screen.findByRole('button', { name: 'スマホ用に公開' });
-    await user.click(screen.getByRole('button', { name: 'スマホ用に公開' }));
-    await user.type(
-      screen.getByLabelText('トンネル用パスワード（任意）'),
-      'a',
+    const startCall = fetchMock.mock.calls.find(
+      ([url]) => url === '/api/tunnel/start',
     );
-
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    expect(countTunnelStartPosts(fetchMock)).toBe(0);
-  });
-
-  it('shows validation errors for too-short and too-long passwords without confirming', async () => {
-    const user = userEvent.setup();
-    renderTunnelControl();
-
-    await screen.findByRole('button', { name: 'スマホ用に公開' });
-
-    await user.type(
-      screen.getByLabelText('トンネル用パスワード（任意）'),
-      'a',
-    );
-    await user.click(screen.getByRole('button', { name: 'スマホ用に公開' }));
-
+    expect(String(startCall?.[1]?.body ?? '')).not.toContain('password');
     expect(
-      screen.getByText(
-        'パスワードは2〜64文字で入力してください（トンネルURLは公開されます）',
-      ),
-    ).toBeInTheDocument();
+      screen.queryByRole('button', { name: 'スマホ用に公開' }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    expect(countTunnelStartPosts(fetchMock)).toBe(0);
-
-    await user.clear(screen.getByLabelText('トンネル用パスワード（任意）'));
-    await user.type(
-      screen.getByLabelText('トンネル用パスワード（任意）'),
-      'a'.repeat(65),
-    );
-    await user.click(screen.getByRole('button', { name: 'スマホ用に公開' }));
-
-    expect(
-      screen.getByText(
-        'パスワードは2〜64文字で入力してください（トンネルURLは公開されます）',
-      ),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    expect(countTunnelStartPosts(fetchMock)).toBe(0);
   });
 
-  it('disables publishing and explains why when Basic Auth is not enabled', async () => {
-    vi.unstubAllGlobals();
+  it('does not start when Basic Auth is not enabled, and explains why', async () => {
     fetchMock = installTunnelFetchMock({
       state: 'off',
       available: true,
@@ -151,23 +65,55 @@ describe('TunnelControl publish confirmation', () => {
     });
     renderTunnelControl();
 
-    const publish = await screen.findByRole('button', { name: 'スマホ用に公開' });
-    expect(publish).toBeDisabled();
-    expect(screen.getByLabelText('トンネル用パスワード（任意）')).toBeDisabled();
     expect(
-      screen.getByText(/Basic Authが有効でないためトンネル公開はできません/),
+      await screen.findByText(/Basic Authが有効でないためトンネル公開はできません/),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText('トンネル用パスワード（任意）')).toBeDisabled();
     expect(countTunnelStartPosts(fetchMock)).toBe(0);
   });
 
-  it('describes QR-only access without promising to display a password', async () => {
+  it('validates a custom password in the 詳細 area before starting', async () => {
     const user = userEvent.setup();
+    fetchMock = installTunnelFetchMock({
+      state: 'error',
+      available: true,
+      authEnabled: true,
+      message: 'cloudflared failed',
+    } as TunnelDto);
     renderTunnelControl();
 
-    await user.click(await screen.findByRole('button', { name: 'スマホ用に公開' }));
-    const dialog = screen.getByRole('alertdialog');
-    expect(dialog).toHaveTextContent('公開後のQRコードから開きます');
-    expect(dialog).not.toHaveTextContent('公開後にこの画面に表示されます');
+    await screen.findByText('詳細');
+    await user.type(screen.getByLabelText('トンネル用パスワード（任意）'), 'a');
+    await user.click(screen.getByRole('button', { name: 'このパスワードで公開' }));
+
+    expect(
+      screen.getByText(
+        'パスワードは2〜64文字で入力してください（トンネルURLは公開されます）',
+      ),
+    ).toBeInTheDocument();
+    expect(countTunnelStartPosts(fetchMock)).toBe(0);
+
+    await user.clear(screen.getByLabelText('トンネル用パスワード（任意）'));
+    await user.type(
+      screen.getByLabelText('トンネル用パスワード（任意）'),
+      'a'.repeat(12),
+    );
+    await user.click(screen.getByRole('button', { name: 'このパスワードで公開' }));
+    await waitFor(() => {
+      expect(countTunnelStartPosts(fetchMock)).toBe(1);
+    });
+  });
+});
+
+describe('TunnelControl dialog chrome', () => {
+  beforeEach(() => {
+    installTunnelFetchMock({ state: 'off', available: true, authEnabled: false });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetAllMocks();
+    vi.restoreAllMocks();
   });
 
   it('calls onClose when the modal close button is clicked', async () => {
@@ -194,7 +140,7 @@ describe('TunnelControl publish confirmation', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onClose when Escape is pressed outside publish confirmation', async () => {
+  it('calls onClose when Escape is pressed', async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
     renderTunnelControl(onClose);
@@ -232,61 +178,31 @@ describe('TunnelControl QR code', () => {
     vi.restoreAllMocks();
   });
 
-  it('does not request an access token until QR display is requested', async () => {
+  it('shows the QR right away when the tunnel is already running', async () => {
     fetchMock = installTunnelFetchMock(ON_TUNNEL);
     renderTunnelControl();
 
-    await screen.findByRole('button', { name: 'QRを表示' });
-    expect(countTunnelAccessTokenPosts(fetchMock)).toBe(0);
+    expect(await screen.findByTitle(QR_TITLE)).toBeInTheDocument();
+    expect(countTunnelAccessTokenPosts(fetchMock)).toBe(1);
+    expect(countTunnelStartPosts(fetchMock)).toBe(0);
+    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'QRを表示' })).not.toBeInTheDocument();
   });
 
-  it('hides the QR until asked, then renders it while the tunnel is on', async () => {
-    const user = userEvent.setup();
-    fetchMock = installTunnelFetchMock(ON_TUNNEL);
-    renderTunnelControl();
-
-    const toggle = await screen.findByRole('button', { name: 'QRを表示' });
-    expect(screen.queryByTitle(QR_TITLE)).not.toBeInTheDocument();
-
-    await user.click(toggle);
-
-    await waitFor(() => {
-      expect(countTunnelAccessTokenPosts(fetchMock)).toBe(1);
-    });
-    expect(screen.getByTitle(QR_TITLE)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'QRを隠す' })).toBeInTheDocument();
-  });
-
-  it('does not show the access token as visible text', async () => {
-    const user = userEvent.setup();
-    fetchMock = installTunnelFetchMock(ON_TUNNEL);
-    renderTunnelControl();
-
-    await user.click(await screen.findByRole('button', { name: 'QRを表示' }));
-
-    await waitFor(() => {
-      expect(screen.getByTitle(QR_TITLE)).toBeInTheDocument();
-    });
-    expect(screen.queryByText('example-token')).toBeNull();
-  });
-
-  it('does not show tunnel URL, username, or password as visible text', async () => {
+  it('does not show the access token, tunnel URL, username or password as visible text', async () => {
     installTunnelFetchMock(ON_TUNNEL);
     renderTunnelControl();
 
-    await screen.findByRole('button', { name: 'QRを表示' });
-
+    await screen.findByTitle(QR_TITLE);
+    expect(screen.queryByText('example-token')).toBeNull();
     expect(screen.queryByText(ON_TUNNEL.url)).not.toBeInTheDocument();
     expect(screen.queryByText(ON_TUNNEL.username)).not.toBeInTheDocument();
     expect(screen.queryByText(ON_TUNNEL.password)).not.toBeInTheDocument();
   });
 
   it('shows an error message when access token issuance fails with 409', async () => {
-    const user = userEvent.setup();
     fetchMock = installTunnelFetchMock(ON_TUNNEL, { accessTokenStatus: 409 });
     renderTunnelControl();
-
-    await user.click(await screen.findByRole('button', { name: 'QRを表示' }));
 
     await waitFor(() => {
       expect(screen.getByText(TUNNEL_NOT_RUNNING_HELP)).toBeInTheDocument();
@@ -294,31 +210,11 @@ describe('TunnelControl QR code', () => {
     expect(screen.queryByTitle(QR_TITLE)).not.toBeInTheDocument();
   });
 
-  it('requests a fresh access token each time QR display is toggled', async () => {
-    const user = userEvent.setup();
-    fetchMock = installTunnelFetchMock(ON_TUNNEL);
+  it('does not render the QR while the tunnel cannot start', async () => {
+    installTunnelFetchMock({ state: 'off', available: true, authEnabled: false });
     renderTunnelControl();
 
-    await user.click(await screen.findByRole('button', { name: 'QRを表示' }));
-    await waitFor(() => {
-      expect(countTunnelAccessTokenPosts(fetchMock)).toBe(1);
-    });
-
-    await user.click(screen.getByRole('button', { name: 'QRを隠す' }));
-    await user.click(screen.getByRole('button', { name: 'QRを表示' }));
-
-    await waitFor(() => {
-      expect(countTunnelAccessTokenPosts(fetchMock)).toBe(2);
-    });
-  });
-
-  it('does not offer or render the QR while the tunnel is off', async () => {
-    installTunnelFetchMock();
-    renderTunnelControl();
-
-    await screen.findByRole('button', { name: 'スマホ用に公開' });
-
-    expect(screen.queryByRole('button', { name: 'QRを表示' })).not.toBeInTheDocument();
+    await screen.findByText(/Basic Authが有効でない/);
     expect(screen.queryByTitle(QR_TITLE)).not.toBeInTheDocument();
   });
 });
@@ -364,18 +260,17 @@ describe('TunnelControl write access notice', () => {
     installTunnelFetchMock(BASE_ON_TUNNEL);
     renderTunnelControl();
 
-    await screen.findByRole('button', { name: 'QRを表示' });
+    await screen.findByRole('button', { name: '停止' });
     expect(screen.queryByText(/読み取り専用です/)).not.toBeInTheDocument();
     expect(screen.queryByText(/変更もできます/)).not.toBeInTheDocument();
   });
 
-  it('warns about the 12-character rule before publishing', async () => {
-    installTunnelFetchMock();
+  it('warns about the 12-character rule next to the custom password', async () => {
+    installTunnelFetchMock({ state: 'off', available: true, authEnabled: false });
     renderTunnelControl();
 
-    await screen.findByRole('button', { name: 'スマホ用に公開' });
     expect(
-      screen.getByText(/パスワードが12文字未満だと、スマホからは読み取り専用/),
+      await screen.findByText(/パスワードが12文字未満だと、スマホからは読み取り専用/),
     ).toBeInTheDocument();
   });
 });
@@ -415,7 +310,7 @@ describe('TunnelControl tunnel interruption notice', () => {
     installTunnelFetchMock();
     renderTunnelControl();
 
-    await screen.findByRole('button', { name: 'スマホ用に公開' });
+    await screen.findByText('公開を開始しています…');
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
@@ -430,7 +325,7 @@ describe('TunnelControl tunnel interruption notice', () => {
     });
     renderTunnelControl();
 
-    await screen.findByRole('button', { name: 'QRを表示' });
+    await screen.findByRole('button', { name: '停止' });
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
