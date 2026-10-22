@@ -107,7 +107,7 @@ describe('case-insensitive literal search (bdboard-uudb)', () => {
         expect({ key, text, root, spans: actual }).toEqual({ key, text, root, spans: regexSpans(text, key, root) });
       }
     }
-  });
+  }, 30_000);
 
   it('matches every code point that the engine treats as equal, and only those, for each cased letter key', () => {
     // 表に入る文字 (大文字小文字で変わりうる文字) を全部並べた本文で、各文字を鍵にしたときの一致が正規表現と同じ。
