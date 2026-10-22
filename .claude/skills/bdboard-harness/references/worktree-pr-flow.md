@@ -15,7 +15,7 @@
 | `verify` | 回して **exit 0 が合格**の検証コマンド |
 | `prFlow` | `pr` = PR 必須 / `direct` = main 直コミット可 / `none` = git 手順を省く |
 | `mainBranch` | rebase と、マージ直前 CAS（層2）の基準ブランチ名 |
-| `merge`（任意） | マージ手順の段階。`mode` が `S0`（既定）/ `S1` / `S2`、`hotFiles` は S2 の hot file グロブ。§5「S1」「S2」参照 |
+| `merge`（任意） | マージ手順。`mode` が `S0`（既定 = GitHub auto-merge、§5）。`S1` / `S2` は廃止（§5 末尾の旧手順） |
 
 **(3) に落ちたときのエスカレーション**（この文言をそのまま使う）:
 
@@ -50,8 +50,8 @@ SKILL.md 規律2 の手順の全文。本文には骨格だけを残している
 ## ライフサイクル
 
 ```
-空き確認 → worktree作成(=排他獲得) → claim → 実装(+heartbeat) → 検証
-→ rebase → 再検証 → PR → CI green → マージ排他3層 → マージ → close → 掃除
+空き確認 → worktree作成(=排他獲得) → claim → 実装(+heartbeat) → 軽い検証
+→ push → PR → auto-merge 有効化 → (CI green で GitHub がマージ) → deploy → close → 掃除
 ```
 
 ### 1. 空き確認と worktree 作成（排他獲得）
@@ -125,20 +125,19 @@ git -C <メインチェックアウト> worktree add .claude/worktrees/<id> -b b
 - **`.beads/` 配下を PR ブランチ内で変更しない。** 台帳の同期は Dolt 側
   （`bd dolt push/pull`）が担い、コード PR の diff に混ぜない。
 
-### 3. 検証 → rebase → 再検証
+### 3. 軽い検証（フル検証は CI に任せる）
 
-検証コマンド（上の参照順で決めたもの。コントラクトの `verify`、無ければプロジェクト規約の
-フルの検証チェーン）をローカルで緑にしてから PR を開く。`prFlow` が `direct` / `none` の
-プロジェクトでは以降の PR 手順を省いてよいが、**検証を省いてよいわけではない**。その直前に:
+2026-10-22 のユーザー決定（「検証と CI/CD は最小に。バグは許容して fix-forward」、bdboard-415t）
+以降、PR 前のローカル検証は**型チェック + lint + 触った範囲のテスト**だけにする。bdboard では:
 
 ```bash
-git fetch origin
-git rebase origin/<mainBranch>
-# → 検証コマンドをもう一度全部回す（テキスト上クリーンな rebase でも意味的衝突は残る）
-git rev-parse origin/<mainBranch>   # ← この base SHA を控える（後述の直前CASで使う）
+npm run verify:quick                     # tsc 3 プロジェクト + ESLint
+npx vitest related --run <変更ファイル>    # 落ちても push は止めない（CI が拾う）
 ```
 
-詳細な理由と merge-base 基準の diff の読み方は [verification.md](verification.md)。
+コントラクトの `verify`（フル）は PR 前に回さない。CI の required checks が唯一のフル実行場所。
+rebase と再検証も不要（GitHub の mergeable 判定で衝突は止まり、意味的衝突は main の push CI が拾う）。
+`prFlow` が `direct` / `none` のプロジェクトでは CI が無いことがあるので、その場合だけフル検証を回す。
 
 ### 4. PR 作成
 
@@ -299,7 +298,28 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
    いったん `bd merge-slot release` して待ち、リセット後に acquire し直してから再試行する
    （slot を握ったまま待つと、他セッションのマージを丸ごと止める）。
 
-### 5. マージ排他3層
+### 5. マージ（`merge.mode: S0` = GitHub auto-merge）
+
+PR を作ったら auto-merge を有効にする。マージ枠・CAS・着地後検証・main-broken は使わない。
+
+```bash
+gh pr merge <N> --auto --squash --delete-branch
+```
+
+- **複雑度 low/med**: worker（実装役）が PR 作成の直後に自分で打つ。
+- **複雑度 high**: worker は `PR:` コメントで止まる。議長が diff を読み（モデルレビューを挟むかは
+  議長判断。必須ではない）、問題なければ議長が上のコマンドを打つ。
+- GitHub は required checks が緑になった時点でマージする。赤なら worker／議長が同じブランチに
+  修正を push する（auto-merge は有効のまま）。
+- マージ後は議長が常時稼働サーバーを作り直し（bdboard: `always-on-server.sh deploy`）、
+  それから `bd close <id>`（§6）。
+- **main の push CI が赤になったら**: 小さければ fix-forward、そうでなければ
+  `git revert --no-edit <squash SHA>` の PR を auto-merge で入れる。枠の確保や `--repair` は無い。
+- 知って捨てたもの: branch protection の strict が off なので、古い main の上でそれぞれ緑だった
+  2 本が組み合わさって壊れうる（main の push CI が約 10 分後に示す）。
+
+#### 旧手順（廃止。コード削除の後続チケットまで記録として残す — 新しいマージで従わない）
+
 
 `npm run merge-pr -- gate` と `finish` は議長だけが実行し、必ず `BDBOARD_MERGER=chair` を前置する。
 サブエージェントはこれらを実行せず、必要なコマンドを最終報告に記す。
@@ -565,7 +585,7 @@ S2 は S1 の層2 だけを変える（gate / finish / 台帳は S1 のまま）
 
 ### 6. close と掃除
 
-マージ成功後（層3の検証まで済んでから）。**`bd close` の前に
+マージ成功後（GitHub の auto-merge が着地させてから。§5）。**`bd close` の前に
 [close-template.md](close-template.md) の書式で証拠コメントを残す**:
 
 ```bash

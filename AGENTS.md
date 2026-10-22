@@ -102,18 +102,15 @@ bd prime                # Refresh Beads context
 
 ## Build & Test
 
-Before committing any change (server or web), run the full verification chain — it must be clean:
+PR を出す前のローカル確認は軽くする (2026-10-22 ユーザー決定「検証は最小、バグは fix-forward」、bdboard-415t):
 
 ```bash
-npm run verify   # check:file-size + check:invisible-chars + lint:verify + build + build:web + test:server + test:web + check:boundaries
+npm run verify:quick                 # tsc 3 プロジェクト + ESLint (約 1 分)
+npx vitest related --run <変更ファイル>  # 触った範囲だけ。落ちても push は止めない (CI が拾う)
 ```
 
-- **フルチェーンは必ず `npm run verify` で回す。`npm run verify:steps` の直叩きは禁止** —
-  プロセスグループ kill (bdboard-kia) とスロットの両方を迂回する。反復中の個別ステップは可。`lint` は ESLint + typescript-eslint (`src/` `web/src/` `scripts/` のみ、詳細は [docs/VERIFY.md](docs/VERIFY.md))。
-- **Verify slots**: verify は 1 マシン最大 2 並列に自分でスロット制限する (2026-08-18 に 6 並列が
-  load average 190–258 を数時間続けた事故 bdboard-d48 の対策)。`verify: waiting for a verify
-  slot (queue position N/M …)` が 10 秒ごとに出るのは**ハングではなく FIFO 待ち**。kill して
-  再実行すると列の最後尾に戻るだけなので、長めのタイムアウトで待つ。
+- フル `npm run verify` は PR 前に打たない (CI の `verify` job が唯一のフル実行場所)。打つなら
+  `npm run verify` 経由で (`verify:steps` 直叩き禁止: プロセスグループ kill と slot を迂回する)。
 - ポートは `BDBOARD_PORT` (既定 8787)。**worktree で `npm run dev` を回さない** (メインチェック
   アウトのポートと衝突)。`vitest` / `tsc` / `depcruise` は並列 worktree で問題ない。
 - tsc 3 プロジェクトの表、slot の stale 処理と env ノブ、`npm run check:file-size` の baseline
@@ -152,13 +149,13 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
   **worktree** `.claude/worktrees/<ticket-id>/` (`origin/main` から作成、マージ後に削除。
   worktree ごとに `npm install && npm --prefix web install` が要る)。
 - **Lifecycle**: `bd update <id> --claim` → worktree+branch 作成 → 実装 → 機能追加/変更なら
-  ヘルプ原本 `docs/help-content.json` の追従を確認 → `npm run drift` (PR が数時間開いていたら
-  再実行) → `npm run verify` (PR を開く前にクリーンであること) →
-  `gh pr create --fill --body "Closes: <ticket-id> …"` → `bd comment <id> "PR: <url>"` →
-  CI green → マージ (マージは議長のみ。S1/S2 の gate/finish は `BDBOARD_MERGER=chair` を要求。`origin/main` の `merge.mode` で分岐。S0: drift → `bd merge-slot acquire` → ls-remote で CAS →
-  `gh pr merge --squash --delete-branch` → 着地後検証 → release / S1・S2: `npm run merge-pr -- prepare|gate|finish <N>`
-  で枠は CAS とマージの間だけ・着地後検証は commit status。docs/GIT-WORKFLOW.md) → **`bd close <id>` はマージ成功後だけ**
-  (PR を開いた時点では閉じない — `bd ready` が他セッションに嘘をつく)。
+  ヘルプ原本 `docs/help-content.json` の追従を確認 → `verify:quick` + `vitest related` (上節) →
+  `git push` → `gh pr create --fill --body "Closes: <ticket-id> …"` → `bd comment <id> "PR: <url>"` →
+  **`gh pr merge --auto --squash --delete-branch`** (複雑度 low/med は worker 自身が打つ。high は
+  `PR:` コメントで止まり、議長がレビュー後に打つ。Opus レビュー必須は廃止) → GitHub が required
+  checks 緑でマージ → 議長が `always-on-server.sh deploy` → **`bd close <id>` はマージ後だけ**。
+  `merge.mode` は `S0` (merge-pr・merge-slot・drift・着地後検証・main-broken は使わない)。main の
+  push CI が赤なら fix-forward か `git revert` の PR (auto-merge)。詳細 docs/GIT-WORKFLOW.md。
 - **Direct-to-main commits are banned, no exceptions.** CI 復旧も PR 経由 (bypass は pull requests only、2026-09-26 変更)。
 - **`.beads/` はこのリポジトリで git 追跡していない** (ルート `.gitignore` 参照)。PR で
   `.beads/` 配下を追加・変更しない — CI が `origin/main` との diff に含めば PR を落とす。

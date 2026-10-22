@@ -155,6 +155,9 @@ diff against `origin/main` touches `.beads/`.
 
 ## Drift check (`npm run drift`)
 
+> **Retired (bdboard-415t).** Do not run `npm run drift` before a PR; GitHub's mergeability check
+> and auto-merge replace it. The section stays until the script is deleted.
+
 `npm run drift` has two comparisons. Its main comparison prints the files that **both**
 `origin/main` and your branch have touched since their merge-base, and tells
 you to rebase now if there are any. It also lists overlap with each eligible
@@ -240,46 +243,35 @@ computing it from the merge-base is always current.
 
 ## Merge serialization
 
-merge one PR at a time. Whoever holds merge
-rights updates/rebases the next queued PR's branch and re-waits for CI
-before merging it — this is what catches semantic conflicts between two
-PRs that each pass CI independently but break when combined.
+**Current procedure (since 2026-10-22, bdboard-415t): GitHub auto-merge, `merge.mode: "S0"`.**
+The user decided to trade some safety for a much faster cycle ("bugs from this are acceptable;
+fix forward"). GitHub serialises merges; nobody holds a slot, runs a CAS or re-verifies main by hand.
 
-Concurrent sessions have made this concrete, so the procedure is now
-spelled out rather than left to judgement. Run these in order for every
-merge (this is **S0**, the procedure while `merge.mode` is `"S0"`; S1, S2 and S3 follow):
+1. **Local, before push** — `npm run verify:quick` (the three `tsc` projects + ESLint) and
+   `npx vitest related --run <changed files>`. The related run is advisory: a failure there does
+   not stop the push, because CI runs the full suite anyway. Do not run the full `npm run verify`
+   or `npm run drift` before a PR.
+2. **Open the PR** — `git push -u origin bd/<id>` → `gh pr create --fill --body "Closes: <id> …"`
+   → `bd comment <id> "PR: <url>"`.
+3. **Turn on auto-merge** — `gh pr merge <N> --auto --squash --delete-branch`. GitHub merges when
+   the required checks (`verify`, `e2e`) are green. Complexity low/med: the worker runs this itself.
+   Complexity high: the worker stops at the `PR:` comment; the chair reviews (a model review is the
+   chair's call, no longer mandatory) and then turns on auto-merge.
+4. **After the merge** — the chair runs
+   `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh deploy --expect-pid <PID>`, then
+   `bd close <id>` (still only after the merge).
+5. **When main goes red** (the push CI on `main` fails) — fix forward if it is small (one file,
+   about ten minutes); otherwise open a `git revert --no-edit <squash sha>` PR with auto-merge.
+   There is no main-broken lock, no merge slot and no `--repair`.
 
-0. **Check for drift** — `npm run drift`. Rebase for main-branch drift; use
-   peer-overlap reports to choose a merge order, then re-run CI before taking
-   the slot. Taking it first just makes peers wait while you rebase.
-1. **Take the slot** — `bd merge-slot acquire` (the `bdboard-merge-slot`
-   bead already exists; `bd merge-slot create` is a one-time setup that has
-   been done). Release it with `bd merge-slot release` when the merge is
-   finished, including when you abandon the attempt. This is a
-   *cooperative* lock: it coordinates every session that reads bd, and
-   nothing else.
-2. **Compare-and-swap immediately before merging** — after CI is green and
-   right before `gh pr merge`, run `git ls-remote origin main` and compare
-   it with the SHA the branch was rebased onto. If it moved, a peer merged
-   while CI was running: update the branch and wait for CI again. **This
-   step needs no cooperation from anyone, so it is the one that actually
-   holds** — it shrinks the race window from "the length of a CI run" to a
-   couple of seconds.
-3. **Verify on main, and treat that as the gate for the next merge** —
-   `git pull --ff-only`, then run `npm run verify` on `main` itself. Two
-   branches that were independently green can still break in combination,
-   and this is the only place that shows up. Do not merge the next queued
-   PR until main is green. Merges are squashed, so recovery is a single
-   revert.
+What this gives up, knowingly: with branch protection `strict` off, two PRs that were each green
+on an older main can land together and break; the push CI on `main` shows it about ten minutes
+later and it is fixed forward or reverted.
 
-Steps 1 and 3 are conventions other sessions must also follow; step 2
-protects you regardless of what they do. Step 0 protects only you, but it
-is the only one that catches a conflict *before* it has cost you a CI run.
-
-Which procedure applies is decided by `merge.mode` in `.claude/bdboard-harness.json`
-**as it is on `origin/main`** (bdboard-ulxa): `S0` = the steps above (the default),
-`S1` / `S2` / `S3` = the steps below. Switching and rolling back are one-line edits of that key,
-landed through a normal PR; agents dispatched after the switch use the new steps.
+**Retired (kept below only until the code is deleted in a follow-up ticket):** the merge slot,
+the CAS before merging, verify-on-main, `npm run drift`, and the `npm run merge-pr` modes S1/S2/S3
+with their landed-verify ledger and main-broken lock. Do not follow the sections below for new
+merges; they describe code that no longer runs while `merge.mode` is `"S0"`.
 
 ### S1 — hold the slot only for the CAS and the merge (`merge.mode: "S1"`)
 
@@ -860,6 +852,9 @@ File overlap still never decides whether to merge without a rebase; it only pick
   script: the record lives in the git common dir.
 
 ### When main is broken (S0, S1, S2 and S3)
+
+> **Retired (bdboard-415t).** Fix forward or open a revert PR with auto-merge (see
+> "Merge serialization" above). There is no main-broken lock any more.
 
 Detected by a `failure` in `bdboard/landed-verify`, a red `verify` / `e2e` in main's push CI
 (`commit-parse` is not used as a gate), or a gate exiting 4. Squash merges make recovery one
