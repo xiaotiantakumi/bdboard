@@ -36,6 +36,7 @@ export interface MountRoutesDeps {
   readonly attachmentsRouter: Hono;
   /** チケット本文が指すプロジェクト内ファイル (bdboard-vgdr)。ローカル直、または認可済みトンネルセッション (bdboard-teir)。`inner` の catch-all より前に mount する。 */
   readonly localFilesRouter: Hono;
+  readonly homeJudgementRouter: Hono;
   /** src/interface/http/routes.ts (bdboard-sso1.1 で分割済み)。 */
   readonly inner: Hono;
   readonly harnessRouter: Hono;
@@ -73,6 +74,7 @@ export function mountRoutes(app: Hono, deps: MountRoutesDeps): void {
   // attachment / local-files routes は必ず inner より前に mount する (bdboard-qw26)。
   app.route('/', deps.attachmentsRouter);
   app.route('/', deps.localFilesRouter);
+  app.route('/', deps.homeJudgementRouter);
   app.route('/', deps.inner);
 
   app.route('/', deps.harnessRouter);

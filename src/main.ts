@@ -16,6 +16,7 @@ import { wireAuthAndTunnel } from './bootstrap/wire-auth-and-tunnel.js';
 import { wireBoardApi } from './bootstrap/wire-board-api.js';
 import { wireAttachments } from './bootstrap/wire-attachments.js';
 import { wireLocalFiles } from './bootstrap/wire-local-files.js';
+import { wireHomeJudgement } from './bootstrap/wire-home-judgement.js';
 import { wireHarness } from './bootstrap/wire-harness.js';
 import { wireMiscRoutes } from './bootstrap/wire-misc-routes.js';
 import { wireFeatureRoutes } from './bootstrap/wire-feature-routes.js';
@@ -132,6 +133,7 @@ async function main(): Promise<void> {
     platformSupport,
     attachmentsRouter: attachments.attachmentsRouter,
     localFilesRouter: wireLocalFiles({ cache: infra.cache, fsPort: infra.fsPort, commentReader: bdServices.commentReader, writeAccess: auth.writeAccess }),
+    homeJudgementRouter: wireHomeJudgement(auth),
     inner: boardApi.inner,
     harnessRouter: harness.harnessRouter,
     scanRootsRouter: misc.scanRootsRouter,

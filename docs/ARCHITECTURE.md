@@ -87,6 +87,7 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `AgentRunner` | `createClaudeSpawnRunner` / `createClaudeResumeRunner` / `createDisabledRunner` 等 | エージェント起動(`POST /api/runs` の1経路のみ。`agent-run-guard` 必須) |
 | `PackRegistryPort` / `HarnessInjectorPort` | `createFsPackRegistry` / `createFsHarnessInjector` | ハーネスパックの一覧と、注入先 `.claude/` への書き込み |
 | `HarnessContractReaderPort` | `createFsHarnessContractReader` | 注入先の検証コントラクトと `package.json` の scripts 読み取り |
+| `PublicAddressProbe` | `createPublicAddressProbe` | 自分のトンネルの `/cdn-cgi/trace` から Mac の外向き IPv4/IPv6 を調べる (自宅判定 `GET /api/tunnel/at-home` 用。IP は応答に出さない) |
 | `FileSystemPort` | `NodeFileSystem` | ファイルシステムの非同期読み取り(ディレクトリ列挙・stat・範囲読み取り。読めなければ `undefined`) |
 | `ScanRootsConfigPort` | `createFileScanRootsConfigStore` | スキャン対象ルートと除外パスの設定の永続化 |
 | `BoardThresholdsConfigPort` | `createFileBoardThresholdsConfigStore` | 滞留・liveness 判定しきい値と In Progress の WIP 上限設定の永続化 |

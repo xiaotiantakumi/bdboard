@@ -41,6 +41,7 @@ export const UI_STORAGE_KEYS = {
    * また出た」が起こりうる。これは本キー固有の不具合ではなく永続化方式の性質。
    */
   tipsBannerDismissed: 'bdboard.ui.tipsBannerDismissed',
+  autoTopAwaitingVideos: 'bdboard.ui.autoTopAwaitingVideos',
 } as const;
 
 export const DEFAULT_TIPS_BANNER_DISMISSED = false;

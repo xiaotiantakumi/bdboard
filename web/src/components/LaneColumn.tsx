@@ -21,6 +21,7 @@ export function LaneColumn({
   collapsed = false,
   onToggleCollapse = () => {},
   wipStatus,
+  footerAddon,
 }: LaneColumnProps) {
   const boardDnD = useBoardDnD();
   const boardNav = useBoardKeyboardNav();
@@ -111,6 +112,7 @@ export function LaneColumn({
           {showMoreButton !== null && (
             <div className="lane-show-more">{showMoreButton}</div>
           )}
+          {footerAddon}
           {hiddenCount !== undefined && hiddenCount > 0 && (
             <div
               className="lane-hidden-note"

@@ -28,6 +28,7 @@ function buildDeps(overrides: Partial<MountRoutesDeps> = {}): MountRoutesDeps {
     platformSupport: unrestrictedPlatformSupport('darwin'),
     attachmentsRouter: stubRouter('/__sentinel/attachments'),
     localFilesRouter: stubRouter('/__sentinel/local-files'),
+    homeJudgementRouter: stubRouter('/__sentinel/home'),
     inner: stubRouter('/__sentinel/inner'),
     harnessRouter: stubRouter('/__sentinel/harness'),
     scanRootsRouter: stubRouter('/__sentinel/scan-roots'),
@@ -57,6 +58,7 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
     expect(sentinelGets).toEqual([
       '/__sentinel/attachments',
       '/__sentinel/local-files',
+      '/__sentinel/home',
       '/__sentinel/inner',
       '/__sentinel/harness',
       '/__sentinel/scan-roots',
@@ -92,6 +94,7 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
     const platformSupportIndex = paths.indexOf('/api/platform-support');
     const attachmentsIndex = paths.indexOf('/__sentinel/attachments');
     const localFilesIndex = paths.indexOf('/__sentinel/local-files');
+    const homeIndex = paths.indexOf('/__sentinel/home');
     const innerIndex = paths.indexOf('/__sentinel/inner');
 
     expect(platformSupportIndex).toBeGreaterThanOrEqual(0);
@@ -99,6 +102,8 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
     expect(attachmentsIndex).toBeLessThan(innerIndex);
     expect(localFilesIndex).toBeGreaterThan(attachmentsIndex);
     expect(localFilesIndex).toBeLessThan(innerIndex);
+    expect(homeIndex).toBeGreaterThan(attachmentsIndex);
+    expect(homeIndex).toBeLessThan(innerIndex);
 
     // chat ガードは ALL メソッドの
     // ミドルウェアとして platform-support routes の直後に登録される。

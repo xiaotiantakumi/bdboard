@@ -1,5 +1,6 @@
 import type { BoardCardDto, Lane, PrBadgeDto } from '../../api';
 import type { CardNavProps } from '../BoardKeyboardNavProvider';
+import type { ReactNode } from 'react';
 
 export interface CardItemProps {
   card: BoardCardDto;
@@ -32,4 +33,5 @@ export interface LaneColumnProps {
   onToggleCollapse?: () => void;
   /** in_progress レーンの WIP 状態。exceeded 時にヘッダー警告を表示する。 */
   wipStatus?: { limit: number; count: number; exceeded: boolean };
+  footerAddon?: ReactNode;
 }
