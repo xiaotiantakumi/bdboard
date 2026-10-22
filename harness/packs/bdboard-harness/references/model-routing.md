@@ -84,11 +84,10 @@ bd update <id> --set-metadata bdboard.complexity=med \
 }
 ```
 
-**`review` は low/med/high の全セルを `claude:opus` に固定する**（bdboard 自身の
-`.claude/bdboard-harness.json` もこの表のとおり）。bd memory
-`2026-08-30-bdboard-review-model-opus` に残るユーザー指示（dev ready 消化ループの
-コードレビューは fable ではなく opus に依頼する）を覆すため、low だけ下げる案は
-議長判断で見送り済み。変更にはユーザーの明示承認が要る。
+**レビューは必須ではない**（2026-10-22 ユーザー決定、bdboard-415t）。low/med は worker が
+auto-merge まで進め、レビューを挟まない。high だけ議長が diff を読み、モデルレビューを挟むかを
+議長が決める。挟むときのモデルは `review` セル（`claude:opus` 固定。bd memory
+`2026-08-30-bdboard-review-model-opus` のユーザー指示）を使う。
 
 対象プロジェクト/worktree のルートで呼ぶ。スクリプト自身の配置場所から別のリポジトリを
 推測しないので、正本パックのスクリプトを絶対パスで呼んでも **cwd の契約**を読む。

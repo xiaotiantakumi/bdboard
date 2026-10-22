@@ -369,27 +369,12 @@ git log --oneline HEAD..origin/<mainBranch>
 
 委譲先を疑うのは (a)(b) の後。
 
-## rebase 規律 — 検証は最新 main の上で
+## rebase 規律 — 廃止（2026-10-22、bdboard-415t）
 
-なぜ: ブランチ作成時点の main で緑でも、その後に着地した他セッションの変更との
-**意味的衝突**（テキスト衝突を起こさずに挙動が壊れる組み合わせ）は、最新 main に載せて
-検証し直すまで見えない。rebase がコンフリクトなしで通ることは安全の証拠にならない。
-
-手順（PR を開く直前、および CI 待ちが長引いて main が動いたとき）:
-
-```bash
-git fetch origin
-git rebase origin/<mainBranch>
-# → 検証コマンド（規律4 手順1 の参照順で決めたもの）をフルで回し直す（ここを省略しない。
-#    テキスト上クリーンな rebase でも意味的衝突は残り、再検証がその唯一の網）
-git rev-parse origin/<mainBranch>   # base SHA を控える → マージ直前 CAS で使う
-```
-
-- 控えた base SHA は、マージ直前に `git ls-remote origin <mainBranch>` と突き合わせる
-  （[worktree-pr-flow.md](worktree-pr-flow.md) のマージ排他・層2）。
-- rebase 後に検証が割れたら、それは自分のブランチと main の意味的衝突であって
-  「テストの flake」ではない、をまず疑う。原因を特定してから直す（タイムアウト延長などの
-  対症療法は本物の退行を隠す方向に効く）。
+PR 前の rebase とフル再検証はしない。GitHub の mergeable 判定がテキスト衝突を止め、意味的衝突は
+main の push CI が後から拾う（赤なら fix-forward か revert PR）。手順は
+[worktree-pr-flow.md](worktree-pr-flow.md) §3・§5。CI が赤になったときは、まず自分の
+ブランチと main の意味的衝突を疑う（タイムアウト延長などの対症療法は本物の退行を隠す）。
 
 ## サイクルタイムの内訳を測る — レビュー時間は GitHub に痕跡が残らない
 

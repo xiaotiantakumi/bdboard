@@ -71,8 +71,8 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 手順:
 
-1. 検証 → PR → CI → マージ、まで完走する。検証コマンドは **`.claude/bdboard-harness.json`
-   の `verify` → CLAUDE.md / AGENTS.md → 無ければ検証せず進めない**の順で決める。
+1. 軽い検証 → PR → auto-merge → マージ、まで完走する。フル検証（`.claude/bdboard-harness.json`
+   の `verify`）は CI に任せる（worktree-pr-flow.md §3・§5）。
 2. **マージ成功後、`bd close` の前に証拠コメント**（**`PR:` 行必須**）。
 3. **その上で `bd close <id>`。マージ前に close しない**。
 4. worktree を掃除する（remove → ブランチ削除 → `git remote prune origin`）。
@@ -92,7 +92,7 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 2. **即時の最小記録**: 復旧前に証拠を残す（残す中身と置き場所は詳細）。
 3. **直せないなら起票して現作業へ戻る**（`harness` ラベル。起票の形と priority は詳細）。
 4. **編集する層を先に決める**: 注入コピー `.claude/skills/bdboard-harness/` は**編集禁止**。
-5. **検討は Fable の最大熟考で固める**。規律を変える PR はマージ前に Fable の独立レビューへ。
+5. **検討は Fable の最大熟考で固める**。規律を変える PR の独立レビューは任意（議長判断）。
 6. **確定した教訓は catalog にエントリを持つ**（本則が他所ならポインタ付きで）。
 7. **後続が同じ仕組みで2本目なら止め、root: チケットへ**（§8）。
 
