@@ -259,10 +259,11 @@ bdboard 自身は `8787` / `scripts/always-on-server.sh` を宣言している�
   持つ」の両方。判定の前段でCSRF対策(`Sec-Fetch-Site` / `Content-Type` / `Origin` の3レイヤ)を
   適用する。依存が渡されない場合は fail-closed でlocalhost限定にフォールバックする。新規に追加した
   書き込みルートも、このミドルウェアの内側に登録される限り自動的にガード対象になる。
-- **チケットが指すプロジェクト内ファイルの閲覧はローカル直アクセス限定・根に閉じ込める** (bdboard-vgdr): `interface/http/local-file-routes.ts`(+ `local-file-raw.ts`)の `GET /api/tickets/:id/local-files`
+- **チケットが指すプロジェクト内ファイルの閲覧はローカル直、または認可済みトンネルセッションのみ・根に閉じ込める** (bdboard-vgdr / bdboard-teir): `interface/http/local-file-routes.ts`(+ `local-file-raw.ts`)の `GET /api/tickets/:id/local-files`
   は description / design / acceptance_criteria / notes / コメント本文から抽出し実在分だけ最大100件返す。`.../local-files/list?path=` はフォルダ直下で `.` 始まりと許可外拡張子を出さず自然順・500件まで、`.../local-files/raw?path=` は中身を返す。
-  `createPrivilegedApiGuardMiddleware({})` をトンネル用の依存無しで `/api/tickets/:id/local-files` と `/api/tickets/:id/local-files/*` の両方に掛ける。ローカル直アクセスだけが通る。
-  トンネル経由は書き込み許可つきのセッションでも403になる。GETでもCSRF/Fetch Metadata判定を通すので、`Sec-Fetch-Site` が same-origin 以外(アドレスバー直打ちの `none` も)は403である。
+  `createPrivilegedApiGuardMiddleware(deps.writeAccess ?? {})` を `/api/tickets/:id/local-files` と `/api/tickets/:id/local-files/*` の両方に掛ける。`writeAccess` は main.ts が `wireLocalFiles` 経由で渡す `auth.writeAccess`(チャット・添付と同じ)。
+  通るのはローカル直アクセス、または強いパスワードで起動したトンネル+有効なセッションCookieのときだけ。弱いパスワード・セッション無し・`writeAccess` 未配線は403(fail-closed)。根への閉じ込めはトンネルでも同じ。
+  動画は `<video src>` が同一オリジン(`Sec-Fetch-Site: same-origin`)でセッションCookie付きの Range リクエストを送り、206で再生・シークできる。GETでもCSRF/Fetch Metadata判定を通すので、`Sec-Fetch-Site` が same-origin 以外(アドレスバー直打ちの `none` も)は403である。
   中身は同一オリジンのビューア画面から `<img>` / `<video>` / fetch で読む。router は inner の `GET /api/tickets/:id{.+}` キャッチオールより前に mount する(`bootstrap/mount-routes.ts`、順序はテストで固定)。
   raw / list / 参照解決は `application/local-files/resolve-contained-local-path.ts` の1関数を通る。(1) 字面で NUL・制御文字・バックスラッシュ・`/` `~` 始まり・`..`・空セグメント・`.` 始まりを拒否する(末尾の `/` 1つは落とす)。
   (2) `realpath(根)` と `realpath(根/相対)` を取り後者が前者の下にある。(3) realpath 後の相対にも `.` 始まりセグメントが無い(シンボリックリンクで `.git` 等へ逃げない)。(4) 拡張子は要求パスと realpath の両方で許可表を通す。

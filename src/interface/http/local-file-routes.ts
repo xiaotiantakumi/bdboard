@@ -1,6 +1,6 @@
 /**
  * bdboard-vgdr。チケット本文が指すプロジェクト内のファイルをボードで見るための読み取り API。
- * ローカル直アクセス限定 (トンネル不可)。閉じ込めは resolveContainedLocalPath の 1 関数に集約。
+ * ローカル直アクセス、または強パスワードのトンネル + セッション Cookie (チャット・添付と同じ資格、bdboard-teir)。閉じ込めは resolveContainedLocalPath の 1 関数に集約。
  * この router は inner のキャッチオールより先に mount される (mount-routes.ts) ので、
  * inner 側のガードは効かない — ここで自前のガードを両パターンに掛ける。
  */
@@ -21,7 +21,7 @@ import { isSafePathSegment } from './attachment-validation.js';
 import { localFileErrorResponse } from './local-file-http-errors.js';
 import { serveLocalFileRaw } from './local-file-raw.js';
 import { findCachedTicket } from './ticket-project-lookup.js';
-import { createPrivilegedApiGuardMiddleware } from './write-guard.js';
+import { createPrivilegedApiGuardMiddleware, type WriteGuardDeps } from './write-guard.js';
 
 export interface LocalFileRoutesDeps {
   readonly cache: Pick<BoardCache, 'listProjects'>;
@@ -30,6 +30,11 @@ export interface LocalFileRoutesDeps {
     'tryRealPath' | 'stat' | 'isDirectory' | 'readDir' | 'readRangeBytes'
   >;
   readonly commentReader?: CommentReader;
+  /**
+   * bdboard-teir: トンネル経由の許可に使う依存 (main.ts の auth.writeAccess。チャット・添付と同じ)。
+   * 省略時はローカル直アクセスだけ通す。
+   */
+  readonly writeAccess?: WriteGuardDeps;
 }
 
 export const LOCAL_FILES_PATH = '/api/tickets/:id/local-files';
@@ -100,7 +105,7 @@ export function createLocalFileRoutes(deps: LocalFileRoutesDeps): Hono {
   const app = new Hono();
 
   // コレクション単体は `/*` にマッチしないので、両方に同じガードを掛ける。
-  const guard = createPrivilegedApiGuardMiddleware({});
+  const guard = createPrivilegedApiGuardMiddleware(deps.writeAccess ?? {});
   app.use(LOCAL_FILES_PATH, guard);
   app.use(`${LOCAL_FILES_PATH}/*`, guard);
 

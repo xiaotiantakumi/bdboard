@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LocalFileListDto, LocalFileRefDto } from '../../api/local-files';
 import { localFileRawUrl } from '../../api/local-files';
+import { LOCAL_FILE_ACCESS_NOTICE } from './localFileErrorMessage';
 import { TicketLocalFilesSection } from './TicketLocalFilesSection';
 
 const TICKET_ID = 'video-p4q.38';
@@ -18,10 +19,9 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-function renderSection(hostname: string) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+// retry は既定のまま (コンポーネントの retry 述語を効かせる)。失敗を待つテストは述語で 403 を止めるので遅くならない。
+function renderSection(hostname = 'localhost') {
+  const client = new QueryClient();
   return render(
     <QueryClientProvider client={client}>
       <TicketLocalFilesSection ticketId={TICKET_ID} hostname={hostname} />
@@ -53,7 +53,7 @@ describe('TicketLocalFilesSection', () => {
       { path: 'projects/demo/script/scenes.json', kind: 'json', size: 512 },
       { path: 'projects/demo/script/review.md', kind: 'markdown', size: 2048 },
     ]);
-    renderSection('localhost');
+    renderSection();
 
     expect(await screen.findByRole('heading', { name: 'ファイル' })).toBeInTheDocument();
     expect(screen.getByText('JSON')).toBeInTheDocument();
@@ -64,20 +64,45 @@ describe('TicketLocalFilesSection', () => {
     expect(screen.getByText('2.0 KB')).toBeInTheDocument();
   });
 
-  it('renders nothing and does not fetch when the hostname is a tunnel', async () => {
-    const fetchMock = installFetch([
-      { path: 'projects/demo/thumbnail.json', kind: 'json', size: 10 },
-    ]);
-    const { container } = renderSection('example.trycloudflare.com');
+  it('lists the files on a tunnel host too (the server guard decides)', async () => {
+    installFetch([{ path: 'projects/demo/thumbnail.json', kind: 'json', size: 10 }]);
+    renderSection('example.trycloudflare.com');
 
-    await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
-    expect(container).toBeEmptyDOMElement();
-    expect(screen.queryByRole('heading', { name: 'ファイル' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'ファイル' })).toBeInTheDocument();
+    expect(screen.getByText('projects/demo/thumbnail.json')).toBeInTheDocument();
+  });
+
+  function stub403() {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ error: 'local access only' }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('shows a one-line notice on a tunnel host when the server denies the session (403), without retrying', async () => {
+    const fetchMock = stub403();
+    renderSection('example.trycloudflare.com');
+
+    expect(await screen.findByText(LOCAL_FILE_ACCESS_NOTICE)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders nothing on loopback when the server denies the session (403)', async () => {
+    const fetchMock = stub403();
+    const { container } = renderSection('localhost');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('renders nothing when the ticket has no local files', async () => {
     const fetchMock = installFetch([]);
-    const { container } = renderSection('localhost');
+    const { container } = renderSection();
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(FILES_URL, undefined));
     expect(container).toBeEmptyDOMElement();
@@ -90,7 +115,7 @@ describe('TicketLocalFilesSection', () => {
     installFetch([
       { path: 'projects/demo/script/scenes.json', kind: 'json', size: 512 },
     ]);
-    renderSection('127.0.0.1');
+    renderSection();
 
     await user.click(await screen.findByRole('button', { name: /scenes\.json/ }));
     expect(
@@ -118,7 +143,7 @@ describe('TicketLocalFilesSection', () => {
         ],
       },
     );
-    renderSection('localhost');
+    renderSection();
 
     const folder = await screen.findByRole('button', { name: /stills/ });
     expect(folder).toHaveAttribute('aria-expanded', 'false');

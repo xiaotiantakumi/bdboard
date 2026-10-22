@@ -35,7 +35,7 @@ export interface MountRoutesDeps {
   readonly platformSupport: PlatformSupport;
   /** チケット添付画像 (bdboard-qw26)。`inner` の catch-all より前に mount する。 */
   readonly attachmentsRouter: Hono;
-  /** チケット本文が指すプロジェクト内ファイル (bdboard-vgdr)。ローカル直アクセス限定。`inner` の catch-all より前に mount する。 */
+  /** チケット本文が指すプロジェクト内ファイル (bdboard-vgdr)。ローカル直、または認可済みトンネルセッション (bdboard-teir)。`inner` の catch-all より前に mount する。 */
   readonly localFilesRouter: Hono;
   /** src/interface/http/routes.ts (bdboard-sso1.1 で分割済み)。 */
   readonly inner: Hono;

@@ -65,6 +65,8 @@ export const BOARD_CHANGED_QUERY_KEY_EXCLUSIONS = {
     '不具合報告の下書き (bdboard-4y8q.3.2) は .beads の外 (下書きのディレクトリ。開発時は data/issue-drafts、npm/npx では ~/.bdboard/issue-drafts) にあり、bd の書き込みからは変化しない。件数と一覧は 60 秒ごとのポーリング (useIssueReportPendingCount・IssueReportsPanel)、編集・見送りの操作の側も invalidate する。',
   'ticket-local-files':
     'チケット本文が指すプロジェクト内ファイルの一覧 (bdboard-vgdr)。本文やコメントの変更で候補は変わりうるが、取得のたびにサーバーが bd comments を起こすうえ board.changed は頻発するので追従させない。詳細パネルの開き直しか、既定の staleTime (30秒) 経過後の再マウント・フォーカス時の再取得に任せる。',
+  'ticket-local-files-access-probe':
+    'ローカルファイルのビューア画面がトンネルのガード (403) を判定するだけの探り (bdboard-teir)。ガードの可否は bd の書き込みでは変わらないので board.changed には追従させない。',
   'ticket-local-file-list':
     'プロジェクト内フォルダの中身 (bdboard-vgdr)。.beads の外のファイルシステムで、bd の書き込みからは変化しない。既定の staleTime 経過後の再マウント・フォーカス時の再取得に任せる。',
   'local-file-text':
