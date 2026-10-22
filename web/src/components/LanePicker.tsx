@@ -31,7 +31,10 @@ export function LanePicker({ items, selectedLane, onSelect, enabled }: LanePicke
 
   return (
     <nav ref={stripRef} className="lane-indicator-strip" aria-label="レーン切り替え">
-      <ul className="lane-indicator-list">
+      <ul
+        className="lane-indicator-list"
+        style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}
+      >
         {items.map((item) => {
           const isCurrent = item.lane === selectedLane;
           const ariaLabel = item.countLabel.startsWith('WIP超過:')
