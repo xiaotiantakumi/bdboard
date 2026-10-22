@@ -119,15 +119,6 @@ describe('mapBdIssueToTicket', () => {
     expect(ticket.models).toEqual([{ stage: 'implement', model: 'composer-2.5' }]);
   });
 
-  it('maps bdboard.session metadata to a manual session link', () => {
-    const ticket = mapBdIssueToTicket(
-      { ...fullIssue(), metadata: { 'bdboard.session': 'sess-manual' } },
-      'my-project',
-    );
-
-    expect(ticket.manualSessionId).toBe('sess-manual');
-  });
-
   it('maps close_reason to closeReason', () => {
     const ticket = mapBdIssueToTicket(
       { ...fullIssue(), close_reason: 'Merged via PR #42' },

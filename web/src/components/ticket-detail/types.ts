@@ -1,6 +1,5 @@
 // bdboard-sso1.5: TicketDetailPanel.tsx から純粋な型・定数を移動しただけのファイル。
 // 挙動は一切変えていない。
-import type { BdCommandKind } from '../../bdCommands';
 import type {
   PendingDecisionDto,
   PrBadgeDto,
@@ -52,7 +51,7 @@ export interface TicketDetailPanelProps {
 export type NextStepCopyTarget = 'next-step-current' | 'next-step-history';
 
 type CopyFeedback =
-  | { kind: 'success'; command: BdCommandKind | NextStepCopyTarget }
+  | { kind: 'success'; command: NextStepCopyTarget }
   | { kind: 'error' };
 
 /**
@@ -66,12 +65,6 @@ export interface CopyDisplay {
 }
 
 export const EMPTY_COPY_DISPLAY: CopyDisplay = { feedback: null, aria: '' };
-
-export type ConfirmingQuickAction =
-  | { kind: 'claim' }
-  | { kind: 'close' }
-  | { kind: 'defer'; untilDate: string }
-  | { kind: 'priority'; priority: number };
 
 export type SubmittedDecision = {
   decisionId: string;

@@ -7,7 +7,6 @@ vi.mock('./api', async (importOriginal) => {
   return {
     ...actual,
     fetchProjects: vi.fn(),
-    fetchSessions: vi.fn(),
     fetchStatus: vi.fn(),
     fetchBoard: vi.fn(),
     fetchPendingDecisions: vi.fn(),
@@ -33,7 +32,7 @@ vi.mock('./components/BoardView', async (importOriginal) => {
   };
 });
 
-import { primeAppApiMocks, renderApp } from './test/appHarness';
+import { primeAppApiMocks, renderApp, selectOverflowItem } from './test/appHarness';
 
 describe('App view boundary (bdboard-yfq)', () => {
   beforeEach(() => {
@@ -55,8 +54,7 @@ describe('App view boundary (bdboard-yfq)', () => {
     );
     // ビュー領域の外 (ヘッダー) は生きている。境界が無ければ App ごと落ちて
     // ここも消える。
-    expect(screen.getByRole('button', { name: '設定' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '分割' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^その他のメニュー/ })).toBeInTheDocument();
   });
 
   it('recovers by switching to another view', async () => {
@@ -64,7 +62,7 @@ describe('App view boundary (bdboard-yfq)', () => {
     renderApp();
 
     await screen.findByRole('alert');
-    await user.click(screen.getByRole('button', { name: '設定' }));
+    await selectOverflowItem(user, '設定');
 
     // 境界から key={view} を外すと、壊れた状態を持ち越して別ビューでも
     // fallback が出たままになる。

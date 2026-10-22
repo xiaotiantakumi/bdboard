@@ -31,13 +31,11 @@ function makeParams(
     projectRootPath: '/repo',
     clearCopyDisplay: vi.fn(),
     resetDecision: vi.fn(),
-    resetQuickActions: vi.fn(),
     resetComment: vi.fn(),
     resetDependencies: vi.fn(),
     resetLabelInput: vi.fn(),
     resetTitleEditing: vi.fn(),
     resetDescriptionEditing: vi.fn(),
-    resetSessionLink: vi.fn(),
     ...overrides,
   };
 }
@@ -52,13 +50,11 @@ describe('useTicketFormReset', () => {
     expect(params.resetDecision).toHaveBeenCalledWith({
       clearSubmittedDecision: true,
     });
-    expect(params.resetQuickActions).toHaveBeenCalledTimes(1);
     expect(params.resetComment).toHaveBeenCalledTimes(1);
     expect(params.resetDependencies).toHaveBeenCalledTimes(1);
     expect(params.resetLabelInput).toHaveBeenCalledTimes(1);
     expect(params.resetTitleEditing).toHaveBeenCalledTimes(1);
     expect(params.resetDescriptionEditing).toHaveBeenCalledTimes(1);
-    expect(params.resetSessionLink).toHaveBeenCalledTimes(1);
   });
 
   it('calls the resets in the original resetFormState order', () => {
@@ -66,7 +62,6 @@ describe('useTicketFormReset', () => {
     const params = makeParams({
       clearCopyDisplay: vi.fn(() => order.push('clearCopyDisplay')),
       resetDecision: vi.fn(() => order.push('resetDecision')),
-      resetQuickActions: vi.fn(() => order.push('resetQuickActions')),
       resetComment: vi.fn(() => order.push('resetComment')),
       resetDependencies: vi.fn(() => order.push('resetDependencies')),
       resetLabelInput: vi.fn(() => order.push('resetLabelInput')),
@@ -74,7 +69,6 @@ describe('useTicketFormReset', () => {
       resetDescriptionEditing: vi.fn(() =>
         order.push('resetDescriptionEditing'),
       ),
-      resetSessionLink: vi.fn(() => order.push('resetSessionLink')),
     });
 
     renderHook(() => useTicketFormReset(params));
@@ -82,13 +76,11 @@ describe('useTicketFormReset', () => {
     expect(order).toEqual([
       'clearCopyDisplay',
       'resetDecision',
-      'resetQuickActions',
       'resetComment',
       'resetDependencies',
       'resetLabelInput',
       'resetTitleEditing',
       'resetDescriptionEditing',
-      'resetSessionLink',
     ]);
   });
 
@@ -110,11 +102,11 @@ describe('useTicketFormReset', () => {
       { initialProps: params },
     );
 
-    expect(params.resetSessionLink).toHaveBeenCalledTimes(1);
+    expect(params.resetDescriptionEditing).toHaveBeenCalledTimes(1);
 
     rerender({ ...params, ticketId: 'bd-2' });
 
-    expect(params.resetSessionLink).toHaveBeenCalledTimes(2);
+    expect(params.resetDescriptionEditing).toHaveBeenCalledTimes(2);
   });
 
   it('re-runs the reset when only projectRootPath changes (ticketId unchanged)', () => {

@@ -160,21 +160,6 @@
     width: 100%;
   }
 
-  /* セッション行は表示専用でタップ先が無いので、44px のタップ領域は与えない。
-     フィールドは1行あたり6個あり、44px を敷くと1セッションで 264px を超えて、
-     縦幅が最も貴重な画面で読み取り専用のリストが何も得ずに膨らむ。
-     代わりにスクロール中の誤選択だけを抑える。 */
-  .session-row {
-    -webkit-user-select: none;
-    user-select: none;
-  }
-
-  /* pid は手で拾ってコマンドに貼るため、meta 行だけ選択可能に戻す */
-  .session-row-meta {
-    -webkit-user-select: text;
-    user-select: text;
-  }
-
   .meta-text-btn {
     min-height: 44px;
     display: inline-flex;
@@ -209,20 +194,6 @@
     max-width: 90%;
   }
 
-  .session-tail-message {
-    max-width: 90%;
-  }
-
-  .bd-command-btn {
-    min-height: 44px;
-    min-width: 44px;
-  }
-
-  .quick-action-btn {
-    min-height: 44px;
-    min-width: 44px;
-  }
-
   .quick-action-confirm-actions .btn {
     min-height: 44px;
     min-width: 44px;
@@ -241,11 +212,6 @@
 
   .search-result-item {
     min-height: 44px;
-  }
-
-  .btn-search {
-    min-height: 44px;
-    min-width: 44px;
   }
 
   /* --- bdboard-h4xs.9: モバイル(<=480px)タップ領域底上げ ---
@@ -314,13 +280,8 @@
     gap: 12px;
   }
 
-  /* Tier 3: 期間切替・ビュータブ・チャット以外の toggle-btn */
-  .view-switcher .toggle-btn {
-    min-height: 44px;
-  }
-
-  .session-list-tabs .toggle-btn,
-  .board-filter-bar .toggle-btn {
+  /* Tier 3: 期間切替・チャット以外の toggle-btn */
+  .filter-menu .toggle-btn {
     min-height: 44px;
   }
 }

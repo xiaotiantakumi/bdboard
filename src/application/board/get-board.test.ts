@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compareStrings } from '../../domain/compare.js';
 import {
-  makeSession,
-  makeSessionLink,
   makeTicket,
 } from '../../domain/test-support.js';
 import type { Project } from '../../domain/project.js';
@@ -260,75 +258,6 @@ describe('getBoard', () => {
     const view = await getBoard({ cache, now: NOW }, { projectIds: [a.id, '/missing'] });
 
     expect(view.projects.map((p) => p.project.id)).toEqual([a.id]);
-  });
-
-  it('passes sessions and links to buildBoard', async () => {
-    const cache = createFakeBoardCache();
-    const a = project('/a', '/projects/a');
-    seedCache(cache, [{ project: a, ticketId: 'bdboard-linked' }]);
-
-    const session = makeSession({
-      sessionId: 'session-active',
-      lastActivityAt: NOW,
-      alive: true,
-    });
-    const links = [
-      makeSessionLink({ ticketId: 'bdboard-linked', sessionId: 'session-active' }),
-    ];
-    /*
-     * ここで livenessThresholds を渡さないのは意図的 (bdboard-3z5x)。この
-     * テストが見ているのは sessions/links の受け渡しであって閾値ではなく、
-     * lastActivityAt=NOW は既定閾値でも上書き閾値でも 'active' になるため、
-     * 閾値を渡しても何も検証できない (渡し忘れても通る飾りになる)。
-     * 閾値の受け渡しは下の 'passes livenessThresholds to buildBoard' が見る。
-     */
-    const view = await getBoard({
-      cache,
-      now: NOW,
-      sessions: [session],
-      links,
-    });
-
-    const card = view.projects[0]?.board.cards[0];
-    expect(card?.sessions.map((s) => s.sessionId)).toEqual(['session-active']);
-    expect(card?.liveness).toBe('active');
-  });
-
-  it('passes livenessThresholds to buildBoard', async () => {
-    /*
-     * 既定 (activeMs=5分) と上書き (activeMs=1分) で結果が変わる入力を使う。
-     * 2分アイドルなら既定は 'active'、上書きは 'idle'。この対比が無いと
-     * get-board.ts の条件付き spread から livenessThresholds を落としても
-     * このファイルは緑のまま通る (bdboard-3z5x で変異テストにより確認)。
-     * 隣の stalledThresholds は既にこの形で守られており、それに揃えた。
-     */
-    const cache = createFakeBoardCache();
-    const a = project('/a', '/projects/a');
-    seedCache(cache, [{ project: a, ticketId: 'bdboard-liveness' }]);
-    const session = makeSession({
-      sessionId: 'session-2m-idle',
-      lastActivityAt: new Date(NOW.getTime() - 2 * 60_000),
-      alive: true,
-    });
-    const links = [
-      makeSessionLink({ ticketId: 'bdboard-liveness', sessionId: 'session-2m-idle' }),
-    ];
-
-    const defaultView = await getBoard({ cache, now: NOW, sessions: [session], links });
-    expect(defaultView.projects[0]?.board.cards[0]?.liveness).toBe('active');
-
-    const overriddenView = await getBoard({
-      cache,
-      now: NOW,
-      sessions: [session],
-      links,
-      livenessThresholds: {
-        activeMs: 60_000,
-        idleMs: 10 * 60_000,
-        staleMs: 60 * 60_000,
-      },
-    });
-    expect(overriddenView.projects[0]?.board.cards[0]?.liveness).toBe('idle');
   });
 
   it('passes stalledThresholds to buildBoard', async () => {

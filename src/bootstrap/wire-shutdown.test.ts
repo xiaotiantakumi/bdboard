@@ -13,7 +13,6 @@ function createDeps(overrides: Partial<WireShutdownDeps> = {}): WireShutdownDeps
     },
     shutdownTimeoutMs: 5_000,
     refreshIntervalTimer: setInterval(() => {}, 1_000_000),
-    sessionIntervalTimer: setInterval(() => {}, 1_000_000),
     transcriptIntervalTimer: setInterval(() => {}, 1_000_000),
     aiQuotaAlertIntervalTimer: setInterval(() => {}, 1_000_000),
     reclaimScheduler: { stop: vi.fn() },
@@ -77,7 +76,6 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
       // ラベルを引けるマップを先に作っておく (5本とも spy 一本で区別する)。
       const timerLabels = new Map<unknown, string>([
         [deps.refreshIntervalTimer, 'clearInterval(refresh)'],
-        [deps.sessionIntervalTimer, 'clearInterval(session)'],
         [deps.transcriptIntervalTimer, 'clearInterval(transcript)'],
         [deps.aiQuotaAlertIntervalTimer, 'clearInterval(aiQuotaAlert)'],
       ]);
@@ -95,7 +93,6 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
       // reclaimScheduler.stop() はその手前で既に呼ばれている。
       expect(order).toEqual([
         'clearInterval(refresh)',
-        'clearInterval(session)',
         'clearInterval(transcript)',
         'clearInterval(aiQuotaAlert)',
         'reclaimScheduler.stop',
@@ -114,11 +111,10 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
     }
   });
 
-  it('tolerates undefined/null optional timers (transcript/ai-quota disabled, session-discovery unsupported)', async () => {
+  it('tolerates undefined/null optional timers (transcript/ai-quota disabled)', async () => {
     vi.useFakeTimers();
     try {
       const deps = createDeps({
-        sessionIntervalTimer: null,
         transcriptIntervalTimer: undefined,
         aiQuotaAlertIntervalTimer: undefined,
       });
@@ -170,7 +166,6 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
       // このテストは vi.useFakeTimers() を使わないため、createDeps() が張った
       // 5本の実タイマーが残ったままだと vitest プロセスがハングしかねない。
       clearInterval(deps.refreshIntervalTimer);
-      if (deps.sessionIntervalTimer !== null) clearInterval(deps.sessionIntervalTimer);
       if (deps.transcriptIntervalTimer !== undefined) clearInterval(deps.transcriptIntervalTimer);
       if (deps.aiQuotaAlertIntervalTimer !== undefined) clearInterval(deps.aiQuotaAlertIntervalTimer);
     }

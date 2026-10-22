@@ -47,7 +47,6 @@ export function AppBody({ controller }: AppBodyProps) {
     handleSelectTicket,
     overlays,
     projectNames,
-    projectActiveSessions,
     projectRootPaths,
     statusErrors,
     boardQuery,
@@ -116,7 +115,6 @@ export function AppBody({ controller }: AppBodyProps) {
           }}
           boardMeta={{
             projectNames,
-            projectActiveSessions,
             projectRootPaths,
             pendingDecisionIds,
             prLinksById,
@@ -125,7 +123,6 @@ export function AppBody({ controller }: AppBodyProps) {
             selectedProjectIdsJoined,
           }}
           onCardClick={handleSelectTicket}
-          onSessionBadgeClick={overlays.handleOpenSessionList}
           nextUp={{
             batchRun: nextUpBatchRun,
           }}

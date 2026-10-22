@@ -7,7 +7,6 @@ vi.mock('./api', async (importOriginal) => {
   return {
     ...actual,
     fetchProjects: vi.fn(),
-    fetchSessions: vi.fn(),
     fetchStatus: vi.fn(),
     fetchBoard: vi.fn(),
     fetchPendingDecisions: vi.fn(),
@@ -20,7 +19,7 @@ vi.mock('./api', async (importOriginal) => {
   };
 });
 
-import { primeAppApiMocks, renderApp } from './test/appHarness';
+import { primeAppApiMocks, renderApp, selectOverflowItem } from './test/appHarness';
 
 /*
   bdboard-ml0k: カードのチェックボックスは出て選択も入るのに、一括操作バー
@@ -53,7 +52,6 @@ describe('App bulk action bar visibility (bdboard-ml0k)', () => {
       name: 'bdboard-boom を選択',
     });
     await user.click(checkbox);
-    await user.click(screen.getByRole('button', { name: '分割' }));
 
     expect(await screen.findByText('1件選択中')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '全解除' })).toBeInTheDocument();
@@ -74,7 +72,7 @@ describe('App bulk action bar visibility (bdboard-ml0k)', () => {
 
       // 選択はビューを跨いで残る (PR#129) が、カードを並べないビューでは
       // 操作バーは出ない。
-      await user.click(screen.getByRole('button', { name: viewLabel }));
+      await selectOverflowItem(user, viewLabel);
       expect(screen.queryByText('1件選択中')).toBeNull();
     },
   );

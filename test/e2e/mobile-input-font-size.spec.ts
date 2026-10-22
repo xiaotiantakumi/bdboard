@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { clickChatButton } from './fixtures/chat-panel-helpers.js';
 
 /**
  * Mobile form control font-size regression (bdboard-h4xs.10).
@@ -114,13 +115,13 @@ test.describe('mobile input font-size', () => {
     const card = page.locator('article').first();
     await expect(card).toBeVisible({ timeout: 15_000 });
 
-    const filterToggle = page.getByRole('button', { name: /^絞り込み/ });
-    await expect(filterToggle).toBeVisible();
-    await filterToggle.click();
+    // bdboard-gyvv: フィルタは ⋯ メニューのシートから開く。
+    await page.getByRole('button', { name: 'その他のメニュー' }).click();
+    await page.getByRole('menuitem', { name: /^フィルタ/ }).click();
     await expect(page.locator('#board-priority-ceiling')).toBeVisible();
 
     // 実測2（board-filter select + search）。件数が少ないので下限も2のまま。
-    await expectAllFormElementsAtLeast16px(page, 'board root', 2);
+    await expectAllFormElementsAtLeast16px(page, 'board root', 1);
 
     const ticketCard = page.locator('article', { hasText: TICKET_TITLE });
     await expect(ticketCard).toBeVisible();
@@ -145,21 +146,23 @@ test.describe('mobile input font-size', () => {
       timeout: 15_000,
     });
 
-    // 実測6（詳細パネルを開いた状態）。内訳: ボード2
+    // 実測4 (2026-10-22、#964 でフィルタ入力がポップオーバーへ、#967 で延期期間 select が消えた後)。
+    // 以下は当時の実測6の内訳 (参考)。内訳: ボード2
     // (select#board-priority-ceiling / input[type=search].board-filter-input) +
     // 詳細パネル4 (#label-add-input / #dependency-search / #comment-text /
     // aria-label="延期期間" の select)。延期期間 select は BulkActionBar にもあるが、
     // 一括操作バーが出ている状態では件数が変わるため、この内訳は詳細パネル open 限定。
     // いずれも #comment-text 待機で同一 {data !== undefined} ブロック内に描画される。
     // e2e bd スタブは human-decisions を空配列で返すため #decision-freeform は出ない
-    // (bdboard-sp5q)。下限5は確実な6より下 (5/6≒83%) でフォーム群消失検知用。
-    await expectAllFormElementsAtLeast16px(page, 'ticket detail open', 5);
+    // (bdboard-sp5q)。下限3は実測4より下でフォーム群消失検知用。
+    await expectAllFormElementsAtLeast16px(page, 'ticket detail open', 3);
 
     const closeBtn = dialog.getByRole('button', { name: '閉じる' });
     await closeBtn.click();
     await expect(dialog).not.toBeVisible();
 
-    await page.getByRole('button', { name: '設定', exact: true }).click();
+    await page.getByRole('button', { name: 'その他のメニュー' }).click();
+    await page.getByRole('menuitem', { name: '設定' }).click();
     // section[aria-label="設定"] はローディング/エラー/コンテンツの3状態すべてにある。
     // コンテンツ状態 (.settings-panel-title) の visible を待ち、エラー状態を素通りしない。
     await expect(page.locator('.settings-panel-title')).toBeVisible({
@@ -176,12 +179,11 @@ test.describe('mobile input font-size', () => {
 
     // bdboard-mkm1.1: 「統合」タブは削除された。既定ビューは既に「分割」だが、
     // 直前に設定ビューへ遷移しているのでボード系ビューへ明示的に戻す必要がある。
-    await page.getByRole('button', { name: '分割', exact: true }).click();
+    await page.getByRole('button', { name: 'その他のメニュー' }).click();
+    await page.getByRole('menuitem', { name: 'ボードに戻る' }).click();
     await expect(card).toBeVisible({ timeout: 15_000 });
 
-    const chatButton = page.getByRole('button', { name: 'チャット' });
-    await expect(chatButton).toBeVisible();
-    await chatButton.click();
+    await clickChatButton(page);
 
     const chatDialog = page.getByRole('dialog');
     await expect(chatDialog).toBeVisible();

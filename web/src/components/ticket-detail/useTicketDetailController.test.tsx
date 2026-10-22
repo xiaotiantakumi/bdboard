@@ -12,13 +12,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./useTicketDetailQueries');
 vi.mock('./useTicketAgentRun');
 vi.mock('../../hooks/useAutoClearedValue');
-vi.mock('./useTicketQuickActions');
 vi.mock('./useTicketTitleEditing');
 vi.mock('./useTicketDescriptionEditing');
 vi.mock('./useTicketLabels');
 vi.mock('./useTicketDependencies');
 vi.mock('./useTicketComment');
-vi.mock('./useTicketSessionLink');
 vi.mock('./useTicketFormReset');
 vi.mock('../../hooks/useFocusTrap');
 vi.mock('./useCommentFocusShortcut');
@@ -26,13 +24,11 @@ vi.mock('./useCommentFocusShortcut');
 import { useTicketDetailQueries } from './useTicketDetailQueries';
 import { useTicketAgentRun } from './useTicketAgentRun';
 import { useAutoClearedValue } from '../../hooks/useAutoClearedValue';
-import { useTicketQuickActions } from './useTicketQuickActions';
 import { useTicketTitleEditing } from './useTicketTitleEditing';
 import { useTicketDescriptionEditing } from './useTicketDescriptionEditing';
 import { useTicketLabels } from './useTicketLabels';
 import { useTicketDependencies } from './useTicketDependencies';
 import { useTicketComment } from './useTicketComment';
-import { useTicketSessionLink } from './useTicketSessionLink';
 import { useTicketFormReset } from './useTicketFormReset';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useCommentFocusShortcut } from './useCommentFocusShortcut';
@@ -44,13 +40,11 @@ import {
 const queriesMock = vi.mocked(useTicketDetailQueries);
 const agentRunMock = vi.mocked(useTicketAgentRun);
 const autoClearedMock = vi.mocked(useAutoClearedValue);
-const quickActionsMock = vi.mocked(useTicketQuickActions);
 const titleMock = vi.mocked(useTicketTitleEditing);
 const descriptionMock = vi.mocked(useTicketDescriptionEditing);
 const labelsMock = vi.mocked(useTicketLabels);
 const dependenciesMock = vi.mocked(useTicketDependencies);
 const commentMock = vi.mocked(useTicketComment);
-const sessionLinkMock = vi.mocked(useTicketSessionLink);
 const formResetMock = vi.mocked(useTicketFormReset);
 const focusTrapMock = vi.mocked(useFocusTrap);
 const commentFocusShortcutMock = vi.mocked(useCommentFocusShortcut);
@@ -70,7 +64,6 @@ const MARK_DATA = {
 const shortcutHandler = vi.fn();
 
 function setupMocks(overrides: {
-  quickActions?: Partial<ReturnType<typeof useTicketQuickActions>>;
   agentRun?: { confirmingAgentRun?: boolean; startRunMutation?: { isPending: boolean } };
 } = {}) {
   const queryClient = { invalidateQueries: vi.fn() };
@@ -110,15 +103,6 @@ function setupMocks(overrides: {
     clear: autoClearedClear,
   });
 
-  const quickActionsReset = vi.fn();
-  quickActionsMock.mockReturnValue({
-    mutationPending: false,
-    confirmingQuickAction: null,
-    reset: quickActionsReset,
-    MARK: 'quick-actions',
-    ...overrides.quickActions,
-  } as unknown as ReturnType<typeof useTicketQuickActions>);
-
   const titleReset = vi.fn();
   titleMock.mockReturnValue({ MARK: 'title', reset: titleReset } as unknown as ReturnType<
     typeof useTicketTitleEditing
@@ -144,11 +128,6 @@ function setupMocks(overrides: {
     shared: 'MARK-from-comment',
     reset: commentReset,
   } as unknown as ReturnType<typeof useTicketComment>);
-  const sessionLinkReset = vi.fn();
-  sessionLinkMock.mockReturnValue({
-    MARK: 'session-link',
-    reset: sessionLinkReset,
-  } as unknown as ReturnType<typeof useTicketSessionLink>);
   formResetMock.mockReturnValue(undefined);
   focusTrapMock.mockReturnValue(undefined);
   commentFocusShortcutMock.mockReturnValue(shortcutHandler);
@@ -159,13 +138,11 @@ function setupMocks(overrides: {
     decision,
     decisionReset,
     autoClearedClear,
-    quickActionsReset,
     titleReset,
     descriptionReset,
     labelsReset,
     dependenciesReset,
     commentReset,
-    sessionLinkReset,
   };
 }
 
@@ -215,10 +192,6 @@ describe('useTicketDetailController', () => {
       MARK: 'dependencies',
       reset: expect.any(Function) as unknown,
     });
-    expect(result.current.sessionLink).toEqual({
-      MARK: 'session-link',
-      reset: expect.any(Function) as unknown,
-    });
     expect(result.current.decision).toBe(decision);
     expect(result.current.timeline).toEqual({ MARK: 'timeline' });
     expect(result.current.similarTickets).toEqual({ MARK: 'similar-tickets' });
@@ -247,39 +220,18 @@ describe('useTicketDetailController', () => {
     });
   });
 
-  it('computes quickActions.disabled / agentRun.actionsDisabled from the combined flags (each flag exercised in isolation, including confirmingQuickAction)', () => {
+  it('computes agentRun.actionsDisabled from the combined flags', () => {
     setupMocks();
     const params = makeParams();
     const { result: allFalse } = renderHook(() => useTicketDetailController(params));
-    expect(allFalse.current.quickActions.disabled).toBe(false);
     expect(allFalse.current.agentRun.actionsDisabled).toBe(false);
-
-    setupMocks({ quickActions: { mutationPending: true } });
-    const { result: mutationPending } = renderHook(() =>
-      useTicketDetailController(params),
-    );
-    // mutationPending は quickActionsDisabled のみに効き、
-    // agentRunActionsDisabled の式には含まれない。
-    expect(mutationPending.current.quickActions.disabled).toBe(true);
-    expect(mutationPending.current.agentRun.actionsDisabled).toBe(false);
-
-    // confirmingQuickAction !== null は quickActionsDisabled と
-    // agentRunActionsDisabled の両方の式に含まれる。
-    setupMocks({ quickActions: { confirmingQuickAction: { kind: 'claim' } } });
-    const { result: confirmingQuickAction } = renderHook(() =>
-      useTicketDetailController(params),
-    );
-    expect(confirmingQuickAction.current.quickActions.disabled).toBe(true);
-    expect(confirmingQuickAction.current.agentRun.actionsDisabled).toBe(true);
 
     setupMocks({ agentRun: { confirmingAgentRun: true } });
     const { result: confirming } = renderHook(() => useTicketDetailController(params));
-    expect(confirming.current.quickActions.disabled).toBe(true);
     expect(confirming.current.agentRun.actionsDisabled).toBe(true);
 
     setupMocks({ agentRun: { startRunMutation: { isPending: true } } });
     const { result: pending } = renderHook(() => useTicketDetailController(params));
-    expect(pending.current.quickActions.disabled).toBe(true);
     expect(pending.current.agentRun.actionsDisabled).toBe(true);
   });
 
@@ -303,7 +255,6 @@ describe('useTicketDetailController', () => {
 
     expect(result.current.copy.copyFeedback).toEqual({ kind: 'success', command: 'claim' });
     expect(result.current.copy.ariaLiveMessage).toBe('MARK-aria');
-    expect(result.current.copy.handleCopyCommand).toEqual(expect.any(Function) as unknown);
     expect(result.current.copy.handleCopyNextStep).toEqual(expect.any(Function) as unknown);
   });
 
@@ -316,11 +267,6 @@ describe('useTicketDetailController', () => {
       'MARK-ticket-id',
       MARK_DATA,
       'MARK-project-root',
-    );
-    expect(quickActionsMock).toHaveBeenCalledWith(
-      'MARK-ticket-id',
-      MARK_DATA,
-      expect.objectContaining({ MARK: 'undo-snackbar' }) as unknown,
     );
     expect(titleMock).toHaveBeenCalledWith('MARK-ticket-id', 'MARK-title');
     expect(descriptionMock).toHaveBeenCalledWith(
@@ -335,7 +281,6 @@ describe('useTicketDetailController', () => {
     );
     expect(dependenciesMock).toHaveBeenCalledWith('MARK-ticket-id', MARK_DATA);
     expect(commentMock).toHaveBeenCalledWith('MARK-ticket-id');
-    expect(sessionLinkMock).toHaveBeenCalledWith('MARK-ticket-id');
 
     expect(focusTrapMock).toHaveBeenCalledWith({
       containerRef: params.panelRef,
@@ -349,17 +294,8 @@ describe('useTicketDetailController', () => {
     });
   });
 
-  it('drives useFocusTrap.enabled and useCommentFocusShortcut.disabled from confirmingQuickAction / confirmingAgentRun', () => {
+  it('drives useFocusTrap.enabled and useCommentFocusShortcut.disabled from confirmingAgentRun', () => {
     const params = makeParams();
-
-    setupMocks({ quickActions: { confirmingQuickAction: { kind: 'claim' } } });
-    renderHook(() => useTicketDetailController(params));
-    expect(focusTrapMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ enabled: false }) as unknown,
-    );
-    expect(commentFocusShortcutMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ disabled: true }) as unknown,
-    );
 
     setupMocks({ agentRun: { confirmingAgentRun: true } });
     renderHook(() => useTicketDetailController(params));
@@ -375,13 +311,11 @@ describe('useTicketDetailController', () => {
     const {
       decisionReset,
       autoClearedClear,
-      quickActionsReset,
-      titleReset,
+        titleReset,
       descriptionReset,
       labelsReset,
       dependenciesReset,
       commentReset,
-      sessionLinkReset,
     } = setupMocks();
     const params = makeParams();
     renderHook(() => useTicketDetailController(params));
@@ -391,13 +325,11 @@ describe('useTicketDetailController', () => {
       projectRootPath: 'MARK-project-root',
       clearCopyDisplay: autoClearedClear,
       resetDecision: decisionReset,
-      resetQuickActions: quickActionsReset,
       resetComment: commentReset,
       resetDependencies: dependenciesReset,
       resetLabelInput: labelsReset,
       resetTitleEditing: titleReset,
       resetDescriptionEditing: descriptionReset,
-      resetSessionLink: sessionLinkReset,
     });
   });
 });

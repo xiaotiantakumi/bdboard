@@ -1,10 +1,8 @@
 import { buildBoard, mergeBoards, type Board, type BoardCard } from '../../domain/board.js';
 import { compareStrings } from '../../domain/compare.js';
 import { filterTicketsByEpic } from '../../domain/epic-closure.js';
-import type { LivenessThresholds } from '../../domain/liveness.js';
 import type { StalledThresholds } from '../../domain/stalled.js';
 import type { Project } from '../../domain/project.js';
-import type { AgentSession, SessionLink } from '../../domain/session.js';
 import type { TicketId } from '../../domain/ticket-id.js';
 import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { BoardCache } from '../ports/board-cache.js';
@@ -47,10 +45,6 @@ export interface BoardView {
 export interface GetBoardDeps {
   readonly cache: BoardCache;
   readonly now: Date;
-  /** S7/S8 で埋まる。未指定なら空 */
-  readonly sessions?: readonly AgentSession[];
-  readonly links?: readonly SessionLink[];
-  readonly livenessThresholds?: LivenessThresholds;
   readonly stalledThresholds?: StalledThresholds;
 }
 
@@ -177,11 +171,6 @@ export async function getBoard(
   }
 
   const optionalBuildBoardInput = {
-    ...(deps.sessions !== undefined ? { sessions: deps.sessions } : {}),
-    ...(deps.links !== undefined ? { links: deps.links } : {}),
-    ...(deps.livenessThresholds !== undefined
-      ? { livenessThresholds: deps.livenessThresholds }
-      : {}),
     ...(deps.stalledThresholds !== undefined
       ? { stalledThresholds: deps.stalledThresholds }
       : {}),

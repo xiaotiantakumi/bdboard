@@ -26,15 +26,6 @@ export interface DependencyEdgeDto {
   kind: string;
 }
 
-/**
- * source: 'metadata' は bdboard.session メタデータ経由の手動リンク、
- * 'transcript' はトランスクリプトからの自動推定リンク(bdboard-3tw.9)。
- */
-export interface TicketSessionLinkDto {
-  sessionId: string;
-  source: 'metadata' | 'transcript';
-}
-
 /** `bdboard.model.<工程>` メタデータ由来の、工程ごとの使用モデル。 */
 export interface TicketModelDto {
   stage: string;
@@ -48,7 +39,6 @@ export interface TicketDetailDto extends TicketSummaryDto {
   blockedBy: string[];
   blocks: string[];
   usage?: TicketTokenUsageDto;
-  sessionLinks: TicketSessionLinkDto[];
   models: TicketModelDto[];
   children: TicketChildDto[];
   /** `bdboard.complexity` メタデータ由来の複雑度(bdboard-p5l.18)。 */

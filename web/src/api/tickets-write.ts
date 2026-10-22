@@ -137,26 +137,3 @@ export function patchTicketDescription(
     },
   ).then(() => undefined);
 }
-
-export function postTicketSessionLink(
-  id: string,
-  sessionId: string,
-): Promise<void> {
-  return fetchJson<{ ok: true }>(
-    `/api/tickets/${encodeURIComponent(id)}/session-link`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId }),
-    },
-  ).then(() => undefined);
-}
-
-export function deleteTicketSessionLink(id: string): Promise<void> {
-  return fetchJson<{ ok: true }>(
-    `/api/tickets/${encodeURIComponent(id)}/session-link`,
-    {
-      method: 'DELETE',
-    },
-  ).then(() => undefined);
-}

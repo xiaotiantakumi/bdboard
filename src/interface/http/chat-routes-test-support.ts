@@ -10,7 +10,6 @@ import { compareStrings } from '../../domain/compare.js';
 import { makeTicket } from '../../domain/test-support.js';
 import type { Project } from '../../domain/project.js';
 import type { BoardCache, CachedProject } from '../../application/ports/board-cache.js';
-import type { ChatSessionDiscoveryPort } from '../../application/ports/chat-session-discovery.js';
 import { createEmptyCacheStatsMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../../application/ports/board-cache-fakes.js';
 import type { ChatAgentPort } from '../../application/ports/chat-agent.js';
 import { createChatSessionStore } from '../../application/chat/chat-session-store.js';
@@ -137,7 +136,6 @@ export function createApp(
       readonly defaultWeight?: number;
     };
     readonly availabilityCacheMs?: number;
-    readonly sessionDiscovery?: ChatSessionDiscoveryPort;
   } = {},
 ): Hono {
   const agents =
@@ -160,9 +158,6 @@ export function createApp(
     ...(overrides.rateLimit !== undefined ? { rateLimit: overrides.rateLimit } : {}),
     ...(overrides.availabilityCacheMs !== undefined
       ? { availabilityCacheMs: overrides.availabilityCacheMs }
-      : {}),
-    ...(overrides.sessionDiscovery !== undefined
-      ? { sessionDiscovery: overrides.sessionDiscovery }
       : {}),
   });
 }

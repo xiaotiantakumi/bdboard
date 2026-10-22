@@ -1,11 +1,7 @@
-// bdboard-sso1.70: BoardFilterBar.tsx のフィルタパネル本体(優先度上限/種別/ラベル/
-// テキスト/フィルタ解除)を移動しただけの表示専用コンポーネント。state は
-// 親(useBoardFilterBar)に残し、値とハンドラを props で受け取る。JSX・className・
-// aria属性・文言・DOM構造は移動前から変えていない。
-// onClearFilter は「フィルタ解除」ボタンの表示条件(filterActive)を兼ねる
-// (undefined なら非表示)。移動前の `{filterActive && (<button onClick={handleClearFilter}>...` と
-// 表示条件・クリック時の呼び出し先は同じで、条件判定を呼び出し側(親)に残したまま
-// props を1つ減らしている。
+// bdboard-gyvv: ヘッダーの「フィルタ」ポップオーバーの中身 (優先度上限/種別/ラベル/
+// フィルタ解除)。テキスト検索はヘッダーの検索欄に移した。state は親が持ち、値と
+// ハンドラを props で受け取る。onClearFilter は「フィルタ解除」ボタンの表示条件を兼ねる
+// (undefined なら非表示)。
 import {
   BOARD_ISSUE_TYPES,
   type PriorityCeilingChoice,
@@ -26,8 +22,6 @@ export interface BoardFilterPanelProps {
   onLabelToggle: (label: string) => void;
   isMissingLabel: (label: string) => boolean;
   hasMissingLabel: boolean;
-  filterText: string;
-  onFilterTextChange: (text: string) => void;
   onClearFilter: (() => void) | undefined;
 }
 
@@ -41,8 +35,6 @@ export function BoardFilterPanel({
   onLabelToggle,
   isMissingLabel,
   hasMissingLabel,
-  filterText,
-  onFilterTextChange,
   onClearFilter,
 }: BoardFilterPanelProps) {
   return (
@@ -128,17 +120,6 @@ export function BoardFilterPanel({
           )}
         </div>
       )}
-
-      <div className="board-filter-group board-filter-text-group">
-        <input
-          type="search"
-          className="board-filter-input"
-          value={filterText}
-          onChange={(event) => onFilterTextChange(event.target.value)}
-          placeholder="タイトル/IDで絞り込み"
-          aria-label="チケットの絞り込み"
-        />
-      </div>
 
       {onClearFilter !== undefined && (
         <button

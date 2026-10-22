@@ -1,5 +1,4 @@
 import { AppTicketDetailOverlay, type AppTicketDetailOverlayProps } from './AppTicketDetailOverlay';
-import { AppSessionListOverlay, type AppSessionListOverlayProps } from './AppSessionListOverlay';
 import { AppShortcutsOverlay, type AppShortcutsOverlayProps } from './AppShortcutsOverlay';
 import { AppHelpOverlay, type AppHelpOverlayProps } from './AppHelpOverlay';
 import { AppSearchOverlay, type AppSearchOverlayProps } from './AppSearchOverlay';
@@ -8,7 +7,6 @@ import { AppChatOverlay, type AppChatOverlayProps } from './AppChatOverlay';
 
 export interface AppOverlayGroupProps {
   ticketDetail: AppTicketDetailOverlayProps;
-  sessionList: AppSessionListOverlayProps;
   shortcuts: AppShortcutsOverlayProps;
   help: AppHelpOverlayProps;
   search: AppSearchOverlayProps;
@@ -23,7 +21,7 @@ export interface AppOverlayGroupProps {
  * 同じ手法(関心ごとにまとめたオブジェクトを渡す)でまとめた組み立て役。
  *
  * 各オーバーレイ自体の props 型 (AppXxxOverlayProps) をそのまま
- * `ticketDetail`/`sessionList`/... の型として再利用しているため、渡す値・
+ * `ticketDetail`/`shortcuts`/... の型として再利用しているため、渡す値・
  * prop 名は元の App.tsx から一切変えていない — ただ7回の個別 JSX 呼び出しを
  * 1回のグループ呼び出しにまとめただけ。各オーバーレイ自身の開閉ガード
  * (`if (!open) return null`) はそれぞれの実装内に残っているので、ここでは
@@ -31,7 +29,6 @@ export interface AppOverlayGroupProps {
  */
 export function AppOverlayGroup({
   ticketDetail,
-  sessionList,
   shortcuts,
   help,
   search,
@@ -41,7 +38,6 @@ export function AppOverlayGroup({
   return (
     <>
       <AppTicketDetailOverlay {...ticketDetail} />
-      <AppSessionListOverlay {...sessionList} />
       <AppShortcutsOverlay {...shortcuts} />
       <AppHelpOverlay {...help} />
       <AppSearchOverlay {...search} />

@@ -37,10 +37,6 @@ export const BOARD_CHANGED_QUERY_KEY_EXCLUSIONS = {
   'scan-roots-config': '設定パネル自身の保存操作で invalidate する設定値。',
   'db-stats':
     '設定パネルのローカルキャッシュ DB 診断値 (サイズ・行数)。board.changed で行数は変わりうるが、パネルを開いた時点のスナップショットで足りるため追従させない。',
-  sessions: 'session.changed が更新を通知するセッション一覧。',
-  sessionHistory: 'セッション履歴であり、表示中は定期ポーリングする。',
-  sessionTail: 'セッション出力であり、表示中は定期ポーリングする。',
-  agentProcesses: 'ローカルのエージェントプロセス一覧であり、表示中は定期ポーリングする。',
   'chat-availability': 'チャット機能の利用可否は board データに依存しない。',
   'ai-quota': '外部 AI のクォータは独自の定期ポーリングで更新する。',
   tunnel: 'トンネル状態は board データに依存せず、開始中のみ独自にポーリングする。',

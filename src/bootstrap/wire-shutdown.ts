@@ -37,7 +37,6 @@ export interface WireShutdownDeps extends Omit<ShutdownDrainDeps, 'chatRepositor
   readonly server: GracefulShutdownServer;
   readonly shutdownTimeoutMs: number;
   readonly refreshIntervalTimer: ReturnType<typeof setInterval>;
-  readonly sessionIntervalTimer: ReturnType<typeof setInterval> | null;
   readonly transcriptIntervalTimer: ReturnType<typeof setInterval> | undefined;
   readonly aiQuotaAlertIntervalTimer: ReturnType<typeof setInterval> | undefined;
   readonly reclaimScheduler: Pick<ReclaimScheduler, 'stop'>;
@@ -80,9 +79,6 @@ export function wireShutdown(deps: WireShutdownDeps): WireShutdownResult {
 
   const shutdownForSignal = (): void => {
     clearInterval(deps.refreshIntervalTimer);
-    if (deps.sessionIntervalTimer !== null) {
-      clearInterval(deps.sessionIntervalTimer);
-    }
     if (deps.transcriptIntervalTimer !== undefined) {
       clearInterval(deps.transcriptIntervalTimer);
     }

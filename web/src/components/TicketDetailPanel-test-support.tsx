@@ -62,7 +62,6 @@ export const sampleTicket: TicketDetailDto = {
   blockedBy: [],
   blocks: [],
   commentCount: 0,
-  sessionLinks: [],
   models: [],
   children: [],
 };

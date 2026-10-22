@@ -7,7 +7,7 @@ import {
   type BoardCard,
 } from './board.js';
 import { LANES } from './readiness.js';
-import { makeSession, makeSessionLink, makeTicket } from './test-support.js';
+import { makeTicket } from './test-support.js';
 import type { Ticket } from './ticket.js';
 
 const NOW = new Date('2026-06-01T12:00:00.000Z');
@@ -27,8 +27,6 @@ function makeCard(
   return {
     lane: 'ready',
     projectId: PROJECT,
-    sessions: [],
-    liveness: null,
     blockedBy: [],
     blocks: [],
     unblocksCount: 0,
@@ -76,24 +74,6 @@ describe('compareCards', () => {
     expect(compareCards(low, high)).toBeGreaterThan(0);
   });
 
-  it('sorts by liveness rank ascending when only liveness differs (null is last)', () => {
-    const ticket = makeTicket({
-      id: 'bdboard-live',
-      priority: 2,
-      updatedAt: BASE,
-    });
-    const active = makeCard(ticket, { liveness: 'active' });
-    const idle = makeCard(ticket, { liveness: 'idle' });
-    const stale = makeCard(ticket, { liveness: 'stale' });
-    const dormant = makeCard(ticket, { liveness: 'dormant' });
-    const none = makeCard(ticket, { liveness: null });
-
-    expect(compareCards(active, idle)).toBeLessThan(0);
-    expect(compareCards(idle, stale)).toBeLessThan(0);
-    expect(compareCards(stale, dormant)).toBeLessThan(0);
-    expect(compareCards(dormant, none)).toBeLessThan(0);
-  });
-
   it('sorts by unblocksCount descending when only unblocksCount differs', () => {
     const ticket = makeTicket({
       id: 'bdboard-unblock',
@@ -138,7 +118,7 @@ describe('compareCards', () => {
 
   it('sorts by ticket id using code-point order (not localeCompare)', () => {
     // localeCompare would put 'bdboard-a' before 'ExampleApp-a'; code-point order is the reverse.
-    // makeCard defaults liveness to null and unblocksCount to 0, so only the id differs.
+    // makeCard defaults unblocksCount to 0, so only the id differs.
     const shared = { priority: 2 as const, updatedAt: BASE };
     const kakei = makeCard(makeTicket({ ...shared, id: 'ExampleApp-a' }));
     const bdboard = makeCard(makeTicket({ ...shared, id: 'bdboard-a' }));
@@ -212,129 +192,6 @@ describe('buildBoard blocks and unblocksCount', () => {
     const card = board.cards.find((c) => c.ticket.id === 'bdboard-hub');
     expect(card!.blocks).toEqual(['bdboard-a', 'bdboard-b']);
     expect(card!.unblocksCount).toBe(2);
-  });
-});
-
-describe('buildBoard sessions', () => {
-  it('links sessions via links, ignores missing sessionIds, sorts by sessionId', () => {
-    const ticket = makeTicket({ id: 'bdboard-linked' });
-    const sessionZ = makeSession({ sessionId: 'session-z' });
-    const sessionA = makeSession({ sessionId: 'session-a' });
-    const links = [
-      makeSessionLink({ ticketId: 'bdboard-linked', sessionId: 'session-z' }),
-      makeSessionLink({ ticketId: 'bdboard-linked', sessionId: 'session-a' }),
-      makeSessionLink({ ticketId: 'bdboard-linked', sessionId: 'session-missing' }),
-      makeSessionLink({ ticketId: 'bdboard-other', sessionId: 'session-a' }),
-      makeSessionLink({ ticketId: 'bdboard-linked', sessionId: 'session-a' }),
-    ];
-
-    const board = buildBoard({
-      projectId: PROJECT,
-      tickets: [ticket],
-      now: NOW,
-      sessions: [sessionZ, sessionA],
-      links,
-    });
-
-    const card = board.cards[0];
-    expect(card.sessions.map((s) => s.sessionId)).toEqual([
-      'session-a',
-      'session-z',
-    ]);
-  });
-});
-
-describe('buildBoard liveness', () => {
-  const thresholds = {
-    activeMs: 60_000,
-    idleMs: 120_000,
-    staleMs: 180_000,
-  };
-
-  it('picks the most alive session liveness', () => {
-    const ticket = makeTicket({ id: 'bdboard-live-pick' });
-    const activeSession = makeSession({
-      sessionId: 'session-active',
-      lastActivityAt: NOW,
-      alive: true,
-    });
-    const staleSession = makeSession({
-      sessionId: 'session-stale',
-      lastActivityAt: new Date(NOW.getTime() - 150_000),
-      alive: true,
-    });
-    const links = [
-      makeSessionLink({ ticketId: 'bdboard-live-pick', sessionId: 'session-stale' }),
-      makeSessionLink({ ticketId: 'bdboard-live-pick', sessionId: 'session-active' }),
-    ];
-
-    const board = buildBoard({
-      projectId: PROJECT,
-      tickets: [ticket],
-      now: NOW,
-      sessions: [activeSession, staleSession],
-      links,
-      livenessThresholds: thresholds,
-    });
-
-    expect(board.cards[0].liveness).toBe('active');
-  });
-
-  it('honors livenessThresholds when deriving card liveness', () => {
-    /*
-     * 閾値の受け渡しは「既定値と結果が一致しない入力」でしか観測できない
-     * (bdboard-3z5x)。2分アイドルのセッションは既定 (activeMs=5分) では
-     * 'active'、activeMs=1分に上書きすると 'idle' になる — この対比を取ることで
-     * livenessThresholds を渡し忘れた実装が必ず落ちる。
-     *
-     * 上の 'picks the most alive session' も閾値を渡しているが、あちらは2つの
-     * セッションを区別するために渡しているだけで、最終的な期待値 'active' は
-     * 既定でも一致してしまう。つまり閾値の受け渡し自体は検証できていない。
-     * buildBoard 側で input.livenessThresholds を落とす変異は、この専用テストが
-     * 無いとドメイン層・アプリケーション層のどちらでも捕まらず、遠く離れた
-     * routes.test.ts の1件だけが偶然拾う状態だった。
-     */
-    const ticket = makeTicket({ id: 'bdboard-liveness-threshold' });
-    const session = makeSession({
-      sessionId: 'session-2m-idle',
-      lastActivityAt: new Date(NOW.getTime() - 2 * 60_000),
-      alive: true,
-    });
-    const links = [
-      makeSessionLink({
-        ticketId: 'bdboard-liveness-threshold',
-        sessionId: 'session-2m-idle',
-      }),
-    ];
-    const input = {
-      projectId: PROJECT,
-      tickets: [ticket],
-      now: NOW,
-      sessions: [session],
-      links,
-    };
-
-    expect(buildBoard(input).cards[0].liveness).toBe('active');
-    expect(
-      buildBoard({
-        ...input,
-        livenessThresholds: {
-          activeMs: 60_000,
-          idleMs: 10 * 60_000,
-          staleMs: 60 * 60_000,
-        },
-      }).cards[0].liveness,
-    ).toBe('idle');
-  });
-
-  it('returns null liveness when no sessions are linked', () => {
-    const ticket = makeTicket({ id: 'bdboard-no-session' });
-    const board = buildBoard({
-      projectId: PROJECT,
-      tickets: [ticket],
-      now: NOW,
-    });
-    expect(board.cards[0].liveness).toBeNull();
   });
 });
 
@@ -469,29 +326,6 @@ describe('buildBoard stalled', () => {
     expect(board.cards.find((c) => c.ticket.id === 'bdboard-fresh')?.stalled).toBe(
       false,
     );
-  });
-
-  it('does not mark stalled when an alive session is linked even if updatedAt is old', () => {
-    const ticket = makeTicket({
-      id: 'bdboard-active-session',
-      status: 'in_progress',
-      updatedAt: stalledUpdatedAt,
-    });
-    const aliveSession = makeSession({ sessionId: 'session-alive', alive: true });
-    const deadSession = makeSession({ sessionId: 'session-dead', alive: false });
-
-    const board = buildBoard({
-      projectId: PROJECT,
-      tickets: [ticket],
-      now: NOW,
-      sessions: [aliveSession, deadSession],
-      links: [
-        makeSessionLink({ ticketId: ticket.id, sessionId: 'session-alive' }),
-        makeSessionLink({ ticketId: ticket.id, sessionId: 'session-dead' }),
-      ],
-    });
-
-    expect(board.cards[0].stalled).toBe(false);
   });
 
   it('honors stalledThresholds when marking cards stalled', () => {

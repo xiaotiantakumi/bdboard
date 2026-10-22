@@ -64,7 +64,6 @@ vi.mock('../api', async (importOriginal) => {
     fetchChatThreads: vi.fn(() => Promise.resolve<ChatThreadDto[]>([])),
     fetchChatTurnStatus: vi.fn(() => Promise.resolve<ChatTurnStatusDto>({ state: 'idle' })),
     acknowledgeChatTurn: vi.fn(() => Promise.resolve()),
-    fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     fetchPlatformSupport: vi.fn(() => Promise.resolve({ platform: 'darwin', limitations: [] })),
   };
 });
@@ -128,7 +127,6 @@ import {
   fetchChatAgents,
   fetchChatThreads,
   fetchChatTurnStatus,
-  fetchDiscoveredChatSessions,
   fetchPlatformSupport,
 } from '../api';
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
@@ -203,7 +201,6 @@ describe('ChatPanel hook call order (bdboard-sso1.83 第15b段の前提)', () =>
     vi.mocked(fetchChatThreads).mockResolvedValue([]);
     vi.mocked(fetchChatTurnStatus).mockResolvedValue({ state: 'idle' });
     vi.mocked(acknowledgeChatTurn).mockResolvedValue();
-    vi.mocked(fetchDiscoveredChatSessions).mockResolvedValue({ sessions: [] });
   });
 
   afterEach(() => {

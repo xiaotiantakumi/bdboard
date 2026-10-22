@@ -7,7 +7,7 @@
  * board refresh → セッション初回取得 → 通知初期化 → transcript インターバル →
  * watcher/refresh インターバル → セッションインターバル → reclaim) は元の main() と
  * 完全に同じ順序で await する。中身は既存の wire-board-refresh.ts /
- * wire-board-sessions.ts / wire-board-reclaim.ts をそのまま呼ぶだけで、構築ロジック
+ * wire-board-transcripts.ts / wire-board-reclaim.ts をそのまま呼ぶだけで、構築ロジック
  * 自体はここでは変えない。
  */
 import type { BoardCache } from '../application/ports/board-cache.js';
@@ -18,15 +18,12 @@ import type { LeaseReader } from '../application/ports/lease-reader.js';
 import type { LeaseReclaimer } from '../application/ports/lease-reclaimer.js';
 import type { ScanRootsConfigPort } from '../application/ports/scan-roots-config.js';
 import type { WorktreeScanner } from '../application/ports/worktree-scanner.js';
-import type { PlatformSupport } from '../domain/platform-support.js';
-import { createPsProcessScanner, NodeFileSystem } from '../infrastructure/index.js';
+import { NodeFileSystem } from '../infrastructure/index.js';
 import { createEventHub } from '../interface/sse/event-hub.js';
 import {
-  createBoardSessionServices,
-  runInitialSessionsFetch,
-  startSessionInterval,
+  createBoardTranscriptServices,
   startTranscriptInterval,
-} from './wire-board-sessions.js';
+} from './wire-board-transcripts.js';
 import { wireBoardRefresh } from './wire-board-refresh.js';
 import { wireBoardReclaim } from './wire-board-reclaim.js';
 import type { RefreshResult } from '../application/board/refresh-projects.js';
@@ -40,10 +37,7 @@ export interface WireBoardLifecycleDeps {
   readonly repository: IssueRepository;
   readonly cache: BoardCache;
   readonly humanDecisions: HumanDecisionsPort;
-  readonly platformSupport: PlatformSupport;
-  readonly sessionDiscoverySupported: boolean;
   readonly refreshIntervalMs: number;
-  readonly sessionIntervalMs: number;
   readonly transcriptIntervalMs: number;
   readonly leaseReclaimer: LeaseReclaimer;
   readonly leaseReader: LeaseReader;
@@ -55,10 +49,9 @@ export interface WireBoardLifecycleDeps {
 }
 
 export async function wireBoardLifecycle(deps: WireBoardLifecycleDeps) {
-  const processScanner = createPsProcessScanner(deps.commandRunner);
   const events = createEventHub();
 
-  const boardSessionServices = createBoardSessionServices({
+  const boardTranscriptServices = createBoardTranscriptServices({
     fsPort: deps.fsPort,
     cache: deps.cache,
     events,
@@ -77,27 +70,15 @@ export async function wireBoardLifecycle(deps: WireBoardLifecycleDeps) {
     ...(deps.onRefreshResult !== undefined ? { onRefreshResult: deps.onRefreshResult } : {}),
   });
 
-  await runInitialSessionsFetch(
-    boardSessionServices,
-    deps.platformSupport,
-    deps.sessionDiscoverySupported,
-  );
-
   boardRefreshServices.finishInitialization();
 
-  const transcriptIntervalTimer = await startTranscriptInterval(boardSessionServices, {
+  const transcriptIntervalTimer = await startTranscriptInterval(boardTranscriptServices, {
     cache: deps.cache,
     transcriptIntervalMs: deps.transcriptIntervalMs,
   });
 
   const { watchHandle, refreshIntervalTimer } =
     await boardRefreshServices.startWatchAndIntervals();
-
-  const sessionIntervalTimer = startSessionInterval(
-    boardSessionServices,
-    deps.sessionDiscoverySupported,
-    deps.sessionIntervalMs,
-  );
 
   const { reclaimScheduler, reclaimHistory } = wireBoardReclaim({
     leaseReclaimer: deps.leaseReclaimer,
@@ -110,14 +91,12 @@ export async function wireBoardLifecycle(deps: WireBoardLifecycleDeps) {
   });
 
   return {
-    processScanner,
     events,
-    boardSessionServices,
+    boardTranscriptServices,
     boardRefreshServices,
     transcriptIntervalTimer,
     watchHandle,
     refreshIntervalTimer,
-    sessionIntervalTimer,
     reclaimScheduler,
     reclaimHistory,
   };

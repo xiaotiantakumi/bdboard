@@ -2,7 +2,7 @@
 // 1つの useReducer に畳んだもの。元は下記6個の独立した useState + 1個の
 // useEffect だった:
 //   threadDrawerOpen / threadActionMenuSessionId / renamingSessionId /
-//   renameDraft / confirmingDeleteSessionId / showDiscoveredSessions
+//   renameDraft / confirmingDeleteSessionId
 // これらは送受信・添付・会話キー再割り当て(bdboard-c1pw の対象)とは独立した
 // 「今どの行が何の操作中か」を表す UI 状態で、bdboard-c1pw の調査でも
 // 「既に独立していて事故っていない」グループとして触らない対象に挙げられていた
@@ -16,7 +16,6 @@ export interface ThreadDrawerState {
   renamingSessionId: string | null;
   renameDraft: string;
   confirmingDeleteSessionId: string | null;
-  showDiscoveredSessions: boolean;
 }
 
 export const initialThreadDrawerState: ThreadDrawerState = {
@@ -25,7 +24,6 @@ export const initialThreadDrawerState: ThreadDrawerState = {
   renamingSessionId: null,
   renameDraft: '',
   confirmingDeleteSessionId: null,
-  showDiscoveredSessions: false,
 };
 
 export type ThreadDrawerAction =
@@ -52,16 +50,12 @@ export type ThreadDrawerAction =
   | { type: 'cancelRename' }
   // 旧: メニュー内の削除ボタン(1回目クリック、メニューは開いたまま) setConfirmingDeleteSessionId(sessionId)
   | { type: 'startConfirmDelete'; sessionId: string }
-  // 旧: handleResumeDiscoveredSession / handleDeleteThread の finally /
+  // 旧: handleDeleteThread の finally /
   // startNewDraftThread が行っていた無条件の setConfirmingDeleteSessionId(null)
   | { type: 'cancelConfirmDelete' }
   // 旧: handleCloseThread が行っていた「対象 sessionId の
   // confirmingDeleteSessionId/renamingSessionId だけを条件付きで null に戻す」処理
-  | { type: 'cancelInteractionsForSession'; sessionId: string }
-  // 旧: onToggleDiscoveredSessions={() => setShowDiscoveredSessions((prev) => !prev)}
-  | { type: 'toggleDiscoveredSessions' }
-  // 旧: onCloseDiscoveredSessions={() => setShowDiscoveredSessions(false)}
-  | { type: 'closeDiscoveredSessions' };
+  | { type: 'cancelInteractionsForSession'; sessionId: string };
 
 export function threadDrawerReducer(
   state: ThreadDrawerState,
@@ -143,13 +137,6 @@ export function threadDrawerReducer(
         renamingSessionId: clearRenaming ? null : state.renamingSessionId,
       };
     }
-    case 'toggleDiscoveredSessions':
-      return { ...state, showDiscoveredSessions: !state.showDiscoveredSessions };
-    case 'closeDiscoveredSessions':
-      if (!state.showDiscoveredSessions) {
-        return state;
-      }
-      return { ...state, showDiscoveredSessions: false };
     default:
       return state;
   }

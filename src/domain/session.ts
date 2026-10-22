@@ -1,17 +1,5 @@
 import type { TicketId } from './ticket-id.js';
 
-export interface AgentSession {
-  readonly sessionId: string;
-  readonly pid: number;
-  readonly cwd: string;
-  readonly startedAt: Date;
-  readonly lastActivityAt: Date;
-  readonly alive: boolean;
-  readonly kind?: string;
-  readonly entrypoint?: string;
-  readonly name?: string;
-}
-
 export const SESSION_LINK_SOURCES = ['metadata', 'transcript'] as const;
 
 export type SessionLinkSource = (typeof SESSION_LINK_SOURCES)[number];

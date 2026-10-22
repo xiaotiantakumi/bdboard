@@ -29,8 +29,6 @@ export interface Ticket {
   /** bd の acceptance_criteria。ローカルファイル参照の抽出元 (bdboard-vgdr)。 */
   readonly acceptanceCriteria?: string;
   readonly labels?: readonly string[];
-  /** `bdboard.session` メタデータ由来の手動セッションリンク。 */
-  readonly manualSessionId?: string;
   readonly models?: readonly TicketModelRecord[];
   /** `bdboard.complexity` メタデータ由来の複雑度(自由文字列)。bdboard-p5l.18 */
   readonly complexity?: string;

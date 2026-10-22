@@ -12,7 +12,7 @@ const EVENT_SOURCE_OPEN = 1;
 export const SSE_STALE_AFTER_MS = 45_000;
 
 /** Event types the server sends; any of them proves the socket is alive. */
-const ACTIVITY_EVENT_TYPES = ['hello', 'ping', 'notification', 'board.changed', 'session.changed'];
+const ACTIVITY_EVENT_TYPES = ['hello', 'ping', 'notification', 'board.changed'];
 
 function eventsUrl(): string {
   // Absolute URL built from origin rather than relative '/api/events': a

@@ -2,7 +2,6 @@ import { Hono } from 'hono';
 import { parseClampedIntQueryParam } from './parse-clamped-int-query-param.js';
 import { getBoard } from '../../application/board/get-board.js';
 import { searchTickets } from '../../application/board/search-tickets.js';
-import { DEFAULT_LIVENESS_THRESHOLDS } from '../../domain/liveness.js';
 import { compareStrings } from '../../domain/compare.js';
 import {
   countIncompleteTicketsFromTickets,
@@ -16,12 +15,7 @@ import {
   computeWeakEtag,
   ifNoneMatchMatches,
 } from './etag.js';
-import {
-  buildGetBoardDeps,
-  parseProjectIds,
-  resolveLivenessThresholds,
-} from './api-route-shared.js';
-import { groupSessionsByProject } from '../../application/session/link-sessions-to-projects.js';
+import { buildGetBoardDeps, parseProjectIds } from './api-route-shared.js';
 import type { ApiDeps } from './api-deps.js';
 
 const SEARCH_DEFAULT_LIMIT = 30;
@@ -53,25 +47,15 @@ function parseClosedLimit(raw: string | undefined): number {
 export function createBoardRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
 
-  app.get('/api/projects', async (c) => {
-    const now = deps.now();
-    // ユーザー設定の liveness 閾値を反映する (bdboard-3tw.102.5)。渡さないと
-    // activeSessionCount = ヘッダーの「稼働中 N」だけが既定値のままになる。
-    const livenessThresholds = await resolveLivenessThresholds(deps);
+  app.get('/api/projects', (c) => {
     const cachedProjects = deps.cache
       .listProjects()
       // Locale-independent, to match cache.listProjects()/getBoard ordering.
       .slice()
       .sort((a, b) => compareStrings(a.project.rootPath, b.project.rootPath));
-    const allProjects = cachedProjects.map((entry) => entry.project);
-    const sessionsByProject = groupSessionsByProject(
-      deps.sessions?.() ?? [],
-      allProjects,
-    );
 
     const projects: ProjectDto[] = cachedProjects.map((entry) =>
-      toProjectDto(entry.project, now, livenessThresholds, {
-        sessions: sessionsByProject.get(entry.project.id),
+      toProjectDto(entry.project, {
         incompleteTicketCount: countIncompleteTicketsFromTickets(entry.tickets),
       }),
     );
@@ -103,27 +87,7 @@ export function createBoardRoutes(deps: ApiDeps): Hono {
       },
     );
 
-    const sessionsByProject = groupSessionsByProject(
-      deps.sessions?.() ?? [],
-      view.projects.map((entry) => entry.project),
-    );
-
-    /*
-     * ここは意図的に resolveLivenessThresholds を使わない (bdboard-5kz2)。
-     * buildGetBoardDeps が既に getBoardThresholds を1回引いており、その同じ値を
-     * getBoard (card.liveness をドメインで計算) とこの DTO 変換
-     * (sessions[].liveness) の両方が使うことで、1リクエスト内の2つの liveness が
-     * 必ず同じ閾値から出ることを保証している。ここで resolveLivenessThresholds を
-     * 呼ぶと getBoardThresholds を2回引くことになり、その間に設定が変わると
-     * バッジとセッション行が食い違う — bdboard-3tw.102.5 で潰したのと同じ不整合。
-     * 上の resolveLivenessThresholds のコメントに従ってここを「整理」しないこと。
-     * テストは getBoardThresholds に定数を注入するので、2回引きは緑のまま通る。
-     */
-    const dto = toBoardViewDto(
-      view,
-      boardDeps.livenessThresholds ?? DEFAULT_LIVENESS_THRESHOLDS,
-      sessionsByProject,
-    );
+    const dto = toBoardViewDto(view);
     const etag = computeWeakEtag(boardViewDtoStableJson(dto));
 
     c.header('ETag', etag);

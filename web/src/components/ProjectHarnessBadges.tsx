@@ -17,6 +17,35 @@ export interface ProjectHarnessBadgesProps {
   readonly projectId: string;
 }
 
+/**
+ * bdboard-gyvv: ⋯ メニューに出す導入バージョンの1行 (`bdboard-harness v1.2`)。
+ * 未導入・読み込み中・取得失敗のときは何も出さない (要対応の警告は見出し側が持つ)。
+ */
+export function ProjectHarnessVersion({
+  projectId,
+  projectName,
+}: ProjectHarnessBadgesProps & { readonly projectName?: string }) {
+  const query = useQuery({
+    queryKey: ['project-harness', projectId],
+    queryFn: () => fetchProjectHarnessStatus(projectId),
+  });
+  const pack = query.data?.packs.find((entry) => entry.installedVersion !== null);
+  if (pack === undefined) {
+    return null;
+  }
+  return (
+    <p className="overflow-menu-footnote">
+      {projectName !== undefined && `${projectName}: `}
+      {pack.name} v{pack.installedVersion}
+    </p>
+  );
+}
+
+/**
+ * 見出し (プロジェクト名の隣) には警告だけを出す: 要対応のパック (未導入 / 要更新 /
+ * hook 不足 + 注入ボタン) と、要注意の検証コントラクト。正常なバージョン表示は ⋯ メニュー
+ * (ProjectHarnessVersion) に移した (bdboard-gyvv)。
+ */
 export function ProjectHarnessBadges({ projectId }: ProjectHarnessBadgesProps) {
   const { message, showFeedback } = useHarnessFeedback();
   const query = useQuery({
@@ -35,13 +64,16 @@ export function ProjectHarnessBadges({ projectId }: ProjectHarnessBadgesProps) {
   const contract = query.data.contract;
   const contractLabel = formatHarnessContractLabel(contract);
 
-  if (query.data.packs.length === 0 && contractLabel === null) {
+  const actionPacks = query.data.packs.filter(harnessPackNeedsAction);
+  const showContract = contractLabel !== null && harnessContractNeedsAttention(contract);
+
+  if (actionPacks.length === 0 && !showContract && message === '') {
     return null;
   }
 
   return (
     <span className="project-harness-badges" aria-label="ハーネス導入状況">
-      {query.data.packs.map((pack) => {
+      {actionPacks.map((pack) => {
         const needsAction = harnessPackNeedsAction(pack);
         const statusClassName = pack.drift
           ? 'project-harness-status project-harness-status-drift'
@@ -80,7 +112,7 @@ export function ProjectHarnessBadges({ projectId }: ProjectHarnessBadgesProps) {
           </span>
         );
       })}
-      {contractLabel !== null && (
+      {showContract && (
         <span
           className={
             harnessContractNeedsAttention(contract)

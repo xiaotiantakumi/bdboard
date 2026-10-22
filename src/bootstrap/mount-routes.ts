@@ -66,10 +66,6 @@ export function mountRoutes(app: Hono, deps: MountRoutesDeps): void {
 
   // 未対応機能は inner へ届く前に 501 で止める (bdboard-70z.9)。
   app.route('/', createPlatformSupportRoutes({ platformSupport: deps.platformSupport }));
-  // コレクションとワイルドカードの両方を登録する (chat-routes.ts の既存の作法)。
-  for (const pattern of ['/api/processes', '/api/processes/*']) {
-    app.use(pattern, createPlatformFeatureGuard(deps.platformSupport, 'session-discovery'));
-  }
   app.use('/api/chat/*', createPlatformFeatureGuard(deps.platformSupport, 'chat'));
 
   // `inner` (routes.ts) の `GET /api/tickets/:id{.+}` は catch-all なので、

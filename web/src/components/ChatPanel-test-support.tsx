@@ -18,10 +18,7 @@ export function makeProjectDto(overrides: Partial<ProjectDto> & Pick<ProjectDto,
     name: overrides.name ?? overrides.id,
     rootPath: `/projects/${overrides.id}`,
     prefixes: ['bdboard'],
-    sessionCount: 0,
-    activeSessionCount: 0,
     incompleteTicketCount: 0,
-    sessions: [],
     ...overrides,
   };
 }

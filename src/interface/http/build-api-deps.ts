@@ -8,13 +8,10 @@ import type { HumanDecisionsPort } from '../../application/ports/human-decisions
 import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
 import type { PrStatusReader } from '../../application/ports/pr-status-reader.js';
 import type { PrBadgeStatusCache } from '../../application/board/get-pr-badges.js';
-import type { ProcessScanner } from '../../application/ports/process-scanner.js';
-import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
-import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
 import type { ReclaimHistory } from '../../application/lease/reclaim-history.js';
 import { resolveBoardThresholds } from '../../domain/board-thresholds.js';
-import type { AgentSession, SessionLink } from '../../domain/session.js';
+import type { SessionLink } from '../../domain/session.js';
 import type { EventHub } from '../sse/event-hub.js';
 import type { ApiDeps, ApiStatus } from './api-deps.js';
 import type { WriteGuardDeps } from './write-guard.js';
@@ -31,19 +28,15 @@ export interface BuildApiDepsParams {
   readonly refreshProjects?: (projectIds: readonly string[]) => Promise<void>;
   readonly events: EventHub;
   readonly boardThresholdsConfigStore: BoardThresholdsConfigPort;
-  readonly sessions?: () => readonly AgentSession[];
   readonly links?: () => readonly SessionLink[];
   readonly commentReader?: CommentReader;
   readonly prStatusReader?: PrStatusReader;
   readonly prBadgeStatusCache?: PrBadgeStatusCache;
-  readonly processScanner?: ProcessScanner;
   readonly humanDecisions?: HumanDecisionsPort;
   readonly worktreeScanner?: WorktreeScanner;
   readonly getProjectMainBranch?: (rootPath: string) => Promise<string | undefined>;
   readonly issueWriter?: IssueWriterPort;
   readonly dependencyWriter?: DependencyWriterPort;
-  readonly sessionLinkWriter?: SessionLinkWriterPort;
-  readonly sessionTail?: SessionTailReader;
   readonly writeAccess?: WriteGuardDeps;
   readonly reclaimHistory?: ReclaimHistory;
 }

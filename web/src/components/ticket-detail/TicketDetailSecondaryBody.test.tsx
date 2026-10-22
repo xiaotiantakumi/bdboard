@@ -20,9 +20,6 @@ vi.mock('./TicketDependenciesSection', () => ({
 vi.mock('./TicketModelsSection', () => ({
   TicketModelsSection: vi.fn(() => <div data-testid="models-section" />),
 }));
-vi.mock('./TicketSessionLinkSection', () => ({
-  TicketSessionLinkSection: vi.fn(() => <div data-testid="session-link-section" />),
-}));
 vi.mock('./TicketUsageSection', () => ({
   TicketUsageSection: vi.fn(() => <div data-testid="usage-section" />),
 }));
@@ -38,28 +35,19 @@ vi.mock('../TicketAttachments', () => ({
 vi.mock('./TicketCommentsSection', () => ({
   TicketCommentsSection: vi.fn(() => <div data-testid="comments-section" />),
 }));
-vi.mock('./TicketQuickActionsSection', () => ({
-  TicketQuickActionsSection: vi.fn(() => <div data-testid="quick-actions-section" />),
-}));
 vi.mock('./TicketAgentRunSection', () => ({
   TicketAgentRunSection: vi.fn(() => <div data-testid="agent-run-section" />),
-}));
-vi.mock('./TicketBdCommandSection', () => ({
-  TicketBdCommandSection: vi.fn(() => <div data-testid="bd-command-section" />),
 }));
 
 import { TicketIdListSection } from './TicketIdListSection';
 import { TicketDependenciesSection } from './TicketDependenciesSection';
 import { TicketModelsSection } from './TicketModelsSection';
-import { TicketSessionLinkSection } from './TicketSessionLinkSection';
 import { TicketUsageSection } from './TicketUsageSection';
 import { TicketDecisionSection } from './TicketDecisionSection';
 import { TicketTimelineSection } from './TicketTimelineSection';
 import { TicketAttachments } from '../TicketAttachments';
 import { TicketCommentsSection } from './TicketCommentsSection';
-import { TicketQuickActionsSection } from './TicketQuickActionsSection';
 import { TicketAgentRunSection } from './TicketAgentRunSection';
-import { TicketBdCommandSection } from './TicketBdCommandSection';
 import {
   TicketDetailSecondaryBody,
   type TicketDetailSecondaryBodyProps,
@@ -68,15 +56,12 @@ import {
 const idListMock = vi.mocked(TicketIdListSection);
 const dependenciesMock = vi.mocked(TicketDependenciesSection);
 const modelsMock = vi.mocked(TicketModelsSection);
-const sessionLinkMock = vi.mocked(TicketSessionLinkSection);
 const usageMock = vi.mocked(TicketUsageSection);
 const decisionMock = vi.mocked(TicketDecisionSection);
 const timelineMock = vi.mocked(TicketTimelineSection);
 const attachmentsMock = vi.mocked(TicketAttachments);
 const commentsMock = vi.mocked(TicketCommentsSection);
-const quickActionsMock = vi.mocked(TicketQuickActionsSection);
 const agentRunMock = vi.mocked(TicketAgentRunSection);
-const bdCommandMock = vi.mocked(TicketBdCommandSection);
 
 function makeData(overrides: Partial<TicketDetailDto> = {}): TicketDetailDto {
   return {
@@ -92,7 +77,6 @@ function makeData(overrides: Partial<TicketDetailDto> = {}): TicketDetailDto {
     dependencies: [{ id: 'MARK-dep-1', title: 'dep', kind: 'blocks' }],
     blockedBy: ['MARK-blocked-by-1'],
     blocks: ['MARK-blocks-1'],
-    sessionLinks: [{ sessionId: 'MARK-session-1', label: 'session' }],
     models: [{ name: 'MARK-model-1' }],
     children: [],
     ...overrides,
@@ -105,7 +89,6 @@ function makeProps(
   return {
     data: makeData(),
     ticketId: 'MARK-ticket-id',
-    projectRootPath: 'MARK-project-root',
     pendingDecision: undefined,
     isTicketOnBoard: vi.fn(() => true),
     onOpenTicket: vi.fn(),
@@ -125,17 +108,6 @@ function makeProps(
       handleAddDependency: vi.fn(),
       error: 'MARK-dep-error',
     } as unknown as TicketDetailSecondaryBodyProps['dependencies'],
-    sessionLink: {
-      // sessionLinkPickerOpen/isLoadingSessions も同値 boolean の衝突(finding B)。
-      sessionLinkPickerOpen: 'MARK-session-link-picker-open' as unknown as boolean,
-      togglePicker: vi.fn(),
-      isLoadingSessions: 'MARK-is-loading-sessions' as unknown as boolean,
-      activeSessionCandidates: [{ id: 'MARK-session-candidate-1' }],
-      sessionLinkMutationPending: false,
-      sessionLinkMutationError: 'MARK-session-link-error',
-      onLinkSession: vi.fn(),
-      onUnlinkSession: vi.fn(),
-    } as unknown as TicketDetailSecondaryBodyProps['sessionLink'],
     decision: {
       selectedChoice: 'MARK-choice',
       setSelectedChoice: vi.fn(),
@@ -163,32 +135,6 @@ function makeProps(
       canSubmitComment: 'MARK-can-submit-comment' as unknown as boolean,
       mutation: { mutate: vi.fn(), isPending: true, error: null },
     } as unknown as TicketDetailSecondaryBodyProps['comment'],
-    quickActions: {
-      confirmingQuickAction: { kind: 'claim' },
-      setConfirmingQuickAction: vi.fn(),
-      // disabled/deferSubmitDisabled/canRaisePriority/canLowerPriority/mutationPending
-      // は同じ Section 呼び出しに渡る5つの boolean。2値では全部を pairwise で区別
-      // できない(pigeonhole。finding B)ので文字列マーカーに差し替える。
-      disabled: 'MARK-quick-actions-disabled' as unknown as boolean,
-      deferPeriodKind: 'MARK-defer-kind',
-      setDeferPeriodKind: vi.fn(),
-      customDeferDate: 'MARK-defer-date',
-      setCustomDeferDate: vi.fn(),
-      deferSubmitDisabled: 'MARK-defer-submit-disabled' as unknown as boolean,
-      handleDeferQuickAction: vi.fn(),
-      canRaisePriority: 'MARK-can-raise-priority' as unknown as boolean,
-      canLowerPriority: 'MARK-can-lower-priority' as unknown as boolean,
-      // { current: null } 同士は toEqual で区別できない(finding A)。固有の current を
-      // 入れる(モック越しなので実要素は不要)。
-      quickActionConfirmRef: { current: 'MARK-quick-action-confirm-ref' },
-      cancelQuickActionRef: { current: 'MARK-cancel-quick-action-ref' },
-      handleCancelQuickAction: vi.fn(),
-      closeReason: 'MARK-close-reason',
-      setCloseReason: vi.fn(),
-      mutationPending: 'MARK-quick-actions-mutation-pending' as unknown as boolean,
-      handleConfirmQuickAction: vi.fn(),
-      mutationError: 'MARK-quick-action-error',
-    } as unknown as TicketDetailSecondaryBodyProps['quickActions'],
     agentRun: {
       polledRunDetail: { id: 'MARK-run-1' },
       activeRunMeta: { id: 'MARK-active-run' },
@@ -207,7 +153,6 @@ function makeProps(
     copy: {
       copyFeedback: { kind: 'success', command: 'claim' },
       ariaLiveMessage: 'MARK-aria-live',
-      handleCopyCommand: vi.fn(),
       handleCopyNextStep: vi.fn(),
     } as unknown as TicketDetailSecondaryBodyProps['copy'],
     commentTextareaRef: { current: null },
@@ -254,18 +199,6 @@ describe('TicketDetailSecondaryBody', () => {
     });
 
     expect(modelsMock.mock.calls.at(-1)?.[0]).toEqual({ models: props.data.models });
-
-    expect(sessionLinkMock.mock.calls.at(-1)?.[0]).toEqual({
-      sessionLinks: props.data.sessionLinks,
-      pickerOpen: 'MARK-session-link-picker-open',
-      onTogglePicker: props.sessionLink.togglePicker,
-      isLoadingSessions: 'MARK-is-loading-sessions',
-      activeSessionCandidates: props.sessionLink.activeSessionCandidates,
-      mutationPending: false,
-      mutationError: 'MARK-session-link-error',
-      onLinkSession: props.sessionLink.onLinkSession,
-      onUnlinkSession: props.sessionLink.onUnlinkSession,
-    });
 
     expect(usageMock.mock.calls.at(-1)?.[0]).toEqual({ usage: props.data.usage });
   });
@@ -414,32 +347,9 @@ describe('TicketDetailSecondaryBody', () => {
     });
   });
 
-  it('forwards quick-actions/agent-run/bd-command props with marker values, including copy-handler wiring', () => {
+  it('forwards agent-run props with marker values, including copy-handler wiring', () => {
     const props = makeProps();
     render(<TicketDetailSecondaryBody {...props} />);
-
-    expect(quickActionsMock.mock.calls.at(-1)?.[0]).toEqual({
-      priority: 3,
-      confirmingQuickAction: props.quickActions.confirmingQuickAction,
-      onSetConfirmingQuickAction: props.quickActions.setConfirmingQuickAction,
-      quickActionsDisabled: 'MARK-quick-actions-disabled',
-      deferPeriodKind: 'MARK-defer-kind',
-      onDeferPeriodKindChange: props.quickActions.setDeferPeriodKind,
-      customDeferDate: 'MARK-defer-date',
-      onCustomDeferDateChange: props.quickActions.setCustomDeferDate,
-      deferSubmitDisabled: 'MARK-defer-submit-disabled',
-      onDeferQuickAction: props.quickActions.handleDeferQuickAction,
-      canRaisePriority: 'MARK-can-raise-priority',
-      canLowerPriority: 'MARK-can-lower-priority',
-      quickActionConfirmRef: props.quickActions.quickActionConfirmRef,
-      cancelQuickActionRef: props.quickActions.cancelQuickActionRef,
-      onCancelQuickAction: props.quickActions.handleCancelQuickAction,
-      closeReason: 'MARK-close-reason',
-      onCloseReasonChange: props.quickActions.setCloseReason,
-      mutationPending: 'MARK-quick-actions-mutation-pending',
-      onConfirmQuickAction: props.quickActions.handleConfirmQuickAction,
-      mutationError: 'MARK-quick-action-error',
-    });
 
     expect(agentRunMock.mock.calls.at(-1)?.[0]).toEqual({
       polledRunDetail: props.agentRun.polledRunDetail,
@@ -463,17 +373,5 @@ describe('TicketDetailSecondaryBody', () => {
     expect(props.copy.handleCopyNextStep).toHaveBeenCalledWith('next-step-current', {
       command: 'MARK-next-step',
     });
-
-    expect(bdCommandMock.mock.calls.at(-1)?.[0]).toEqual({
-      ticketId: 'MARK-id',
-      projectRootPath: 'MARK-project-root',
-      copyFeedback: props.copy.copyFeedback,
-      ariaLiveMessage: 'MARK-aria-live',
-      onCopyCommand: expect.any(Function) as unknown,
-    });
-    const onCopyCommand = bdCommandMock.mock.calls.at(-1)?.[0]
-      .onCopyCommand as (kind: string) => void;
-    onCopyCommand('claim');
-    expect(props.copy.handleCopyCommand).toHaveBeenCalledWith('claim');
   });
 });

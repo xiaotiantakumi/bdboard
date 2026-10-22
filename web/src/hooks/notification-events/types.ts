@@ -5,18 +5,13 @@ export interface NotificationEventItem {
   readonly kind:
     | 'ticket_ready'
     | 'decision_pending'
-    | 'session_died'
     | 'ai_quota_threshold'
     | 'watched_lane_changed'
-    | 'watched_comment_changed'
-    | 'watched_session_changed';
+    | 'watched_comment_changed';
   readonly occurredAt: string;
   readonly ticketId?: string;
   readonly title?: string;
   readonly projectId?: string;
-  readonly sessionId?: string;
-  readonly cwd?: string;
-  readonly name?: string;
   readonly providerId?: string;
   readonly providerLabel?: string;
   readonly metricLabel?: string;
@@ -27,8 +22,6 @@ export interface NotificationEventItem {
   readonly toLane?: string;
   readonly previousCommentCount?: number;
   readonly commentCount?: number;
-  readonly addedSessionIds?: readonly string[];
-  readonly removedSessionIds?: readonly string[];
 }
 
 export interface UseNotificationEventsOptions {
@@ -64,14 +57,6 @@ type NotificationPayloadBody =
       ticketId: string;
       title?: string;
       projectId?: string;
-      occurredAt: string;
-    }
-  | {
-      kind: 'session_died';
-      sessionId: string;
-      cwd: string;
-      name?: string;
-      lastActivityAt: string;
       occurredAt: string;
     }
   | {

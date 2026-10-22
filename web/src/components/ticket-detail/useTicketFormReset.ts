@@ -17,7 +17,7 @@
 //
 // 呼び出し位置の制約: このフックの引数(各セクションフックの reset)は呼び出し元
 // (useTicketDetailController)側で先に宣言されている必要があるため、各セクションのフック
-// (title/description/labels/dependencies/comment/sessionLink/quickActions/
+// (title/description/labels/dependencies/comment/sessionLink/
 // decision)を呼び出した後でしか呼べない(TDZ)。それより後ろへ動かすこと自体は
 // 型上は可能だが、元の resetFormState useEffect があった位置(useFocusTrap の
 // 直前)からは動かさないこと — React の effect 実行順は「レンダー中にどの位置で
@@ -26,7 +26,7 @@
 // 内部の2つの effect の順序だけで保証している(呼び出し位置は useTicketDetailController.ts
 // 内の useTicketAgentRun() 呼び出し、このフックの前後どちらでも影響しない)ので、
 // 「このフックと agentRun の間の順序」自体は不変条件ではない。不変条件はあくまで
-// 「このフック内の9つの reset の呼び出し順」
+// 「このフック内の8つの reset の呼び出し順」
 // と「useEffect の依存配列の中身」。
 import { useCallback, useEffect } from 'react';
 
@@ -37,13 +37,11 @@ export interface UseTicketFormResetParams {
   readonly resetDecision: (options?: {
     clearSubmittedDecision?: boolean;
   }) => void;
-  readonly resetQuickActions: () => void;
   readonly resetComment: () => void;
   readonly resetDependencies: () => void;
   readonly resetLabelInput: () => void;
   readonly resetTitleEditing: () => void;
   readonly resetDescriptionEditing: () => void;
-  readonly resetSessionLink: () => void;
 }
 
 /**
@@ -61,13 +59,11 @@ export function useTicketFormReset({
   projectRootPath,
   clearCopyDisplay,
   resetDecision,
-  resetQuickActions,
   resetComment,
   resetDependencies,
   resetLabelInput,
   resetTitleEditing,
   resetDescriptionEditing,
-  resetSessionLink,
 }: UseTicketFormResetParams): void {
   const resetFormState = useCallback(
     (options?: { clearSubmittedDecision?: boolean }) => {
@@ -75,24 +71,20 @@ export function useTicketFormReset({
       resetDecision({
         clearSubmittedDecision: options?.clearSubmittedDecision === true,
       });
-      resetQuickActions();
       resetComment();
       resetDependencies();
       resetLabelInput();
       resetTitleEditing();
       resetDescriptionEditing();
-      resetSessionLink();
     },
     [
       clearCopyDisplay,
       resetDecision,
-      resetQuickActions,
-      resetComment,
+          resetComment,
       resetDependencies,
       resetDescriptionEditing,
       resetLabelInput,
-      resetSessionLink,
-      resetTitleEditing,
+          resetTitleEditing,
     ],
   );
 

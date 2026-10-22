@@ -14,36 +14,22 @@ import { compareCards } from './card-compare.js';
 import { orderByLaneDependencies } from './dependency-order.js';
 import { computeEffectivePriorities } from './effective-priority.js';
 import { buildLanes } from './lanes.js';
-import { buildSessionIdsByTicket, deriveLiveness, deriveSessions } from './sessions.js';
 import type { Board, BoardCard, BuildBoardInput } from './types.js';
 
 export function buildBoard(input: BuildBoardInput): Board {
   const ctx = createReadinessContext(input.tickets);
-  const sessions = input.sessions ?? [];
-  const links = input.links ?? [];
   const blocksIndex = buildBlocksIndex(input.tickets);
   const childrenIndex = buildDirectChildrenIndex(input.tickets);
   const ticketById = new Map(
     input.tickets.map((ticket) => [ticket.id, ticket] as const),
   );
-  const sessionById = new Map(
-    sessions.map((session) => [session.sessionId, session] as const),
-  );
-  const sessionIdsByTicket = buildSessionIdsByTicket(links);
   const effectivePriorities = computeEffectivePriorities(
     input.tickets,
     blocksIndex,
   );
 
   const cards: BoardCard[] = input.tickets.map((ticket) => {
-    const ticketSessions = deriveSessions(
-      ticket.id,
-      sessionById,
-      sessionIdsByTicket,
-    );
     const blocks = deriveBlocks(ticket.id, blocksIndex, ctx);
-    // 紐付いていても死んでいるセッションはまさに滞留の兆候
-    const hasActiveSession = ticketSessions.some((session) => session.alive);
 
     const deferUntil = ticket.deferUntil;
     const deferDays =
@@ -61,18 +47,11 @@ export function buildBoard(input: BuildBoardInput): Board {
       ticket,
       lane: deriveLane(ticket, ctx, input.now, input.humanLabeledIds),
       projectId: input.projectId,
-      sessions: ticketSessions,
-      liveness: deriveLiveness(
-        input.now,
-        ticketSessions,
-        input.livenessThresholds,
-      ),
       blockedBy: openBlockerIds(ticket, ctx),
       blocks,
       unblocksCount: blocks.length,
       stalled: isStalled(ticket, {
         now: input.now,
-        hasActiveSession,
         ...(input.stalledThresholds !== undefined
           ? { thresholds: input.stalledThresholds }
           : {}),

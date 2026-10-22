@@ -1,4 +1,3 @@
-import type { SessionDto } from './sessions';
 import type { TicketSummaryDto } from './tickets-read';
 import { fetchJson } from './http';
 import type { Lane } from './lane';
@@ -9,10 +8,7 @@ export interface ProjectDto {
   name: string;
   rootPath: string;
   prefixes: string[];
-  sessionCount: number;
-  activeSessionCount: number;
   incompleteTicketCount: number;
-  sessions: SessionDto[];
 }
 
 export interface StatusDto {
@@ -30,8 +26,6 @@ export interface BoardCardDto {
   blockedBy: string[];
   blocks: string[];
   unblocksCount: number;
-  liveness: string | null;
-  sessions: SessionDto[];
   stalled: boolean;
   epicProgress: { total: number; done: number } | null;
   deferDays: number | null;

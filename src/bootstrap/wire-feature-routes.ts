@@ -13,7 +13,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ApplicationVersionProvider } from '../application/ports/application-version.js';
 import type { BoardCache } from '../application/ports/board-cache.js';
-import type { ChatSessionDiscoveryPort } from '../application/ports/chat-session-discovery.js';
 import type { CommandRunner } from '../application/ports/command-runner.js';
 import type { StreamingCommandRunner } from '../application/ports/streaming-command-runner.js';
 import type { TunnelAccessService } from '../application/tunnel/tunnel-access.js';
@@ -46,7 +45,6 @@ export interface WireFeatureRoutesDeps {
   readonly applicationVersion: ApplicationVersionProvider;
   readonly events: EventHub;
   readonly aiQuotaAlertConfigStore: AiQuotaAlertConfigPort;
-  readonly chatSessionDiscovery: ChatSessionDiscoveryPort;
   readonly log?: (message: string) => void;
 }
 
@@ -76,7 +74,6 @@ export async function wireFeatureRoutes(deps: WireFeatureRoutesDeps) {
     env: deps.env,
     chatDisabled: envBool('BDBOARD_CHAT_DISABLED'),
     cache: deps.cache,
-    chatSessionDiscovery: deps.chatSessionDiscovery,
     dbPath: deps.dbPath,
     commandRunner: deps.commandRunner,
     streamingCommandRunner: deps.streamingCommandRunner,

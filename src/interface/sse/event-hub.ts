@@ -1,6 +1,5 @@
 export type AppEventName =
   | 'board.changed'
-  | 'session.changed'
   | 'notification';
 
 export interface AppEvent {

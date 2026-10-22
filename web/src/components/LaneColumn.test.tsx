@@ -30,8 +30,6 @@ function makeCard(id: string): BoardCardDto {
     blockedBy: [],
     blocks: [],
     unblocksCount: 0,
-    liveness: null,
-    sessions: [],
     stalled: false,
     epicProgress: null,
     deferDays: null,
@@ -49,7 +47,6 @@ describe('CardItem pending decision badge', () => {
         lane="ready"
         showProjectName={false}
         projectName="Project One"
-        activeSessionCount={0}
         hasPendingDecision
         onClick={() => {}}
       />,
@@ -65,7 +62,6 @@ describe('CardItem pending decision badge', () => {
         lane="ready"
         showProjectName={false}
         projectName="Project One"
-        activeSessionCount={0}
         hasPendingDecision={false}
         onClick={() => {}}
       />,
@@ -83,7 +79,6 @@ describe('CardItem PR link badge', () => {
         lane="ready"
         showProjectName={false}
         projectName="Project One"
-        activeSessionCount={0}
         hasPendingDecision={false}
         prLink={{
           ticketId: 'bdboard-pr',
@@ -130,7 +125,6 @@ describe('CardItem defer date badge (bdboard-ol9)', () => {
         lane="blocked"
         showProjectName={false}
         projectName="Project One"
-        activeSessionCount={0}
         hasPendingDecision={false}
         onClick={() => {}}
       />,
@@ -164,7 +158,6 @@ describe('CardItem defer date badge (bdboard-ol9)', () => {
         lane="blocked"
         showProjectName={false}
         projectName="Project One"
-        activeSessionCount={0}
         hasPendingDecision={false}
         onClick={() => {}}
       />,
@@ -190,7 +183,6 @@ describe('CardItem defer countdown badge (bdboard-662 blocked/deferred merge)', 
         lane="blocked"
         showProjectName={false}
         projectName="Project One"
-        activeSessionCount={0}
         hasPendingDecision={false}
         onClick={() => {}}
       />,
@@ -212,7 +204,6 @@ describe('CardItem defer countdown badge (bdboard-662 blocked/deferred merge)', 
         lane="ready"
         showProjectName={false}
         projectName="Project One"
-        activeSessionCount={0}
         hasPendingDecision={false}
         onClick={() => {}}
       />,
@@ -228,7 +219,6 @@ describe('CardItem defer countdown badge (bdboard-662 blocked/deferred merge)', 
         lane="blocked"
         showProjectName={false}
         projectName="Project One"
-        activeSessionCount={0}
         hasPendingDecision={false}
         onClick={() => {}}
       />,
@@ -256,7 +246,6 @@ describe('CardItem priority inheritance badge', () => {
         lane="ready"
         showProjectName={false}
         projectName="Project One"
-        activeSessionCount={0}
         hasPendingDecision={false}
         onClick={() => {}}
       />,
@@ -273,7 +262,6 @@ describe('CardItem priority inheritance badge', () => {
         lane="ready"
         showProjectName={false}
         projectName="Project One"
-        activeSessionCount={0}
         hasPendingDecision={false}
         onClick={() => {}}
       />,
@@ -294,7 +282,6 @@ describe('CardItem bulk selection checkbox', () => {
           lane="ready"
           showProjectName={false}
           projectName="Project One"
-          activeSessionCount={0}
           hasPendingDecision={false}
           onClick={onClick}
         />
@@ -316,7 +303,6 @@ describe('CardItem bulk selection checkbox', () => {
           lane="ready"
           showProjectName={false}
           projectName="Project One"
-          activeSessionCount={0}
           hasPendingDecision={false}
           onClick={() => {}}
           nav={{
@@ -356,7 +342,6 @@ describe('CardItem keyboard activation (bdboard-4dl)', () => {
           lane="ready"
           showProjectName={false}
           projectName="Project One"
-          activeSessionCount={0}
           hasPendingDecision={false}
           onClick={onClick}
         />
@@ -430,7 +415,6 @@ describe('CardItem keyboard activation (bdboard-4dl)', () => {
 describe('LaneColumn collapse', () => {
   const emptyMaps = {
     projectNames: new Map<string, string>(),
-    projectActiveSessions: new Map<string, number>(),
     pendingDecisionIds: new Set<string>(),
     prLinksById: new Map<string, never>(),
   };
@@ -444,7 +428,6 @@ describe('LaneColumn collapse', () => {
         cards={[makeCard('bdboard-collapse-1')]}
         showProjectName={false}
         projectNames={emptyMaps.projectNames}
-        projectActiveSessions={emptyMaps.projectActiveSessions}
         pendingDecisionIds={emptyMaps.pendingDecisionIds}
         prLinksById={emptyMaps.prLinksById}
         onCardClick={() => {}}
@@ -464,7 +447,6 @@ describe('LaneColumn collapse', () => {
         cards={[makeCard('bdboard-collapse-2'), makeCard('bdboard-collapse-3')]}
         showProjectName={false}
         projectNames={emptyMaps.projectNames}
-        projectActiveSessions={emptyMaps.projectActiveSessions}
         pendingDecisionIds={emptyMaps.pendingDecisionIds}
         prLinksById={emptyMaps.prLinksById}
         onCardClick={() => {}}
@@ -484,7 +466,6 @@ describe('LaneColumn collapse', () => {
         cards={[makeCard('bdboard-collapse-4')]}
         showProjectName={false}
         projectNames={emptyMaps.projectNames}
-        projectActiveSessions={emptyMaps.projectActiveSessions}
         pendingDecisionIds={emptyMaps.pendingDecisionIds}
         prLinksById={emptyMaps.prLinksById}
         onCardClick={() => {}}
@@ -504,7 +485,6 @@ describe('LaneColumn collapse', () => {
           cards={[makeCard('bdboard-collapse-4')]}
           showProjectName={false}
           projectNames={emptyMaps.projectNames}
-          projectActiveSessions={emptyMaps.projectActiveSessions}
           pendingDecisionIds={emptyMaps.pendingDecisionIds}
           prLinksById={emptyMaps.prLinksById}
           onCardClick={() => {}}
@@ -523,7 +503,6 @@ describe('LaneColumn collapse', () => {
 describe('LaneColumn wip exceeded', () => {
   const emptyMaps = {
     projectNames: new Map<string, string>(),
-    projectActiveSessions: new Map<string, number>(),
     pendingDecisionIds: new Set<string>(),
     prLinksById: new Map<string, never>(),
   };
@@ -535,7 +514,6 @@ describe('LaneColumn wip exceeded', () => {
         cards={[makeCard('bdboard-wip-1'), makeCard('bdboard-wip-2')]}
         showProjectName={false}
         projectNames={emptyMaps.projectNames}
-        projectActiveSessions={emptyMaps.projectActiveSessions}
         pendingDecisionIds={emptyMaps.pendingDecisionIds}
         prLinksById={emptyMaps.prLinksById}
         onCardClick={() => {}}
