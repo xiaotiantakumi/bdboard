@@ -237,8 +237,8 @@ baseline の limit は現行行数に 200 行の余白を足した上で 100 行
 何が同居しているか・分割の検討状況を書く。同文のコピペは意図的に赤面するような値ではないが、
 レビューで指摘対象になる (機械的なテンプレ流用は「実態を見ていない」のと同義)。パスは常に
 POSIX 区切り (`/`) で書く — Windows でも git は `/` 区切りでファイルを返すので、baseline 側で
-バックスラッシュを使うと `check-file-size.mjs` が形式エラーとして拒否する (`verify-windows`
-対策)。行数のカウントは CRLF でも LF でも同じ値になるように正規化してある。
+バックスラッシュを使うと `check-file-size.mjs` が形式エラーとして拒否する (Windows 非対応化前の
+名残の対策)。行数のカウントは CRLF でも LF でも同じ値になるように正規化してある。
 パスは対象ディレクトリ・対象拡張子の範囲内、かつ `fixtures/` 配下でない必要もある —
 範囲外のパスを登録すると、走査結果に一度も現れず永久に「対象ファイルが見つからない」(c) 扱いに
 なる前に、baseline 読み込み時点で形式エラーとして拒否される (bdboard-ihf6)。
@@ -723,7 +723,7 @@ worktree での起動可否・常時稼働サーバーの扱いは skill `bdboar
 ## lockfile と npm の版
 
 コミットする `package-lock.json` / `web/package-lock.json` は **Node 22 同梱の npm 10 系 (10.9.x)** が
-書く形に揃える (bdboard-m4sl)。CI (ubuntu / windows の `node-version: 22`) とメインチェックアウトの
+書く形に揃える (bdboard-m4sl)。CI (ubuntu の `node-version: 22`) とメインチェックアウトの
 Node 22 がこの npm を使うため。`packageManager` / `devEngines` で npm を固定しないのは、release-please
 の publish ジョブだけが trusted publishing のために npm 11 へ上げており、固定するとそこと食い違うため。
 
