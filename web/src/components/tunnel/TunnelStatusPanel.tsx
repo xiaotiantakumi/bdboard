@@ -11,7 +11,6 @@ import type { useTunnelStatus } from './useTunnelStatus';
 import { TunnelUnavailableNotice } from './TunnelUnavailableNotice';
 import { TunnelInterruptedNotice } from './TunnelInterruptedNotice';
 import { TunnelPublishForm } from './TunnelPublishForm';
-import { TunnelPublishConfirmDialog } from './TunnelPublishConfirmDialog';
 import { TunnelOnPanel } from './TunnelOnPanel';
 import type { useTunnelPublish } from './useTunnelPublish';
 import type { useTunnelQr } from './useTunnelQr';
@@ -76,8 +75,7 @@ export function TunnelStatusPanel({
       authUnavailable ||
       isMutating ||
       data?.state === 'starting' ||
-      isOn ||
-      publish.publishPhase === 'confirming';
+      isOn;
     const passwordDisabled =
       unavailable ||
       authUnavailable ||
@@ -117,15 +115,6 @@ export function TunnelStatusPanel({
             startPending={publish.startMutation.isPending}
           />
 
-          {publish.publishPhase === 'confirming' && (
-            <TunnelPublishConfirmDialog
-              confirmPanelRef={publish.confirmPanelRef}
-              cancelPublishRef={publish.cancelPublishRef}
-              startPending={publish.startMutation.isPending}
-              onCancel={publish.handleCancelPublish}
-              onConfirm={publish.handleConfirmPublish}
-            />
-          )}
         </>
       )}
 
@@ -134,12 +123,14 @@ export function TunnelStatusPanel({
           起動中…
         </button>
       )}
+      {data?.state === 'off' && publish.startMutation.isPending && (
+        <p className="tunnel-qr-status">公開を開始しています…</p>
+      )}
 
       {data?.state === 'on' && (
         <TunnelOnPanel
           writeAccess={data.writeAccess}
           qrVisible={qr.qrVisible}
-          onQrToggle={qr.handleQrToggle}
           tokenPending={qr.tokenMutation.isPending}
           tokenIsError={qr.tokenMutation.isError}
           tokenError={qr.tokenMutation.error}

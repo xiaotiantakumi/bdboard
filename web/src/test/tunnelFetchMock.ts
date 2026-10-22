@@ -65,6 +65,9 @@ export function installTunnelFetchMock(
           state: 'starting',
           available: true,
           authEnabled: tunnelResponse.authEnabled,
+          ...(tunnelResponse.interruptedAt !== undefined
+            ? { interruptedAt: tunnelResponse.interruptedAt }
+            : {}),
         } satisfies TunnelDto),
         {
           status: 200,

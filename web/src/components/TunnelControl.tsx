@@ -71,16 +71,64 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
   useFocusTrap({
     containerRef: modalPanelRef,
     initialFocusRef: closeButtonRef,
-    enabled: open && publish.publishPhase !== 'confirming',
+    enabled: open,
     onEscape: onClose,
   });
 
-  useFocusTrap({
-    containerRef: publish.confirmPanelRef,
-    initialFocusRef: publish.cancelPublishRef,
-    enabled: open && publish.publishPhase === 'confirming',
-    onEscape: publish.handleCancelPublish,
-  });
+  // bdboard-y2qx: 開いた時点で最新の状態を取り直し、止まっていれば自動生成パスワードで
+  // 公開を始め、公開中ならすぐ QR を出す (メニュー/ヘッダーのボタンを押すこと自体が明示操作)。
+  const [synced, setSynced] = useState(false);
+  const autoStartedRef = useRef(false);
+  const qrAutoRef = useRef(false);
+  const { refetch } = status;
+  const { startMutation } = publish;
+  const { handleQrToggle } = qr;
+  const startWithGeneratedPassword = publish.startWithGeneratedPassword;
+
+  useEffect(() => {
+    if (!open) {
+      setSynced(false);
+      autoStartedRef.current = false;
+      qrAutoRef.current = false;
+      return;
+    }
+    let cancelled = false;
+    void refetch().finally(() => {
+      if (!cancelled) setSynced(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, refetch]);
+
+  const data = status.data;
+  useEffect(() => {
+    if (!open || !synced || localOnlyNotice || data === undefined) return;
+    if (data.state !== 'on') {
+      qrAutoRef.current = false;
+    }
+    if (
+      data.state === 'off' &&
+      data.available &&
+      data.authEnabled === true &&
+      !autoStartedRef.current &&
+      !startMutation.isPending
+    ) {
+      autoStartedRef.current = true;
+      startWithGeneratedPassword();
+    } else if (data.state === 'on' && !qrAutoRef.current) {
+      qrAutoRef.current = true;
+      handleQrToggle();
+    }
+  }, [
+    open,
+    synced,
+    localOnlyNotice,
+    data,
+    startMutation.isPending,
+    startWithGeneratedPassword,
+    handleQrToggle,
+  ]);
 
   if (!open) {
     return null;

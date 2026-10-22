@@ -72,6 +72,17 @@ describe('GlobalBar view switcher a11y', () => {
   });
 });
 
+describe('GlobalBar phone-publish button', () => {
+  it('opens the tunnel dialog with one click', async () => {
+    const user = userEvent.setup();
+    const { onOpenTunnel } = renderGlobalBar();
+
+    await user.click(screen.getByRole('button', { name: 'スマホ公開' }));
+
+    expect(onOpenTunnel).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('GlobalBar view switcher scroll', () => {
   let scrollIntoViewMock: Mock<(arg?: boolean | ScrollIntoViewOptions) => void>;
   let originalScrollIntoView: Element['scrollIntoView'] | undefined;

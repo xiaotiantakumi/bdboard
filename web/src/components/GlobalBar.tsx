@@ -6,6 +6,7 @@ import { navCurrentProps } from './toggleGroupA11y';
 import { OverflowMenu } from './OverflowMenu';
 import { ProjectPicker } from './ProjectPicker';
 import { StatusPill } from './StatusPill';
+import { useTunnelStatus } from './tunnel/useTunnelStatus';
 
 export interface GlobalBarProps {
   view: ViewMode;
@@ -125,6 +126,8 @@ export function GlobalBar({
     .filter(Boolean)
     .join(' ');
 
+  const tunnelOn = useTunnelStatus().data?.state === 'on';
+
   return (
     <div className="global-bar">
       <h1 className="header-title">bdboard</h1>
@@ -156,6 +159,14 @@ export function GlobalBar({
         onClick={onOpenSearch}
       >
         検索
+      </button>
+
+      <button
+        type="button"
+        className={`btn btn-tunnel${tunnelOn ? ' is-on' : ''}`}
+        onClick={onOpenTunnel}
+      >
+        {tunnelOn ? 'スマホ公開中' : 'スマホ公開'}
       </button>
 
       <StatusPill

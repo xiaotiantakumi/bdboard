@@ -1,8 +1,5 @@
-// bdboard-sso1.35: TunnelControl.tsx の「公開前(off)」のパスワード入力欄 +
-// 公開ボタン + ヒント文を移動しただけの表示専用コンポーネント。
-// state・mutation は useTunnelPublish (親で呼び出し) に残し、値とハンドラを
-// props で受け取る。JSX・className・aria属性・文言・DOM構造は移動前から
-// 変えていない。確認ダイアログは別コンポーネント (TunnelPublishConfirmDialog)。
+// bdboard-y2qx: 公開前(off)に出す「詳細」。既定の流れは開いた時点で自動公開
+// (自動生成パスワード) なので、自分でパスワードを決めたいときだけ使う折りたたみ。
 export interface TunnelPublishFormProps {
   passwordInput: string;
   onPasswordChange: (value: string) => void;
@@ -23,7 +20,8 @@ export function TunnelPublishForm({
   startPending,
 }: TunnelPublishFormProps) {
   return (
-    <>
+    <details className="tunnel-details">
+      <summary>詳細</summary>
       <div className="tunnel-off-row">
         <input
           type="password"
@@ -46,15 +44,13 @@ export function TunnelPublishForm({
               : undefined
           }
         >
-          {startPending ? '送信中…' : 'スマホ用に公開'}
+          {startPending ? '送信中…' : 'このパスワードで公開'}
         </button>
       </div>
-
-      {/* bdboard-cu4: 公開してからでは遅い情報なので、公開前に出す。
-          12文字未満のパスワードで公開したトンネルは読み取り専用になる。 */}
+      {/* bdboard-cu4: 12文字未満のパスワードで公開したトンネルは読み取り専用になる。 */}
       <p id="tunnel-password-write-hint" className="tunnel-help">
         パスワードが12文字未満だと、スマホからは読み取り専用になります（空欄=自動生成なら変更もできます）。
       </p>
-    </>
+    </details>
   );
 }
