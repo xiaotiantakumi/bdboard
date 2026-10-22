@@ -44,7 +44,6 @@ export interface BuildPaletteActionsInput {
   hideDone: boolean;
   onToggleStalledOnly: () => void;
   stalledOnly: boolean;
-  onOpenSessionList: () => void;
   onOpenHelp: () => void;
   onRefresh: () => void;
   chatAvailable: boolean;
@@ -75,13 +74,6 @@ export function buildPaletteActions(
           } satisfies PaletteAction,
         ]
       : []),
-    {
-      id: 'panel:sessions',
-      label: 'セッション一覧を開く',
-      keywords: 'session セッション 一覧',
-      group: 'パネル',
-      onSelect: input.onOpenSessionList,
-    },
     {
       id: 'panel:help',
       label: 'ヘルプを開く',

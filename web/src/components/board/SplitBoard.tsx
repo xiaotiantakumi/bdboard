@@ -7,7 +7,6 @@ import { BoardLanes } from './BoardLanes';
 import { hasVisibleCards } from './boardLanesHelpers';
 
 const EMPTY_PROJECT_NAMES = new Map<string, string>();
-const EMPTY_SESSION_COUNTS = new Map<string, number>();
 
 interface SplitBoardProps {
   projects: ProjectBoardDto[];
@@ -80,7 +79,6 @@ export function SplitBoard({
             filter={filter}
             showProjectName={false}
             projectNames={EMPTY_PROJECT_NAMES}
-            projectActiveSessions={EMPTY_SESSION_COUNTS}
             pendingDecisionIds={pendingDecisionIds}
             prLinksById={prLinksById}
             sectionKey={`${sectionKeyPrefix}-${entry.project.id}`}

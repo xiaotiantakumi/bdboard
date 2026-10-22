@@ -42,7 +42,6 @@ export interface UseTicketFormResetParams {
   readonly resetLabelInput: () => void;
   readonly resetTitleEditing: () => void;
   readonly resetDescriptionEditing: () => void;
-  readonly resetSessionLink: () => void;
 }
 
 /**
@@ -65,7 +64,6 @@ export function useTicketFormReset({
   resetLabelInput,
   resetTitleEditing,
   resetDescriptionEditing,
-  resetSessionLink,
 }: UseTicketFormResetParams): void {
   const resetFormState = useCallback(
     (options?: { clearSubmittedDecision?: boolean }) => {
@@ -78,7 +76,6 @@ export function useTicketFormReset({
       resetLabelInput();
       resetTitleEditing();
       resetDescriptionEditing();
-      resetSessionLink();
     },
     [
       clearCopyDisplay,
@@ -87,8 +84,7 @@ export function useTicketFormReset({
       resetDependencies,
       resetDescriptionEditing,
       resetLabelInput,
-      resetSessionLink,
-      resetTitleEditing,
+          resetTitleEditing,
     ],
   );
 

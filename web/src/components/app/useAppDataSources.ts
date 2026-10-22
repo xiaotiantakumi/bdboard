@@ -5,7 +5,6 @@ import { useNotificationEvents } from '../../hooks/useNotificationEvents';
 import { useWatchedTicketDetails } from '../../hooks/useWatchedTicketDetails';
 import { useLastServerContact } from '../../hooks/useLastServerContact';
 import { useProjectsData } from '../../hooks/useProjectsData';
-import { useSessionsData } from '../../hooks/useSessionsData';
 import { useStatusData } from '../../hooks/useStatusData';
 import { useBoardData } from '../../hooks/useBoardData';
 import { usePendingDecisionsData } from '../../hooks/usePendingDecisionsData';
@@ -25,7 +24,7 @@ export interface UseAppDataSourcesParams {
 
 /**
  * App.tsx にフラットに並んでいた「データ取得系統」
- * (useProjectsData → useSessionsData → useStatusData → useBoardData →
+ * (useProjectsData → useStatusData → useBoardData →
  * useLastServerContact → usePendingDecisionsData → usePrLinksData →
  * useChatAvailabilityData → useBoardThresholdsData)と、それに続く
  * ウォッチ中チケット・通知の3系統
@@ -46,12 +45,10 @@ export function useAppDataSources({
   epicFilterId,
   setSelectedProjectIds,
 }: UseAppDataSourcesParams) {
-  const { projectsQuery, chatProjects, projectNames, projectActiveSessions, projectRootPaths } =
+  const { projectsQuery, chatProjects, projectNames, projectRootPaths } =
     useProjectsData({ setSelectedProjectIds });
 
   useReportVisibleProjects(selectedProjectIds);
-
-  const { totalSessionCount, activeSessionCount } = useSessionsData();
 
   const { statusQuery, lastRefreshAt, statusErrors } = useStatusData();
 
@@ -87,10 +84,7 @@ export function useAppDataSources({
     projectsQuery,
     chatProjects,
     projectNames,
-    projectActiveSessions,
     projectRootPaths,
-    totalSessionCount,
-    activeSessionCount,
     statusQuery,
     lastRefreshAt,
     statusErrors,

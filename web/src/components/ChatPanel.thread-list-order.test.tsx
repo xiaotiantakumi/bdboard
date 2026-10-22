@@ -26,7 +26,6 @@ vi.mock('../api', async (importOriginal) => {
     fetchChatTurnStatus: vi.fn(() => Promise.resolve<ChatTurnStatusDto>({ state: 'idle' })),
     acknowledgeChatTurn: vi.fn(() => Promise.resolve()),
     updateChatThread: vi.fn(),
-    fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     fetchPlatformSupport: vi.fn(() => Promise.resolve({ platform: 'darwin', limitations: [] })),
   };
 });
@@ -37,7 +36,6 @@ import {
   fetchChatTurnStatus,
   acknowledgeChatTurn,
   updateChatThread,
-  fetchDiscoveredChatSessions,
   fetchPlatformSupport,
 } from '../api';
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
@@ -59,7 +57,6 @@ const fetchChatThreadsMock = vi.mocked(fetchChatThreads);
 const fetchChatTurnStatusMock = vi.mocked(fetchChatTurnStatus);
 const acknowledgeChatTurnMock = vi.mocked(acknowledgeChatTurn);
 const updateChatThreadMock = vi.mocked(updateChatThread);
-const fetchDiscoveredChatSessionsMock = vi.mocked(fetchDiscoveredChatSessions);
 const fetchPlatformSupportMock = vi.mocked(fetchPlatformSupport);
 
 function thread(sessionId: string, title: string): ChatThreadDto {
@@ -68,21 +65,11 @@ function thread(sessionId: string, title: string): ChatThreadDto {
 
 const THREAD_1 = thread('sess-1', 'first thread');
 const RECOVERED_THREAD = thread('sess-rec', 'recovered thread');
-const ADOPTED_1 = thread('discovered-1', 'resumed title 1');
-const ADOPTED_2 = thread('discovered-2', 'resumed title 2');
 
 function stubFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => handler(url, init));
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
-}
-
-function adoptResponse(sessionId: string, seedText: string) {
-  return jsonResponse({
-    sessionId,
-    agentId: 'claude',
-    seedMessages: [{ role: 'user', text: seedText, timestamp: '2026-08-16T11:00:00.000Z' }],
-  });
 }
 
 function recoveredMessagesResponse() {
@@ -135,20 +122,6 @@ async function resolveDeferred<T>(deferred: ReturnType<typeof createDeferred<T>>
   });
 }
 
-async function resumeDiscoveredSession(
-  container: HTMLElement,
-  user: ReturnType<typeof userEvent.setup>,
-  sessionId: string,
-) {
-  openThreadDrawer(container);
-  const drawer = getThreadDrawer(container);
-  // 一度開いた「CLIセッション」の一覧が開いたままのことがあるので、無ければ開く。
-  if (screen.queryByRole('button', { name: `セッション ${sessionId} を再開` }) === null) {
-    await user.click(within(drawer).getByRole('button', { name: 'CLIセッションを再開' }));
-  }
-  await user.click(await screen.findByRole('button', { name: `セッション ${sessionId} を再開` }));
-}
-
 function switcherTitle(container: HTMLElement) {
   return container.querySelector('.chat-thread-switcher-title');
 }
@@ -167,23 +140,11 @@ describe('ChatPanel: thread-list writers are ordered by fetch start (bdboard-z9m
     fetchChatThreadsMock.mockResolvedValue([]);
     fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
     acknowledgeChatTurnMock.mockResolvedValue();
-    fetchDiscoveredChatSessionsMock.mockResolvedValue({
-      sessions: [
-        { sessionId: 'discovered-1', lastActivityAt: '2026-08-16T12:00:00.000Z', alreadyAdopted: false },
-        { sessionId: 'discovered-2', lastActivityAt: '2026-08-16T12:05:00.000Z', alreadyAdopted: false },
-      ],
-    });
     stubFetch((url, init) => {
       if (url.startsWith('/api/chat/sessions/sess-1/messages')) {
         return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
       }
       if (url.startsWith('/api/chat/sessions/sess-rec/messages')) return recoveredMessagesResponse();
-      if (url === '/api/chat/projects/proj-a/discovered-sessions/discovered-1/adopt' && init?.method === 'POST') {
-        return adoptResponse('discovered-1', 'resumed one');
-      }
-      if (url === '/api/chat/projects/proj-a/discovered-sessions/discovered-2/adopt' && init?.method === 'POST') {
-        return adoptResponse('discovered-2', 'resumed two');
-      }
       throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
     });
   });
@@ -198,58 +159,6 @@ describe('ChatPanel: thread-list writers are ordered by fetch start (bdboard-z9m
       vi.resetAllMocks();
       vi.restoreAllMocks();
     }
-  });
-
-  it('keeps the resumed tab title when a recovery list that started before the resume lands after the resume refresh', async () => {
-    const user = userEvent.setup();
-    writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-1'], selectedSessionId: 'sess-1' });
-    mockRecoveredTurnUntilAcked();
-    // 1 回目 = E7(すぐ届く)、2 回目 = 回収の hydrate(保留。採用より前に始まる)、
-    // 3 回目 = 採用の取り直し(すぐ届く。回収したセッションも含む新しい一覧)。
-    const hydrateList = createDeferred<ChatThreadDto[]>();
-    scriptThreadLists([[THREAD_1], hydrateList, [THREAD_1, ADOPTED_1, RECOVERED_THREAD]]);
-
-    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
-    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(switcherTitle(container)).toHaveTextContent('first thread'));
-
-    await resumeDiscoveredSession(container, user, 'discovered-1');
-    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(3));
-    await waitFor(() => expect(switcherTitle(container)).toHaveTextContent('resumed title 1'));
-
-    // 採用より前に始まった回収の一覧(採用したセッションを含まない)が、採用の取り直しより後に届く。
-    await resolveDeferred(hydrateList, [THREAD_1, RECOVERED_THREAD]);
-
-    // 回収は止まらない(ACK まで進む)。採用したタブは (無題) に戻らない。
-    await waitFor(() => expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-rec'));
-    expect(switcherTitle(container)).toHaveTextContent('resumed title 1');
-    expect(switcherCount(container)).toHaveTextContent('スレッド 3');
-    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(
-      expect.arrayContaining(['sess-1', 'discovered-1', 'sess-rec']),
-    );
-  });
-
-  it('keeps the second resumed tab title when the first resume refresh lands after the second one', async () => {
-    const user = userEvent.setup();
-    writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-1'], selectedSessionId: 'sess-1' });
-    // 1 回目 = E7、2 回目 = 1 回目の採用の取り直し(保留)、3 回目 = 2 回目の採用の取り直し(すぐ届く)。
-    const firstRefresh = createDeferred<ChatThreadDto[]>();
-    scriptThreadLists([[THREAD_1], firstRefresh, [THREAD_1, ADOPTED_1, ADOPTED_2]]);
-
-    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
-    await waitFor(() => expect(switcherTitle(container)).toHaveTextContent('first thread'));
-
-    await resumeDiscoveredSession(container, user, 'discovered-1');
-    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(2));
-    await resumeDiscoveredSession(container, user, 'discovered-2');
-    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(3));
-    await waitFor(() => expect(switcherTitle(container)).toHaveTextContent('resumed title 2'));
-
-    // 1 回目の取り直し(2 回目の採用より前に始まったので、2 回目のセッションを含まない)が遅れて届く。
-    await resolveDeferred(firstRefresh, [THREAD_1, ADOPTED_1]);
-
-    expect(switcherTitle(container)).toHaveTextContent('resumed title 2');
-    expect(switcherCount(container)).toHaveTextContent('スレッド 3');
   });
 
   it('keeps a rename when a list that started before the rename lands after it', async () => {
@@ -328,53 +237,6 @@ describe('ChatPanel: thread-list writers are ordered by fetch start (bdboard-z9m
     });
   });
 
-  it('opens the server list together with a session resumed before the first list lands (bdboard-0206)', async () => {
-    const user = userEvent.setup();
-    const firstList = createDeferred<ChatThreadDto[]>();
-    // 1 回目 = E7(保留。採用より前に始まる)、2 回目 = 採用の取り直し(すぐ届く。採用したセッションも含む)。
-    scriptThreadLists([firstList, [thread('sess-a', 'server thread a'), thread('sess-b', 'server thread b'), ADOPTED_1]]);
-
-    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
-    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
-    // 永続化エントリの無い初回訪問。初回の一覧が in-flight のまま、CLI セッションを採用する(最初の永続化エントリを書く)。
-    await resumeDiscoveredSession(container, user, 'discovered-1');
-    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(switcherTitle(container)).toHaveTextContent('resumed title 1'));
-    expect(switcherCount(container)).toHaveTextContent('スレッド 1');
-
-    // 採用より前に始まった初回の一覧(採用したセッションを含まない)が、採用の取り直しより後に届く。
-    await resolveDeferred(firstList, [thread('sess-a', 'server thread a'), thread('sess-b', 'server thread b')]);
-
-    // 採用したタブは選択されたまま (無題) に戻らず、サーバー一覧のスレッドも開く。
-    expect(switcherTitle(container)).toHaveTextContent('resumed title 1');
-    expect(switcherCount(container)).toHaveTextContent('スレッド 3');
-    expect(readPersistedChatThreads()['proj-a']).toEqual({
-      activeSessionIds: ['sess-a', 'sess-b', 'discovered-1'],
-      selectedSessionId: 'discovered-1',
-    });
-  });
-
-  it('opens the server list together with a session resumed when the first list lands before the resume refresh (bdboard-0206)', async () => {
-    const user = userEvent.setup();
-    const firstList = createDeferred<ChatThreadDto[]>();
-    const refresh = createDeferred<ChatThreadDto[]>();
-    scriptThreadLists([firstList, refresh]);
-
-    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
-    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
-    await resumeDiscoveredSession(container, user, 'discovered-1');
-    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(2));
-
-    // 採用の取り直しが届く前に、初回の一覧が届く。
-    await resolveDeferred(firstList, [thread('sess-a', 'server thread a'), thread('sess-b', 'server thread b')]);
-    expect(switcherCount(container)).toHaveTextContent('スレッド 3');
-
-    // そのあと取り直しが届いても、開いたスレッドは減らない。
-    await resolveDeferred(refresh, [thread('sess-a', 'server thread a'), thread('sess-b', 'server thread b'), ADOPTED_1]);
-    expect(switcherTitle(container)).toHaveTextContent('resumed title 1');
-    expect(switcherCount(container)).toHaveTextContent('スレッド 3');
-    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toEqual(['sess-a', 'sess-b', 'discovered-1']);
-  });
 });
 
 describe('ChatPanel: the provisional first entry is told apart from the user\'s own open/close record (bdboard-rt6i)', () => {
@@ -387,7 +249,6 @@ describe('ChatPanel: the provisional first entry is told apart from the user\'s 
     fetchChatThreadsMock.mockResolvedValue([]);
     fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
     acknowledgeChatTurnMock.mockResolvedValue();
-    fetchDiscoveredChatSessionsMock.mockResolvedValue({ sessions: [] });
   });
 
   afterEach(() => {

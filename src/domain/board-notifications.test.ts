@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   computeBoardNotificationSnapshot,
   diffBoardNotificationSnapshots,
-  diffSessionLiveness,
   type BoardNotificationSnapshot,
   type ProjectNotificationSnapshot,
 } from './board-notifications.js';
-import { makeSession, makeTicket } from './test-support.js';
+import { makeTicket } from './test-support.js';
 
 const NOW = new Date('2026-06-01T12:00:00.000Z');
 
@@ -319,69 +318,5 @@ describe('diffBoardNotificationSnapshots', () => {
       kind: 'ticket_ready',
       ticketId: ticketIds[ticketIds.length - 1],
     });
-  });
-});
-
-describe('diffSessionLiveness', () => {
-  it('detects alive to dead transitions as session_died', () => {
-    const prev = [
-      makeSession({
-        sessionId: 'session-1',
-        alive: true,
-        cwd: '/projects/a',
-        name: 'agent-a',
-        lastActivityAt: NOW,
-      }),
-    ];
-    const next = [
-      makeSession({
-        sessionId: 'session-1',
-        alive: false,
-        cwd: '/projects/a',
-        name: 'agent-a',
-        lastActivityAt: NOW,
-      }),
-    ];
-
-    expect(diffSessionLiveness(prev, next)).toEqual([
-      {
-        kind: 'session_died',
-        sessionId: 'session-1',
-        cwd: '/projects/a',
-        name: 'agent-a',
-        lastActivityAt: NOW,
-      },
-    ]);
-  });
-
-  it('ignores sessions that were already dead', () => {
-    const prev = [
-      makeSession({ sessionId: 'session-1', alive: false }),
-    ];
-    const next = [
-      makeSession({ sessionId: 'session-1', alive: false }),
-    ];
-
-    expect(diffSessionLiveness(prev, next)).toEqual([]);
-  });
-
-  it('ignores sessions that stay alive', () => {
-    const prev = [
-      makeSession({ sessionId: 'session-1', alive: true }),
-    ];
-    const next = [
-      makeSession({ sessionId: 'session-1', alive: true }),
-    ];
-
-    expect(diffSessionLiveness(prev, next)).toEqual([]);
-  });
-
-  it('ignores new sessions that first appear as dead', () => {
-    const prev: ReturnType<typeof makeSession>[] = [];
-    const next = [
-      makeSession({ sessionId: 'session-new', alive: false }),
-    ];
-
-    expect(diffSessionLiveness(prev, next)).toEqual([]);
   });
 });

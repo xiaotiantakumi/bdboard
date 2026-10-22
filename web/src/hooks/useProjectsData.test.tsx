@@ -19,10 +19,7 @@ function makeProject(overrides: Partial<ProjectDto> = {}): ProjectDto {
     name: 'Project One',
     rootPath: '/repo/proj-1',
     prefixes: ['bdboard'],
-    sessionCount: 1,
-    activeSessionCount: 1,
     incompleteTicketCount: 3,
-    sessions: [],
     ...overrides,
   };
 }
@@ -58,10 +55,10 @@ describe('useProjectsData', () => {
     expect(cached?.queryKey).toEqual(['projects']);
   });
 
-  it('derives chatProjects/projectNames/projectActiveSessions/projectRootPaths from the fetched projects', async () => {
+  it('derives chatProjects/projectNames/projectRootPaths from the fetched projects', async () => {
     const projects = [
-      makeProject({ id: 'p-a', name: 'Alpha', rootPath: '/repo/alpha', activeSessionCount: 2 }),
-      makeProject({ id: 'p-b', name: 'Beta', rootPath: '/repo/beta', activeSessionCount: 0 }),
+      makeProject({ id: 'p-a', name: 'Alpha', rootPath: '/repo/alpha' }),
+      makeProject({ id: 'p-b', name: 'Beta', rootPath: '/repo/beta' }),
     ];
     fetchProjectsMock.mockResolvedValue(projects);
     const { result } = renderProjectsData();
@@ -71,8 +68,6 @@ describe('useProjectsData', () => {
     expect(result.current.chatProjects).toEqual(projects);
     expect(result.current.projectNames.get('p-a')).toBe('Alpha');
     expect(result.current.projectNames.get('p-b')).toBe('Beta');
-    expect(result.current.projectActiveSessions.get('p-a')).toBe(2);
-    expect(result.current.projectActiveSessions.get('p-b')).toBe(0);
     expect(result.current.projectRootPaths.get('p-a')).toBe('/repo/alpha');
     expect(result.current.projectRootPaths.get('p-b')).toBe('/repo/beta');
   });

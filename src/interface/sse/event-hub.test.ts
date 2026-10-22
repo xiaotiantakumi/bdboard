@@ -30,7 +30,7 @@ describe('createEventHub', () => {
 
     hub.publish({ name: 'board.changed', data: {} });
     unsubscribe();
-    hub.publish({ name: 'session.changed', data: {} });
+    hub.publish({ name: 'board.changed', data: {} });
     unsubscribe();
 
     expect(received).toEqual(['board.changed']);
@@ -106,7 +106,7 @@ describe('createEventHub', () => {
       const hub = createEventHub({ epoch: 'e1' });
 
       hub.publish({ name: 'notification', data: { n: 1 } });
-      hub.publish({ name: 'session.changed', data: {} });
+      hub.publish({ name: 'board.changed', data: {} });
 
       expect(hub.notificationsSince(undefined)).toEqual([
         { name: 'notification', data: { n: 1 }, id: 'e1-1' },

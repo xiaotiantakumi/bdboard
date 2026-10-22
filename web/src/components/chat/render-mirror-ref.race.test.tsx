@@ -144,10 +144,8 @@ function useThreadListsProbe(projectId: string) {
     selectedThreadIdsRef: key.selectedThreadIdsRef,
     setSelectedThreadIds: key.setSelectedThreadIds,
     draftNoncesRef: key.draftNoncesRef,
-    historyRequestIdRef,
     setConversations: setConversations as never,
     setHistoryLoadedFor,
-    setLoadingHistoryFor,
     setThreadModelIds,
     openThreads: threadLists.openThreads,
     openThreadIdsRef: threadLists.openThreadIdsRef,
@@ -157,7 +155,6 @@ function useThreadListsProbe(projectId: string) {
     setOpenThreadIds: threadLists.setOpenThreadIds,
     threadListOrder: threadLists.threadListOrder,
     setSelectedAgentId,
-    cancelThreadConfirmDelete,
     advanceDraftNonceAfterSessionGone: launcher.advanceDraftNonceAfterSessionGone,
     replacedMarksRef,
   });
@@ -334,57 +331,6 @@ const raceSuites: RaceSuite[] = [
           expect(result.current.openThreadIds['project-a']).toEqual(['sess-2', 'sess-rec']);
           expect(readPersistedChatThreads()['project-a']?.activeSessionIds).toEqual(['sess-2', 'sess-rec']);
         });
-      
-        it('does not let a session resumed before the initial thread-list fetch resolves get clobbered by that fetch (item 2, bdboard-g8e7, controlled promise ordering, no sleep)', async () => {
-          // このプロジェクトは以前の訪問で sess-existing を開いたまま永続化済み。
-          writePersistedChatThreadState('project-a', {
-            activeSessionIds: ['sess-existing'],
-            selectedSessionId: 'sess-existing',
-          });
-      
-          let resolveFetch: ((threads: ChatThreadDto[]) => void) | undefined;
-          fetchChatThreadsMock.mockReturnValue(
-            new Promise<ChatThreadDto[]>((resolve) => {
-              resolveFetch = resolve;
-            }),
-          );
-      
-          const { result } = renderHook(() => useThreadListsProbe('project-a'));
-          // マウント時に E7 の effect が発火し、fetchChatThreads が呼ばれるが、
-          // まだ解決していない(resolveFetch を握ったまま)。
-          expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1);
-          expect(result.current.restoredProjectsRef.current.has('project-a')).toBe(false);
-      
-          act(() => {
-            // E7 の fetch が解決するより前に、ユーザーが「CLI セッションを再開」を押す。
-            result.current.lifecycle.handleResumeDiscoveredSession('sess-resumed', 'agent-b', []);
-          });
-      
-          await act(async () => {
-            resolveFetch?.([
-              thread('sess-existing', 'existing'),
-              thread('sess-resumed', 'resumed'),
-            ]);
-            await Promise.resolve();
-            await Promise.resolve();
-          });
-      
-          await waitFor(() => {
-            expect(result.current.restoredProjectsRef.current.has('project-a')).toBe(true);
-          });
-      
-          // 修正前の壊れ方: handleResumeDiscoveredSession は(E7 未解決なので)
-          // openThreads=[] から nextOpenThreads=['sess-resumed'] を計算して
-          // persisted へ書く。E7 はまだ復元済みマークを見ていないので、その
-          // 書き込みをそのまま restoreThreadView の入力にし、sess-existing が
-          // open からも永続化からも無言で消える。
-          expect(result.current.openThreadIds['project-a']).toEqual(
-            expect.arrayContaining(['sess-existing', 'sess-resumed']),
-          );
-          expect(readPersistedChatThreads()['project-a']?.activeSessionIds).toEqual(
-            expect.arrayContaining(['sess-existing', 'sess-resumed']),
-          );
-        });
     },
   },
   // Reproduces bdboard-d7on.
@@ -464,25 +410,6 @@ const raceSuites: RaceSuite[] = [
           // (sess-rec)が無言で選ばれてしまっていた。
           expect(result.current.openThreadIds['project-a']).toEqual(['sess-1', 'sess-2', 'sess-rec']);
           expect(result.current.key.selectedThreadIds['project-a']).toBe('sess-2');
-        });
-      
-        it('keeps a just-resumed CLI session selected when turn-status recovery hydrates in the same tick as handleResumeDiscoveredSession', async () => {
-          fetchChatThreadsMock.mockResolvedValue([thread('sess-1', 'one')]);
-          const { result } = renderHook(() => useThreadListsProbe('project-a'));
-          await waitFor(() => expect(result.current.openThreadIds['project-a']).toEqual(['sess-1']));
-      
-          act(() => {
-            // ドロワーから CLI セッションを再開した直後、再レンダーを挟まないまま
-            // turn-status 回収の hydrate が別セッションの回収を届ける。
-            result.current.lifecycle.handleResumeDiscoveredSession('sess-resumed', 'agent-b', []);
-            result.current.lifecycle.applyRecoveredTurn(
-              [thread('sess-1', 'one'), thread('sess-rec', 'recovered')],
-              RECOVERED,
-            );
-          });
-      
-          expect(result.current.openThreadIds['project-a']).toEqual(['sess-1', 'sess-resumed', 'sess-rec']);
-          expect(result.current.key.selectedThreadIds['project-a']).toBe('sess-resumed');
         });
     },
   },

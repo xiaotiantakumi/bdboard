@@ -23,10 +23,7 @@ function makeProject(id: string, name = id): ProjectDto {
     name,
     rootPath: `/projects/${id}`,
     prefixes: [],
-    sessionCount: 0,
-    activeSessionCount: 0,
     incompleteTicketCount: 0,
-    sessions: [],
   };
 }
 
@@ -46,7 +43,6 @@ function baseParams(overrides: Partial<AppActionsParams> = {}): AppActionsParams
     hideDone: true,
     setStalledOnly: vi.fn(),
     stalledOnly: false,
-    handleOpenSessionList: vi.fn(),
     handleOpenHelp: vi.fn(),
     chatAvailable: true,
     setEpicFilterId: vi.fn(),

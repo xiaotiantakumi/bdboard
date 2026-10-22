@@ -124,8 +124,6 @@ function makeBoardCard(ticket: TicketSummaryDto): BoardCardDto {
     blockedBy: [],
     blocks: [],
     unblocksCount: 0,
-    liveness: null,
-    sessions: [],
     stalled: false,
     epicProgress: null,
     deferDays: null,
@@ -141,7 +139,6 @@ function makeTicketDetail(ticket: TicketSummaryDto): TicketDetailDto {
     dependencies: [],
     blockedBy: [],
     blocks: [],
-    sessionLinks: [],
     models: [],
     children: [],
   };
@@ -208,45 +205,6 @@ describe('useNotificationEvents watched ticket snapshot continuity', () => {
       previousCommentCount: 1,
       commentCount: 2,
     });
-  });
-
-  it('does not emit watched_session_changed when board/detail source switching changes sessionIds', () => {
-    const ticketId = 'bdboard-abc';
-    const ticket = makeTicketSummary({ id: ticketId, commentCount: 1 });
-    const watchedTicketIds = new Set([ticketId]);
-    const emptyDetails = new Map<string, TicketDetailDto>();
-
-    const boardCard = makeBoardCard(ticket);
-
-    const { result, rerender } = renderHook((props) => useNotificationEvents(props), {
-      initialProps: {
-        watchedTicketIds,
-        boardCardsById: new Map([[ticketId, boardCard]]),
-        watchedTicketDetails: emptyDetails,
-      },
-    });
-
-    expect(result.current.events).toHaveLength(0);
-
-    const detailWithEndedSession: TicketDetailDto = {
-      ...makeTicketDetail(ticket),
-      sessionLinks: [{ sessionId: 'ended-session', source: 'metadata' }],
-    };
-    rerender({
-      watchedTicketIds,
-      boardCardsById: new Map<string, BoardCardDto>(),
-      watchedTicketDetails: new Map([[ticketId, detailWithEndedSession]]),
-    });
-
-    expect(result.current.events).toHaveLength(0);
-
-    rerender({
-      watchedTicketIds,
-      boardCardsById: new Map([[ticketId, boardCard]]),
-      watchedTicketDetails: emptyDetails,
-    });
-
-    expect(result.current.events).toHaveLength(0);
   });
 
   it('does not duplicate watched lane transitions detected twice within the same time bucket', () => {

@@ -34,7 +34,6 @@ export interface AppBoardViewSwitchProps {
   };
   boardMeta: {
     projectNames: Map<string, string>;
-    projectActiveSessions: Map<string, number>;
     pendingDecisionIds: ReadonlySet<string>;
     prLinksById: ReadonlyMap<string, PrBadgeDto>;
     wipLimitsOverrides: WipLimitsOverrides;

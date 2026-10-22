@@ -1,8 +1,4 @@
 import type { GetBoardDeps } from '../../application/board/get-board.js';
-import {
-  DEFAULT_LIVENESS_THRESHOLDS,
-  type LivenessThresholds,
-} from '../../domain/liveness.js';
 import type { CachedProject } from '../../application/ports/board-cache.js';
 import type { InFlightOverlap } from '../../domain/in-flight-overlap.js';
 import { parseClampedIntQueryParam } from './parse-clamped-int-query-param.js';
@@ -44,33 +40,13 @@ export function parseProjectIds(raw: string | undefined): string[] | undefined {
   return ids;
 }
 
-/*
- * DTO 変換は liveness 閾値を必須で受け取る (bdboard-5kz2)。getBoardThresholds は
- * 任意の依存なので、未注入のときにどの値へ落ちるかをここ1箇所で明示する。
- * 各ハンドラで `?? DEFAULT_LIVENESS_THRESHOLDS` を書き散らすと、渡し忘れと
- * 「既定でよい」の区別がまた付かなくなる。
- */
-export async function resolveLivenessThresholds(
-  deps: ApiDeps,
-): Promise<LivenessThresholds> {
-  const thresholds = await deps.getBoardThresholds?.();
-  return thresholds?.livenessThresholds ?? DEFAULT_LIVENESS_THRESHOLDS;
-}
-
 export async function buildGetBoardDeps(deps: ApiDeps): Promise<GetBoardDeps> {
   const thresholds = await deps.getBoardThresholds?.();
-  const sessions = deps.sessions?.();
-  const links = deps.links?.();
   return {
     cache: deps.cache,
     now: deps.now(),
-    ...(sessions !== undefined ? { sessions } : {}),
-    ...(links !== undefined ? { links } : {}),
     ...(thresholds !== undefined
-      ? {
-          stalledThresholds: thresholds.stalledThresholds,
-          livenessThresholds: thresholds.livenessThresholds,
-        }
+      ? { stalledThresholds: thresholds.stalledThresholds }
       : {}),
   };
 }

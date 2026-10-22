@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createApiRoutes } from './routes.js';
-import { makeSessionLink, makeTicket } from '../../domain/test-support.js';
+import { makeTicket } from '../../domain/test-support.js';
 import type { HumanDecisionsPort } from '../../application/ports/human-decisions.js';
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
 import { NOW, project, createFakeBoardCache, seedCache, createDeps, assertNoDates, inFlightScanner, inFlightCache, IN_FLIGHT_FILES } from './routes-test-support.js';
@@ -538,58 +538,7 @@ describe('createApiRoutes', () => {
       },
     ]);
   });
-  describe('GET /api/tickets/:id sessionLinks', () => {
-    it('includes transcript-sourced links from deps.links', async () => {
-      const cache = createFakeBoardCache();
-      const a = project('proj-a', '/root/a');
-      seedCache(cache, [{ project: a, ticketId: 'bdboard-a' }]);
-
-      const links = () => [
-        makeSessionLink({
-          ticketId: 'bdboard-a',
-          sessionId: 'sess-inferred',
-          source: 'transcript',
-        }),
-        // Different ticket: must not leak into bdboard-a's sessionLinks.
-        makeSessionLink({ ticketId: 'bdboard-other', sessionId: 'sess-other' }),
-      ];
-
-      const app = createApiRoutes(createDeps({ cache, links }));
-      const response = await app.request('/api/tickets/bdboard-a');
-      const body = await response.json();
-
-      expect(response.status).toBe(200);
-      expect(body.sessionLinks).toEqual([
-        { sessionId: 'sess-inferred', source: 'transcript' },
-      ]);
-    });
-
-    it('merges the cached manual link, preferring metadata over transcript for the same session', async () => {
-      const cache = createFakeBoardCache();
-      const a = project('proj-a', '/root/a');
-      seedCache(cache, [{
-        project: a,
-        ticketId: 'bdboard-a',
-        ticket: { manualSessionId: 'sess-shared' },
-      }]);
-
-      const links = () => [
-        makeSessionLink({
-          ticketId: 'bdboard-a',
-          sessionId: 'sess-shared',
-          source: 'transcript',
-        }),
-      ];
-      const app = createApiRoutes(createDeps({ cache, links }));
-      const response = await app.request('/api/tickets/bdboard-a');
-      const body = await response.json();
-
-      expect(response.status).toBe(200);
-      expect(body.sessionLinks).toEqual([
-        { sessionId: 'sess-shared', source: 'metadata' },
-      ]);
-    });
-
+  describe('GET /api/tickets/:id models', () => {
     it('includes models cached with the ticket in stage order', async () => {
       const cache = createFakeBoardCache();
       const a = project('proj-a', '/root/a');
@@ -617,34 +566,7 @@ describe('createApiRoutes', () => {
       ]);
     });
 
-    it('keeps distinct manual and inferred links side by side', async () => {
-      const cache = createFakeBoardCache();
-      const a = project('proj-a', '/root/a');
-      seedCache(cache, [{
-        project: a,
-        ticketId: 'bdboard-a',
-        ticket: { manualSessionId: 'sess-manual' },
-      }]);
-
-      const links = () => [
-        makeSessionLink({
-          ticketId: 'bdboard-a',
-          sessionId: 'sess-inferred',
-          source: 'transcript',
-        }),
-      ];
-      const app = createApiRoutes(createDeps({ cache, links }));
-      const response = await app.request('/api/tickets/bdboard-a');
-      const body = await response.json();
-
-      expect(response.status).toBe(200);
-      expect(body.sessionLinks).toEqual([
-        { sessionId: 'sess-inferred', source: 'transcript' },
-        { sessionId: 'sess-manual', source: 'metadata' },
-      ]);
-    });
-
-    it('returns no manual link and empty models when the cache has no metadata', async () => {
+    it('returns empty models when the cache has no metadata', async () => {
       const cache = createFakeBoardCache();
       const a = project('proj-a', '/root/a');
       seedCache(cache, [{ project: a, ticketId: 'bdboard-a' }]);
@@ -654,22 +576,9 @@ describe('createApiRoutes', () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
-      expect(body.sessionLinks).toEqual([]);
       expect(body.models).toEqual([]);
       expect(body.id).toBe('bdboard-a');
     });
 
-    it('returns an empty sessionLinks array when no links are configured', async () => {
-      const cache = createFakeBoardCache();
-      const a = project('proj-a', '/root/a');
-      seedCache(cache, [{ project: a, ticketId: 'bdboard-a' }]);
-
-      const app = createApiRoutes(createDeps({ cache }));
-      const response = await app.request('/api/tickets/bdboard-a');
-      const body = await response.json();
-
-      expect(response.status).toBe(200);
-      expect(body.sessionLinks).toEqual([]);
-    });
   });
 });

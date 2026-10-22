@@ -20,9 +20,6 @@ vi.mock('./TicketDependenciesSection', () => ({
 vi.mock('./TicketModelsSection', () => ({
   TicketModelsSection: vi.fn(() => <div data-testid="models-section" />),
 }));
-vi.mock('./TicketSessionLinkSection', () => ({
-  TicketSessionLinkSection: vi.fn(() => <div data-testid="session-link-section" />),
-}));
 vi.mock('./TicketUsageSection', () => ({
   TicketUsageSection: vi.fn(() => <div data-testid="usage-section" />),
 }));
@@ -45,7 +42,6 @@ vi.mock('./TicketAgentRunSection', () => ({
 import { TicketIdListSection } from './TicketIdListSection';
 import { TicketDependenciesSection } from './TicketDependenciesSection';
 import { TicketModelsSection } from './TicketModelsSection';
-import { TicketSessionLinkSection } from './TicketSessionLinkSection';
 import { TicketUsageSection } from './TicketUsageSection';
 import { TicketDecisionSection } from './TicketDecisionSection';
 import { TicketTimelineSection } from './TicketTimelineSection';
@@ -60,7 +56,6 @@ import {
 const idListMock = vi.mocked(TicketIdListSection);
 const dependenciesMock = vi.mocked(TicketDependenciesSection);
 const modelsMock = vi.mocked(TicketModelsSection);
-const sessionLinkMock = vi.mocked(TicketSessionLinkSection);
 const usageMock = vi.mocked(TicketUsageSection);
 const decisionMock = vi.mocked(TicketDecisionSection);
 const timelineMock = vi.mocked(TicketTimelineSection);
@@ -82,7 +77,6 @@ function makeData(overrides: Partial<TicketDetailDto> = {}): TicketDetailDto {
     dependencies: [{ id: 'MARK-dep-1', title: 'dep', kind: 'blocks' }],
     blockedBy: ['MARK-blocked-by-1'],
     blocks: ['MARK-blocks-1'],
-    sessionLinks: [{ sessionId: 'MARK-session-1', label: 'session' }],
     models: [{ name: 'MARK-model-1' }],
     children: [],
     ...overrides,
@@ -114,17 +108,6 @@ function makeProps(
       handleAddDependency: vi.fn(),
       error: 'MARK-dep-error',
     } as unknown as TicketDetailSecondaryBodyProps['dependencies'],
-    sessionLink: {
-      // sessionLinkPickerOpen/isLoadingSessions も同値 boolean の衝突(finding B)。
-      sessionLinkPickerOpen: 'MARK-session-link-picker-open' as unknown as boolean,
-      togglePicker: vi.fn(),
-      isLoadingSessions: 'MARK-is-loading-sessions' as unknown as boolean,
-      activeSessionCandidates: [{ id: 'MARK-session-candidate-1' }],
-      sessionLinkMutationPending: false,
-      sessionLinkMutationError: 'MARK-session-link-error',
-      onLinkSession: vi.fn(),
-      onUnlinkSession: vi.fn(),
-    } as unknown as TicketDetailSecondaryBodyProps['sessionLink'],
     decision: {
       selectedChoice: 'MARK-choice',
       setSelectedChoice: vi.fn(),
@@ -216,18 +199,6 @@ describe('TicketDetailSecondaryBody', () => {
     });
 
     expect(modelsMock.mock.calls.at(-1)?.[0]).toEqual({ models: props.data.models });
-
-    expect(sessionLinkMock.mock.calls.at(-1)?.[0]).toEqual({
-      sessionLinks: props.data.sessionLinks,
-      pickerOpen: 'MARK-session-link-picker-open',
-      onTogglePicker: props.sessionLink.togglePicker,
-      isLoadingSessions: 'MARK-is-loading-sessions',
-      activeSessionCandidates: props.sessionLink.activeSessionCandidates,
-      mutationPending: false,
-      mutationError: 'MARK-session-link-error',
-      onLinkSession: props.sessionLink.onLinkSession,
-      onUnlinkSession: props.sessionLink.onUnlinkSession,
-    });
 
     expect(usageMock.mock.calls.at(-1)?.[0]).toEqual({ usage: props.data.usage });
   });

@@ -49,7 +49,7 @@ export function useBoardStream(): BoardStreamResult {
   // explicit reconnect) since the effect mounted, or since the last successful
   // revalidation. Any change that happened while we were disconnected only
   // reaches us as a fresh SSE event *after* reconnecting, so that first open
-  // has to be treated the same as an explicit board.changed/session.changed —
+  // has to be treated the same as an explicit board.changed —
   // otherwise the UI keeps showing stale data until the next live event.
   // Lives outside the effect because reconnect() has to set it too: tearing the
   // EventSource down drops any event fired during the close→open window.
@@ -102,7 +102,6 @@ export function useBoardStream(): BoardStreamResult {
 
     const revalidateAll = () => {
       onBoardChanged();
-      onSessionChanged();
       lastRevalidateAtRef.current = Date.now();
     };
 
@@ -147,15 +146,7 @@ export function useBoardStream(): BoardStreamResult {
       }
     };
 
-    const onSessionChanged = () => {
-      touchContact();
-      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
-      void queryClient.invalidateQueries({ queryKey: ['board'] });
-      void queryClient.invalidateQueries({ queryKey: ['projects'] });
-    };
-
     conn.addEventListener('board.changed', onBoardChanged);
-    conn.addEventListener('session.changed', onSessionChanged);
     conn.addEventListener('ping', touchContact);
     conn.addEventListener('hello', touchContact);
 
@@ -174,7 +165,6 @@ export function useBoardStream(): BoardStreamResult {
 
     return () => {
       conn.removeEventListener('board.changed', onBoardChanged);
-      conn.removeEventListener('session.changed', onSessionChanged);
       conn.removeEventListener('ping', touchContact);
       conn.removeEventListener('hello', touchContact);
       conn.removeOpenListener(onOpen);

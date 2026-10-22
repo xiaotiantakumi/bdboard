@@ -16,8 +16,6 @@
 - **看板表示**: 全プロジェクト統合(merged)/プロジェクト別カラム(split)を切り替え可能な Kanban ボード。
   導出レーン(Ready / In Progress / Blocked / Deferred / Done)表示、ドラッグ&ドロップでのステータス変更、
   各カードからのクイックアクション(close / claim / defer / priority 変更、取り消し可能な undo スナックバー付き)
-- **セッション紐付け**: 稼働中の Claude Code セッションをチケットに紐付けて表示し、セッションの
-  トランスクリプトを覗ける(SSE でリアルタイム更新)
 - **チケット詳細パネル**: Markdown 対応(既知チケットIDの自動リンク付き)の説明/ノート/コメント表示、
   パネルからのコメント投稿
 - **チャット**: ローカルの `claude` CLI 経由でチケットについて対話。既定で許可されているのは bd
@@ -65,8 +63,7 @@
 ### 対応 OS
 
 - **macOS** — **対応 OS は macOS のみ**。全機能が動作する(開発・動作確認・利用はここが中心)。
-- **Linux** — 全機能が動作する想定だが、実機での通し確認はしていない。セッション紐付けは
-  `lsof` の実体に依存するので、最小構成のディストリでは別途インストールが要る。
+- **Linux** — 全機能が動作する想定だが、実機での通し確認はしていない。
 - **Windows** — 非対応(2026-10-22 決定、bdboard-l1kt)。CI の `verify-windows` ジョブも廃止した。
   コード中の win32 分岐は過去の名残で、動作は保証しない。
 
@@ -179,7 +176,6 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_SCAN_ROOTS` | `.beads/` を探索するルートディレクトリ(カンマ区切りで複数指定可) | `~/Documents`(存在しない場合は `~`。Windows は `%USERPROFILE%\Documents`、`%USERPROFILE%` 未設定時は `os.homedir()` 起点)。未設定時はユーザー設定(`~/.config/bdboard/config.json`、Windows は `%APPDATA%\bdboard\config.json`)、その後 OS 検出デフォルトを使用 |
 | `BDBOARD_SCAN_DIR_LIMIT` | 1 スキャンで訪問するディレクトリ数の上限(正の整数のみ有効。読み込みは `src/infrastructure/discovery/fs-project-discovery.ts`)。超過すると走査を打ち切って部分結果を返し、`console.warn` に警告を出す。上限は全 scanRoots で共有されソート順に消費されるため、超過時はソート順で後ろの root のプロジェクトがまとめて欠けうる(警告に走査しきれなかった root を列挙する) | `50000` |
 | `BDBOARD_REFRESH_INTERVAL_MS` | 全プロジェクトの定期リフレッシュ間隔(ミリ秒) | `300000`(5分) |
-| `BDBOARD_SESSION_INTERVAL_MS` | Claude Code セッション一覧の再取得間隔(ミリ秒) | `10000`(10秒) |
 | `BDBOARD_TRANSCRIPT_INTERVAL_MS` | セッション⇔チケットのトランスクリプト走査間隔(ミリ秒)。`0` 以下で無効化 | `30000`(30秒) |
 | `BDBOARD_RECLAIM_ENABLED` | 期限切れの agent lease を定期回収する処理を有効化する。`0` / `false` で無効化 | `true` |
 | `BDBOARD_RECLAIM_INTERVAL_MS` | agent lease 回収の実行間隔(ミリ秒) | `300000`(5分) |
@@ -201,7 +197,7 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_AI_QUOTA_ALERT_CONFIG_PATH` | AI クォータ通知しきい値の設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
 | `BDBOARD_AI_QUOTA_ALERT_INTERVAL_MS` | AI クォータ通知しきい値の確認間隔(ミリ秒) | `60000`(1分) |
 | `BDBOARD_CHAT_DISABLED` | `1` または `true`(大小無視)でチャット機能を無効化 | `false` |
-| `BDBOARD_IGNORE_PLATFORM_LIMITS` | `1` / `true` で、プラットフォーム未対応判定 (Windows のセッション検出・チャット) を無視して有効化する。独自に環境を整えた場合の逃げ道 | `false` |
+| `BDBOARD_IGNORE_PLATFORM_LIMITS` | `1` / `true` で、プラットフォーム未対応判定 (Windows のチャット) を無視して有効化する。独自に環境を整えた場合の逃げ道 | `false` |
 | `BDBOARD_CLAUDE_PATH` | チャット機能が呼び出す `claude` CLI のパス/名前 | `claude` |
 | `BDBOARD_CHAT_MODEL` | チャットで使うモデル(起動時の既定値1つ) | `sonnet` |
 | `BDBOARD_CHAT_MODELS` | チャットの claude エージェントで選択可能なモデル一覧(カンマ区切り) | `sonnet,opus,haiku` |

@@ -39,7 +39,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     threadModelIdsRef, historyRequestIdRef, threadListRequestIdRef, setSelectedThreadIds,
     selectedThreadIdsRef, setDraftNonces, draftNoncesRef, currentSessionId, currentConversationKey,
     turnRecoveryGeneration, unresolvedSends, clearUnresolvedSend, clearStreamingReplyForKey,
-    detachedStreamSendRef, requestAbortControllerRef, cancelThreadConfirmDelete, setThreadError,
+    detachedStreamSendRef, requestAbortControllerRef, setThreadError,
     ticketProjectFallbackNotice, setTicketProjectFallbackNotice, setThreadLists, openThreadIds,
     setOpenThreadIds, openThreadIdsRef, restoredProjectsRef, provisionalEntries, threadListOrder, openThreads,
     conversationInputs,
@@ -136,20 +136,17 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
   });
 
   // bdboard-sso1.83 第15a段: applyRecoveredTurn(E8 の hydrate)・
-  // handleHistorySessionGone(E12 の 23u prune)・handleResumeDiscoveredSession
-  // (CLI セッションの再開)を chat/useChatSessionLifecycle.ts へ move-only で
+  // handleHistorySessionGone(E12 の 23u prune)を chat/useChatSessionLifecycle.ts へ move-only で
   // 抜き出した。effect は持たない。applyRecoveredTurn の元の位置(E7 の後、E8 の前)で
   // 呼ぶので、handleHistorySessionGone の useCallback だけが E8〜E11 より前へ移る
   // (effect の登録順は変わらない)。
-  const { applyRecoveredTurn, handleHistorySessionGone, handleResumeDiscoveredSession } =
+  const { applyRecoveredTurn, handleHistorySessionGone } =
     useChatSessionLifecycle({
       selectedProjectId,
       selectedThreadIdsRef,
       setSelectedThreadIds,
-      historyRequestIdRef,
       setConversations,
       setHistoryLoadedFor,
-      setLoadingHistoryFor,
       setThreadModelIds,
       openThreads,
       openThreadIdsRef,
@@ -159,7 +156,6 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
       setThreadLists,
       setOpenThreadIds,
       setSelectedAgentId,
-      cancelThreadConfirmDelete,
       advanceDraftNonceAfterSessionGone,
       draftNoncesRef,
       replacedMarksRef: send.replacedMarksRef,
@@ -242,7 +238,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     currentInput, currentAttachments, currentAttachmentError, isHistoryPending, currentMessages,
     selectedProject, showProjectSelect, projectSelectionHint, projectSelectionHintId,
     agentUnavailableHintId, hasUnsupportedAttachments, handleProjectSelectChange,
-    handleResumeDiscoveredSession, backgroundTurnStatus, backgroundTurnProjectId,
+    backgroundTurnStatus, backgroundTurnProjectId,
     resetBackgroundTurnStatus,
   };
 }

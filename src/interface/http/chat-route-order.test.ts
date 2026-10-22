@@ -25,8 +25,6 @@ const EXPECTED_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'ALL', path: '/api/chat/message/stream' },
   { method: 'ALL', path: '/api/chat' },
   { method: 'ALL', path: '/api/chat/*' },
-  { method: 'ALL', path: '/api/chat/projects/:projectId/discovered-sessions' },
-  { method: 'ALL', path: '/api/chat/projects/:projectId/discovered-sessions/*' },
   { method: 'GET', path: '/api/chat/availability' },
   { method: 'GET', path: '/api/chat/agents' },
   { method: 'GET', path: '/api/chat/sessions/:sessionId/messages' },
@@ -37,8 +35,6 @@ const EXPECTED_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'DELETE', path: '/api/chat/sessions/:sessionId' },
   { method: 'POST', path: '/api/chat/message' },
   { method: 'POST', path: '/api/chat/message/stream' },
-  { method: 'GET', path: '/api/chat/projects/:projectId/discovered-sessions' },
-  { method: 'POST', path: '/api/chat/projects/:projectId/discovered-sessions/:sessionId/adopt' },
 ];
 
 function buildMinimalDeps(): ChatRoutesDeps {

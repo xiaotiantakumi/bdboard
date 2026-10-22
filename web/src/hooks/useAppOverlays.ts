@@ -28,11 +28,6 @@ export interface AppOverlaysState {
   handleCloseChat: () => void;
   handleChatAboutTicket: (context: AppChatContext) => void;
 
-  sessionListOpen: boolean;
-  sessionListProjectId: string | undefined;
-  handleOpenSessionList: (projectId?: string) => void;
-  handleCloseSessionList: () => void;
-
   tunnelModalOpen: boolean;
   handleOpenTunnel: () => void;
   handleCloseTunnel: () => void;
@@ -52,13 +47,13 @@ export interface AppOverlaysState {
  *
  * hook 呼び出し順について: 元の App.tsx では detailMaximized の
  * useState+useEffect (旧 L191-199) が先頭、続けて search/shortcuts/help/chat/
- * sessionList/tunnel/statusDetail/presetSaveIntentToken の useState 群
+ * tunnel/statusDetail/presetSaveIntentToken の useState 群
  * (旧 L200-214) が並んでいた。このフックは App.tsx 内の同じ位置
  * (useTicketDeepLink の直後、データ取得9系統より前)から1回だけ呼ぶため、
  * 内部のuseState群とdetailMaximizedのuseEffectは全体で見ても元と同じ相対
  * 位置・同じ順序で登録される。
  *
- * 各 open/close ハンドラ (handleOpenSessionList 等) は、元の App.tsx では
+ * 各 open/close ハンドラ (handleOpenTunnel 等) は、元の App.tsx では
  * もっと後ろ (旧 L408-440、handleRefresh/handleToggleProject などの並び) で
  * useCallback として定義されていた。ここへまとめて前倒ししているが、これら
  * はいずれも自分自身の setState 以外に依存しない副作用のない
@@ -89,10 +84,6 @@ export function useAppOverlays(selectedTicketId: string | null): AppOverlaysStat
   const [chatOpen, setChatOpen] = useState(false);
   const [chatContext, setChatContext] = useState<AppChatContext | undefined>(undefined);
   const [chatContextToken, setChatContextToken] = useState(0);
-  const [sessionListOpen, setSessionListOpen] = useState(false);
-  const [sessionListProjectId, setSessionListProjectId] = useState<string | undefined>(
-    undefined,
-  );
   const [tunnelModalOpen, setTunnelModalOpen] = useState(false);
   const [statusDetailOpen, setStatusDetailOpen] = useState(false);
   const [presetSaveIntentToken, setPresetSaveIntentToken] = useState(0);
@@ -129,15 +120,6 @@ export function useAppOverlays(selectedTicketId: string | null): AppOverlaysStat
     setChatContext(context);
     setChatContextToken((token) => token + 1);
     setChatOpen(true);
-  }, []);
-
-  const handleOpenSessionList = useCallback((projectId?: string) => {
-    setSessionListProjectId(projectId);
-    setSessionListOpen(true);
-  }, []);
-  const handleCloseSessionList = useCallback(() => {
-    setSessionListOpen(false);
-    setSessionListProjectId(undefined);
   }, []);
 
   const handleOpenTunnel = useCallback(() => {
@@ -177,11 +159,6 @@ export function useAppOverlays(selectedTicketId: string | null): AppOverlaysStat
     handleOpenChat,
     handleCloseChat,
     handleChatAboutTicket,
-
-    sessionListOpen,
-    sessionListProjectId,
-    handleOpenSessionList,
-    handleCloseSessionList,
 
     tunnelModalOpen,
     handleOpenTunnel,

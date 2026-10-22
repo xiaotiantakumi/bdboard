@@ -8,10 +8,7 @@ function project(id: string): ProjectDto {
     name: id,
     rootPath: `/tmp/${id}`,
     prefixes: [id],
-    sessionCount: 0,
-    activeSessionCount: 0,
     incompleteTicketCount: 0,
-    sessions: [],
   };
 }
 

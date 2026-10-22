@@ -14,7 +14,6 @@
 // (型の移し忘れ・名前の変更・re-export の欠落) と、import 自体が解決できず tsc が
 // このファイルで落ちる (TS2305: has no exported member)。
 import type {
-  AdoptChatSessionResponseDto,
   ChatAgentAvailability,
   ChatAgentCapability,
   ChatAgentDto,
@@ -28,8 +27,6 @@ import type {
   ChatSessionMessagesDto,
   ChatThreadDto,
   ChatTurnStatusDto,
-  DiscoveredChatSessionDto,
-  DiscoveredChatSessionsDto,
 } from './chat';
 
 export type ExpectedTypeExportSurface = [
@@ -46,7 +43,4 @@ export type ExpectedTypeExportSurface = [
   ChatSessionMessagesDto,
   ChatThreadDto,
   ChatTurnStatusDto,
-  DiscoveredChatSessionDto,
-  DiscoveredChatSessionsDto,
-  AdoptChatSessionResponseDto,
 ];

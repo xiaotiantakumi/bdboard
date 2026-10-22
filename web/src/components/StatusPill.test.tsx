@@ -1,5 +1,4 @@
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   gutterForViewport,
@@ -18,9 +17,6 @@ function renderPill(overrides?: Partial<React.ComponentProps<typeof StatusPill>>
     lastContactAtMs: NOW.getTime(),
     generatedAt: NOW.toISOString(),
     lastRefreshAt: NOW.toISOString(),
-    totalSessionCount: 0,
-    activeSessionCount: 0,
-    onOpenSessionList: vi.fn(),
     open: true,
     onOpenChange: vi.fn(),
     ...overrides,
@@ -124,14 +120,6 @@ describe('StatusPill popover freshness (bdboard-d55)', () => {
 
     expect(screen.queryByText(/盤面内容の最終変化/)).not.toBeInTheDocument();
     expect(screen.queryByText(/最終通信/)).not.toBeInTheDocument();
-  });
-
-  it('still opens the session list from the popover', async () => {
-    const onOpenSessionList = vi.fn();
-    renderPill({ onOpenSessionList, totalSessionCount: 3, activeSessionCount: 1 });
-
-    await userEvent.click(screen.getByRole('button', { name: /セッション: 3/ }));
-    expect(onOpenSessionList).toHaveBeenCalledTimes(1);
   });
 });
 

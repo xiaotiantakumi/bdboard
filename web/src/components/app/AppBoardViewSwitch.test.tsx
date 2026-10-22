@@ -114,7 +114,6 @@ function makeProps(overrides: Partial<AppBoardViewSwitchProps> = {}): AppBoardVi
     },
     boardMeta: {
       projectNames: new Map(),
-      projectActiveSessions: new Map(),
       pendingDecisionIds: new Set(),
       prLinksById: new Map(),
       wipLimitsOverrides: {},
@@ -267,7 +266,6 @@ describe('AppBoardViewSwitch', () => {
           },
           boardMeta: {
             projectNames: new Map(),
-            projectActiveSessions: new Map(),
             pendingDecisionIds: new Set(),
             prLinksById: new Map(),
             wipLimitsOverrides: {},
@@ -289,7 +287,6 @@ describe('AppBoardViewSwitch', () => {
       ['bdboard-pr-1', { ticketId: 'bdboard-pr-1', projectId: 'proj-1', url: 'https://example.test/1', state: 'open', checkStatus: null }],
     ]);
     const projectNames = new Map([['proj-1', 'Project One']]);
-    const projectActiveSessions = new Map([['proj-1', 2]]);
     const wipLimitsOverrides = { inProgressWipLimit: 7 };
     const collapsedLanesSet = new Set(['in_progress' as const]);
     const onToggleLaneCollapse = vi.fn();
@@ -314,7 +311,6 @@ describe('AppBoardViewSwitch', () => {
           },
           boardMeta: {
             projectNames,
-            projectActiveSessions,
             pendingDecisionIds,
             prLinksById,
             wipLimitsOverrides,
@@ -354,7 +350,6 @@ describe('AppBoardViewSwitch', () => {
           },
           boardMeta: {
             projectNames: new Map(),
-            projectActiveSessions: new Map(),
             pendingDecisionIds: new Set(),
             prLinksById: new Map(),
             wipLimitsOverrides: {},
@@ -395,7 +390,6 @@ describe('AppBoardViewSwitch', () => {
           },
           boardMeta: {
             projectNames: new Map(),
-            projectActiveSessions: new Map(),
             pendingDecisionIds,
             prLinksById,
             wipLimitsOverrides,

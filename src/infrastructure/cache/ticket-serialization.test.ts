@@ -43,7 +43,6 @@ function fullTicket(): Required<Ticket> {
     closeReason: 'Merged via PR #42',
     labels: ['human', 'needs-review'],
     commentCount: 3,
-    manualSessionId: 'sess-manual',
     models: [{ stage: 'implement', model: 'composer-2.5' }],
     complexity: 'high',
     reviewAfter: ['proj-before', 'proj-earlier'],
@@ -151,15 +150,6 @@ describe('ticket serialization', () => {
     };
     const restored = deserializeTickets(serializeTickets([original]))[0];
     expect(restored).toEqual(original);
-  });
-
-  it('round-trips a manual session link when present', () => {
-    const original: Ticket = {
-      ...minimalTicket(),
-      manualSessionId: 'sess-manual',
-    };
-
-    expect(deserializeTickets(serializeTickets([original]))[0]).toEqual(original);
   });
 
   it('omits models after round-trip when absent', () => {

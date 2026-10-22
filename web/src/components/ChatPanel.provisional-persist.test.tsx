@@ -22,7 +22,6 @@ vi.mock('../api', async (importOriginal) => {
     fetchChatTurnStatus: vi.fn(() => Promise.resolve<ChatTurnStatusDto>({ state: 'idle' })),
     acknowledgeChatTurn: vi.fn(() => Promise.resolve()),
     updateChatThread: vi.fn(),
-    fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     fetchPlatformSupport: vi.fn(() => Promise.resolve({ platform: 'darwin', limitations: [] })),
   };
 });
@@ -32,7 +31,6 @@ import {
   fetchChatThreads,
   fetchChatTurnStatus,
   acknowledgeChatTurn,
-  fetchDiscoveredChatSessions,
   fetchPlatformSupport,
 } from '../api';
 import { AppChatOverlay } from './app/AppChatOverlay';
@@ -54,7 +52,6 @@ const fetchChatAgentsMock = vi.mocked(fetchChatAgents);
 const fetchChatThreadsMock = vi.mocked(fetchChatThreads);
 const fetchChatTurnStatusMock = vi.mocked(fetchChatTurnStatus);
 const acknowledgeChatTurnMock = vi.mocked(acknowledgeChatTurn);
-const fetchDiscoveredChatSessionsMock = vi.mocked(fetchDiscoveredChatSessions);
 const fetchPlatformSupportMock = vi.mocked(fetchPlatformSupport);
 
 const KEY = 'bdboard.chat.thread.v2';
@@ -163,7 +160,6 @@ describe('ChatPanel: the provisional-entry mark is stored, so reload and closing
     fetchChatThreadsMock.mockResolvedValue([]);
     fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
     acknowledgeChatTurnMock.mockResolvedValue();
-    fetchDiscoveredChatSessionsMock.mockResolvedValue({ sessions: [] });
   });
 
   afterEach(() => {

@@ -1,5 +1,4 @@
 import { createReadinessContext, isReady } from './readiness.js';
-import type { AgentSession } from './session.js';
 import type { Ticket } from './ticket.js';
 import type { TicketId } from './ticket-id.js';
 
@@ -103,41 +102,6 @@ export function diffBoardNotificationSnapshots(
 
     for (const event of diffProjectNotificationSnapshots(prevProject, nextProject)) {
       events.push(event);
-    }
-  }
-
-  return events;
-}
-
-export interface SessionDiedEvent {
-  readonly kind: 'session_died';
-  readonly sessionId: string;
-  readonly cwd: string;
-  readonly name?: string;
-  readonly lastActivityAt: Date;
-}
-
-export function diffSessionLiveness(
-  prev: readonly AgentSession[],
-  next: readonly AgentSession[],
-): readonly SessionDiedEvent[] {
-  const prevById = new Map(prev.map((session) => [session.sessionId, session]));
-  const events: SessionDiedEvent[] = [];
-
-  for (const session of next) {
-    const prevSession = prevById.get(session.sessionId);
-    if (
-      prevSession !== undefined &&
-      prevSession.alive &&
-      !session.alive
-    ) {
-      events.push({
-        kind: 'session_died',
-        sessionId: session.sessionId,
-        cwd: session.cwd,
-        ...(session.name !== undefined ? { name: session.name } : {}),
-        lastActivityAt: session.lastActivityAt,
-      });
     }
   }
 

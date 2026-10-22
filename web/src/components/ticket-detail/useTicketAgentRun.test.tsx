@@ -73,7 +73,6 @@ const ticket: TicketDetailDto = {
   dependencies: [],
   blockedBy: [],
   blocks: [],
-  sessionLinks: [],
   models: [],
   children: [],
 };
