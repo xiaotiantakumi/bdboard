@@ -12,7 +12,6 @@ function renderGlobalBar(overrides?: Partial<React.ComponentProps<typeof GlobalB
   const props: React.ComponentProps<typeof GlobalBar> = {
     view: 'split',
     onViewChange,
-    notificationUnreadCount: 0,
     onOpenSearch: vi.fn(),
     streamState: 'open',
     lastContactAtMs: Date.now(),
@@ -113,7 +112,6 @@ describe('GlobalBar view switcher scroll', () => {
     const props: React.ComponentProps<typeof GlobalBar> = {
       view: 'split',
       onViewChange: vi.fn(),
-      notificationUnreadCount: 0,
       onOpenSearch: vi.fn(),
       streamState: 'open',
       lastContactAtMs: Date.now(),

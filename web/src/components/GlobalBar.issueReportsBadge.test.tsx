@@ -9,7 +9,6 @@ function renderBar(issueReportPendingCount: number | null | undefined) {
   const props: React.ComponentProps<typeof GlobalBar> = {
     view: 'split',
     onViewChange: vi.fn(),
-    notificationUnreadCount: 0,
     ...(issueReportPendingCount !== undefined ? { issueReportPendingCount } : {}),
     onOpenSearch: vi.fn(),
     streamState: 'open',
@@ -42,9 +41,8 @@ function renderBar(issueReportPendingCount: number | null | undefined) {
 }
 
 describe('GlobalBar issue report tab (bdboard-4y8q.3.2)', () => {
-  it('places 不具合報告 between イベント and 設定', () => {
+  it('places 不具合報告 right before 設定', () => {
     const labels = VIEW_ITEMS.map((item) => item.label);
-    expect(labels.indexOf('不具合報告')).toBe(labels.indexOf('イベント') + 1);
     expect(labels.indexOf('設定')).toBe(labels.indexOf('不具合報告') + 1);
   });
 
