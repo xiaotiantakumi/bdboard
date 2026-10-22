@@ -14,17 +14,14 @@
 //   保っているだけで、今回変更していない)。
 //
 // 戻り値はセクションの関心事ごとにグループ化して返す
-// (title/description/labels/dependencies/comment/sessionLink/timeline/
+// (title/description/labels/dependencies/comment/timeline/
 // similarTickets/inFlightOverlaps/decision)。
 // 各グループの中身は対応するフックの戻り値オブジェクトをそのまま(または
 // 表示に必要な派生値を足して spread した)もので、フィールド名は元の
 // TicketDetailPanel 内のローカル変数名/フックの戻り値フィールド名を変えていない。
 import { useEffect, useRef, type RefObject } from 'react';
 import { type PendingDecisionDto } from '../../api';
-import { useAutoClearedValue } from '../../hooks/useAutoClearedValue';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { COPY_FEEDBACK_MS } from './constants';
-import { type CopyDisplay, EMPTY_COPY_DISPLAY } from './types';
 import { useTicketDetailQueries } from './useTicketDetailQueries';
 import { useTicketTitleEditing } from './useTicketTitleEditing';
 import { useTicketDescriptionEditing } from './useTicketDescriptionEditing';
@@ -73,11 +70,6 @@ export function useTicketDetailController({
   const { queryClient, data, isLoading, error, projectRootPath, decision } =
     queries;
 
-  // bdboard-ty72: コピー表示は copyTextToClipboard の継続から出るので、素の
-  // setTimeout だとアンマウント後にタイマーを仕掛けうる。
-  const {
-    clear: clearCopyDisplay,
-  } = useAutoClearedValue<CopyDisplay>(EMPTY_COPY_DISPLAY, COPY_FEEDBACK_MS);
   const title = useTicketTitleEditing(ticketId, data?.title);
   const description = useTicketDescriptionEditing(
     ticketId,
@@ -95,7 +87,6 @@ export function useTicketDetailController({
   useTicketFormReset({
     ticketId,
     projectRootPath,
-    clearCopyDisplay,
     resetDecision: decision.reset,
     resetComment: comment.reset,
     resetDependencies: dependencies.reset,

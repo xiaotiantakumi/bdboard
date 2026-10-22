@@ -41,14 +41,6 @@
   letter-spacing: 0.03em;
 }
 
-.tunnel-field-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  max-width: 100%;
-}
-
 .tunnel-qr-hint {
   font-size: 0.75rem;
   color: var(--color-text-tertiary);

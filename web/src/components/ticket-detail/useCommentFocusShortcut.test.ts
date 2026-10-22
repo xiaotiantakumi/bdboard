@@ -167,7 +167,7 @@ describe('useCommentFocusShortcut', () => {
     expect(preventDefaultSpy).not.toHaveBeenCalled();
   });
 
-  it('ignores the shortcut while disabled (quick action / agent run confirmation open)', () => {
+  it('ignores the shortcut while disabled (confirmation open)', () => {
     const textarea = document.createElement('textarea');
     const focusSpy = vi.spyOn(textarea, 'focus');
     const preventDefaultSpy = vi.fn();

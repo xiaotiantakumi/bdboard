@@ -9,5 +9,3 @@ export const DEPENDENCY_SEARCH_LIMIT = 20;
  * 埋まって他の情報が押し出される。残りは件数だけ出す。
  */
 export const OVERLAP_FILE_DISPLAY_LIMIT = 20;
-
-export const COPY_FEEDBACK_MS = 2000;

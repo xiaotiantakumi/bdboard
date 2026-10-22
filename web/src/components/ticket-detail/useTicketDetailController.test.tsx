@@ -10,7 +10,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // 押さえられている。
 
 vi.mock('./useTicketDetailQueries');
-vi.mock('../../hooks/useAutoClearedValue');
 vi.mock('./useTicketTitleEditing');
 vi.mock('./useTicketDescriptionEditing');
 vi.mock('./useTicketLabels');
@@ -21,7 +20,6 @@ vi.mock('../../hooks/useFocusTrap');
 vi.mock('./useCommentFocusShortcut');
 
 import { useTicketDetailQueries } from './useTicketDetailQueries';
-import { useAutoClearedValue } from '../../hooks/useAutoClearedValue';
 import { useTicketTitleEditing } from './useTicketTitleEditing';
 import { useTicketDescriptionEditing } from './useTicketDescriptionEditing';
 import { useTicketLabels } from './useTicketLabels';
@@ -36,7 +34,6 @@ import {
 } from './useTicketDetailController';
 
 const queriesMock = vi.mocked(useTicketDetailQueries);
-const autoClearedMock = vi.mocked(useAutoClearedValue);
 const titleMock = vi.mocked(useTicketTitleEditing);
 const descriptionMock = vi.mocked(useTicketDescriptionEditing);
 const labelsMock = vi.mocked(useTicketLabels);
@@ -83,14 +80,6 @@ function setupMocks() {
     inFlightOverlaps: { MARK: 'in-flight-overlaps' },
   } as unknown as ReturnType<typeof useTicketDetailQueries>);
 
-  const autoClearedClear = vi.fn();
-  autoClearedMock.mockReturnValue({
-    value: { feedback: { kind: 'success', command: 'claim' }, aria: 'MARK-aria' },
-    show: vi.fn(),
-    hold: vi.fn(),
-    clear: autoClearedClear,
-  });
-
   const titleReset = vi.fn();
   titleMock.mockReturnValue({ MARK: 'title', reset: titleReset } as unknown as ReturnType<
     typeof useTicketTitleEditing
@@ -125,7 +114,6 @@ function setupMocks() {
     undoSnackbar,
     decision,
     decisionReset,
-    autoClearedClear,
     titleReset,
     descriptionReset,
     labelsReset,
@@ -255,8 +243,7 @@ describe('useTicketDetailController', () => {
   it('binds every useTicketFormReset reset*/clear callback to the matching sub-hook mock reference', () => {
     const {
       decisionReset,
-      autoClearedClear,
-        titleReset,
+          titleReset,
       descriptionReset,
       labelsReset,
       dependenciesReset,
@@ -268,7 +255,6 @@ describe('useTicketDetailController', () => {
     expect(formResetMock).toHaveBeenCalledWith({
       ticketId: 'MARK-ticket-id',
       projectRootPath: 'MARK-project-root',
-      clearCopyDisplay: autoClearedClear,
       resetDecision: decisionReset,
       resetComment: commentReset,
       resetDependencies: dependenciesReset,

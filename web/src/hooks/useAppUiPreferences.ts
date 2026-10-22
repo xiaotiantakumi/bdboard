@@ -47,11 +47,10 @@ export interface AppUiPreferences {
  * (useAppUiPreferences.test.ts でキー名と既定値の一致を検証)。
  *
  * hook 呼び出し順について: 元の App.tsx ではこの並びは
- * boardFilterState / nextUpBatchRun (queryClient +
- * useNextUpRunLoopController) と互い違いに並んでいたが、いずれも
+ * boardFilterState / queryClient と互い違いに並んでいたが、いずれも
  * usePersistedState (内部は useState + useEffect のみ、他の localStorage
  * キーや外部 I/O に依存しない) なので、互いの呼び出し順序を入れ替えても・
- * boardFilterState/nextUpBatchRun との相対位置を変えても観測可能な挙動は
+ * boardFilterState との相対位置を変えても観測可能な挙動は
  * 変わらない。このフック内部での呼び出し順序自体は元の宣言順 (view →
  * selectedProjectIds → lastChatProjectId → boardFilterPresets →
  * tipsBannerDismissed) を保っている。

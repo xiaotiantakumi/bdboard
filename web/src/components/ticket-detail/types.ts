@@ -44,20 +44,6 @@ export interface TicketDetailPanelProps {
   availableLabels?: readonly string[];
 }
 
-type CopyFeedback = { kind: 'error' };
-
-/**
- * コピー結果の表示。ボタン脇のバッジ (feedback) と読み上げ (aria) は必ず一緒に
- * 出て一緒に消えるので、1つの値として useAutoClearedValue に持たせる
- * (bdboard-ty72)。別々の state にすると自動消去タイマーも2本になる。
- */
-export interface CopyDisplay {
-  readonly feedback: CopyFeedback | null;
-  readonly aria: string;
-}
-
-export const EMPTY_COPY_DISPLAY: CopyDisplay = { feedback: null, aria: '' };
-
 export type SubmittedDecision = {
   decisionId: string;
   choiceLabel?: string;

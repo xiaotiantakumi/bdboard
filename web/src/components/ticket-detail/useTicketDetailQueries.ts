@@ -50,10 +50,6 @@ export function useTicketDetailQueries({
     });
   }, [data?.id, data?.title, data?.projectId, onTicketViewed]);
 
-  // agentRun (useTicketDetailController 側) の ticketId/projectRootPath 変更
-  // リセットが内部の同期effectより先に走る順序を保証するため、agentRun 呼び出しより
-  // 前で確定させておく (bdboard-sso1.5 PR-L Opus レビュー対応、
-  // useTicketAgentRun.ts 冒頭コメント参照)。
   const projectRootPath =
     data === undefined ? undefined : projectRootPaths.get(data.projectId);
 

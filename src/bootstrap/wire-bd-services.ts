@@ -2,8 +2,8 @@
  * bdboard-sso1.14: src/main.ts (composition root) から bd/gh CLI 経由の各種
  * ポート実装の組み立てを切り出したもの (move only, 挙動変更ゼロ)。
  *
- * `inner` (routes.ts の buildApiDeps) をはじめ、harness routes / agent-run
- * routes など複数の領域から共有される「bd 台帳・gh PR ステータス・git
+ * `inner` (routes.ts の buildApiDeps) をはじめ、harness routes など
+ * 複数の領域から共有される「bd 台帳・gh PR ステータス・git
  * worktree 走査」まわりの下位ポート群をまとめて組み立てる。ここに置くのは
  * 単純な `createXxx(commandRunner, options)` の呼び出しだけで、mount 順や
  * 起動時副作用は持たない。

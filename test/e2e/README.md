@@ -10,7 +10,7 @@ Playwright の E2E。**spec は `smoke.spec.ts` の 1 本だけ** (bdboard-5wxf�
 `moduleResolution: node16` なので `.js` 拡張子を明示すること (省くと `error TS2835`)。
 Desktop Chrome の 1 プロジェクトのみ。
 
-`global-setup.ts` が偽 `bd` / `claude` (`fixtures/bin/`) と fixture (`fixtures/bd/`) を使う専用サーバを
+`global-setup.ts` が偽 `bd` / `claude` (`fixtures/bin/`) と golden 一覧 (`test/fixtures/bd/bdboard.list.json`) を使う専用サーバを
 空きポートで起動する (常時稼働の 8787 は使わない)。
 
 ## 落とし穴

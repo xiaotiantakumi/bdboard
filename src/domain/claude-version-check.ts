@@ -135,11 +135,11 @@ export function compareClaudeVersions(a: string, b: string): number {
 }
 
 /**
- * infrastructure 層が取得した claude CLI のバージョンを、agent-run が要求する最低版と比較する。
+ * infrastructure 層が取得した claude CLI のバージョンを、chat 経路が要求する最低版と比較する。
  *
  * unknown では run を弾かない。BDBOARD_CLAUDE_PATH がラッパースクリプトを指している
  * 正当な構成では `claude --version` が semver を返さないことがあり、そこを fail-closed
- * すると agent-run 全体が無言で死ぬため。一次の保険は起動前の `claude --version`
+ * すると chat 全体が無言で死ぬため。一次の保険は起動前の `claude --version`
  * による事前チェック (本関数)。二次の保険は describeClaudeSettingSourcesFailure()
  * による stderr 翻訳だが、文字列マッチは脆いので単独では使わない。
  */
@@ -180,7 +180,7 @@ export function evaluateClaudeVersion(
  * 兆候を読み取る二次の保険。事前の `claude --version` チェックが一次。
  *
  * 文字列マッチは脆いので、**実行を止めるゲートとしては**これ単独を使わない
- * (agent-run は起動前の evaluateClaudeVersion が一次で、本関数は二次)。
+ * (起動前の evaluateClaudeVersion が一次で、本関数は二次)。
  *
  * 一方、**既に失敗した実行のメッセージを分類する用途では単独で使ってよい**
  * (bdboard-ndky の chat 経路)。ゲートと違い、外した場合の劣化先が

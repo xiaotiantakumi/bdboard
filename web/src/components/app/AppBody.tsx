@@ -19,7 +19,7 @@ export interface AppBodyProps {
  * (bdboard-sso1.5)と同じ「controller hook + presentational body」の分割方針を
  * 踏襲するが、prop の渡し方は精度が異なる: あちらの TicketDetailBody は
  * useTicketDetailController の戻り値を関心事ごとにグループ化した上で
- * (`title`/`agentRun`/`labels` 等)個別の型付き prop として受け取るのに対し、
+ * (`title`/`labels` 等)個別の型付き prop として受け取るのに対し、
  * ここでは useAppController の戻り値(約70フィールドのフラットな1オブジェクト)
  * をそのまま単一の `controller` prop として渡す(≤12 props soft guidance に
  * 対し、個々の値を並べると70近い props になるため、フィールド名を変えない

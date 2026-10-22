@@ -22,95 +22,12 @@
   opacity: 0.5;
 }
 
-.btn-danger {
-  background: var(--color-danger);
-  color: #fff;
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: var(--color-danger);
-  filter: brightness(0.92);
-}
-
-.btn-danger:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
 /* 確認ダイアログでは誤タップ防止のため、安全側のキャンセルを視覚的に重くする */
-.btn-danger-outline {
-  background: transparent;
-  border: 1px solid var(--color-danger);
-  color: var(--color-danger);
-}
-
-.btn-danger-outline:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
-}
-
-.btn-danger-outline:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.tunnel-confirm-cancel {
-  font-weight: 600;
-  border: 1px solid var(--color-text-secondary);
-}
 
 .btn-small {
   padding: 5px 10px;
   font-size: 0.75rem;
   min-height: 26px;
-}
-
-.checkbox-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.8125rem;
-  color: var(--color-text);
-  cursor: pointer;
-  white-space: nowrap;
-  min-height: 30px;
-}
-
-.checkbox-label input[type='checkbox'] {
-  accent-color: var(--color-accent);
-  width: 16px;
-  height: 16px;
-}
-
-
-.meta-text {
-  color: var(--color-text-tertiary);
-  font-size: 0.75rem;
-}
-
-.meta-text-btn {
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  /* bdboard-97ib.1: .meta-text の --color-text-tertiary (#8e8e93) は light で 3.22:1 と
-     AA (4.5:1) 未達 (button.meta-text.meta-text-btn 実測)。.meta-text-btn は常に .meta-text
-     と併用される (ViewToolbar.tsx の唯一の利用箇所) ため、ここで --color-text-secondary
-     (light 5.23:1 / white 面) に上書きする。下線色も揃える。 */
-  color: var(--color-text-secondary);
-  /* font-size は .meta-text 側を活かす(font ショートハンドだと上書きされる) */
-  font-family: inherit;
-  text-decoration: underline;
-  text-decoration-color: var(--color-text-secondary);
-  text-underline-offset: 2px;
-  transition: color 0.15s ease, text-decoration-color 0.15s ease;
-}
-
-.meta-text-btn:hover {
-  /* bdboard-97ib.1: 静止時が --color-text-secondary になったため、hover 用に
-     .toggle-btn:hover:not(.active) と同じ一段濃い --color-text へ差し替える
-     (差し替えないと静止/hover が同色になり視覚的な変化が消える)。 */
-  color: var(--color-text);
-  text-decoration-color: var(--color-text);
 }
 
 .error-banner {

@@ -19,7 +19,6 @@ const bdHumanListItemSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
-// e2e fixture の契約テスト (e2e-fixtures-contract.test.ts, bdboard-0rch) から参照するため export する。
 export const bdGateListItemSchema = z.object({
   id: z.string(),
   issue_type: z.string().optional(),

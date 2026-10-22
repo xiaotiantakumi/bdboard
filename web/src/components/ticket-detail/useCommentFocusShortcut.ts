@@ -11,7 +11,7 @@ import type { KeyboardEvent, RefObject } from 'react';
 export interface UseCommentFocusShortcutOptions {
   /** コメント入力欄の ref。null または disabled のときは何もしない。 */
   textareaRef: RefObject<HTMLTextAreaElement | null>;
-  /** true の間はショートカットを無効化する (quick action / agent run 確認中など)。 */
+  /** true の間はショートカットを無効化する (確認パネル表示中など)。 */
   disabled: boolean;
 }
 
