@@ -35,5 +35,5 @@ export interface LaneColumnProps {
   onToggleCollapse?: () => void;
   /** in_progress レーンの WIP 状態。exceeded 時にヘッダー警告を表示する。 */
   wipStatus?: { limit: number; count: number; exceeded: boolean };
-  headerAddon?: ReactNode;
+  footerAddon?: ReactNode;
 }

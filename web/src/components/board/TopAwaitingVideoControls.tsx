@@ -28,7 +28,7 @@ export function TopAwaitingVideoControls({ ticketIds, enabled, onEnabledChange }
   </div>;
 }
 
-/** 確認待ちレーンの見出しに置く操作。上位3件は描画中のカード順 (並べ替えない) から取る。 */
+/** 確認待ちレーンのカードの下に置く操作 (スマホで先頭カードを押し下げない)。上位3件は描画中のカード順 (並べ替えない) から取る。 */
 export function topAwaitingAddon(
   lane: string,
   cards: readonly { ticket: { id: string } }[],

@@ -121,7 +121,7 @@ function LanesRow({
             : undefined
         }
         wipStatus={wipStatusForColumn}
-        headerAddon={topAwaitingAddon(lane, filteredCards, autoTopAwaitingVideos, setAutoTopAwaitingVideos)}
+        footerAddon={topAwaitingAddon(lane, filteredCards, autoTopAwaitingVideos, setAutoTopAwaitingVideos)}
       />
     ),
   );
