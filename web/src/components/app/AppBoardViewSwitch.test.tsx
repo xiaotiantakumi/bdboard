@@ -26,11 +26,6 @@ import { AppBoardViewSwitch, type AppBoardViewSwitchProps } from './AppBoardView
 // AppBoardViewSwitch から消えた。nextUp は batchRun (一括操作バー用の
 // 実行ループ) だけを持つ形に単純化されたので、このテストも追随する。
 
-vi.mock('../BoardFilterBar', () => ({
-  BoardFilterBar: vi.fn((props: { filterText: string }) => (
-    <div data-testid="board-filter-bar">{props.filterText}</div>
-  )),
-}));
 vi.mock('../BulkActionBar', () => ({
   BulkActionBar: vi.fn((props: { cardsById: Map<string, BoardCardDto> }) => (
     <div data-testid="bulk-action-bar">{props.cardsById.size}</div>
@@ -56,14 +51,12 @@ vi.mock('../BoardView', () => ({
   hasVisibleCards: vi.fn(),
 }));
 
-import { BoardFilterBar } from '../BoardFilterBar';
 import { BulkActionBar } from '../BulkActionBar';
 import { hasVisibleCards, SplitBoard } from '../BoardView';
 
 const hasVisibleCardsMock = vi.mocked(hasVisibleCards);
 const splitBoardMock = vi.mocked(SplitBoard);
 const bulkActionBarMock = vi.mocked(BulkActionBar);
-const boardFilterBarMock = vi.mocked(BoardFilterBar);
 
 // beforeEach で毎回クリアする: vitest.config は clearMocks/restoreMocks を
 // 有効にしていないため、素の状態だと hasVisibleCardsMock.mockReturnValue(...)
@@ -135,13 +128,11 @@ function makeProps(overrides: Partial<AppBoardViewSwitchProps> = {}): AppBoardVi
 }
 
 describe('AppBoardViewSwitch', () => {
-  it('renders BoardFilterBar/BulkActionBar for split view but not for other views', () => {
+  it('renders BulkActionBar for split view but not for other views', () => {
     const { rerender } = render(<AppBoardViewSwitch {...makeProps({ view: 'split' })} />);
-    expect(screen.getByTestId('board-filter-bar')).toBeInTheDocument();
     expect(screen.getByTestId('bulk-action-bar')).toBeInTheDocument();
 
     rerender(<AppBoardViewSwitch {...makeProps({ view: 'settings' })} />);
-    expect(screen.queryByTestId('board-filter-bar')).not.toBeInTheDocument();
     expect(screen.queryByTestId('bulk-action-bar')).not.toBeInTheDocument();
   });
 
@@ -168,7 +159,6 @@ describe('AppBoardViewSwitch', () => {
       />,
     );
     expect(container).toBeEmptyDOMElement();
-    expect(boardFilterBarMock).not.toHaveBeenCalled();
     expect(bulkActionBarMock).not.toHaveBeenCalled();
   });
 

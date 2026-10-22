@@ -1,3 +1,4 @@
+import { openFilterMenu } from './test/appHarness';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -511,6 +512,7 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
     setupFilterApiMocks(priorityFilterBoardView());
 
     renderApp();
+    await openFilterMenu(userEvent.setup());
 
     await waitFor(() => {
       expect(screen.getByText('Split P0 Ready')).toBeInTheDocument();
@@ -531,6 +533,7 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
     setupFilterApiMocks(priorityFilterBoardView());
 
     renderApp();
+    await openFilterMenu(userEvent.setup());
 
     await waitFor(() => {
       expect(screen.getByText('Split P0 Ready')).toBeInTheDocument();
@@ -556,6 +559,7 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
     setupFilterApiMocks(persistenceFilterBoardView());
 
     renderApp();
+    await openFilterMenu(userEvent.setup());
 
     await waitFor(() => {
       expect(screen.getByLabelText('優先度上限')).toHaveValue('2');
@@ -563,7 +567,7 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
         'aria-pressed',
         'true',
       );
-      expect(screen.getByLabelText('チケットの絞り込み')).toHaveValue('UniqueText');
+      expect(screen.getByLabelText('チケットの検索')).toHaveValue('UniqueText');
       expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
     });
 
@@ -576,6 +580,7 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
     setupFilterApiMocks(compositeFilterBoardView());
 
     renderApp();
+    await openFilterMenu(userEvent.setup());
 
     await waitFor(() => {
       expect(screen.getByText('Combo Ready P0')).toBeInTheDocument();
@@ -594,6 +599,7 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
     setupFilterApiMocks(compositeFilterBoardView());
 
     renderApp();
+    await openFilterMenu(userEvent.setup());
 
     await waitFor(() => {
       expect(screen.getByText('Combo Stalled Bug')).toBeInTheDocument();
@@ -666,6 +672,7 @@ describe('board filter presets (bdboard-3tw.112)', () => {
     localStorage.setItem(UI_STORAGE_KEYS.boardFilterText, JSON.stringify(''));
 
     renderApp();
+    await openFilterMenu(userEvent.setup());
 
     await waitFor(() => {
       expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
@@ -682,7 +689,7 @@ describe('board filter presets (bdboard-3tw.112)', () => {
         'aria-pressed',
         'true',
       );
-      expect(screen.getByLabelText('チケットの絞り込み')).toHaveValue('UniqueText');
+      expect(screen.getByLabelText('チケットの検索')).toHaveValue('UniqueText');
       expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
     });
 
@@ -719,10 +726,11 @@ describe('board filter presets (bdboard-3tw.112)', () => {
     seedDefaultPreset();
 
     renderApp();
+    await openFilterMenu(userEvent.setup());
 
     await waitFor(() => {
       expect(screen.getByLabelText('優先度上限')).toHaveValue('1');
-      expect(screen.getByLabelText('チケットの絞り込み')).toHaveValue('UniqueText');
+      expect(screen.getByLabelText('チケットの検索')).toHaveValue('UniqueText');
     });
     expect(screen.getByRole('button', { name: 'bug' })).toHaveAttribute(
       'aria-pressed',
@@ -743,6 +751,7 @@ describe('board filter presets (bdboard-3tw.112)', () => {
 
     seedDefaultPreset();
     renderApp();
+    await openFilterMenu(userEvent.setup());
 
     await waitFor(() => {
       expect(screen.getByLabelText('優先度上限')).toHaveValue('1');
@@ -754,12 +763,13 @@ describe('board filter presets (bdboard-3tw.112)', () => {
     localStorage.setItem(UI_STORAGE_KEYS.boardPriorityCeiling, JSON.stringify('all'));
 
     renderApp();
+    await openFilterMenu(userEvent.setup());
 
     await waitFor(() => {
       expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
     });
     expect(screen.getByLabelText('優先度上限')).toHaveValue('all');
-    expect(screen.getByLabelText('チケットの絞り込み')).toHaveValue('');
+    expect(screen.getByLabelText('チケットの検索')).toHaveValue('');
   });
 
   it('applies hideDone and stalledOnly from a new-schema preset', async () => {
@@ -786,6 +796,7 @@ describe('board filter presets (bdboard-3tw.112)', () => {
     localStorage.setItem(UI_STORAGE_KEYS.boardFilterText, JSON.stringify(''));
 
     renderApp();
+    await openFilterMenu(userEvent.setup());
 
     await waitFor(() => {
       expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
@@ -819,12 +830,13 @@ describe('board filter presets (bdboard-3tw.112)', () => {
     localStorage.setItem(UI_STORAGE_KEYS.hideDone, JSON.stringify(false));
 
     renderApp();
+    await openFilterMenu(userEvent.setup());
 
     await waitFor(() => {
       expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
     });
     expect(screen.getByLabelText('優先度上限')).toHaveValue('all');
-    expect(screen.getByLabelText('チケットの絞り込み')).toHaveValue('');
+    expect(screen.getByLabelText('チケットの検索')).toHaveValue('');
     expect(screen.getByRole('button', { name: 'done レーンを隠す' })).toHaveAttribute(
       'aria-pressed',
       'false',
@@ -891,6 +903,7 @@ describe('header help overlays', () => {
   it('does not open shortcuts on ? while an input is focused', async () => {
     const user = userEvent.setup();
     renderApp();
+    await openFilterMenu(user);
 
     await waitFor(() => {
       expect(screen.getByLabelText('優先度上限')).toBeInTheDocument();

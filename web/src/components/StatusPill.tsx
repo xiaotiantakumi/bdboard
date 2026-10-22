@@ -62,7 +62,10 @@ export function StatusPill({
           onOpenChange(!open);
         }}
       >
-        {STATUS_LABELS[level]}
+        {/* bdboard-gyvv: 正常のときは小さな丸だけ。正常でないときだけ文言を添える。
+            状態の意味 (aria-label) はこれまでと同じ。 */}
+        <span className="status-dot" aria-hidden="true" />
+        {level !== 'ok' && <span className="status-pill-text">{STATUS_LABELS[level]}</span>}
       </button>
 
       {open && (

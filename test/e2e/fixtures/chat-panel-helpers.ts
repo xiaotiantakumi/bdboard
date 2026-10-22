@@ -1,11 +1,27 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
-export async function openChatPanel(page: Page) {
-  await page.goto('/');
-  await expect(page.locator('.header')).toBeVisible({ timeout: 5_000 });
+/**
+ * ヘッダーの「チャット」を押す。スマホ幅 (<=700px) ではボタンは ⋯ メニューの項目になる
+ * (bdboard-gyvv)。
+ */
+export async function clickChatButton(page: Page) {
+  const mobile = (page.viewportSize()?.width ?? 1280) <= 700;
+  if (mobile) {
+    await page.getByRole('button', { name: 'その他のメニュー' }).click();
+    const item = page.getByRole('menuitem', { name: 'チャット' });
+    await expect(item).toBeVisible({ timeout: 15_000 });
+    await item.click();
+    return;
+  }
   const chatButton = page.getByRole('button', { name: 'チャット' });
   await expect(chatButton).toBeVisible({ timeout: 15_000 });
   await chatButton.click();
+}
+
+export async function openChatPanel(page: Page) {
+  await page.goto('/');
+  await expect(page.locator('.header')).toBeVisible({ timeout: 5_000 });
+  await clickChatButton(page);
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   return dialog;

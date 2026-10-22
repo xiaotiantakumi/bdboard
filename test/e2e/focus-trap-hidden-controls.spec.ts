@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { clickChatButton } from './fixtures/chat-panel-helpers.js';
 
 /**
  * CSS で隠した操作子がフォーカストラップの端に居座る問題 (bdboard-77k) を
@@ -24,9 +25,7 @@ test.describe('focus trap and CSS-hidden controls', () => {
   }) => {
     await page.goto('/');
     await expect(page.locator('.header')).toBeVisible({ timeout: 5_000 });
-    const chatButton = page.getByRole('button', { name: 'チャット' });
-    await expect(chatButton).toBeVisible({ timeout: 15_000 });
-    await chatButton.click();
+    await clickChatButton(page);
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();

@@ -7,7 +7,6 @@ import {
 import { type BoardFilterState } from '../../hooks/useBoardFilterState';
 import { type ViewMode } from '../../uiPersistedState';
 import { type WipLimitsOverrides } from '../../wip-limits';
-import { BoardFilterBar } from '../BoardFilterBar';
 import { SplitBoard } from '../BoardView';
 import { BulkActionBar } from '../BulkActionBar';
 import { type NextUpRunLoopController } from '../nextUpRunLoop';
@@ -58,19 +57,6 @@ export function AppBoardViewSwitch({
 }: AppBoardViewSwitchProps) {
   return (
     <>
-      {view === 'split' && (
-        <BoardFilterBar
-          priorityCeiling={filterState.priorityCeiling}
-          onPriorityCeilingChange={filterState.setPriorityCeiling}
-          issueTypes={filterState.issueTypes}
-          onIssueTypesChange={filterState.setIssueTypes}
-          labels={filterState.labels}
-          onLabelsChange={filterState.setLabels}
-          availableLabels={board.availableLabels}
-          filterText={filterState.filterText}
-          onFilterTextChange={filterState.setFilterText}
-        />
-      )}
       {view === 'split' && epicFilterId !== undefined && (
         <div className="filter-bar-epic-indicator">
           <span>エピック {epicFilterId} のみ表示中</span>

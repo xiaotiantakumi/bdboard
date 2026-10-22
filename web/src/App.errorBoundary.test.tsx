@@ -28,7 +28,7 @@ vi.mock('./components/TicketDetailPanel', () => ({
   },
 }));
 
-import { primeAppApiMocks, renderApp } from './test/appHarness';
+import { primeAppApiMocks, renderApp, selectOverflowItem } from './test/appHarness';
 
 describe('App error boundaries (bdboard-yfq)', () => {
   beforeEach(() => {
@@ -56,7 +56,7 @@ describe('App error boundaries (bdboard-yfq)', () => {
     // 境界が無い/掛け違えていると、ここで App ごとアンマウントされて
     // ボードもヘッダーも消える (= 画面が真っ白)。
     expect(screen.getByTitle('Board card stays alive')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '設定' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^その他のメニュー/ })).toBeInTheDocument();
   });
 
   it('closes the crashed panel from the fallback', async () => {
@@ -96,8 +96,8 @@ describe('App error boundaries (bdboard-yfq)', () => {
     await user.click(checkbox);
     expect(checkbox).toBeChecked();
 
-    await user.click(screen.getByRole('button', { name: '設定' }));
-    await user.click(screen.getByRole('button', { name: '分割' }));
+    await selectOverflowItem(user, '設定');
+    await selectOverflowItem(user, 'ボードに戻る');
 
     // ビュー境界は key={view} で作り直される。選択プロバイダーをその内側に
     // 置くと再マウントが伝わり、ビューを往復しただけで選択が消える

@@ -1,177 +1,91 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { ProjectDto } from '../api';
-import { VIEW_ITEMS, type ViewMode } from '../uiPersistedState';
-import type { StreamState } from '../useBoardStream';
-import { navCurrentProps } from './toggleGroupA11y';
-import { OverflowMenu } from './OverflowMenu';
+import { useMatchMedia } from '../hooks/useMatchMedia';
+import { MOBILE_LAYOUT_MEDIA_QUERY } from '../mediaQueries';
+import type { ViewMode } from '../uiPersistedState';
+import { HeaderFilterMenu, countHeaderFilters, type HeaderFilterProps } from './header/HeaderFilterMenu';
+import { HeaderSearchField } from './header/HeaderSearchField';
+import { OverflowMenu, type OverflowMenuProps } from './OverflowMenu';
 import { ProjectPicker } from './ProjectPicker';
-import { StatusPill } from './StatusPill';
+import { StatusPill, type StatusPillProps } from './StatusPill';
 import { useTunnelStatus } from './tunnel/useTunnelStatus';
 
 export interface GlobalBarProps {
   view: ViewMode;
   onViewChange: (view: ViewMode) => void;
   onOpenSearch: () => void;
-  streamState: StreamState;
-  connectStalled?: boolean;
-  lastContactAtMs: number | null | undefined;
-  generatedAt: string | null | undefined;
-  lastRefreshAt: string | null | undefined;
-  statusDetailOpen: boolean;
-  onStatusDetailOpenChange: (open: boolean) => void;
+  status: StatusPillProps;
   projects: ProjectDto[];
   selectedProjectIds: string[];
   onToggleProject: (projectId: string, checked: boolean) => void;
   onSelectAllProjects: () => void;
   onClearAllProjects: () => void;
   onSaveProjectCombination: () => void;
-  onOpenSettings: () => void;
+  filter: HeaderFilterProps;
   onOpenTunnel: () => void;
-  onOpenHelp: () => void;
-  onOpenShortcuts: () => void;
-  tipsBannerDismissed: boolean;
-  onShowTipsBanner: () => void;
+  chatAvailable: boolean;
+  onOpenChat: () => void;
+  menu: Pick<
+    OverflowMenuProps,
+    | 'onRefresh'
+    | 'isRefreshing'
+    | 'onOpenHelp'
+    | 'onOpenShortcuts'
+    | 'tipsBannerDismissed'
+    | 'onShowTipsBanner'
+  >;
 }
 
+/**
+ * bdboard-gyvv: ヘッダーは 1 行。左から タイトル+接続状態の丸 / プロジェクト / 検索 /
+ * フィルタ / スマホ公開 / チャット / ⋯。モバイル (<=700px) は プロジェクト / 検索アイコン / ⋯ の
+ * 上部バーに畳み、フィルタとチャットは ⋯ のシートに入れる。
+ */
 export function GlobalBar({
   view,
   onViewChange,
   onOpenSearch,
-  streamState,
-  connectStalled = false,
-  lastContactAtMs,
-  generatedAt,
-  lastRefreshAt,
-  statusDetailOpen,
-  onStatusDetailOpenChange,
+  status,
   projects,
   selectedProjectIds,
   onToggleProject,
   onSelectAllProjects,
   onClearAllProjects,
   onSaveProjectCombination,
-  onOpenSettings,
+  filter,
   onOpenTunnel,
-  onOpenHelp,
-  onOpenShortcuts,
-  tipsBannerDismissed,
-  onShowTipsBanner,
+  chatAvailable,
+  onOpenChat,
+  menu,
 }: GlobalBarProps) {
-  const toggleGroupRef = useRef<HTMLDivElement | null>(null);
-  const activeTabRef = useRef<HTMLButtonElement | null>(null);
-  const [canScrollStart, setCanScrollStart] = useState(false);
-  const [canScrollEnd, setCanScrollEnd] = useState(false);
-
-  const updateScrollHints = useCallback(() => {
-    const el = toggleGroupRef.current;
-    if (el === null) {
-      return;
-    }
-    const { scrollLeft, scrollWidth, clientWidth } = el;
-    const overflow = scrollWidth - clientWidth;
-    if (overflow <= 1) {
-      setCanScrollStart(false);
-      setCanScrollEnd(false);
-      return;
-    }
-    setCanScrollStart(scrollLeft > 1);
-    setCanScrollEnd(scrollLeft + clientWidth < scrollWidth - 1);
-  }, []);
-
-  useEffect(() => {
-    const el = activeTabRef.current;
-    if (el !== null && typeof el.scrollIntoView === 'function') {
-      el.scrollIntoView({ block: 'nearest', inline: 'center' });
-    }
-  }, [view]);
-
-  useEffect(() => {
-    const el = toggleGroupRef.current;
-    if (el === null) {
-      return;
-    }
-
-    updateScrollHints();
-
-    el.addEventListener('scroll', updateScrollHints, { passive: true });
-
-    let resizeObserver: ResizeObserver | undefined;
-    if (typeof ResizeObserver !== 'undefined') {
-      resizeObserver = new ResizeObserver(updateScrollHints);
-      resizeObserver.observe(el);
-    } else {
-      window.addEventListener('resize', updateScrollHints);
-    }
-
-    return () => {
-      el.removeEventListener('scroll', updateScrollHints);
-      resizeObserver?.disconnect();
-      if (resizeObserver === undefined) {
-        window.removeEventListener('resize', updateScrollHints);
-      }
-    };
-  }, [updateScrollHints, view]);
-
-  const scrollerClassName = [
-    'view-switcher-scroller',
-    canScrollStart ? 'can-scroll-start' : '',
-    canScrollEnd ? 'can-scroll-end' : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
-
+  const isMobile = useMatchMedia(MOBILE_LAYOUT_MEDIA_QUERY);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const tunnelOn = useTunnelStatus().data?.state === 'on';
+  const { filterText, setFilterText } = filter.filterState;
+  const harnessProjects = projects
+    .filter((p) => selectedProjectIds.length === 0 || selectedProjectIds.includes(p.id))
+    .map((p) => ({ id: p.id, name: p.name }));
+
+  if (isMobile && mobileSearchOpen) {
+    return (
+      <div className="global-bar global-bar-searching">
+        <HeaderSearchField
+          value={filterText}
+          onChange={setFilterText}
+          onClose={() => setMobileSearchOpen(false)}
+          autoFocus
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="global-bar">
-      <h1 className="header-title">bdboard</h1>
-
-      <div className="header-group view-switcher">
-        <span className="header-label">ビュー</span>
-        <div className={scrollerClassName}>
-          <div ref={toggleGroupRef} className="toggle-group">
-            {VIEW_ITEMS.map((item) => (
-              <button
-                key={item.view}
-                ref={view === item.view ? activeTabRef : undefined}
-                type="button"
-                className={`toggle-btn${view === item.view ? ' active' : ''}`}
-                {...navCurrentProps(view === item.view)}
-                onClick={() => onViewChange(item.view)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
+      <div className="header-brand">
+        <h1 className="header-title">bdboard</h1>
+        <StatusPill {...status} />
       </div>
-
-      <button
-        type="button"
-        className="btn btn-search"
-        aria-label="コマンドパレット (Cmd+K)"
-        onClick={onOpenSearch}
-      >
-        検索
-      </button>
-
-      <button
-        type="button"
-        className={`btn btn-tunnel${tunnelOn ? ' is-on' : ''}`}
-        onClick={onOpenTunnel}
-      >
-        {tunnelOn ? 'スマホ公開中' : 'スマホ公開'}
-      </button>
-
-      <StatusPill
-        streamState={streamState}
-        connectStalled={connectStalled}
-        lastContactAtMs={lastContactAtMs}
-        generatedAt={generatedAt}
-        lastRefreshAt={lastRefreshAt}
-        open={statusDetailOpen}
-        onOpenChange={onStatusDetailOpenChange}
-      />
 
       <ProjectPicker
         projects={projects}
@@ -182,13 +96,63 @@ export function GlobalBar({
         onSaveCombination={onSaveProjectCombination}
       />
 
+      <span className="header-spacer" aria-hidden="true" />
+
+      {isMobile ? (
+        <button
+          type="button"
+          className="header-icon-btn"
+          aria-label="検索"
+          onClick={() => setMobileSearchOpen(true)}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+        </button>
+      ) : (
+        <HeaderSearchField value={filterText} onChange={setFilterText} />
+      )}
+
+      <HeaderFilterMenu
+        {...filter}
+        open={filterOpen}
+        onOpenChange={setFilterOpen}
+        showButton={!isMobile}
+      />
+
+      {!isMobile && (
+        <button
+          type="button"
+          className={`btn btn-tunnel${tunnelOn ? ' is-on' : ''}`}
+          onClick={onOpenTunnel}
+        >
+          {tunnelOn ? 'スマホ公開中' : 'スマホ公開'}
+        </button>
+      )}
+
+      {!isMobile && chatAvailable && (
+        <button type="button" className="btn" onClick={onOpenChat}>
+          チャット
+        </button>
+      )}
+
       <OverflowMenu
-        onOpenSettings={onOpenSettings}
-        onOpenTunnel={onOpenTunnel}
-        onOpenHelp={onOpenHelp}
-        onOpenShortcuts={onOpenShortcuts}
-        tipsBannerDismissed={tipsBannerDismissed}
-        onShowTipsBanner={onShowTipsBanner}
+        view={view}
+        onViewChange={onViewChange}
+        onOpenSearch={onOpenSearch}
+        harnessProjects={harnessProjects}
+        mobile={
+          isMobile
+            ? {
+                filterCount: countHeaderFilters(filter.filterState),
+                onOpenFilter: () => setFilterOpen(true),
+                chatAvailable,
+                onOpenChat,
+              }
+            : undefined
+        }
+        {...menu}
       />
     </div>
   );

@@ -69,7 +69,7 @@ export function SplitBoard({
       {visibleProjects.map((entry) => (
         <section key={entry.project.id} className="board-section">
           <h2 className="board-section-title">
-            {entry.project.name} ({entry.board.cardCount} 件)
+            {entry.project.name} · {entry.board.cardCount} 件
             <ProjectHarnessBadges projectId={entry.project.id} />
           </h2>
           <BoardLanes
