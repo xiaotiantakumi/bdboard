@@ -3,12 +3,13 @@
 // コンポーネント。state・mutation は親側の各フック(useTicketTitleEditing 等)に
 // 残し、値とハンドラを props で受け取る表示専用コンポーネント。JSX・
 // className・aria属性・文言・DOM構造・コメントは移動前から変えていない。
-import type { RefObject } from 'react';
+import { useRef, type RefObject } from 'react';
 import { WatchToggle } from '../WatchToggle';
 import {
   TicketTitleSection,
   type TicketTitleSectionProps,
 } from './TicketTitleSection';
+import { mobileBarLabel, useTitleOutOfView } from './useTitleOutOfView';
 
 export interface TicketDetailHeaderSectionProps extends TicketTitleSectionProps {
   ticketId: string;
@@ -28,12 +29,21 @@ export function TicketDetailHeaderSection({
   closeButtonRef,
   ...titleSectionProps
 }: TicketDetailHeaderSectionProps) {
+  // bdboard-fac0: モバイルでは .detail-header-actions だけが細い固定バーになり、
+  // タイトル行は本文と一緒にスクロールする。タイトルが隠れたらバーの文字が ID→タイトルに替わる。
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const titleOutOfView = useTitleOutOfView(titleRef, ticketId);
   return (
     // .detail-header は7パネル共有のため、モバイル向け縦積みは ticket-detail-header
     // 修飾クラスで詳細パネルだけに限定する (bdboard-h4xs.2)。
     <div className="detail-header ticket-detail-header">
-      <TicketTitleSection {...titleSectionProps} />
+      <TicketTitleSection {...titleSectionProps} titleRef={titleRef} />
       <div className="detail-header-actions">
+        {/* モバイル専用 (デスクトップでは CSS で非表示)。見出しは h2#detail-title が
+            担うので読み上げからは外す。 */}
+        <span className="detail-bar-label" aria-hidden="true">
+          {mobileBarLabel(titleOutOfView, ticketId, titleSectionProps.title)}
+        </span>
         {onBackTicket !== undefined && (
           <button
             type="button"
@@ -76,9 +86,13 @@ export function TicketDetailHeaderSection({
           ref={closeButtonRef}
           type="button"
           className="btn detail-close"
+          aria-label="閉じる"
           onClick={onClose}
         >
-          閉じる
+          <span className="detail-close-label">閉じる</span>
+          <span className="detail-close-icon" aria-hidden="true">
+            ×
+          </span>
         </button>
       </div>
     </div>
