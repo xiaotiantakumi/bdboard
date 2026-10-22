@@ -28,7 +28,7 @@ done
 BASE="http://localhost:${PORT}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # worktree から呼ばれても常時稼働サーバーは main checkout のもの。
-MAIN_CHECKOUT="$(cd "$(git -C "$SCRIPT_DIR" rev-parse --git-common-dir)/.." && pwd)"
+MAIN_CHECKOUT="$(cd "$(git -C "$SCRIPT_DIR" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)"
 
 health_code() {
   curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "${BASE}/api/health" 2>/dev/null || true
