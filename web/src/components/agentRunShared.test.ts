@@ -162,10 +162,10 @@ describe('describeHarnessRunBlock', () => {
 
   it('reports an uninjected harness', () => {
     expect(describeHarnessRunBlock({ packs: [], contract: { state: 'not-applicable' } })).toBe(
-      'ハーネス未注入 — Hygiene から注入',
+      'ハーネス未注入 — プロジェクト見出しから注入',
     );
     expect(describeHarnessRunBlock(harnessStatus({ installedVersion: null }))).toBe(
-      'ハーネス未注入 — Hygiene から注入',
+      'ハーネス未注入 — プロジェクト見出しから注入',
     );
   });
 

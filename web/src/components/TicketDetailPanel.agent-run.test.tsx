@@ -196,7 +196,7 @@ describe('TicketDetailPanel agent run', () => {
     renderPanel(new Map());
 
     expect(
-      await screen.findByText('ハーネス未注入 — Hygiene から注入'),
+      await screen.findByText('ハーネス未注入 — プロジェクト見出しから注入'),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '▶ 実行' })).toBeDisabled();
   });

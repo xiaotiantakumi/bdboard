@@ -6,7 +6,6 @@ export * from './compare.js';
 export * from './defer.js';
 export * from './dependency.js';
 export * from './epic-progress.js';
-export * from './hygiene.js';
 export * from './lease.js';
 export * from './interaction.js';
 export * from './liveness.js';

@@ -1,5 +1,4 @@
 import type { LeftoverCandidate } from '../git-worktree.js';
-import { hasLiveWorktreeEvidence } from '../hygiene.js';
 import type { Ticket } from '../ticket.js';
 import type { TicketId } from '../ticket-id.js';
 import { isInRange } from './shared.js';
@@ -10,6 +9,11 @@ import {
   type ReclaimRunRecord,
   type TicketAccumulator,
 } from './types.js';
+
+// 生存判定: worktree かブランチが残っていれば「生きている」(bdboard-t3ct)。
+function hasLiveWorktreeEvidence(candidate: LeftoverCandidate): boolean {
+  return candidate.worktreePath !== null || candidate.branchName !== null;
+}
 
 /**
  * projectId と ticketId の連結キー。区切りは NUL (どちらの値にも現れない) を

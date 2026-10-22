@@ -435,7 +435,7 @@ describe('BulkActionBar ▶ 実行 (bdboard-mkm1.2)', () => {
     await waitFor(() => {
       expect(confirm).toBeDisabled();
     });
-    expect(confirmDialog()).toHaveTextContent('Project One: ハーネス未注入 — Hygiene から注入');
+    expect(confirmDialog()).toHaveTextContent('Project One: ハーネス未注入 — プロジェクト見出しから注入');
     await user.click(confirm);
     expect(batchRun.beginBatchRun).not.toHaveBeenCalled();
   });
@@ -464,7 +464,7 @@ describe('BulkActionBar ▶ 実行 (bdboard-mkm1.2)', () => {
       ['ok', 'bad'],
     );
 
-    const reason = 'Project Two: ハーネス未注入 — Hygiene から注入';
+    const reason = 'Project Two: ハーネス未注入 — プロジェクト見出しから注入';
     await waitFor(() => {
       expect(runButton()).toBeDisabled();
     });

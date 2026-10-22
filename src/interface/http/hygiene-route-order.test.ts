@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHygieneRoutes } from './hygiene-routes.js';
-import { createInFlightOverlapMemo } from './api-route-shared.js';
 import type { ApiDeps } from './routes.js';
 
 /**
@@ -19,7 +18,6 @@ import type { ApiDeps } from './routes.js';
  * 順序だけを固定する。
  */
 const EXPECTED_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
-  { method: 'GET', path: '/api/hygiene' },
   { method: 'GET', path: '/api/lease-health' },
   { method: 'GET', path: '/api/pr-links' },
   { method: 'GET', path: '/api/merge-slot-status' },
@@ -47,7 +45,7 @@ function buildMinimalDeps(): ApiDeps {
 
 describe('hygiene route order lock-down (bdboard-sso1.61)', () => {
   it('registers exactly the same routes, in the same order, as the pre-split hygiene-routes.ts', () => {
-    const app = createHygieneRoutes(buildMinimalDeps(), createInFlightOverlapMemo());
+    const app = createHygieneRoutes(buildMinimalDeps());
 
     const actual = app.routes.map((route) => ({ method: route.method, path: route.path }));
 

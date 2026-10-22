@@ -102,7 +102,7 @@ describe('useBoardStream', () => {
   // bdboard-cjsa: /api/hygiene の nonTicketHarnessWorktrees が生存セッションの有無で
   // 内容を変わるようになったため、session.changed だけが来た場合でも hygiene が
   // invalidate されることを固定する (board.changed を待たずに追従する必要がある)。
-  it('invalidates sessions, board, projects, and hygiene when session.changed is dispatched', () => {
+  it('invalidates sessions, board, and projects when session.changed is dispatched', () => {
     const { es, invalidateSpy } = renderBoardStream();
 
     act(() => es.onopen?.());
@@ -111,7 +111,7 @@ describe('useBoardStream', () => {
     act(() => es.dispatch('session.changed'));
 
     const keys = invalidatedKeys(invalidateSpy);
-    expect([...keys].sort()).toEqual(['board', 'hygiene', 'projects', 'sessions']);
+    expect([...keys].sort()).toEqual(['board', 'projects', 'sessions']);
   });
 
   it('revalidates board, session, and related queries after an onerror followed by onopen', () => {

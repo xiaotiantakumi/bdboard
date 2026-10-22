@@ -99,7 +99,6 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `ScanRootsConfigPort` | `createFileScanRootsConfigStore` | スキャン対象ルートと除外パスの設定の永続化 |
 | `BoardThresholdsConfigPort` | `createFileBoardThresholdsConfigStore` | 滞留・liveness 判定しきい値と In Progress の WIP 上限設定の永続化 |
 | `AiQuotaAlertConfigPort` | `createFileAiQuotaAlertConfigStore` | AI残量アラート設定の永続化 |
-| `HygieneThresholdsConfigPort` | `createFileHygieneThresholdsConfigStore` | 健全性(Hygiene)パネルの検出しきい値設定の永続化 |
 | `ApplicationVersionProvider` | `createPackageJsonVersionProvider` | アプリケーションのバージョン取得 |
 | `ChatSessionDiscoveryPort` | `createFsChatSessionDiscovery` | CLI で起動した既存 Claude セッションのトランスクリプトからの検出・所有権(cwd)検証・adopt 時の履歴シード読み取り |
 | `TunnelInterruptionStore` | `createFileTunnelInterruptionStore` | トンネル中断状態の記録と読み取り |

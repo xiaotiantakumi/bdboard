@@ -10,7 +10,6 @@ import { VIEW_LABELS } from '../../paletteActions';
 import { ActivityFeed } from '../ActivityFeed';
 import { DependencyGraphView } from '../DependencyGraphView';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { HygienePanel } from '../HygienePanel';
 import { type NextUpRunLoopController } from '../nextUpRunLoop';
 import { SettingsPanel } from '../SettingsPanel';
 import { AppBoardViewSwitch } from './AppBoardViewSwitch';
@@ -32,7 +31,7 @@ import { AppBoardViewSwitch } from './AppBoardViewSwitch';
  *
  * ボード系ビュー(split)の JSX は ESLint の200行上限のため
  * ./AppBoardViewSwitch.tsx へさらに分けた。ここは ErrorBoundary と
- * ボード以外のビュー(activity/hygiene/graph/settings)
+ * ボード以外のビュー(activity/graph/settings)
  * の出し分けだけを持つ。
  */
 export interface AppViewContentProps {
@@ -107,13 +106,6 @@ export function AppViewContent({
           windowDays={windows.activityWindowDays}
           onWindowDaysChange={windows.onActivityWindowDaysChange}
           onSelectTicket={onCardClick}
-        />
-      )}
-      {view === 'hygiene' && (
-        <HygienePanel
-          projectIds={boardMeta.selectedProjectIds}
-          onSelectTicket={onCardClick}
-          projectRootPaths={boardMeta.projectRootPaths}
         />
       )}
       {view === 'graph' && (

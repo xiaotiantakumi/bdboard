@@ -15,7 +15,6 @@ export interface PaletteAction {
 export const VIEW_LABELS: Record<ViewMode, string> = {
   split: '分割',
   activity: 'アクティビティ',
-  hygiene: '健全性',
   graph: '依存グラフ',
   settings: '設定',
 };

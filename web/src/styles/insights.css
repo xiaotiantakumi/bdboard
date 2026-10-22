@@ -215,12 +215,3 @@
 .activity-feed .empty-message {
   padding: 32px 16px;
 }
-
-.hygiene-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  width: 100%;
-  max-width: 720px;
-  margin: 0 auto;
-}

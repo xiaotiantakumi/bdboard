@@ -9,7 +9,6 @@ import type { DependencyWriterPort } from '../../application/ports/dependency-wr
 import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
 import type { ResolvedBoardThresholds } from '../../domain/board-thresholds.js';
-import type { HygieneThresholds } from '../../domain/hygiene.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
 import type { LeaseReader } from '../../application/ports/lease-reader.js';
 import type { MergeSlotReader } from '../../application/ports/merge-slot-reader.js';
@@ -90,5 +89,4 @@ export interface ApiDeps {
    */
   readonly writeAccess?: WriteGuardDeps;
   readonly getBoardThresholds?: () => Promise<ResolvedBoardThresholds>;
-  readonly getHygieneThresholds?: () => Promise<HygieneThresholds>;
 }

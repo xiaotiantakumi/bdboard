@@ -18,7 +18,6 @@
   各カードからのクイックアクション(close / claim / defer / priority 変更、取り消し可能な undo スナックバー付き)
 - **アクティビティフィード / デイリーダイジェスト**: 直近の変更をまとめて把握
 - **依存グラフ**: `blocks` / `parent-child` 依存関係をグラフ表示
-- **Hygiene パネル**: 放置チケットなど台帳の健全性チェック
 - **セッション紐付け**: 稼働中の Claude Code セッションをチケットに紐付けて表示し、セッションの
   トランスクリプトを覗ける(SSE でリアルタイム更新)
 - **チケット詳細パネル**: Markdown 対応(既知チケットIDの自動リンク付き)の説明/ノート/コメント表示、
@@ -225,7 +224,6 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_AGY_MODEL` | (同上)agy のモデル。未設定時はアカウント既定。`agy models` の id (例: `gemini-3.7-flash-medium`) を指定 | (未設定) |
 | `BDBOARD_SCAN_ROOTS_CONFIG_PATH` | scan roots のユーザー設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
 | `BDBOARD_BOARD_THRESHOLDS_CONFIG_PATH` | ボードしきい値のユーザー設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
-| `BDBOARD_HYGIENE_THRESHOLDS_CONFIG_PATH` | hygiene しきい値のユーザー設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
 | `BDBOARD_AGENT_RUN_CONFIG_PATH` | agent run 設定のユーザー設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
 | `BDBOARD_MAX_CONCURRENT_RUNS` | 同時に実行できる agent run の上限。増やすと verify スロットを圧迫する | `1` |
 | `BDBOARD_MAX_MANAGED_WORKTREES` | bdboard が管理できる Git worktree 数の上限 | `20` |

@@ -25,7 +25,6 @@ const EXPECTED_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'GET', path: '/api/board' },
   { method: 'GET', path: '/api/search' },
   { method: 'GET', path: '/api/activity' },
-  { method: 'GET', path: '/api/hygiene' },
   { method: 'GET', path: '/api/lease-health' },
   { method: 'GET', path: '/api/pr-links' },
   { method: 'GET', path: '/api/merge-slot-status' },

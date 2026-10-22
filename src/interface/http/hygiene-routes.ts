@@ -1,35 +1,26 @@
 import { Hono } from 'hono';
 import { createPrBadgeShared, type PrBadgeShared } from '../../application/board/pr-badge-shared.js';
-import { createHygieneStatusRoutes } from './hygiene-status-routes.js';
 import { createLeaseHealthRoutes } from './lease-health-routes.js';
 import { createPrLinksRoutes } from './pr-links-routes.js';
 import { createMergeSlotStatusRoutes } from './merge-slot-status-routes.js';
 import { createDependencyGraphRoutes } from './dependency-graph-routes.js';
-import type { InFlightOverlapMemo } from './api-route-shared.js';
 import type { ApiDeps } from './api-deps.js';
 
-// bdboard-sso1.61: hygiene-routes.ts (旧284行、5ルートが同居) を関心別のルート
-// 登録モジュール (hygiene-status-routes.ts / lease-health-routes.ts /
+// bdboard-sso1.61: 関心別のルート登録モジュール (lease-health-routes.ts /
 // pr-links-routes.ts / merge-slot-status-routes.ts / dependency-graph-routes.ts)
-// へ分割した (move only, 挙動変更ゼロ)。このファイルは合成層として残り、公開 API
-// (createHygieneRoutes) は分割前と同一。GET /api/hygiene と GET /api/pr-links が
-// 共有する PR コメント走査キャッシュ (prBadgeCommentCache, bdboard-pkr6.16) は
-// ここで1個だけ作り、両方のグループへ明示引数で渡す (harness-routes.ts 分割
-// bdboard-sso1.56 と同じ方針)。ルート登録順は元のファイルでの並び
-// (hygiene → lease-health → pr-links → merge-slot-status → graph) をそのまま維持。
+// を束ねる合成層。健全性ステータス (GET /api/hygiene) と閾値は bdboard-i9g4.6 で撤去した。
+// ルート登録順は lease-health → pr-links → merge-slot-status → graph。
 
 // bdboard-p5l.27: PR 情報のキャッシュ・ゲート (prBadgeShared) は routes.ts が1組だけ作り、
 // /api/model-stats (修正 push 回数) とも共有する。省略時 (このグループ単体のテスト等) は
 // 従来どおりこの関数の中で作る。
 export function createHygieneRoutes(
   deps: ApiDeps,
-  memo: InFlightOverlapMemo,
   prBadgeShared: PrBadgeShared = createPrBadgeShared(deps.prBadgeStatusCache),
 ): Hono {
   const app = new Hono();
   const prBadgeCommentCache = prBadgeShared.commentCache;
 
-  app.route('/', createHygieneStatusRoutes(deps, memo, { prBadgeCommentCache }));
   app.route('/', createLeaseHealthRoutes(deps));
   app.route(
     '/',
