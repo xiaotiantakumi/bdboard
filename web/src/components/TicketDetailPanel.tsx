@@ -20,6 +20,7 @@ import {
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { type TicketDetailPanelProps } from './ticket-detail/types';
 import { TicketDetailHeaderSection } from './ticket-detail/TicketDetailHeaderSection';
+import { TicketLocalFileLinksProvider } from './local-files/TicketLocalFileLinks';
 import { TicketDetailBody } from './ticket-detail/TicketDetailBody';
 import { TicketDetailSecondaryBody } from './ticket-detail/TicketDetailSecondaryBody';
 import { useTicketDetailController } from './ticket-detail/useTicketDetailController';
@@ -114,7 +115,7 @@ export function TicketDetailPanel({
           </p>
         )}
         {controller.data !== undefined && (
-          <>
+          <TicketLocalFileLinksProvider ticketId={controller.data.id}>
             <TicketDetailBody
               data={controller.data}
               prLink={prLink}
@@ -139,7 +140,7 @@ export function TicketDetailPanel({
               comment={controller.comment}
               commentTextareaRef={commentTextareaRef}
             />
-          </>
+          </TicketLocalFileLinksProvider>
         )}
       </div>
     </div>

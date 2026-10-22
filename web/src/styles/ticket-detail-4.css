@@ -72,6 +72,27 @@
   vertical-align: baseline;
 }
 
+/* bdboard-32vv: 本文中のファイルパス。ファイル一覧の行と同じくビューアを開くボタン。スマホで押しやすいよう縦に余白を持たせる。 */
+.markdown-local-file-link {
+  display: inline;
+  vertical-align: baseline;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 6px 0;
+  font: inherit;
+  color: var(--color-accent-text);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.markdown-local-file-link:hover {
+  opacity: 0.85;
+}
+
 .detail-help {
   margin: 0 0 10px;
   font-size: 0.8125rem;
