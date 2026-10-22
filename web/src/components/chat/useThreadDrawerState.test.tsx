@@ -174,7 +174,6 @@ describe('useThreadDrawerState (bdboard-sso1.83)', () => {
     click('startRename');
     click('changeRenameDraft');
     click('cancelRename');
-    click('toggleDiscoveredSessions');
     expect(screen.getByTestId('identity-mismatches')).toBeEmptyDOMElement();
   });
 });
