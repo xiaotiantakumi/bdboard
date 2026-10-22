@@ -10,7 +10,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // 押さえられている。
 
 vi.mock('./useTicketDetailQueries');
-vi.mock('./useTicketAgentRun');
 vi.mock('../../hooks/useAutoClearedValue');
 vi.mock('./useTicketTitleEditing');
 vi.mock('./useTicketDescriptionEditing');
@@ -22,7 +21,6 @@ vi.mock('../../hooks/useFocusTrap');
 vi.mock('./useCommentFocusShortcut');
 
 import { useTicketDetailQueries } from './useTicketDetailQueries';
-import { useTicketAgentRun } from './useTicketAgentRun';
 import { useAutoClearedValue } from '../../hooks/useAutoClearedValue';
 import { useTicketTitleEditing } from './useTicketTitleEditing';
 import { useTicketDescriptionEditing } from './useTicketDescriptionEditing';
@@ -38,7 +36,6 @@ import {
 } from './useTicketDetailController';
 
 const queriesMock = vi.mocked(useTicketDetailQueries);
-const agentRunMock = vi.mocked(useTicketAgentRun);
 const autoClearedMock = vi.mocked(useAutoClearedValue);
 const titleMock = vi.mocked(useTicketTitleEditing);
 const descriptionMock = vi.mocked(useTicketDescriptionEditing);
@@ -63,9 +60,7 @@ const MARK_DATA = {
 // 受け渡しているか)」を同一性で検証する。
 const shortcutHandler = vi.fn();
 
-function setupMocks(overrides: {
-  agentRun?: { confirmingAgentRun?: boolean; startRunMutation?: { isPending: boolean } };
-} = {}) {
+function setupMocks() {
   const queryClient = { invalidateQueries: vi.fn() };
   const undoSnackbar = { MARK: 'undo-snackbar' };
   const decisionReset = vi.fn();
@@ -87,13 +82,6 @@ function setupMocks(overrides: {
     similarTickets: { MARK: 'similar-tickets' },
     inFlightOverlaps: { MARK: 'in-flight-overlaps' },
   } as unknown as ReturnType<typeof useTicketDetailQueries>);
-
-  agentRunMock.mockReturnValue({
-    confirmingAgentRun: false,
-    startRunMutation: { isPending: false },
-    MARK: 'agent-run',
-    ...overrides.agentRun,
-  } as unknown as ReturnType<typeof useTicketAgentRun>);
 
   const autoClearedClear = vi.fn();
   autoClearedMock.mockReturnValue({
@@ -220,21 +208,6 @@ describe('useTicketDetailController', () => {
     });
   });
 
-  it('computes agentRun.actionsDisabled from the combined flags', () => {
-    setupMocks();
-    const params = makeParams();
-    const { result: allFalse } = renderHook(() => useTicketDetailController(params));
-    expect(allFalse.current.agentRun.actionsDisabled).toBe(false);
-
-    setupMocks({ agentRun: { confirmingAgentRun: true } });
-    const { result: confirming } = renderHook(() => useTicketDetailController(params));
-    expect(confirming.current.agentRun.actionsDisabled).toBe(true);
-
-    setupMocks({ agentRun: { startRunMutation: { isPending: true } } });
-    const { result: pending } = renderHook(() => useTicketDetailController(params));
-    expect(pending.current.agentRun.actionsDisabled).toBe(true);
-  });
-
   it('calls useTicketDetailQueries with the documented arguments, including the onTicketViewed reference', () => {
     setupMocks();
     const params = makeParams();
@@ -248,26 +221,11 @@ describe('useTicketDetailController', () => {
     });
   });
 
-  it('sources the copy group values from useAutoClearedValue, not from a different mock', () => {
-    setupMocks();
-    const params = makeParams();
-    const { result } = renderHook(() => useTicketDetailController(params));
-
-    expect(result.current.copy.copyFeedback).toEqual({ kind: 'success', command: 'claim' });
-    expect(result.current.copy.ariaLiveMessage).toBe('MARK-aria');
-    expect(result.current.copy.handleCopyNextStep).toEqual(expect.any(Function) as unknown);
-  });
-
   it('wires the panel refs into useFocusTrap/useCommentFocusShortcut and calls each sub-hook with the documented arguments', () => {
     setupMocks();
     const params = makeParams();
     renderHook(() => useTicketDetailController(params));
 
-    expect(agentRunMock).toHaveBeenCalledWith(
-      'MARK-ticket-id',
-      MARK_DATA,
-      'MARK-project-root',
-    );
     expect(titleMock).toHaveBeenCalledWith('MARK-ticket-id', 'MARK-title');
     expect(descriptionMock).toHaveBeenCalledWith(
       'MARK-ticket-id',
@@ -292,19 +250,6 @@ describe('useTicketDetailController', () => {
       textareaRef: params.commentTextareaRef,
       disabled: false,
     });
-  });
-
-  it('drives useFocusTrap.enabled and useCommentFocusShortcut.disabled from confirmingAgentRun', () => {
-    const params = makeParams();
-
-    setupMocks({ agentRun: { confirmingAgentRun: true } });
-    renderHook(() => useTicketDetailController(params));
-    expect(focusTrapMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ enabled: false }) as unknown,
-    );
-    expect(commentFocusShortcutMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ disabled: true }) as unknown,
-    );
   });
 
   it('binds every useTicketFormReset reset*/clear callback to the matching sub-hook mock reference', () => {

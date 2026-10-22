@@ -13,7 +13,6 @@ import { TicketDecisionSection } from './TicketDecisionSection';
 import { TicketTimelineSection } from './TicketTimelineSection';
 import { TicketAttachments } from '../TicketAttachments';
 import { TicketCommentsSection } from './TicketCommentsSection';
-import { TicketAgentRunSection } from './TicketAgentRunSection';
 import type { useTicketDetailController } from './useTicketDetailController';
 
 type Controller = ReturnType<typeof useTicketDetailController>;
@@ -28,8 +27,6 @@ export interface TicketDetailSecondaryBodyProps {
   decision: Controller['decision'];
   timeline: Controller['timeline'];
   comment: Controller['comment'];
-  agentRun: Controller['agentRun'];
-  copy: Controller['copy'];
   commentTextareaRef: RefObject<HTMLTextAreaElement | null>;
 }
 
@@ -43,8 +40,6 @@ export function TicketDetailSecondaryBody({
   decision,
   timeline,
   comment,
-  agentRun,
-  copy,
   commentTextareaRef,
 }: TicketDetailSecondaryBodyProps) {
   // bdboard-u6hf レビュー指摘: このセクションは pendingDecision の有無で2つの
@@ -121,24 +116,6 @@ export function TicketDetailSecondaryBody({
         onCommentTextChange={comment.setCommentText}
         canSubmit={comment.canSubmitComment}
         mutation={comment.mutation}
-      />
-      <TicketAgentRunSection
-        polledRunDetail={agentRun.polledRunDetail}
-        activeRunMeta={agentRun.activeRunMeta}
-        runStatusUnavailable={agentRun.runStatusUnavailable}
-        copyFeedback={copy.copyFeedback}
-        onCopyNextStep={(target, nextStep) =>
-          void copy.handleCopyNextStep(target, nextStep)
-        }
-        cancelRunMutation={agentRun.cancelRunMutation}
-        ticketRunsLoading={agentRun.ticketRunsLoading}
-        ticketRunsError={agentRun.ticketRunsError}
-        ticketRunsData={agentRun.ticketRunsData}
-        selectedHistoryRunId={agentRun.selectedHistoryRunId}
-        onSelectHistoryRun={agentRun.setSelectedHistoryRunId}
-        selectedHistoryRunLoading={agentRun.selectedHistoryRunLoading}
-        selectedHistoryRunError={agentRun.selectedHistoryRunError}
-        selectedHistoryRun={agentRun.selectedHistoryRun}
       />
     </>
   );

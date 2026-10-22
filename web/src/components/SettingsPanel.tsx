@@ -7,9 +7,7 @@ import { DbStatsSection } from './settings/DbStatsSection';
 import { BoardThresholdsSection } from './settings/BoardThresholdsSection';
 import { WipLimitsSection } from './settings/WipLimitsSection';
 import { AiQuotaAlertSection } from './settings/AiQuotaAlertSection';
-import { AgentRunsSection } from './settings/AgentRunsSection';
 import { useAiQuotaAlertForm } from './settings/useAiQuotaAlertForm';
-import { useAgentRunsForm } from './settings/useAgentRunsForm';
 import { useScanRootsForm } from './settings/useScanRootsForm';
 import { useBoardThresholdsForm } from './settings/useBoardThresholdsForm';
 import { useWipLimitsForm } from './settings/useWipLimitsForm';
@@ -22,8 +20,6 @@ export function SettingsPanel() {
   const thresholdsQuery = thresholdsShared.query;
   const aiQuotaAlertForm = useAiQuotaAlertForm();
   const aiQuotaAlertQuery = aiQuotaAlertForm.query;
-  const agentRunsForm = useAgentRunsForm();
-  const agentRunsQuery = agentRunsForm.query;
   const dbStatsQuery = useQuery({
     queryKey: ['db-stats'],
     queryFn: fetchDbStats,
@@ -47,8 +43,7 @@ export function SettingsPanel() {
   if (
     query.isPending ||
     thresholdsQuery.isPending ||
-    aiQuotaAlertQuery.isPending ||
-    agentRunsQuery.isPending
+    aiQuotaAlertQuery.isPending
   ) {
     return (
       <section className="settings-panel" aria-label="設定">
@@ -62,9 +57,7 @@ export function SettingsPanel() {
     thresholdsQuery.isError ||
     thresholdsQuery.data === undefined ||
     aiQuotaAlertQuery.isError ||
-    aiQuotaAlertQuery.data === undefined ||
-    agentRunsQuery.isError ||
-    agentRunsQuery.data === undefined
+    aiQuotaAlertQuery.data === undefined
   ) {
     return (
       <section className="settings-panel" aria-label="設定">
@@ -132,14 +125,6 @@ export function SettingsPanel() {
         isDirty={aiQuotaAlertForm.isDirty}
         onSubmit={aiQuotaAlertForm.onSubmit}
         feedback={aiQuotaAlertForm.feedback}
-      />
-      <AgentRunsSection
-        checked={agentRunsForm.checked}
-        onChange={agentRunsForm.onChange}
-        isSaving={agentRunsForm.isSaving}
-        isDirty={agentRunsForm.isDirty}
-        onSubmit={agentRunsForm.onSubmit}
-        feedback={agentRunsForm.feedback}
       />
       <DbStatsSection isPending={dbStatsQuery.isPending} isError={dbStatsQuery.isError} data={dbStatsQuery.data} />
       <div className="settings-panel-footer">

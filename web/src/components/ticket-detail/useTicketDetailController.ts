@@ -12,31 +12,25 @@
 //   より後でしか呼べない(TDZ)。かつ useFocusTrap の直前という元の位置を維持する
 //   こと(useTicketFormReset.ts 冒頭コメント参照。この制約は元の並びをそのまま
 //   保っているだけで、今回変更していない)。
-// - useTicketAgentRun (agentRun) は自分の ticketId/projectRootPath 変更リセットを
-//   内部の2つの effect の順序だけで保証しており、このフックの前後どちらに置いても
-//   影響しない(PR-L, c9fcb38 参照)。呼び出し位置は元のまま。
 //
 // 戻り値はセクションの関心事ごとにグループ化して返す
 // (title/description/labels/dependencies/comment/sessionLink/timeline/
-// similarTickets/inFlightOverlaps/agentRun/decision/copy)。
+// similarTickets/inFlightOverlaps/decision)。
 // 各グループの中身は対応するフックの戻り値オブジェクトをそのまま(または
 // 表示に必要な派生値を足して spread した)もので、フィールド名は元の
 // TicketDetailPanel 内のローカル変数名/フックの戻り値フィールド名を変えていない。
-import { useCallback, useEffect, useRef, type RefObject } from 'react';
-import { copyTextToClipboard } from '../../clipboard';
-import { type AgentRunNextStepDto, type PendingDecisionDto } from '../../api';
+import { useEffect, useRef, type RefObject } from 'react';
+import { type PendingDecisionDto } from '../../api';
 import { useAutoClearedValue } from '../../hooks/useAutoClearedValue';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { buildRunNextStepCommand } from '../agentRunShared';
 import { COPY_FEEDBACK_MS } from './constants';
-import { type CopyDisplay, type NextStepCopyTarget, EMPTY_COPY_DISPLAY } from './types';
+import { type CopyDisplay, EMPTY_COPY_DISPLAY } from './types';
 import { useTicketDetailQueries } from './useTicketDetailQueries';
 import { useTicketTitleEditing } from './useTicketTitleEditing';
 import { useTicketDescriptionEditing } from './useTicketDescriptionEditing';
 import { useTicketLabels } from './useTicketLabels';
 import { useTicketDependencies } from './useTicketDependencies';
 import { useTicketComment } from './useTicketComment';
-import { useTicketAgentRun } from './useTicketAgentRun';
 import { useTicketFormReset } from './useTicketFormReset';
 import { useCommentFocusShortcut } from './useCommentFocusShortcut';
 
@@ -79,16 +73,11 @@ export function useTicketDetailController({
   const { queryClient, data, isLoading, error, projectRootPath, decision } =
     queries;
 
-  const agentRun = useTicketAgentRun(ticketId, data, projectRootPath);
   // bdboard-ty72: コピー表示は copyTextToClipboard の継続から出るので、素の
   // setTimeout だとアンマウント後にタイマーを仕掛けうる。
   const {
-    value: copyDisplay,
-    show: showCopyDisplay,
     clear: clearCopyDisplay,
   } = useAutoClearedValue<CopyDisplay>(EMPTY_COPY_DISPLAY, COPY_FEEDBACK_MS);
-  const copyFeedback = copyDisplay.feedback;
-  const ariaLiveMessage = copyDisplay.aria;
   const title = useTicketTitleEditing(ticketId, data?.title);
   const description = useTicketDescriptionEditing(
     ticketId,
@@ -102,8 +91,7 @@ export function useTicketDetailController({
   const prevCommentCountRef = useRef<number | undefined>(undefined);
 
   // ticketId/projectRootPath 変更時の各セクション横断リセットは
-  // useTicketFormReset.ts に抽出済み (bdboard-sso1.5)。agentRun は含まない
-  // (useTicketAgentRun が自前でリセットを持つ理由はそのフック冒頭のコメント参照)。
+  // useTicketFormReset.ts に抽出済み (bdboard-sso1.5)。
   useTicketFormReset({
     ticketId,
     projectRootPath,
@@ -120,15 +108,14 @@ export function useTicketDetailController({
     containerRef: panelRef,
     initialFocusRef: closeButtonRef,
     onEscape: onClose,
-    enabled: !agentRun.confirmingAgentRun,
+    enabled: true,
   });
 
   // パネル外枠の 'c' キーボードショートカット (コメント入力欄へフォーカス)。
-  // useTicketFormReset と同じく、disabled の中身 (quickActions/agentRun の
-  // 確認中フラグ) は複数セクションのフックを跨ぐため、合成は親側に残す。
+  // useTicketFormReset と同じく、disabled の中身  は複数セクションのフックを跨ぐため、合成は親側に残す。
   const onCommentFocusShortcut = useCommentFocusShortcut({
     textareaRef: commentTextareaRef,
-    disabled: agentRun.confirmingAgentRun,
+    disabled: false,
   });
 
   useEffect(() => {
@@ -147,28 +134,6 @@ export function useTicketDetailController({
     }
   }, [data?.commentCount, queryClient, ticketId]);
 
-  const handleCopyNextStep = useCallback(
-    async (target: NextStepCopyTarget, nextStep: AgentRunNextStepDto) => {
-      const command = buildRunNextStepCommand(nextStep);
-      try {
-        await copyTextToClipboard(command);
-        showCopyDisplay({
-          feedback: { kind: 'success', command: target },
-          aria: '次に実行するコマンドをコピーしました',
-        });
-      } catch (copyError) {
-        console.error('Failed to copy next step command', copyError);
-        showCopyDisplay({
-          feedback: { kind: 'error' },
-          aria: 'コピーできませんでした',
-        });
-      }
-    },
-    [showCopyDisplay],
-  );
-
-  const agentRunActionsDisabled =
-    agentRun.startRunMutation.isPending || agentRun.confirmingAgentRun;
 
   return {
     data,
@@ -183,9 +148,7 @@ export function useTicketDetailController({
     timeline: queries.timeline,
     similarTickets: queries.similarTickets,
     inFlightOverlaps: queries.inFlightOverlaps,
-    agentRun: { ...agentRun, actionsDisabled: agentRunActionsDisabled },
     decision,
-    copy: { copyFeedback, ariaLiveMessage, handleCopyNextStep },
     onCommentFocusShortcut,
   };
 }
