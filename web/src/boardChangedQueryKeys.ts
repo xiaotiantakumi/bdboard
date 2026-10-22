@@ -19,7 +19,6 @@ export const BOARD_CHANGED_QUERY_KEY_ROOTS = [
   'lease-health',
   'merge-slot-status',
   'activity',
-  'digest-activity',
   'cfd-stats',
   'dependency-graph',
   'ticket-timeline',

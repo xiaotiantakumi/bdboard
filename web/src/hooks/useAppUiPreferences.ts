@@ -31,8 +31,6 @@ export interface AppUiPreferences {
   setBoardFilterPresets: PersistedSetter<BoardFilterPreset[]>;
   activityWindowDays: ActivityWindowDays;
   setActivityWindowDays: PersistedSetter<ActivityWindowDays>;
-  digestWindowDays: ActivityWindowDays;
-  setDigestWindowDays: PersistedSetter<ActivityWindowDays>;
   statsWeeks: StatsWeeks;
   setStatsWeeks: PersistedSetter<StatsWeeks>;
   recentTickets: RecentTicketEntry[];
@@ -43,9 +41,9 @@ export interface AppUiPreferences {
 
 /**
  * App.tsx 直下に並んでいた usePersistedState 呼び出しをひとまとめにする
- * フック (bdboard-62p4 第6段)。現在は9個
+ * フック (bdboard-62p4 第6段)。現在は8個
  * (view/selectedProjectIds/lastChatProjectId/boardFilterPresets/
- * activityWindowDays/digestWindowDays/statsWeeks/recentTickets/
+ * activityWindowDays/statsWeeks/recentTickets/
  * tipsBannerDismissed)。boardFilterState (優先度上限などボードのフィルタ7種)
  * は既に useBoardFilterState.ts に分かれているのでここには含めない。
  * bdboard-mkm1.3: Next Up ビュー削除に伴い、Next Up 専用の表示件数/epic
@@ -63,7 +61,7 @@ export interface AppUiPreferences {
  * boardFilterState/nextUpBatchRun との相対位置を変えても観測可能な挙動は
  * 変わらない。このフック内部での呼び出し順序自体は元の宣言順 (view →
  * selectedProjectIds → lastChatProjectId → boardFilterPresets →
- * activityWindowDays → digestWindowDays → statsWeeks → recentTickets →
+ * activityWindowDays → statsWeeks → recentTickets →
  * tipsBannerDismissed) を保っている。
  */
 export function useAppUiPreferences(): AppUiPreferences {
@@ -85,11 +83,6 @@ export function useAppUiPreferences(): AppUiPreferences {
   );
   const [activityWindowDays, setActivityWindowDays] = usePersistedState(
     UI_STORAGE_KEYS.activityWindowDays,
-    1,
-    validateActivityWindowDays,
-  );
-  const [digestWindowDays, setDigestWindowDays] = usePersistedState(
-    UI_STORAGE_KEYS.digestWindowDays,
     1,
     validateActivityWindowDays,
   );
@@ -120,8 +113,6 @@ export function useAppUiPreferences(): AppUiPreferences {
     setBoardFilterPresets,
     activityWindowDays,
     setActivityWindowDays,
-    digestWindowDays,
-    setDigestWindowDays,
     statsWeeks,
     setStatsWeeks,
     recentTickets,
