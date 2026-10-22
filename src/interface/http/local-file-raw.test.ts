@@ -127,6 +127,76 @@ describe('GET /api/tickets/:id/local-files/raw', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: 'not a file' });
   });
+
+  it('sends one strong ETag on two chunks, on 200, and on 416', async () => {
+    const etag = '"24-0"';
+    const first = await requestLocal(app, raw('nums.json'), { Range: 'bytes=0-9' });
+    const second = await requestLocal(app, raw('nums.json'), { Range: 'bytes=10-19' });
+    const whole = await requestLocal(app, raw('nums.json'));
+    const unsatisfied = await requestLocal(app, raw('nums.json'), { Range: 'bytes=100-' });
+
+    expect(first.status).toBe(206);
+    expect(second.status).toBe(206);
+    expect(whole.status).toBe(200);
+    expect(unsatisfied.status).toBe(416);
+    expect(first.headers.get('etag')).toBe(etag);
+    expect(second.headers.get('etag')).toBe(etag);
+    expect(whole.headers.get('etag')).toBe(etag);
+    expect(unsatisfied.headers.get('etag')).toBe(etag);
+  });
+
+  it('changes the ETag when the size or the mtime changes', async () => {
+    const varied = createFakeLocalFs();
+    varied.addFile('same-size-a.mp4', Buffer.alloc(5 * MIB), 1000);
+    varied.addFile('same-size-b.mp4', Buffer.alloc(5 * MIB), 2000);
+    varied.addFile('other-size.mp4', Buffer.alloc(5 * MIB + 7), 1000);
+    varied.addFile('fractional.mp4', Buffer.alloc(5 * MIB), 1000.75);
+    const variedApp = createLocalFileRoutes({ cache: createFakeLocalFilesCache({}), fs: varied });
+    const headers = { Range: 'bytes=0-0' };
+
+    const sameSizeA = await requestLocal(variedApp, raw('same-size-a.mp4'), headers);
+    const sameSizeB = await requestLocal(variedApp, raw('same-size-b.mp4'), headers);
+    const otherSize = await requestLocal(variedApp, raw('other-size.mp4'), headers);
+
+    expect(sameSizeA.headers.get('etag')).toBe('"500000-3e8"');
+    expect(sameSizeB.headers.get('etag')).toBe('"500000-7d0"');
+    expect(otherSize.headers.get('etag')).toBe('"500007-3e8"');
+    const fractional = await requestLocal(variedApp, raw('fractional.mp4'), headers);
+    expect(fractional.headers.get('etag')).toBe('"500000-3e8"');
+  });
+
+  it('never returns 206 when If-Range is not the current ETag', async () => {
+    const varied = createFakeLocalFs();
+    varied.addFile('nums.json', NUMS);
+    varied.addFile('clip.mp4', Buffer.alloc(5 * MIB), 1000);
+    const variedApp = createLocalFileRoutes({ cache: createFakeLocalFilesCache({}), fs: varied });
+    const current = '"24-0"';
+
+    const mismatch = await requestLocal(variedApp, raw('nums.json'), {
+      Range: 'bytes=0-9',
+      'If-Range': '"0-0"',
+    });
+    const weak = await requestLocal(variedApp, raw('nums.json'), {
+      Range: 'bytes=0-9',
+      'If-Range': `W/${current}`,
+    });
+    const tooBig = await requestLocal(variedApp, raw('clip.mp4'), {
+      Range: 'bytes=0-9',
+      'If-Range': '"0-0"',
+    });
+    const match = await requestLocal(variedApp, raw('nums.json'), {
+      Range: 'bytes=0-9',
+      'If-Range': current,
+    });
+
+    expect(mismatch.status).toBe(200);
+    expect(await mismatch.text()).toBe(NUMS);
+    expect(mismatch.headers.get('etag')).toBe(current);
+    expect(weak.status).toBe(200);
+    expect(tooBig.status).toBe(413);
+    expect(match.status).toBe(206);
+    expect(match.headers.get('etag')).toBe(current);
+  });
 });
 
 describe.each([raw('a.md'), COLLECTION, LIST_STILLS] as const)('privileged guard %s', (url) => {

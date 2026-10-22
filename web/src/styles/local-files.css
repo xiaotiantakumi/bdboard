@@ -98,7 +98,8 @@
   max-width: 100%;
 }
 
-.local-file-viewer-nav {
+.local-file-viewer-nav,
+.local-file-offline-actions {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -106,7 +107,9 @@
   margin: 8px 0 0;
 }
 
-.local-file-viewer-nav button {
+.local-file-viewer-nav button,
+.local-file-offline-actions button,
+.local-file-viewer-remove-all {
   font: inherit;
   color: var(--color-text);
   background: var(--color-bg-elevated);
@@ -116,7 +119,9 @@
   cursor: pointer;
 }
 
-.local-file-viewer-nav button:disabled {
+.local-file-viewer-nav button:disabled,
+.local-file-offline-actions button:disabled,
+.local-file-viewer-remove-all:disabled {
   color: var(--color-text-tertiary);
   cursor: default;
 }
@@ -156,6 +161,10 @@
   flex: none;
   color: var(--color-text-tertiary);
   font-size: 0.75rem;
+}
+
+.local-file-viewer-remove-all {
+  flex: none;
 }
 
 .local-file-viewer-body {

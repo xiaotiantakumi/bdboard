@@ -13,6 +13,7 @@ import { useAppKeyboardShortcuts } from '../../hooks/useAppKeyboardShortcuts';
 import { useAppFilterPresets } from '../../hooks/useAppFilterPresets';
 import { useAppActions } from '../../hooks/useAppActions';
 import { boardApiModeFromView } from '../../uiPersistedState';
+import { useOfflineVideoSweep } from '../../lib/offline-video/useOfflineVideoSweep';
 import { useAppDataSources } from './useAppDataSources';
 
 /**
@@ -23,7 +24,8 @@ import { useAppDataSources } from './useAppDataSources';
  * 行数の都合で useAppDataSources.ts にさらに分けた(呼び出し位置はこのフックの
  * 元の宣言順のまま、詳細は useAppDataSources.ts の JSDoc 参照)。
  *
- * hook 呼び出し順は元の App.tsx から変えていない。唯一の例外は、元は
+ * hook 呼び出し順は元の App.tsx から変えていない。先頭の useOfflineVideoSweep
+ * は端末に保存した動画の期限掃除で、後続の順には影響しない。唯一の例外は、元は
  * boardFilterState / nextUpBatchRun (queryClient + useNextUpRunLoopController)
  * と互い違いに並んでいた11個の usePersistedState を useAppUiPreferences.ts へ
  * まとめたことで、これら11個が1箇所にまとまって呼ばれるようになった点のみ
@@ -47,6 +49,7 @@ import { useAppDataSources } from './useAppDataSources';
  * boardFilterState オブジェクトの中身と完全に同じもので、値自体は変わらない)。
  */
 export function useAppController() {
+  useOfflineVideoSweep();
   useHeaderHeightVar();
 
   const ui = useAppUiPreferences();
