@@ -11,7 +11,6 @@ import {
   createDoltAutostartCommandRunner,
   createFileAiQuotaAlertConfigStore,
   createFileBoardThresholdsConfigStore,
-  createFileHygieneThresholdsConfigStore,
   createFileScanRootsConfigStore,
   createSqliteBoardCache,
   NodeCommandRunner,
@@ -57,9 +56,6 @@ export function wireCoreInfra(deps: WireCoreInfraDeps) {
   const boardThresholdsConfigStore = createFileBoardThresholdsConfigStore(
     envString('BDBOARD_BOARD_THRESHOLDS_CONFIG_PATH', configFilePath),
   );
-  const hygieneThresholdsConfigStore = createFileHygieneThresholdsConfigStore(
-    envString('BDBOARD_HYGIENE_THRESHOLDS_CONFIG_PATH', configFilePath),
-  );
   const aiQuotaAlertConfigStore = createFileAiQuotaAlertConfigStore(
     envString('BDBOARD_AI_QUOTA_ALERT_CONFIG_PATH', configFilePath),
   );
@@ -73,7 +69,6 @@ export function wireCoreInfra(deps: WireCoreInfraDeps) {
     configFilePath,
     scanRootsConfigStore,
     boardThresholdsConfigStore,
-    hygieneThresholdsConfigStore,
     aiQuotaAlertConfigStore,
   };
 }

@@ -41,7 +41,6 @@ export interface MountRoutesDeps {
   readonly harnessRouter: Hono;
   readonly scanRootsRouter: Hono;
   readonly boardThresholdsRouter: Hono;
-  readonly hygieneThresholdsRouter: Hono;
   readonly dbStatsRouter: Hono;
   readonly aiQuotaAlertRouter: Hono;
   readonly agentRunSettingsRouter: Hono;
@@ -83,7 +82,6 @@ export function mountRoutes(app: Hono, deps: MountRoutesDeps): void {
   app.route('/', deps.harnessRouter);
   app.route('/', deps.scanRootsRouter);
   app.route('/', deps.boardThresholdsRouter);
-  app.route('/', deps.hygieneThresholdsRouter);
   app.route('/', deps.dbStatsRouter);
   app.route('/', deps.aiQuotaAlertRouter);
   app.route('/', deps.agentRunSettingsRouter);

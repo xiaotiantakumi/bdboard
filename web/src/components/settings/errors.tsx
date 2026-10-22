@@ -25,7 +25,6 @@ const CONFLICT_WRITE_MESSAGE =
   '他のセッションが先に変更したため保存できませんでした。入力内容は最新の設定で置き換えられました。内容を確認してからやり直してください。';
 
 const INVALID_BOARD_THRESHOLDS_ERROR = 'invalid board thresholds';
-const INVALID_HYGIENE_THRESHOLDS_ERROR = 'invalid hygiene thresholds';
 const INVALID_AI_QUOTA_ALERT_THRESHOLD_ERROR = 'invalid ai quota alert threshold';
 
 function isBoardThresholdErrors(details: unknown): details is { errors: string[] } {
@@ -55,27 +54,6 @@ export function describeBoardThresholdWriteError(error: unknown): ReactNode {
     return CONFLICT_WRITE_MESSAGE;
   }
   return describeWriteError(error, '閾値設定を保存できませんでした');
-}
-
-export function describeHygieneThresholdWriteError(error: unknown): ReactNode {
-  if (
-    error instanceof ApiError &&
-    error.status === 400 &&
-    error.errorMessage === INVALID_HYGIENE_THRESHOLDS_ERROR &&
-    isBoardThresholdErrors(error.details)
-  ) {
-    return (
-      <ul className="settings-panel-error-list">
-        {error.details.errors.map((message) => (
-          <li key={message}>{message}</li>
-        ))}
-      </ul>
-    );
-  }
-  if (error instanceof ApiError && error.status === 409) {
-    return CONFLICT_WRITE_MESSAGE;
-  }
-  return describeWriteError(error, '健全性閾値を保存できませんでした');
 }
 
 export function describeAiQuotaAlertWriteError(error: unknown): ReactNode {

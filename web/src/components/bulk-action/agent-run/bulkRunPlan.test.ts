@@ -280,7 +280,7 @@ describe('describeBulkRunHarnessBlock', () => {
     ];
 
     expect(describeBulkRunHarnessBlock(runCards, statuses, projectNames)).toBe(
-      'Project Two: ハーネス未注入 — Hygiene から注入 / Project One: ハーネス未注入 — Hygiene から注入',
+      'Project Two: ハーネス未注入 — プロジェクト見出しから注入 / Project One: ハーネス未注入 — プロジェクト見出しから注入',
     );
   });
 
@@ -289,7 +289,7 @@ describe('describeBulkRunHarnessBlock', () => {
     const runCards = [makeRunCard('u', { projectId: '/work/repos/unnamed' })];
 
     expect(describeBulkRunHarnessBlock(runCards, statuses, projectNames)).toBe(
-      'unnamed: ハーネス未注入 — Hygiene から注入',
+      'unnamed: ハーネス未注入 — プロジェクト見出しから注入',
     );
   });
 

@@ -28,8 +28,8 @@ describe('filterPaletteActions', () => {
 
   it('matches view labels and keywords', () => {
     const actions = sampleActions();
-    const hits = filterPaletteActions(actions, '健全性');
-    expect(hits.some((action) => action.id === 'view:hygiene')).toBe(true);
+    const hits = filterPaletteActions(actions, '依存グラフ');
+    expect(hits.some((action) => action.id === 'view:graph')).toBe(true);
   });
 
   it('matches chat action by Japanese label', () => {

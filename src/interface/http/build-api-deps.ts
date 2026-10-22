@@ -5,7 +5,6 @@ import type { BoardThresholdsConfigPort } from '../../application/ports/board-th
 import type { CommentReader } from '../../application/ports/comment-reader.js';
 import type { DependencyWriterPort } from '../../application/ports/dependency-writer.js';
 import type { HumanDecisionsPort } from '../../application/ports/human-decisions.js';
-import type { HygieneThresholdsConfigPort } from '../../application/ports/hygiene-thresholds-config.js';
 import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
 import type { LeaseReader } from '../../application/ports/lease-reader.js';
 import type { MergeSlotReader } from '../../application/ports/merge-slot-reader.js';
@@ -18,7 +17,6 @@ import type { WorktreeScanner } from '../../application/ports/worktree-scanner.j
 import type { ReclaimScheduler } from '../../application/lease/reclaim-scheduler.js';
 import type { ReclaimHistory } from '../../application/lease/reclaim-history.js';
 import { resolveBoardThresholds } from '../../domain/board-thresholds.js';
-import { resolveHygieneThresholds } from '../../domain/hygiene-thresholds.js';
 import type { AgentSession, SessionLink } from '../../domain/session.js';
 import type { EventHub } from '../sse/event-hub.js';
 import type { ApiDeps, ApiStatus } from './api-deps.js';
@@ -36,7 +34,6 @@ export interface BuildApiDepsParams {
   readonly refreshProjects?: (projectIds: readonly string[]) => Promise<void>;
   readonly events: EventHub;
   readonly boardThresholdsConfigStore: BoardThresholdsConfigPort;
-  readonly hygieneThresholdsConfigStore: HygieneThresholdsConfigPort;
   readonly sessions?: () => readonly AgentSession[];
   readonly links?: () => readonly SessionLink[];
   readonly commentReader?: CommentReader;
@@ -58,17 +55,11 @@ export interface BuildApiDepsParams {
 }
 
 export function buildApiDeps(params: BuildApiDepsParams): ApiDeps {
-  const {
-    boardThresholdsConfigStore,
-    hygieneThresholdsConfigStore,
-    ...rest
-  } = params;
+  const { boardThresholdsConfigStore, ...rest } = params;
 
   return {
     ...rest,
     getBoardThresholds: async () =>
       resolveBoardThresholds(await boardThresholdsConfigStore.read()),
-    getHygieneThresholds: async () =>
-      resolveHygieneThresholds(await hygieneThresholdsConfigStore.read()),
   };
 }

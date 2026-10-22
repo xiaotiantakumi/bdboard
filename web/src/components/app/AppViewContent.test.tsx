@@ -29,9 +29,6 @@ vi.mock('../ActivityFeed', () => ({
     <div data-testid="activity-feed">{props.windowDays}</div>
   )),
 }));
-vi.mock('../HygienePanel', () => ({
-  HygienePanel: vi.fn(() => <div data-testid="hygiene-panel" />),
-}));
 vi.mock('../DependencyGraphView', () => ({
   DependencyGraphView: vi.fn((props: { focusTicketId?: string }) => (
     <div data-testid="dependency-graph-view">{props.focusTicketId ?? ''}</div>
@@ -52,7 +49,6 @@ const appBoardViewSwitchMock = vi.mocked(AppBoardViewSwitch);
 // ボード以外のリーフ view だけにする。
 const LEAF_TESTIDS = [
   'activity-feed',
-  'hygiene-panel',
   'dependency-graph-view',
   'settings-panel',
 ];
@@ -213,7 +209,6 @@ describe('AppViewContent', () => {
 
   const leafCases: { view: ViewMode; testid: string }[] = [
     { view: 'activity', testid: 'activity-feed' },
-    { view: 'hygiene', testid: 'hygiene-panel' },
     { view: 'graph', testid: 'dependency-graph-view' },
     { view: 'settings', testid: 'settings-panel' },
   ];

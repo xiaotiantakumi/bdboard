@@ -49,14 +49,12 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   // ルーティング解決より前に 403 になる(= ガード掛け忘れで出荷される経路が無い)。
   app.use('*', createWriteGuardMiddleware(deps.writeAccess ?? {}));
 
-  // /api/hygiene (hygiene-status-routes.ts, bdboard-sso1.61 で hygiene-routes.ts
-  // から分割) と /api/tickets/:id/in-flight-overlaps
-  // (ticket-read-routes.ts) が共有する着手中重複メモ。
+  // /api/tickets/:id/in-flight-overlaps (ticket-read-routes.ts) の着手中重複メモ。
   const inFlightOverlapMemo = createInFlightOverlapMemo();
 
   // bdboard-p5l.27: PR 情報 (コメント由来の PR URL / gh pr view の結果) のキャッシュと
-  // gh/bd の同時実行ゲートは、/api/pr-links・/api/hygiene
-  // で1組だけ共有する。経路ごとに持つと同じ PR を取り直し、ゲートの上限も掛け算される。
+  // gh/bd の同時実行ゲートは、/api/pr-links と
+  // /api/model-stats で1組だけ共有する。経路ごとに持つと同じ PR を取り直し、ゲートの上限も掛け算される。
   const prBadgeShared = createPrBadgeShared(deps.prBadgeStatusCache);
 
   // 元の routes.ts の登録順そのまま: health/status → board/projects/search/activity →
@@ -64,7 +62,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   // comments → sessions/processes → refresh/events(SSE)。
   app.route('/', createHealthStatusRoutes(deps));
   app.route('/', createBoardRoutes(deps));
-  app.route('/', createHygieneRoutes(deps, inFlightOverlapMemo, prBadgeShared));
+  app.route('/', createHygieneRoutes(deps, prBadgeShared));
   app.route('/', createTicketReadRoutes(deps, inFlightOverlapMemo));
   app.route('/', createTicketWriteRoutes(deps));
   app.route('/', createCommentRoutes(deps));

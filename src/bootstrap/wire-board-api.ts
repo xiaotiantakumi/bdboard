@@ -16,7 +16,6 @@ import type { BoardThresholdsConfigPort } from '../application/ports/board-thres
 import type { CommentReader } from '../application/ports/comment-reader.js';
 import type { DependencyWriterPort } from '../application/ports/dependency-writer.js';
 import type { HumanDecisionsPort } from '../application/ports/human-decisions.js';
-import type { HygieneThresholdsConfigPort } from '../application/ports/hygiene-thresholds-config.js';
 import type { IssueWriterPort } from '../application/ports/issue-writer.js';
 import type { LeaseReader } from '../application/ports/lease-reader.js';
 import type { MergeSlotReader } from '../application/ports/merge-slot-reader.js';
@@ -49,7 +48,6 @@ export interface WireBoardApiDeps {
   readonly boardRefreshServices: Pick<BoardRefreshServices, 'getStatus' | 'runRefresh'>;
   readonly events: EventHub;
   readonly boardThresholdsConfigStore: BoardThresholdsConfigPort;
-  readonly hygieneThresholdsConfigStore: HygieneThresholdsConfigPort;
   readonly boardSessionServices: Pick<
     BoardSessionServices,
     'sessionLivenessTracker' | 'transcriptLinkTracker' | 'sessionTailReader'
@@ -131,7 +129,6 @@ export function wireBoardApi(deps: WireBoardApiDeps) {
         deps.boardRefreshServices.runRefresh(true, projectIds),
       events: deps.events,
       boardThresholdsConfigStore: deps.boardThresholdsConfigStore,
-      hygieneThresholdsConfigStore: deps.hygieneThresholdsConfigStore,
       sessions: () => deps.boardSessionServices.sessionLivenessTracker.current(),
       links: () => deps.boardSessionServices.transcriptLinkTracker.list(),
       commentReader: deps.commentReader,

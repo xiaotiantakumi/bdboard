@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import type { LeftoverCandidate } from '../git-worktree.js';
-import { hasLiveWorktreeEvidence } from '../hygiene.js';
 import type { Ticket } from '../ticket.js';
 import type { TicketId } from '../ticket-id.js';
 import { makeTicket } from '../test-support.js';
@@ -125,7 +124,7 @@ function referenceReclaim(
   }
   const liveWorktreeTicketKeys = new Set<string>();
   for (const candidate of leftoverCandidates) {
-    if (hasLiveWorktreeEvidence(candidate)) {
+    if (candidate.worktreePath !== null || candidate.branchName !== null) {
       liveWorktreeTicketKeys.add(referenceTicketKey(candidate.projectId, candidate.ticketId));
     }
   }

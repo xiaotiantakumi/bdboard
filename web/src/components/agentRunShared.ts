@@ -99,7 +99,7 @@ export function describeHarnessRunBlock(
 
   const pack = status.packs.find((entry) => entry.name === RUN_REQUIRED_HARNESS_PACK);
   if (pack === undefined || pack.installedVersion === null) {
-    return 'ハーネス未注入 — Hygiene から注入';
+    return 'ハーネス未注入 — プロジェクト見出しから注入';
   }
   if (harnessHooksNeedAttention(pack)) {
     return 'hook 未登録 — 再注入';

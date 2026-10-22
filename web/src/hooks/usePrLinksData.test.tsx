@@ -65,31 +65,6 @@ describe('usePrLinksData', () => {
     expect(result.current.prLinksById.get('bdboard-2')).toEqual(badges[1]);
   });
 
-  it('invalidates the hygiene query cache once the pr-links fetch has resolved', async () => {
-    fetchPrLinksMock.mockResolvedValue([makeBadge()]);
-    const { result, queryClient } = renderPrLinksData([], '');
-    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-
-    await waitFor(() => expect(result.current.prLinksQuery.dataUpdatedAt).toBeGreaterThan(0));
-    await waitFor(() =>
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['hygiene'] }),
-    );
-  });
-
-  it('does not invalidate the hygiene query while the pr-links fetch is still pending', () => {
-    fetchPrLinksMock.mockReturnValue(new Promise(() => {}));
-    // The spy must be attached *before* renderHook mounts the component, since
-    // renderHook synchronously runs the first effect pass as part of mounting.
-    // Attaching it afterwards would silently miss that first invocation and let
-    // the assertion below pass even if the hook's `dataUpdatedAt > 0` guard were
-    // removed entirely (bdboard-62p4 PR-3 opus review finding #2).
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-    renderPrLinksData([], '', queryClient);
-
-    expect(invalidateSpy).not.toHaveBeenCalled();
-  });
-
   it('does not retry pr-links on failure even without a client-level retry override (retry: false is set by the hook itself, matching App.tsx)', async () => {
     fetchPrLinksMock.mockRejectedValue(new Error('boom'));
     // Deliberately omit the `retry: false` defaultOptions override used by the other

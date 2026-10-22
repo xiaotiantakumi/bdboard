@@ -5,13 +5,11 @@ import { ScanRootsSection } from './settings/ScanRootsSection';
 import { ExcludePathsSection } from './settings/ExcludePathsSection';
 import { DbStatsSection } from './settings/DbStatsSection';
 import { BoardThresholdsSection } from './settings/BoardThresholdsSection';
-import { HygieneThresholdsSection } from './settings/HygieneThresholdsSection';
 import { WipLimitsSection } from './settings/WipLimitsSection';
 import { AiQuotaAlertSection } from './settings/AiQuotaAlertSection';
 import { AgentRunsSection } from './settings/AgentRunsSection';
 import { useAiQuotaAlertForm } from './settings/useAiQuotaAlertForm';
 import { useAgentRunsForm } from './settings/useAgentRunsForm';
-import { useHygieneThresholdsForm } from './settings/useHygieneThresholdsForm';
 import { useScanRootsForm } from './settings/useScanRootsForm';
 import { useBoardThresholdsForm } from './settings/useBoardThresholdsForm';
 import { useWipLimitsForm } from './settings/useWipLimitsForm';
@@ -22,8 +20,6 @@ export function SettingsPanel() {
   const query = scanRootsForm.query;
   const thresholdsShared = useThresholdsSharedState();
   const thresholdsQuery = thresholdsShared.query;
-  const hygieneThresholdsForm = useHygieneThresholdsForm();
-  const hygieneThresholdsQuery = hygieneThresholdsForm.query;
   const aiQuotaAlertForm = useAiQuotaAlertForm();
   const aiQuotaAlertQuery = aiQuotaAlertForm.query;
   const agentRunsForm = useAgentRunsForm();
@@ -51,7 +47,6 @@ export function SettingsPanel() {
   if (
     query.isPending ||
     thresholdsQuery.isPending ||
-    hygieneThresholdsQuery.isPending ||
     aiQuotaAlertQuery.isPending ||
     agentRunsQuery.isPending
   ) {
@@ -66,8 +61,6 @@ export function SettingsPanel() {
     query.data === undefined ||
     thresholdsQuery.isError ||
     thresholdsQuery.data === undefined ||
-    hygieneThresholdsQuery.isError ||
-    hygieneThresholdsQuery.data === undefined ||
     aiQuotaAlertQuery.isError ||
     aiQuotaAlertQuery.data === undefined ||
     agentRunsQuery.isError ||
@@ -128,18 +121,6 @@ export function SettingsPanel() {
       {/* boardThresholdsForm のキーは BoardThresholdsSectionProps から defaults を除いたものと
           1対1で一致するよう useBoardThresholdsForm 側で設計しているため spread で渡す。 */}
       <BoardThresholdsSection {...boardThresholdsForm} defaults={thresholdsQuery.data.defaults} />
-      <HygieneThresholdsSection
-        values={hygieneThresholdsForm.values}
-        data={hygieneThresholdsQuery.data}
-        onStaleInProgressDaysChange={hygieneThresholdsForm.onStaleInProgressDaysChange}
-        onHighPriorityMaxChange={hygieneThresholdsForm.onHighPriorityMaxChange}
-        onStalePendingDecisionDaysChange={hygieneThresholdsForm.onStalePendingDecisionDaysChange}
-        onClosedWithoutEvidenceDaysChange={hygieneThresholdsForm.onClosedWithoutEvidenceDaysChange}
-        isSaving={hygieneThresholdsForm.isSaving}
-        isDirty={hygieneThresholdsForm.isDirty}
-        onSubmit={hygieneThresholdsForm.onSubmit}
-        feedback={hygieneThresholdsForm.feedback}
-      />
       {/* wipLimitsForm のキーは WipLimitsSectionProps と1対1で一致するよう
           useWipLimitsForm 側で設計しているため spread で渡す。 */}
       <WipLimitsSection {...wipLimitsForm} />

@@ -256,14 +256,6 @@
      ヘッダー内なのでヘッダー高は 234.5px → 244.5px (+10px) 増える。これは本チケットのコストとして受け入れる。 */
 
   /* Tier 1: 副作用のある操作 */
-  .hygiene-repair-action,
-  .hygiene-repair-confirm-btn,
-  .hygiene-repair-cancel {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-  }
-
   .settings-panel-save {
     min-height: 44px;
     display: inline-flex;
