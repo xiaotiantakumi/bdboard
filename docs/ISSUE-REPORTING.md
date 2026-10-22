@@ -847,7 +847,7 @@ function normalizeErrorText(text: string): string {
 
 **再レビュー(2026-10-04、2 回目)で決めたこと**
 
-- **CI(verify-windows)**: Windows には POSIX のパーミッションが無いので、0700/0600 のテストは Windows では
+- **CI(verify-windows は bdboard-l1kt で廃止済み。以下は当時の判断)**: Windows には POSIX のパーミッションが無いので、0700/0600 のテストは Windows では
   実行しない。「下書きの id が普通のファイル」(ENOTDIR)の行も、Windows は ENOENT と報告して警告にならない
   ので POSIX だけで確かめる。
 - **`source` / `catalogSlug` のパス(F2)**: 400 ではなく**受け取りで `~/` に畳む**ことにした(3節の表)。

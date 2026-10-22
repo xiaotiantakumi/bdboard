@@ -161,7 +161,7 @@ describe.skipIf(process.platform === 'win32' || !hasPortTool())('always-on-serve
   });
 
   it('--dry-run only prints the plan', () => {
-    const result = chair(['start', '--port', String(port), '--dry-run']);
+    const result = chair(['start', '--port', String(port), '--dry-run', '--tunnel-ack']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('[dry-run] action=start');
     expect(result.stdout).toContain('nohup npm run start');

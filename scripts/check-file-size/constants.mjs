@@ -4,7 +4,7 @@ export const CONFIG_RELATIVE_PATH = 'scripts/file-size-baseline.json';
 
 // 対象ディレクトリ・拡張子。パスは常に git ls-files が返す POSIX 区切りの相対パスとして
 // 扱う — Windows でも git は '/' 区切りで返すため、このスクリプトは path.sep を一度も
-// 使わない (verify-windows 対策)。
+// 使わない (Windows 非対応化前の対策。bdboard-l1kt)。
 export const TARGET_DIRS = ['src', 'web/src', 'scripts', 'harness', 'test'];
 export const TARGET_EXTENSIONS = ['.tsx', '.ts', '.mjs', '.js', '.css', '.sh'];
 
