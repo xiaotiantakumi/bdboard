@@ -11,8 +11,7 @@ import { createHarnessRoutes, type HarnessRoutesDeps } from './harness-routes.js
  * `createHarnessRoutes(...).routes` を呼び出し、返ってきた { method, path } の列を
  * そのまま書き写したもの (分割後のファイル群から再生成していない)。
  *
- * route-order.test.ts (bdboard-sso1.1) / agent-run-route-order.test.ts
- * (bdboard-sso1.27) と同じ方針: write-guard は app.use('*', ...) で登録される
+ * route-order.test.ts (bdboard-sso1.1) と同じ方針: write-guard は app.use('*', ...) で登録される
  * ミドルウェアで、app.routes 上は method: 'ALL', path: '/*' として先頭に現れる
  * ため、明示的な method ルートの順序と、ALL ミドルウェアの位置・個数を分けて固定する。
  */

@@ -14,7 +14,6 @@ export const BOARD_CHANGED_QUERY_KEY_ROOTS = [
   'projects',
   'harness-drift',
   'project-harness',
-  'harness-status-all',
   'ticket-timeline',
   'similar-tickets',
   'ticket-in-flight-overlaps',

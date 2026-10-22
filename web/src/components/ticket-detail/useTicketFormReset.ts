@@ -9,31 +9,19 @@
 // 「useEffect の依存配列の中身」であり、これは素のカスタムフックのまま
 // テストできる。
 //
-// 含めないもの: agentRun (useTicketAgentRun) の reset。PR-L の Opus レビューで
-// 見つかった不具合 (c9fcb38) により、agentRun は ticketId/projectRootPath 変更の
-// リセットを自前の useEffect として内部に持つようになった。ここから重ねて
-// 呼ぶと、キャッシュ済みの実行中 run の復元を再びリセットで巻き戻してしまう。
-// このフックは今後も agentRun には一切触れないこと。
-//
 // 呼び出し位置の制約: このフックの引数(各セクションフックの reset)は呼び出し元
 // (useTicketDetailController)側で先に宣言されている必要があるため、各セクションのフック
-// (title/description/labels/dependencies/comment/sessionLink/
+// (title/description/labels/dependencies/comment/
 // decision)を呼び出した後でしか呼べない(TDZ)。それより後ろへ動かすこと自体は
 // 型上は可能だが、元の resetFormState useEffect があった位置(useFocusTrap の
 // 直前)からは動かさないこと — React の effect 実行順は「レンダー中にどの位置で
 // 呼ばれたか」で決まるため、動かすと他の effect との相対順序が変わりうる。
-// なお agentRun (useTicketAgentRun) はこのフックと無関係に自分の reset/復元を
-// 内部の2つの effect の順序だけで保証している(呼び出し位置は useTicketDetailController.ts
-// 内の useTicketAgentRun() 呼び出し、このフックの前後どちらでも影響しない)ので、
-// 「このフックと agentRun の間の順序」自体は不変条件ではない。不変条件はあくまで
-// 「このフック内の8つの reset の呼び出し順」
-// と「useEffect の依存配列の中身」。
+// 不変条件は「このフック内の reset の呼び出し順」と「useEffect の依存配列の中身」。
 import { useCallback, useEffect } from 'react';
 
 export interface UseTicketFormResetParams {
   readonly ticketId: string;
   readonly projectRootPath: string | undefined;
-  readonly clearCopyDisplay: () => void;
   readonly resetDecision: (options?: {
     clearSubmittedDecision?: boolean;
   }) => void;
@@ -52,12 +40,11 @@ export interface UseTicketFormResetParams {
  * 戻り値は無い(副作用のみ)。抽出前の resetFormState も、ticketId 変更
  * useEffect 以外から呼ばれてはいなかった(呼び出し箇所はこの1つだけだった)ため、
  * 公開する意味のある戻り値が無い。将来、手動リセットが必要になったら
- * useTicketAgentRun.reset と同様に戻り値として公開すること。
+ * 戻り値として公開すること。
  */
 export function useTicketFormReset({
   ticketId,
   projectRootPath,
-  clearCopyDisplay,
   resetDecision,
   resetComment,
   resetDependencies,
@@ -67,7 +54,6 @@ export function useTicketFormReset({
 }: UseTicketFormResetParams): void {
   const resetFormState = useCallback(
     (options?: { clearSubmittedDecision?: boolean }) => {
-      clearCopyDisplay();
       resetDecision({
         clearSubmittedDecision: options?.clearSubmittedDecision === true,
       });
@@ -78,8 +64,7 @@ export function useTicketFormReset({
       resetDescriptionEditing();
     },
     [
-      clearCopyDisplay,
-      resetDecision,
+          resetDecision,
           resetComment,
       resetDependencies,
       resetDescriptionEditing,

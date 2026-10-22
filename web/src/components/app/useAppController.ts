@@ -21,13 +21,12 @@ import { useAppDataSources } from './useAppDataSources';
  *
  * hook 呼び出し順は元の App.tsx から変えていない。先頭の useOfflineVideoSweep
  * は端末に保存した動画の期限掃除で、後続の順には影響しない。唯一の例外は、元は
- * boardFilterState / nextUpBatchRun (queryClient + useNextUpRunLoopController)
- * と互い違いに並んでいた11個の usePersistedState を useAppUiPreferences.ts へ
+ * boardFilterState / queryClient と互い違いに並んでいた11個の usePersistedState を useAppUiPreferences.ts へ
  * まとめたことで、これら11個が1箇所にまとまって呼ばれるようになった点のみ
  * (useAppUiPreferences.ts の JSDoc の通り、いずれも他の hook の実行順序に
  * 依存しない usePersistedState 呼び出しなので観測可能な挙動は変わらない)。
  * それ以外の呼び出し(useHeaderHeightVar → ui → boardFilterState →
- * queryClient/nextUpBatchRun → epicFilterId → useTicketDeepLink →
+ * queryClient → epicFilterId → useTicketDeepLink →
  * useAppOverlays → useAppFilterPresets → useAppDataSources(データ取得9系統+
  * ウォッチ/通知3系統)→ useAppActions → useAppKeyboardShortcuts)は元の宣言順
  * のまま。

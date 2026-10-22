@@ -66,18 +66,6 @@
   text-align: right;
 }
 
-.btn-shortcuts-help {
-  min-height: 34px;
-  min-width: 34px;
-  padding: 0 10px;
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-.btn-help {
-  min-height: 34px;
-}
-
 .help-panel-overlay {
   justify-content: center;
   align-items: flex-start;

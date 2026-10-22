@@ -29,7 +29,6 @@ function makeParams(
   return {
     ticketId: 'bd-1',
     projectRootPath: '/repo',
-    clearCopyDisplay: vi.fn(),
     resetDecision: vi.fn(),
     resetComment: vi.fn(),
     resetDependencies: vi.fn(),
@@ -45,7 +44,6 @@ describe('useTicketFormReset', () => {
     const params = makeParams();
     renderHook(() => useTicketFormReset(params));
 
-    expect(params.clearCopyDisplay).toHaveBeenCalledTimes(1);
     expect(params.resetDecision).toHaveBeenCalledTimes(1);
     expect(params.resetDecision).toHaveBeenCalledWith({
       clearSubmittedDecision: true,
@@ -60,7 +58,6 @@ describe('useTicketFormReset', () => {
   it('calls the resets in the original resetFormState order', () => {
     const order: string[] = [];
     const params = makeParams({
-      clearCopyDisplay: vi.fn(() => order.push('clearCopyDisplay')),
       resetDecision: vi.fn(() => order.push('resetDecision')),
       resetComment: vi.fn(() => order.push('resetComment')),
       resetDependencies: vi.fn(() => order.push('resetDependencies')),
@@ -74,7 +71,6 @@ describe('useTicketFormReset', () => {
     renderHook(() => useTicketFormReset(params));
 
     expect(order).toEqual([
-      'clearCopyDisplay',
       'resetDecision',
       'resetComment',
       'resetDependencies',
@@ -143,15 +139,3 @@ describe('useTicketFormReset', () => {
     expect(params.resetDependencies).toHaveBeenCalledTimes(2);
   });
 });
-
-// 型レベルの保証: UseTicketFormResetParams に agentRun 由来のフィールド
-// (例: resetAgentRun) が追加されたら、この行で `npm run build:web` の
-// tsc --noEmit がコンパイルエラーとして検出する。PR-L の effect 順序
-// リグレッション(このフックが agentRun の reset/復元に触れると再発するクラスの
-// バグ)の再発防止。実行時アサーションではなく型だけの仕掛けなので、
-// vitest 上は何も検証しない(失敗するとすればビルド時)。
-type AgentRunFieldMustNotExist =
-  'resetAgentRun' extends keyof UseTicketFormResetParams ? never : true;
-// eslint の unused-vars を避けるためだけの最小参照。実行時の意味は無い。
-const _agentRunFieldGuard: AgentRunFieldMustNotExist = true;
-void _agentRunFieldGuard;

@@ -32,7 +32,6 @@ const EXPECTED_VALUE_EXPORTS = [
   'dismissTunnelInterruption',
   'fetchAiQuota',
   'fetchAiQuotaAlertConfig',
-  'fetchAllHarnessStatus',
   'fetchBoard',
   'fetchBoardThresholdsConfig',
   'fetchChatAgents',

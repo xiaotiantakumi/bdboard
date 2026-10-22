@@ -57,22 +57,8 @@ export interface ProjectHarnessStatusDto {
   contract: ProjectHarnessContractDto;
 }
 
-export interface ProjectHarnessStatusEntryDto {
-  projectId: string;
-  packs: ProjectHarnessPackStatusDto[];
-  contract: ProjectHarnessContractDto;
-}
-
-export interface AllHarnessStatusDto {
-  projects: ProjectHarnessStatusEntryDto[];
-}
-
 export function fetchHarnessPacks(): Promise<HarnessPackSummaryDto[]> {
   return fetchJson<HarnessPackSummaryDto[]>('/api/harness/packs');
-}
-
-export function fetchAllHarnessStatus(): Promise<AllHarnessStatusDto> {
-  return fetchJson<AllHarnessStatusDto>('/api/harness/status');
 }
 
 export function fetchProjectHarnessStatus(

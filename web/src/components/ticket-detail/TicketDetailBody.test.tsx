@@ -9,7 +9,7 @@ import type { TicketDetailDto } from '../../api';
 // props をマーカー値ごと深く検証する。
 //
 // このPR自身のレビュー(opus)で「同じ呼び出し内の複数の boolean がすべて true だと
-// 取り違え(例: agentRunActionsDisabled に hasActiveRun を渡す誤配線)を検出できない」
+// 取り違え(例: 別の boolean prop の値を誤配線する)を検出できない」
 // 「空配列同士は toEqual では区別が付かない」という2つの見逃しパターンを指摘された。
 // 対策として: (1) 同じ Section 呼び出しに渡る boolean は互いに異なる値にする、
 // (2) 空配列ではなく要素内容で識別できる配列を使う。

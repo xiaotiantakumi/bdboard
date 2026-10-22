@@ -32,11 +32,6 @@ export interface UseAppDataSourcesParams {
  * まとめたフック(bdboard-62p4 第6段、useAppController.ts から分離)。
  * 各フックの呼び出し順・queryKey/enabled/依存配列は元の App.tsx
  * (bdboard-62p4 PR-3 の時点)から1文字も変えていない。
- * bdboard-mkm1.3: 元は9系統目に useHarnessStatusData(view) (Next Up ビューを
- * 見ているときだけ harness-status-all を引く) があったが、Next Up ビュー
- * 削除に伴い削除した。一括操作バーの「▶ 実行」が使う harness 前提チェックは
- * useBulkAgentRun.ts が useAllHarnessStatuses を選択件数ベースの独自の
- * enabled 条件で直接呼んでおり、そちらは影響を受けない。
  */
 export function useAppDataSources({
   boardApiMode,

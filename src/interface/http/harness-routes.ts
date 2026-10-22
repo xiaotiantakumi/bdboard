@@ -12,8 +12,8 @@ import { createHarnessContractTicketRoutes } from './harness-contract-ticket-rou
 // (createHarnessRoutes・HarnessRoutesDeps) は分割前と同一。トップレベルの
 // ミドルウェア (write guard) はどのグループを跨いでも適用順が変わってはいけないため、
 // ここに残したまま各グループのルート登録より先に呼ぶ (元のファイルでの並び:
-// ミドルウェア1件 → ルート5件、をそのまま維持。agent-run-routes.ts 分割
-// bdboard-sso1.27 / chat-routes.ts 分割 bdboard-sso1.17 と同じ方針)。
+// ミドルウェア1件 → ルート5件、をそのまま維持。chat-routes.ts 分割
+// bdboard-sso1.17 と同じ方針)。
 
 // bdboard-tml8: HarnessRoutesDeps の実体は harness-routes-deps.ts (このファイルとの
 // 型だけの import 循環を dependency-cruiser no-circular が検出したため抽出)。外部

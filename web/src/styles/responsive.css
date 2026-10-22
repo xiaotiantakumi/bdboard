@@ -263,10 +263,6 @@
     width: 100%;
   }
 
-  .tunnel-field-row .btn {
-    flex-shrink: 0;
-  }
-
   /* レビュー minor-5: iOS Safari は 16px 未満のフォーム要素で自動ズームする。
      対象プロジェクトは常時表示の主導線になったので .chat-input と同じ扱いにする。 */
   .chat-project-select {

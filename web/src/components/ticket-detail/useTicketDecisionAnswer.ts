@@ -1,7 +1,7 @@
 // bdboard-sso1.5 (PR-L): TicketDetailPanel.tsx の「human decision 回答」
 // (質問への回答欄の state・送信 mutation・送信済み回答の保持・pendingDecision
 // 切り替え時のリセット) を、挙動を変えずにこのカスタムフックへ抽出しただけの
-// ファイル。useTicketQuickActions / useTicketAgentRun と同じ抽出パターン。
+// ファイル。他の ticket-detail フックと同じ抽出パターン。
 //
 // submittedDecision はチケット詳細の commentsEnabled 算出 (コメント欄をいつ
 // 取得するか) にも使われている。元の実装がまさにこの2つ(コメント数 / 回答済み

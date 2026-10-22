@@ -15,10 +15,6 @@
     justify-content: flex-start;
   }
 
-  .meta-text {
-    width: auto;
-  }
-
   .btn,
   .toggle-btn {
     min-height: 34px;
@@ -160,18 +156,11 @@
     width: 100%;
   }
 
-  .meta-text-btn {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-  }
-
   .tunnel-input {
     min-height: 44px;
   }
 
-  .tunnel-off-row .btn,
-  .tunnel-confirm-actions .btn {
+  .tunnel-off-row .btn {
     min-height: 44px;
     min-width: 44px;
     width: auto;

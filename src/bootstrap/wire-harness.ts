@@ -2,8 +2,8 @@
  * bdboard-sso1.14: src/main.ts (composition root) からハーネスパック領域の
  * 配線を切り出したもの (move only, 挙動変更ゼロ)。
  *
- * `packRegistry` / `harnessInjector` は agent-run routes の `getHarnessStatus`
- * (bdboard-pkr6.11) とも共有するため、ここで組み立てた両者をそのまま返す。
+ * `packRegistry` / `harnessInjector` は他の routes (harness routes など) とも共有するため、
+ * ここで組み立てた両者をそのまま返す。
  * `harnessContractReader` は routes.ts (buildApiDeps) 側でも使う横断的な値の
  * ため main.ts 側で作り、ここには引数として渡す (元のコード上の役割分担を
  * そのまま保つ — createApiRoutes より前で作らないと TDZ の前方参照になる

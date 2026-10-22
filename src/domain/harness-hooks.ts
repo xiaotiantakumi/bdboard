@@ -1,6 +1,6 @@
 // src/domain/harness-hooks.ts は bdboard-sso1.66 でモジュール分割された。実体は
 // ./harness-hooks/ 配下。このファイルは import 側 (application/harness・domain/harness-pack・
-// domain/harness-run-preflight・infrastructure/harness/* 等) を書き換えないための
+// infrastructure/harness/* 等) を書き換えないための
 // re-export 入口としてのみ残す。挙動・型は一切変えていない (移動のみ)。
 //
 // `export *` を使うと cross-module 専用に export した非公開ヘルパー (resolveHooks /
