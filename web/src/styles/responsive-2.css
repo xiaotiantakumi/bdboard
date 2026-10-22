@@ -44,8 +44,6 @@
 
   .lanes-row {
     padding: 0 12px 10px;
-    /* padding-left と一致。未設定だと2枚目以降のレーンがスナップ後に scrollport 左端へ密着 (bdboard-h4xs.11) */
-    scroll-padding-left: 12px;
   }
 
   .card {
@@ -325,16 +323,5 @@
   .session-list-tabs .toggle-btn,
   .board-filter-bar .toggle-btn {
     min-height: 44px;
-  }
-}
-/* スマホ幅のみ: 「確認待ちのみ」トグル (BoardLanes) */
-@media (max-width: 700px) {
-  .awaiting-only-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 2px 12px 4px;
-    font-size: 0.85rem;
-    line-height: 1.2;
   }
 }

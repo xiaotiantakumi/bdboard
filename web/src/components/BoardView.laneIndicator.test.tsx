@@ -1,34 +1,18 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoardDto } from '../api';
 import { EMPTY_BOARD_FILTER } from '../boardFilter';
-import { MOBILE_LAYOUT_MEDIA_QUERY, REDUCED_MOTION_MEDIA_QUERY } from '../mediaQueries';
+import { MOBILE_LAYOUT_MEDIA_QUERY } from '../mediaQueries';
 import { BoardLanes } from './BoardView';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 
-type IoCallback = IntersectionObserverCallback;
-
-let intersectionCallback: IoCallback | null = null;
-
-class MockIntersectionObserver {
-  readonly observe = vi.fn();
-  readonly disconnect = vi.fn();
-  readonly unobserve = vi.fn();
-
-  constructor(callback: IoCallback) {
-    intersectionCallback = callback;
-  }
-}
-
-function mockMobileViewport(enabled: boolean, reducedMotion = false) {
+function mockMobileViewport(enabled: boolean) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     configurable: true,
     value: vi.fn().mockImplementation((query: string) => ({
-      matches:
-        (enabled && query === MOBILE_LAYOUT_MEDIA_QUERY) ||
-        (reducedMotion && query === REDUCED_MOTION_MEDIA_QUERY),
+      matches: enabled && query === MOBILE_LAYOUT_MEDIA_QUERY,
       media: query,
       onchange: null,
       addEventListener: vi.fn(),
@@ -36,10 +20,6 @@ function mockMobileViewport(enabled: boolean, reducedMotion = false) {
       dispatchEvent: vi.fn(),
     })),
   });
-}
-
-function triggerIntersection(entries: IntersectionObserverEntry[]) {
-  intersectionCallback?.(entries, {} as IntersectionObserver);
 }
 
 function makeBoard(): BoardDto {
@@ -124,138 +104,53 @@ const sharedProps = {
   onCardClick: vi.fn(),
 };
 
-describe('BoardLanes mobile lane indicator', () => {
+function renderLanes() {
+  return render(
+    <WatchedTicketsProvider>
+      <BoardLanes {...sharedProps} board={makeBoard()} />
+    </WatchedTicketsProvider>,
+  );
+}
+
+function renderedLanes(): (string | null)[] {
+  return [...document.querySelectorAll('[data-lane]')].map((el) => el.getAttribute('data-lane'));
+}
+
+describe('BoardLanes mobile lane picker (bdboard-pj9e)', () => {
   beforeEach(() => {
-    intersectionCallback = null;
-    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
-    Element.prototype.scrollIntoView = vi.fn();
     mockMobileViewport(true);
-    localStorage.setItem('bdboard.mobileAwaitingOnly', 'false');
   });
 
   afterEach(() => {
     localStorage.clear();
-    vi.unstubAllGlobals();
     vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 
-  it('does not render the lane indicator on desktop widths', () => {
+  it('shows all lanes and no picker on desktop widths', () => {
     mockMobileViewport(false);
-
-    render(
-      <WatchedTicketsProvider>
-        <BoardLanes {...sharedProps} board={makeBoard()} />
-      </WatchedTicketsProvider>,
-    );
+    renderLanes();
 
     expect(screen.queryByRole('navigation', { name: 'レーン切り替え' })).toBeNull();
+    expect(renderedLanes()).toEqual(['ready', 'in_progress', 'awaiting_human', 'blocked']);
   });
 
-  it('shows the awaiting-only toggle on mobile only and filters lanes', async () => {
+  it('shows only 確認待ち by default, switches lanes from the picker and remembers the choice', async () => {
     const user = userEvent.setup();
-    localStorage.removeItem('bdboard.mobileAwaitingOnly');
-    const view = render(
-      <WatchedTicketsProvider>
-        <BoardLanes {...sharedProps} board={makeBoard()} />
-      </WatchedTicketsProvider>,
+    const view = renderLanes();
+
+    expect(renderedLanes()).toEqual(['awaiting_human']);
+    const strip = screen.getByRole('navigation', { name: 'レーン切り替え' });
+    expect(within(strip).getByRole('button', { name: '確認待ち (0件)' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
     );
 
-    const toggle = screen.getByRole('checkbox', { name: /確認待ちのみ/ });
-    expect(toggle).toBeChecked();
-    expect(document.querySelector('[data-lane="ready"]')).toBeNull();
-    expect(document.querySelector('[data-lane="awaiting_human"]')).not.toBeNull();
-
-    await user.click(toggle);
-    expect(document.querySelector('[data-lane="ready"]')).not.toBeNull();
+    await user.click(within(strip).getByRole('button', { name: '進行中 (1件)' }));
+    expect(renderedLanes()).toEqual(['in_progress']);
     view.unmount();
 
-    mockMobileViewport(false);
-    render(
-      <WatchedTicketsProvider>
-        <BoardLanes {...sharedProps} board={makeBoard()} />
-      </WatchedTicketsProvider>,
-    );
-    expect(screen.queryByRole('checkbox', { name: /確認待ちのみ/ })).toBeNull();
-  });
-
-  it('highlights the most visible lane and scrolls when an indicator item is pressed', async () => {
-    const user = userEvent.setup();
-    render(
-      <WatchedTicketsProvider>
-        <BoardLanes {...sharedProps} board={makeBoard()} />
-      </WatchedTicketsProvider>,
-    );
-
-    const readyLane = document.querySelector('[data-lane="ready"]');
-    const inProgressLane = document.querySelector('[data-lane="in_progress"]');
-    expect(readyLane).not.toBeNull();
-    expect(inProgressLane).not.toBeNull();
-
-    act(() => {
-      triggerIntersection([
-        {
-          target: readyLane!,
-          intersectionRatio: 0.2,
-          isIntersecting: true,
-        } as IntersectionObserverEntry,
-        {
-          target: inProgressLane!,
-          intersectionRatio: 0.85,
-          isIntersecting: true,
-        } as IntersectionObserverEntry,
-      ]);
-    });
-
-    const strip = screen.getByRole('navigation', { name: 'レーン切り替え' });
-    const inProgressButton = await within(strip).findByRole('button', {
-      name: '進行中 (1件)',
-    });
-    await waitFor(() => {
-      expect(inProgressButton).toHaveAttribute('aria-current', 'true');
-    });
-
-    const readyButton = within(strip).getByRole('button', {
-      name: '着手可能 (1件)',
-    });
-    expect(readyButton).not.toHaveAttribute('aria-current');
-
-    await user.click(readyButton);
-
-    const scrollSpy = vi.mocked(Element.prototype.scrollIntoView);
-    expect(scrollSpy).toHaveBeenCalledWith({
-      behavior: 'smooth',
-      inline: 'start',
-      block: 'nearest',
-    });
-    expect(scrollSpy.mock.contexts.at(-1)).toBe(readyLane);
-  });
-
-  it('scrolls instantly when prefers-reduced-motion is enabled', async () => {
-    const user = userEvent.setup();
-    mockMobileViewport(true, true);
-
-    render(
-      <WatchedTicketsProvider>
-        <BoardLanes {...sharedProps} board={makeBoard()} />
-      </WatchedTicketsProvider>,
-    );
-
-    const strip = screen.getByRole('navigation', { name: 'レーン切り替え' });
-    const readyButton = within(strip).getByRole('button', {
-      name: '着手可能 (1件)',
-    });
-    const readyLane = document.querySelector('[data-lane="ready"]');
-    expect(readyLane).not.toBeNull();
-
-    await user.click(readyButton);
-
-    const scrollSpy = vi.mocked(Element.prototype.scrollIntoView);
-    expect(scrollSpy).toHaveBeenCalledWith({
-      behavior: 'auto',
-      inline: 'start',
-      block: 'nearest',
-    });
-    expect(scrollSpy.mock.contexts.at(-1)).toBe(readyLane);
+    renderLanes();
+    expect(renderedLanes()).toEqual(['in_progress']);
   });
 });

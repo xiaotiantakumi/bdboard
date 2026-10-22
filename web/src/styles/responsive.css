@@ -52,11 +52,13 @@
     scroll-padding-bottom: var(--bulk-bar-height, 0px);
   }
 
+  /* bdboard-pj9e: 表示するのは 1 レーンだけなので幅いっぱいに広げる。 */
   .lane {
-    min-width: min(86vw, 320px);
-    max-width: min(86vw, 320px);
-    /* 統合ビューにも効かせる。.board-section 外の .lane が 7708px まで伸び横スワイプ時に
-       空白へ飛ぶのを防ぐ (bdboard-h4xs.3)。分割ビューは下の .board-section .lane が同値で上書き。 */
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+    /* 統合ビューにも効かせる。.board-section 外の .lane が 7708px まで伸びるのを防ぐ
+       (bdboard-h4xs.3)。分割ビューは下の .board-section .lane が同値で上書き。 */
     max-height: calc(100vh - 260px - var(--bulk-bar-height, 0px));
     max-height: calc(100dvh - 260px - var(--bulk-bar-height, 0px));
   }
@@ -70,11 +72,9 @@
      .lane-indicator-strip の下へ潜り込み、.lane-header (レーン名・件数・
      折りたたみトグル) が隠れる問題 (bdboard-knrx / bdboard-t0hx)。上の
      `.lane` / `.board-section .lane` の減算式 (260px) には触れず、隠れて困る
-     .lane-header 自体をモバイルで描画しないことで解消する。ストリップが
-     既にレーン名・件数を持つので情報は失われず (下の `.lane-indicator-strip`
-     ルール参照)、折りたたみトグルだけは唯一の操作なので
-     `.lane-indicator-collapse-toggle` としてストリップ側へ移した
-     (LaneScrollIndicator.tsx)。ヘッダー分の高さがまるごとカード領域に返るため、
+     .lane-header 自体をモバイルで描画しないことで解消する。ストリップ (レーン選択、
+     LanePicker.tsx) が既にレーン名・件数を持つので情報は失われない。折りたたみは
+     1 レーン表示のスマホ幅では意味を持たないので出さない (bdboard-pj9e)。ヘッダー分の高さがまるごとカード領域に返るため、
      PR #392 (別解: 260px を実ヘッダー高へ追従させる案、-10.1% のカード密度を
      払っていた) と異なり density は悪化しない。分割ビュー
      (.board-section .lane) にも同じ .lane-header 非表示が効くので、
@@ -143,12 +143,13 @@
     overflow-y: auto;
   }
 
+  /* bdboard-pj9e: スマホ幅はレーン選択 (LanePicker) で選んだ 1 レーンだけを表示するので、
+     横スクロールとスナップは持たない。 */
   .lanes-row {
     gap: 10px;
     padding: 0 14px 10px;
-    /* padding-left と一致。未設定だと2枚目以降のレーンがスナップ後に scrollport 左端へ密着 (bdboard-h4xs.11) */
-    scroll-padding-left: 14px;
-    scroll-snap-type: x mandatory;
+    overflow-x: visible;
+    scroll-snap-type: none;
   }
 
   .detail-panel {

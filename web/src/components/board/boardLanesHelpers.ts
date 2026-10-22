@@ -9,7 +9,7 @@ import {
   resolveWipLimitForLane,
   type WipLimitsOverrides,
 } from '../../wip-limits';
-import { type LaneIndicatorItem } from '../LaneScrollIndicator';
+import { type LaneIndicatorItem } from '../LanePicker';
 
 export function visibleLanes(hideDone: boolean): Lane[] {
   if (hideDone) {

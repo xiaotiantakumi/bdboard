@@ -224,39 +224,6 @@
   background: color-mix(in srgb, currentColor 14%, transparent);
 }
 
-/* bdboard-6y5b: モバイルでは .lane-header を丸ごと描画しないため (下の
-   `@media (max-width: 700px)` の `.lane-header { display: none; }` 参照)、
-   レーンヘッダーにしか無かった折りたたみトグルをここへ移す。ストリップ自体が
-   `.lane-indicator-strip { display: none; }` (このファイル冒頭) を挟んで
-   モバイル幅の @media 内でしか `display: block` にならないので、この
-   ボタンのスタイルにモバイル専用の @media ガードは要らない — 親が非表示なら
-   このボタンも描画されない。 */
-.lane-indicator-collapse-toggle {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 44px;
-  min-width: 44px;
-  padding: 0;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-pill);
-  background: var(--color-bg-elevated);
-  color: var(--color-text-secondary);
-  font-size: 0.6875rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.lane-indicator-collapse-toggle:hover {
-  background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg-elevated));
-}
-
-.lane-indicator-collapse-toggle:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
 .lanes-row {
   display: flex;
   gap: 14px;

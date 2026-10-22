@@ -283,8 +283,8 @@ const MAX_PAGE_SCROLL_RESIDUAL_PX = 359;
  * 太る (ハーネスバッジ増加・プロジェクト名長大化) 由来の回帰は、この予算ではなく
  * `PROJECT_SECTION_OVERHEAD_PX` に出る。
  */
-// bdboard-3vj3: スマホ幅の「確認待ちのみ」トグル行ぶん 94 から +18 (実測 102.35 + 余裕)。
-const MAX_NON_DISMISSIBLE_RESIDUAL_PX = 112;
+// bdboard-pj9e: bdboard-3vj3 のトグル行 (112 へ一時拡大) を外して 94 へ戻した (実測 77.35)。
+const MAX_NON_DISMISSIBLE_RESIDUAL_PX = 94;
 
 test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
   test.use({ viewport: MOBILE_VIEWPORT, isMobile: true, hasTouch: true });

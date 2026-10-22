@@ -164,8 +164,10 @@ test.describe('mobile horizontal pan', () => {
     // Vertical control first — proves CDP touch drag works. page.mouse.wheel does not
     // scroll under isMobile at all, which invalidates pan measurement. Run before horizontal
     // drag because horizontal pan shifts visualViewport and breaks a subsequent vertical check.
+    // bdboard-pj9e: スマホ幅は 1 レーンを幅いっぱいに描くので、y=600 付近はレーン内
+    // (縦スクロールを持つ) に当たりページではなくレーンが動く。レーンより上から引く。
     await page.evaluate(() => window.scrollTo(0, 0));
-    await dispatchTouchDrag(page, 187, 600, 187, 200);
+    await dispatchTouchDrag(page, 187, 380, 187, 60);
     const scrollYAfterVertical = await page.evaluate(() => window.scrollY);
     expect(
       scrollYAfterVertical,
