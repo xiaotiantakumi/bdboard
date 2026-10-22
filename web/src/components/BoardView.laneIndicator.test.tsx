@@ -130,9 +130,11 @@ describe('BoardLanes mobile lane indicator', () => {
     vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
     Element.prototype.scrollIntoView = vi.fn();
     mockMobileViewport(true);
+    localStorage.setItem('bdboard.mobileAwaitingOnly', 'false');
   });
 
   afterEach(() => {
+    localStorage.clear();
     vi.unstubAllGlobals();
     vi.resetAllMocks();
     vi.restoreAllMocks();
@@ -148,6 +150,33 @@ describe('BoardLanes mobile lane indicator', () => {
     );
 
     expect(screen.queryByRole('navigation', { name: 'レーン切り替え' })).toBeNull();
+  });
+
+  it('shows the awaiting-only toggle on mobile only and filters lanes', async () => {
+    const user = userEvent.setup();
+    localStorage.removeItem('bdboard.mobileAwaitingOnly');
+    const view = render(
+      <WatchedTicketsProvider>
+        <BoardLanes {...sharedProps} board={makeBoard()} />
+      </WatchedTicketsProvider>,
+    );
+
+    const toggle = screen.getByRole('checkbox', { name: /確認待ちのみ/ });
+    expect(toggle).toBeChecked();
+    expect(document.querySelector('[data-lane="ready"]')).toBeNull();
+    expect(document.querySelector('[data-lane="awaiting_human"]')).not.toBeNull();
+
+    await user.click(toggle);
+    expect(document.querySelector('[data-lane="ready"]')).not.toBeNull();
+    view.unmount();
+
+    mockMobileViewport(false);
+    render(
+      <WatchedTicketsProvider>
+        <BoardLanes {...sharedProps} board={makeBoard()} />
+      </WatchedTicketsProvider>,
+    );
+    expect(screen.queryByRole('checkbox', { name: /確認待ちのみ/ })).toBeNull();
   });
 
   it('highlights the most visible lane and scrolls when an indicator item is pressed', async () => {

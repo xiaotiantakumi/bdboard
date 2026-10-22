@@ -336,3 +336,13 @@
     min-height: 44px;
   }
 }
+/* スマホ幅のみ: 「確認待ちのみ」トグル (BoardLanes) */
+@media (max-width: 700px) {
+  .awaiting-only-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px 8px;
+    font-size: 0.9rem;
+  }
+}
