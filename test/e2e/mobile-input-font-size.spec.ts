@@ -167,7 +167,7 @@ test.describe('mobile input font-size', () => {
       timeout: 15_000,
     });
     await expect(page.locator('.settings-panel-error')).toHaveCount(0);
-    // 実測14（checkbox 等は EXCLUDED_INPUT_TYPES で除外されるため SettingsPanel の input 総数とは一致しない）。
+    // 実測10（checkbox 等は EXCLUDED_INPUT_TYPES で除外されるため SettingsPanel の input 総数とは一致しない）。
     // 下限8は約8割で (健全性しきい値フォームの削除後は 10 個)設定フォーム群が丸ごと消えたら落ちる程度。
     await expectAllFormElementsAtLeast16px(page, 'settings view', 8);
     // 健全性ビューにはフォーム要素が無くなった（bdboard-2czx で priority 修復 select を削除）ため
