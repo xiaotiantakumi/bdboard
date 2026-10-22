@@ -67,6 +67,13 @@
   flex-shrink: 0;
 }
 
+/* bdboard-fac0: モバイル専用の細いバーの部品。デスクトップでは出さない。
+   スマホ幅の表示は responsive.css の .ticket-detail-header ブロック。 */
+.detail-bar-label,
+.detail-close-icon {
+  display: none;
+}
+
 /* 「← 戻る」(bdboard-4ql7)。detail-header-actions は flex なので、幅が詰まった
    ときに矢印とラベルで折り返さないようにする。 */
 .detail-back {

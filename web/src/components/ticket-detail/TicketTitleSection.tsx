@@ -3,6 +3,7 @@
 // useTicketTitleEditing (親で呼び出し) に残し、値とハンドラを props で
 // 受け取る表示専用コンポーネント。JSX・className・aria属性・文言・DOM構造は
 // 移動前から変えていない。
+import type { Ref } from 'react';
 import { isImeComposingKeyEvent } from '../../imeGuard';
 import { describeWriteError } from '../../writeAccessMessage';
 
@@ -20,6 +21,8 @@ export interface TicketTitleSectionProps {
   onStartTitleEdit: () => void;
   onCancelTitleEdit: () => void;
   onSaveTitle: () => void;
+  /** モバイルの細いバーが ID↔短縮タイトルを切り替える判定用 (bdboard-fac0)。 */
+  titleRef?: Ref<HTMLHeadingElement>;
 }
 
 export function TicketTitleSection({
@@ -35,10 +38,11 @@ export function TicketTitleSection({
   onStartTitleEdit,
   onCancelTitleEdit,
   onSaveTitle,
+  titleRef,
 }: TicketTitleSectionProps) {
   return titleEditing ? (
     <>
-      <h2 id="detail-title" className="sr-only">
+      <h2 id="detail-title" className="sr-only" ref={titleRef}>
         {title ?? 'チケット詳細'}
       </h2>
       <div className="detail-title-edit">
@@ -96,7 +100,7 @@ export function TicketTitleSection({
     </>
   ) : (
     <div className="detail-title-row">
-      <h2 id="detail-title" className="detail-title">
+      <h2 id="detail-title" className="detail-title" ref={titleRef}>
         {isLoading ? '読み込み中…' : title ?? 'チケット詳細'}
       </h2>
       {hasData && (

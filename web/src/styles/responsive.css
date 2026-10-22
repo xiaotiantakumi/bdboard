@@ -183,22 +183,67 @@
     justify-content: center;
   }
 
-  /* スマホ幅ではヘッダーを縦積みにして、アクション群（戻る / ウォッチ / 閉じる）を
-     タイトルの下の独立した行へ下ろす。全画面パネルの右上は片手操作で親指が最も
-     届きにくい位置で、そこに 44px の閉じるボタンを置いても押しにくさは解消しない
-     (bdboard-h4xs.2 受け入れ条件2「配置し直す」)。
+  /* bdboard-fac0: スマホ幅の詳細パネルは、固定されるのを 48px の細いバー
+     (.detail-header-actions: ID または短縮タイトル + ☆ + ×) だけにする。
+     .ticket-detail-header を display: contents にして子をパネル直下へ出し、
+     タイトル行(見出し・編集)は本文と一緒にスクロールさせる。バーの sticky の
+     包含ブロックはスクロールするパネルそのもの。
      .detail-header は7つのパネルで共有しているので、詳細パネル専用の
-     .ticket-detail-header に限定する。
-     ヘッダーはスティッキーなので縦に伸びる分だけ本文の可視領域は減る — 意図した取引。 */
+     .ticket-detail-header に限定する。 */
   .ticket-detail-header {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
+    display: contents;
   }
 
   .ticket-detail-header .detail-header-actions {
+    order: -1;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    box-sizing: border-box;
+    height: calc(48px + env(safe-area-inset-top, 0px));
+    margin-top: -16px;
+    padding-top: env(safe-area-inset-top, 0px);
+    background: var(--color-bg-elevated);
+    gap: 4px;
     width: 100%;
-    justify-content: flex-end;
+  }
+
+  .ticket-detail-header .detail-bar-label {
+    display: block;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+  }
+
+  .ticket-detail-header .detail-maximize {
+    display: none;
+  }
+
+  .ticket-detail-header .detail-watch-toggle,
+  .ticket-detail-header .btn.detail-close {
+    box-sizing: border-box;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+  }
+
+  .ticket-detail-header .detail-close-label {
+    display: none;
+  }
+
+  .ticket-detail-header .detail-close-icon {
+    display: inline;
+    line-height: 1;
   }
 
   /* bdboard-h4xs.25: 明示 height (100vh/100dvh) を持たせない。ベースの
