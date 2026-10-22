@@ -233,11 +233,6 @@
     min-height: 44px;
   }
 
-  .btn-search {
-    min-height: 44px;
-    min-width: 44px;
-  }
-
   /* --- bdboard-h4xs.9: モバイル(<=480px)タップ領域底上げ ---
      44px はヒット領域の要件。見た目は padding / ::before で拡張する。
      .btn/.toggle-btn の既定 min-height:34px は一括変更しないが、.view-switcher .toggle-btn は
@@ -304,13 +299,9 @@
     gap: 12px;
   }
 
-  /* Tier 3: 期間切替・ビュータブ・チャット以外の toggle-btn */
-  .view-switcher .toggle-btn {
-    min-height: 44px;
-  }
-
+  /* Tier 3: 期間切替・チャット以外の toggle-btn */
   .session-list-tabs .toggle-btn,
-  .board-filter-bar .toggle-btn {
+  .filter-menu .toggle-btn {
     min-height: 44px;
   }
 }

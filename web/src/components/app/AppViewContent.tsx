@@ -50,7 +50,6 @@ export interface AppViewContentProps {
     selectedProjectIdsJoined: string;
   };
   onCardClick: (ticketId: string) => void;
-  onSessionBadgeClick: (projectId?: string) => void;
   nextUp: {
     batchRun: NextUpRunLoopController;
   };
@@ -64,7 +63,6 @@ export function AppViewContent({
   board,
   boardMeta,
   onCardClick,
-  onSessionBadgeClick,
   nextUp,
 }: AppViewContentProps) {
   return (
@@ -85,7 +83,6 @@ export function AppViewContent({
           selectedProjectIdsJoined: boardMeta.selectedProjectIdsJoined,
         }}
         onCardClick={onCardClick}
-        onSessionBadgeClick={onSessionBadgeClick}
         nextUp={nextUp}
       />
       {view === 'settings' && <SettingsPanel />}

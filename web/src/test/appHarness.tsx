@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import type { UserEvent } from '@testing-library/user-event';
 import { vi } from 'vitest';
 import type {
   BoardCardDto,
@@ -200,4 +201,18 @@ export function renderApp() {
       </WatchedTicketsProvider>
     </QueryClientProvider>,
   );
+}
+
+/** bdboard-gyvv: ヘッダーの「フィルタ」ポップオーバーを開く (デスクトップ幅)。 */
+export async function openFilterMenu(user: UserEvent): Promise<void> {
+  await user.click(await screen.findByRole('button', { name: /^フィルタ( \(|$)/ }));
+}
+
+/** bdboard-gyvv: 「⋯」メニューの項目を選ぶ (設定・アクティビティ・ボードに戻る など)。 */
+export async function selectOverflowItem(
+  user: UserEvent,
+  name: string | RegExp,
+): Promise<void> {
+  await user.click(screen.getByRole('button', { name: /^その他のメニュー/ }));
+  await user.click(screen.getByRole('menuitem', { name }));
 }

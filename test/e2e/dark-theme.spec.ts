@@ -597,8 +597,14 @@ async function openBoardAndDetail(page: Page): Promise<void> {
   const firstCard = page.locator('article').first();
   await expect(firstCard).toBeVisible();
   await freezeTransitions(page);
-  await firstCard.click();
-  await expect(page.getByRole('dialog')).toBeVisible();
+  // bdboard-gyvv: ビュー切替タブ行が無くなり、button.toggle-btn (掃引アンカー) はヘッダーの
+  // フィルタポップオーバーの中にしか無い。開いたままカードをキーボードで開く (マウス操作だと
+  // 外側クリックでポップオーバーが閉じてしまう)。
+  await page.locator('.filter-menu-button').click();
+  await expect(page.locator('.filter-menu-popover')).toBeVisible();
+  await firstCard.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.detail-panel')).toBeVisible();
   await waitForDomQuiet(page);
 }
 

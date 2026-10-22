@@ -28,6 +28,7 @@ const EXPECTED_IMPORT_ORDER = [
   'ticket-detail-7.css', 'board-7.css', 'header-5.css', 'settings-6.css', 'base-6.css',
   'ticket-detail-8.css', 'base-7.css', 'ticket-detail-9.css',
   'local-files.css',
+  'header-6.css',
 ];
 
 interface ParsedIndexCss {

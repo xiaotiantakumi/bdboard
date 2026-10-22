@@ -190,7 +190,7 @@ function renderAppBody(
 }
 
 describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSection/AppOverlaySection)', () => {
-  it('passes boardFilterState.hideDone/stalledOnly (not a stale top-level copy) into AppHeader toolbar', async () => {
+  it('passes the controller boardFilterState by reference into the AppHeader filter', async () => {
     capturedHeaderProps.length = 0;
     const { AppBody } = await import('./AppBody');
     const controller = makeController({
@@ -200,24 +200,7 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     renderAppBody(AppBody, controller);
 
     const header = capturedHeaderProps.at(-1);
-    expect(header?.toolbar.hideDone).toBe(false);
-    expect(header?.toolbar.stalledOnly).toBe(true);
-    expect(header?.toolbar.onHideDoneChange).toBe(controller.boardFilterState.setHideDone);
-    expect(header?.toolbar.onStalledOnlyChange).toBe(controller.boardFilterState.setStalledOnly);
-  });
-
-  it('passes the same hideDone/stalledOnly values to AppHeader when they flip', async () => {
-    capturedHeaderProps.length = 0;
-    const { AppBody } = await import('./AppBody');
-    const controller = makeController({
-      boardFilterState: makeBoardFilterState({ hideDone: true, stalledOnly: false }),
-    });
-
-    renderAppBody(AppBody, controller);
-
-    const header = capturedHeaderProps.at(-1);
-    expect(header?.toolbar.hideDone).toBe(true);
-    expect(header?.toolbar.stalledOnly).toBe(false);
+    expect(header?.filter.filterState).toBe(controller.boardFilterState);
   });
 
   it('passes the controller boardQuery/boardFilterState by reference into AppViewContent', async () => {

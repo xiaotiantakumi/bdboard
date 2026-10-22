@@ -138,24 +138,14 @@
   white-space: nowrap;
 }
 
-.btn-search {
-  min-height: 34px;
-}
-
 /* bdboard-y2qx: ヘッダー常設の「スマホ公開」。モバイル幅(<=700px)はヘッダーを
-   圧縮しているので隠し、⋯メニューの項目から開く。 */
+   圧縮しているので GlobalBar が描画しない (bdboard-gyvv)。 */
 .btn-tunnel {
   min-height: 34px;
 }
 
 .btn-tunnel.is-on {
   border-color: var(--color-accent);
-}
-
-@media (max-width: 700px) {
-  .global-bar > .btn-tunnel {
-    display: none;
-  }
 }
 
 .shortcuts-help-overlay {

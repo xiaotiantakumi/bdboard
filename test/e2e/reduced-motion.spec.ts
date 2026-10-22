@@ -26,7 +26,9 @@ async function waitForBoardAndRefreshButton(page: Page) {
   const card = page.locator('article').first();
   await expect(card).toBeVisible({ timeout: 15_000 });
 
-  const refreshButton = page.getByRole('button', { name: '手動更新' });
+  // bdboard-gyvv: 手動更新は ⋯ メニューの中にある。
+  await page.getByRole('button', { name: 'その他のメニュー' }).click();
+  const refreshButton = page.getByRole('menuitem', { name: '手動更新' });
   await expect(refreshButton).toBeVisible();
   return refreshButton;
 }
