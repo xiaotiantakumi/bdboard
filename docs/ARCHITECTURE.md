@@ -74,8 +74,6 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `HumanDecisionsPort` | `createBdCliHumanDecisions` | 人間の意思決定待ちキューの読み書き |
 | `SessionLinkWriterPort` | `createBdCliSessionLinkWriter` | チケット⇔セッションの手動紐付け |
 | `PrStatusReader` | `createGhCliPrStatusReader` | `gh` CLI でPRステータス取得 |
-| `ExternalIssueSourcePort` / `BdExternalRefReaderPort` | `createGhCliExternalIssueSource` / `createBdCliExternalRefReader` | 公開リポジトリの open issue を `gh api --method GET` で読む / bdboard 自身の bd の external_ref を読む。読み取りだけ |
-| `ExternalIssueSnapshotStoragePort` | `createFsExternalIssueSnapshotStorage` | 届いた issue の「判定時点の写し」(題名・切り詰めた本文・全長・updatedAt・写しの時刻・機械の検査の結果・`needsRejudge`・一覧から外れた時刻)の走査(`scan`。読める写しの全件と、ファイルはあるが使えない番号 `unusable` を 1 回の走査で返す。使えない番号は作り直す写しに `needsRejudge` を立てるため、bdboard-g2ti。1 回にまとめた理由は bdboard-558a、`docs/ISSUE-REPORTING.md` 8節の 4y8q.9.3 の差分表 12)/取得/保存/削除。`<基点>/external-issues/<number>.json`、ディレクトリ `0700`・ファイル `0600`、一時ファイルから rename で書く。`number` は `^[1-9][0-9]{0,9}$` だけ。コメントは取り込まない。キャッシュ DB には置かない。使うのは `ExternalIssueService`(`application/issue-report/external-issue-service.ts`。一覧づくり・`needsRejudge`・保持期限 30 日と上限 500(gh のページ上限で一覧が打ち切られ続けても 500 を守る。bdboard-558a)。bdboard-4y8q.9.3、設計は `docs/ISSUE-REPORTING.md` 8節) |
 | `WorktreeScanner` | `createGitWorktreeScanner` | worktree一覧のスキャン |
 | `ProjectDiscovery` | `createFsProjectDiscovery` | スキャンルート配下の `.beads/` プロジェクト検出 |
 | `ProjectFingerprinter` | `createBeadsFingerprinter` | 変化検知用フィンガープリント計算 |
@@ -107,7 +105,6 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `TunnelInterruptionStore` | `createFileTunnelInterruptionStore` | トンネル中断状態の記録と読み取り |
 | `ReleaseSource` | `createGithubReleaseSource` | リリース情報の取得 |
 | `AttachmentStoragePort` | `createFsAttachmentStorage` | チケット添付画像の保存/一覧/読み取り(bdboard-qw26) |
-| `IssueDraftStoragePort` | `createFsIssueDraftStorage` | 不具合報告の下書き(`draft.json` と画像)の保存/一覧(`scan`)/読み取りと、保持期限・合計容量のための棚卸し/削除(`survey`/`remove`、bdboard-00qh。`survey` は読んだ中身から受け取りの索引の材料 `indexSeed` も返し、起動直後の全件読みを 1 回にする、bdboard-xvo2)。`<基点>/issue-drafts/`、ディレクトリ `0700`・ファイル `0600`。キャッシュ DB には置かない。受け取り API(`POST /api/issue-reports/drafts`)はローカル直アクセスのみ(bdboard-4y8q.1、設計は `docs/ISSUE-REPORTING.md`) |
 
 表に載せないモジュール:
 

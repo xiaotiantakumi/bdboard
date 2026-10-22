@@ -10,8 +10,6 @@ import { StatusPill } from './StatusPill';
 export interface GlobalBarProps {
   view: ViewMode;
   onViewChange: (view: ViewMode) => void;
-  /** 不具合報告の未処理件数 (bdboard-4y8q.3.2)。1 件以上のときだけタブに出す。読めないとき・省略時は出さない。 */
-  issueReportPendingCount?: number | null;
   onOpenSearch: () => void;
   streamState: StreamState;
   connectStalled?: boolean;
@@ -40,7 +38,6 @@ export interface GlobalBarProps {
 export function GlobalBar({
   view,
   onViewChange,
-  issueReportPendingCount = null,
   onOpenSearch,
   streamState,
   connectStalled = false,
@@ -118,7 +115,7 @@ export function GlobalBar({
         window.removeEventListener('resize', updateScrollHints);
       }
     };
-  }, [updateScrollHints, view, issueReportPendingCount]);
+  }, [updateScrollHints, view]);
 
   const scrollerClassName = [
     'view-switcher-scroller',
@@ -146,9 +143,6 @@ export function GlobalBar({
                 onClick={() => onViewChange(item.view)}
               >
                 {item.label}
-                {item.view === 'issue-reports' && issueReportPendingCount !== null && issueReportPendingCount > 0
-                  ? ` (${issueReportPendingCount})`
-                  : ''}
               </button>
             ))}
           </div>

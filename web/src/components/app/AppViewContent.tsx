@@ -12,8 +12,6 @@ import { ActivityFeed } from '../ActivityFeed';
 import { DependencyGraphView } from '../DependencyGraphView';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { HygienePanel } from '../HygienePanel';
-import { IssueReportsPanel } from '../issue-reports/IssueReportsPanel';
-import { reportProjectOf } from '../issue-reports/manualDraftAccess';
 import { type NextUpRunLoopController } from '../nextUpRunLoop';
 import { SettingsPanel } from '../SettingsPanel';
 import { ThroughputStats } from '../ThroughputStats';
@@ -36,7 +34,7 @@ import { AppBoardViewSwitch } from './AppBoardViewSwitch';
  *
  * ボード系ビュー(split)の JSX は ESLint の200行上限のため
  * ./AppBoardViewSwitch.tsx へさらに分けた。ここは ErrorBoundary と
- * ボード以外のビュー(activity/stats/hygiene/graph/settings/events/issue-reports)
+ * ボード以外のビュー(activity/stats/hygiene/graph/settings)
  * の出し分けだけを持つ。
  */
 export interface AppViewContentProps {
@@ -137,16 +135,6 @@ export function AppViewContent({
         />
       )}
       {view === 'settings' && <SettingsPanel />}
-      {view === 'issue-reports' && (
-        // 「新しく報告」(bdboard-4y8q.6.8): ボードでちょうど 1 つ選んでいるプロジェクトだけを、題名の漏れ検出の鍵として送る。
-        <IssueReportsPanel
-          reportProject={reportProjectOf(
-            boardMeta.selectedProjectIds,
-            boardMeta.projectNames,
-            boardMeta.projectRootPaths,
-          )}
-        />
-      )}
     </ErrorBoundary>
   );
 }

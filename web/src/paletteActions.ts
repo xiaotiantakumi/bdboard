@@ -18,7 +18,6 @@ export const VIEW_LABELS: Record<ViewMode, string> = {
   stats: '統計',
   hygiene: '健全性',
   graph: '依存グラフ',
-  'issue-reports': '不具合報告',
   settings: '設定',
 };
 

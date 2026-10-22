@@ -14,8 +14,6 @@ import { ViewToolbar } from '../ViewToolbar';
 export interface AppHeaderProps {
   view: ViewMode;
   onViewChange: (view: ViewMode) => void;
-  /** 不具合報告の未処理件数 (bdboard-4y8q.3.2)。null・省略時はタブに出さない。 */
-  issueReportPendingCount?: number | null;
   onOpenSearch: () => void;
   connection: {
     streamState: StreamState;
@@ -94,7 +92,6 @@ export interface AppHeaderProps {
 export function AppHeader({
   view,
   onViewChange,
-  issueReportPendingCount = null,
   onOpenSearch,
   connection,
   sessions,
@@ -114,7 +111,6 @@ export function AppHeader({
         <GlobalBar
           view={view}
           onViewChange={onViewChange}
-          issueReportPendingCount={issueReportPendingCount}
           onOpenSearch={onOpenSearch}
           streamState={connection.streamState}
           connectStalled={connection.connectStalled}
