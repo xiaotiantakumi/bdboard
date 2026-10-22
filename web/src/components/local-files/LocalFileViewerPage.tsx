@@ -29,7 +29,7 @@ interface ShownFile {
  */
 export function LocalFileViewerPage({ route }: LocalFileViewerPageProps) {
   const accessProbe = useQuery({
-    queryKey: ['ticket-local-file-list', route.ticketId, 'access-probe'],
+    queryKey: ['ticket-local-files-access-probe', route.ticketId],
     queryFn: async () => {
       try {
         await fetchLocalFileList(route.ticketId, '.');
