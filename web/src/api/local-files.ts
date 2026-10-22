@@ -48,6 +48,12 @@ export function fetchTicketLocalFiles(ticketId: string): Promise<{ files: LocalF
   return fetchJson<{ files: LocalFileRefDto[] }>(localFilesBase(ticketId));
 }
 
+export function fetchAtHome(): Promise<'yes' | 'no' | 'unknown'> {
+  return fetchJson<{ home?: string }>('/api/tunnel/at-home').then(({ home }) =>
+    home === 'yes' || home === 'no' ? home : 'unknown',
+  );
+}
+
 export function fetchLocalFileList(ticketId: string, dirPath: string): Promise<LocalFileListDto> {
   return fetchJson<LocalFileListDto>(
     `${localFilesBase(ticketId)}/list?path=${encodeURIComponent(dirPath)}`,

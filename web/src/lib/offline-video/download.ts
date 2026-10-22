@@ -38,6 +38,7 @@ export interface DownloadOfflineVideoInput {
   now: () => number;
   onProgress?: (entry: OfflineVideoEntry) => void;
   sizeHint?: number | null;
+  origin?: 'manual' | 'auto';
   storage?: OfflineVideoStorageManager;
 }
 
@@ -62,6 +63,12 @@ export async function downloadOfflineVideo(input: DownloadOfflineVideoInput): Pr
   const existing = (await input.store.readManifest()).find((entry) => entry.key === key);
   let entry =
     existing ?? blankEntry(key, input.ticketId, input.path, input.now());
+  const requestedOrigin = input.origin ?? 'manual';
+  const nextOrigin = existing?.origin === 'manual' ? 'manual' : requestedOrigin;
+  if (entry.origin !== nextOrigin) {
+    entry = { ...entry, origin: nextOrigin };
+    await writeEntry(input.store, entry);
+  }
   if (existing !== undefined && existing.bytesWritten > 0) {
     // 台帳だけ残ってファイルが消えた/短いときは、途中から書かずに先頭からやり直す。
     const file = await input.store.getFile(key);
