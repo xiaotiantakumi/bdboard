@@ -604,7 +604,7 @@ async function openBoardAndDetail(page: Page): Promise<void> {
   await expect(page.locator('.filter-menu-popover')).toBeVisible();
   await firstCard.focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.locator('.detail-panel')).toBeVisible();
   await waitForDomQuiet(page);
 }
 

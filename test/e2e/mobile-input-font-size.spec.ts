@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { clickChatButton } from './fixtures/chat-panel-helpers.js';
 
 /**
  * Mobile form control font-size regression (bdboard-h4xs.10).
@@ -160,7 +161,8 @@ test.describe('mobile input font-size', () => {
     await closeBtn.click();
     await expect(dialog).not.toBeVisible();
 
-    await page.getByRole('button', { name: '設定', exact: true }).click();
+    await page.getByRole('button', { name: 'その他のメニュー' }).click();
+    await page.getByRole('menuitem', { name: '設定' }).click();
     // section[aria-label="設定"] はローディング/エラー/コンテンツの3状態すべてにある。
     // コンテンツ状態 (.settings-panel-title) の visible を待ち、エラー状態を素通りしない。
     await expect(page.locator('.settings-panel-title')).toBeVisible({
@@ -181,9 +183,7 @@ test.describe('mobile input font-size', () => {
     await page.getByRole('menuitem', { name: 'ボードに戻る' }).click();
     await expect(card).toBeVisible({ timeout: 15_000 });
 
-    const chatButton = page.getByRole('button', { name: 'チャット' });
-    await expect(chatButton).toBeVisible();
-    await chatButton.click();
+    await clickChatButton(page);
 
     const chatDialog = page.getByRole('dialog');
     await expect(chatDialog).toBeVisible();
