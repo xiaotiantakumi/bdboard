@@ -8,6 +8,13 @@ import { LocalFileLabel } from './LocalFileLabel';
 import { localFileKindLabel } from './localFileKindLabel';
 import { LocalFolderThumbnails } from './LocalFolderThumbnails';
 import { openLocalFileViewer } from './openLocalFileViewer';
+import {
+  filterLocalFiles,
+  LOCAL_FILE_FILTER_OPTIONS,
+  readStoredLocalFileFilter,
+  writeStoredLocalFileFilter,
+  type LocalFileFilter,
+} from './localFileFilter';
 
 export interface TicketLocalFilesSectionProps {
   readonly ticketId: string;
@@ -31,6 +38,11 @@ export function TicketLocalFilesSection({
     retry: (failureCount, error) => !isLocalFileAccessDenied(error) && failureCount < 3,
   });
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
+  const [filter, setFilter] = useState<LocalFileFilter>(readStoredLocalFileFilter);
+  const selectFilter = (next: LocalFileFilter) => {
+    setFilter(next);
+    writeStoredLocalFileFilter(next);
+  };
 
   if (filesQuery.isError && isLocalFileAccessDenied(filesQuery.error) && !isLoopbackHostname(hostname)) {
     return <p className="local-file-note">{LOCAL_FILE_ACCESS_NOTICE}</p>;
@@ -40,12 +52,27 @@ export function TicketLocalFilesSection({
   }
   const files = filesQuery.data.files;
   if (files.length === 0) return null;
+  const visibleFiles = filterLocalFiles(files, filter);
 
   return (
     <div className="detail-section">
       <h3>ファイル</h3>
+      <div className="local-file-filter" role="group" aria-label="ファイルの種類で絞り込み">
+        {LOCAL_FILE_FILTER_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className="local-file-filter-chip"
+            aria-pressed={filter === option.value}
+            onClick={() => selectFilter(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      {visibleFiles.length === 0 && <p className="local-file-note">この種類のファイルはありません。</p>}
       <ul className="local-files-list">
-        {files.map((file) => (
+        {visibleFiles.map((file) => (
           <LocalFileRow
             key={file.path}
             ticketId={ticketId}

@@ -56,10 +56,11 @@ describe('TicketLocalFilesSection', () => {
     renderSection();
 
     expect(await screen.findByRole('heading', { name: 'ファイル' })).toBeInTheDocument();
-    expect(screen.getByText('JSON')).toBeInTheDocument();
+    // 絞り込みチップにも同じ文言があるので、行のラベル (.local-file-kind) に限って確かめる。
+    const kindLabels = Array.from(document.querySelectorAll('.local-file-kind')).map((el) => el.textContent);
+    expect(kindLabels).toEqual(['JSON', 'Markdown']);
     expect(screen.getByText('projects/demo/script/scenes.json')).toBeInTheDocument();
     expect(screen.getByText('512 B')).toBeInTheDocument();
-    expect(screen.getByText('Markdown')).toBeInTheDocument();
     expect(screen.getByText('projects/demo/script/review.md')).toBeInTheDocument();
     expect(screen.getByText('2.0 KB')).toBeInTheDocument();
   });
