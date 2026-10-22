@@ -1,0 +1,317 @@
+/* bdboard-gyvv: ヘッダー再設計 (案 A)。デスクトップは 1 行、モバイル (<=700px) は 52px の上部バー。
+   左から タイトル+接続状態の丸 / プロジェクト / (スペーサ) / 検索 / フィルタ / スマホ公開 /
+   チャット / ⋯。ビュー切替タブ行とツールバー行は無い。 */
+
+.global-bar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.global-bar > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.header-spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* プロジェクト選択はスペーサ側が縮む前に自分も縮めて、狭いデスクトップ幅でも 1 行を保つ。 */
+.global-bar > .project-picker {
+  flex: 0 1 210px;
+  min-width: 0;
+}
+
+.global-bar .project-picker-button {
+  width: 100%;
+}
+
+.global-bar .project-picker-popover {
+  left: 0;
+  right: auto;
+}
+
+/* --- 接続状態の丸 ------------------------------------------------------ */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: currentcolor;
+  flex: 0 0 auto;
+}
+
+.status-pill.status-pill-ok {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-success);
+  padding: 5px 6px;
+}
+
+/* --- 検索欄 -------------------------------------------------------------- */
+.header-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 260px;
+  min-width: 90px;
+}
+
+.global-bar > .header-search {
+  flex: 0 1 260px;
+}
+
+.header-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  min-height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  font-family: inherit;
+}
+
+.header-search-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.header-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--badge-neutral-bg);
+  color: var(--badge-neutral-fg);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* --- フィルタボタンとポップオーバー --------------------------------------- */
+.filter-menu {
+  position: relative;
+}
+
+.filter-menu-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-menu-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: var(--color-bg-elevated);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.filter-menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: min(70vh, 560px);
+  max-height: min(70dvh, 560px);
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px var(--color-shadow);
+  white-space: normal;
+  transform: translateX(var(--popover-shift-x, 0px));
+}
+
+.filter-menu-popover .board-filter-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.filter-menu-popover .board-filter-group {
+  flex-wrap: wrap;
+}
+
+.filter-menu-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* プリセットのポップオーバーは、フィルタのポップオーバーの中ではその場で開く
+   (絶対配置のままだと、スクロール領域の外へはみ出して隠れる)。 */
+.filter-menu-popover .preset-control {
+  position: static;
+}
+
+.filter-menu-popover .preset-control-popover {
+  position: static;
+  width: auto;
+  max-width: none;
+  margin-top: 6px;
+  box-shadow: none;
+  transform: none;
+}
+
+/* --- ⋯ メニュー ----------------------------------------------------------- */
+.overflow-menu-popover {
+  min-width: 220px;
+  max-width: 320px;
+}
+
+.overflow-menu-popover .overflow-menu-item[aria-current='page'] {
+  font-weight: 700;
+  color: var(--color-accent-text);
+}
+
+.overflow-menu-popover .overflow-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* AIクォータのポップオーバーはメニューの中でその場で開く。 */
+.overflow-menu-quota .ai-quota-widget {
+  padding: 4px 6px;
+}
+
+.overflow-menu-quota .ai-quota-popover {
+  position: static;
+  margin-top: 6px;
+  max-width: none;
+  box-shadow: none;
+  transform: none;
+}
+
+/* --- 見出し (プロジェクト名 · N 件 + 警告) -------------------------------- */
+.board-section-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+/* --- モバイル: 52px の上部バー ------------------------------------------- */
+@media (max-width: 700px) {
+  .header {
+    padding: calc(4px + env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right))
+      4px calc(10px + env(safe-area-inset-left));
+    gap: 0;
+  }
+
+  .global-bar {
+    min-height: 52px;
+    gap: 6px;
+  }
+
+  /* タイトル文字は畳む (プロジェクト名がタイトル代わり)。丸は接続状態の入口として残す。 */
+  .header-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .global-bar > .project-picker {
+    flex: 1 1 auto;
+  }
+
+  .global-bar .project-picker-button {
+    min-height: 44px;
+    max-width: none;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .status-pill,
+  .overflow-menu-button {
+    min-height: 44px;
+    min-width: 44px;
+    justify-content: center;
+  }
+
+  .header-spacer {
+    display: none;
+  }
+
+  /* <=480px の .header-group { width: 100% } を打ち消す (1 行に並べるため)。 */
+  .global-bar > .header-group,
+  .global-bar .header-brand {
+    width: auto;
+  }
+
+  .global-bar-searching .header-search {
+    flex: 1 1 auto;
+  }
+
+  .global-bar-searching .header-search-input {
+    min-height: 44px;
+    font-size: 1rem;
+  }
+
+  /* フィルタとプロジェクト選択のポップオーバーは、バーの下に横幅いっぱいで落ちるシートにする。
+     .header が基準になるよう、起点側の要素は static に戻す。 */
+  .overflow-menu,
+  .filter-menu {
+    position: static;
+  }
+
+  .overflow-menu-popover,
+  .filter-menu-popover {
+    top: 100%;
+    left: 0;
+    right: 0;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    max-height: calc(100vh - var(--header-height, 52px) - 8px);
+    max-height: calc(100dvh - var(--header-height, 52px) - 8px);
+    overflow-y: auto;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    transform: none;
+  }
+
+  .overflow-menu-item {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+}

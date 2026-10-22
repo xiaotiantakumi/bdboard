@@ -49,7 +49,6 @@ export interface AppViewContentProps {
     selectedProjectIdsJoined: string;
   };
   onCardClick: (ticketId: string) => void;
-  onSessionBadgeClick: (projectId?: string) => void;
 }
 
 export function AppViewContent({
@@ -60,7 +59,6 @@ export function AppViewContent({
   board,
   boardMeta,
   onCardClick,
-  onSessionBadgeClick,
 }: AppViewContentProps) {
   return (
     // view をキーにして、別ビューへ切り替えたら壊れた状態を持ち越さない。
@@ -80,7 +78,6 @@ export function AppViewContent({
           selectedProjectIdsJoined: boardMeta.selectedProjectIdsJoined,
         }}
         onCardClick={onCardClick}
-        onSessionBadgeClick={onSessionBadgeClick}
       />
       {view === 'settings' && <SettingsPanel />}
     </ErrorBoundary>

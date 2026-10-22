@@ -124,7 +124,6 @@ export function AppBody({ controller }: AppBodyProps) {
             selectedProjectIdsJoined,
           }}
           onCardClick={handleSelectTicket}
-          onSessionBadgeClick={overlays.handleOpenSessionList}
         />
         </BulkSelectionProvider>
         </BoardDnDProvider>

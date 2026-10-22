@@ -83,7 +83,6 @@ function makeProps(overrides: Partial<AppViewContentProps> = {}): AppViewContent
       selectedProjectIdsJoined: '',
     },
     onCardClick: vi.fn(),
-    onSessionBadgeClick: vi.fn(),
     ...overrides,
   };
 }
@@ -137,7 +136,6 @@ describe('AppViewContent', () => {
       availableLabels: ['marker-label'],
     };
     const onCardClick = vi.fn();
-    const onSessionBadgeClick = vi.fn();
 
     render(
       <AppViewContent
@@ -155,7 +153,6 @@ describe('AppViewContent', () => {
             selectedProjectIdsJoined: 'proj-1',
           },
           onCardClick,
-          onSessionBadgeClick,
         })}
       />,
     );
@@ -164,7 +161,6 @@ describe('AppViewContent', () => {
     expect(props).toMatchObject({
       board,
       onCardClick,
-      onSessionBadgeClick,
       boardMeta: {
         projectNames,
         projectActiveSessions,
