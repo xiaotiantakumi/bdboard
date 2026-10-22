@@ -4,7 +4,6 @@ import type { BoardMode } from '../api';
 
 export type ViewMode =
   | 'split'
-  | 'activity'
   | 'settings';
 
 export const DEFAULT_VIEW: ViewMode = 'split';
@@ -15,7 +14,6 @@ export const DEFAULT_VIEW: ViewMode = 'split';
 */
 export const VIEW_ITEMS: readonly { view: ViewMode; label: string }[] = [
   { view: 'split', label: '分割' },
-  { view: 'activity', label: 'アクティビティ' },
   { view: 'settings', label: '設定' },
 ];
 
@@ -44,6 +42,7 @@ export function validateViewMode(value: unknown): ViewMode | null {
   // bdboard-i9g4.5: 統計ビュー削除。残る 'stats' も同様に 'split' へ読み替える。
   // bdboard-i9g4.6: 健全性ビュー削除。残る 'hygiene' も同様に 'split' へ読み替える。
   // bdboard-i9g4.7: 依存グラフビュー削除。残る 'graph' も同様に 'split' へ読み替える。
+  // bdboard-i9g4.8: アクティビティビュー削除。残る 'activity' も同様に 'split' へ読み替える。
   if (
     value === 'next' ||
     value === 'digest' ||
@@ -51,13 +50,13 @@ export function validateViewMode(value: unknown): ViewMode | null {
     value === 'issue-reports' ||
     value === 'stats' ||
     value === 'hygiene' ||
-    value === 'graph'
+    value === 'graph' ||
+    value === 'activity'
   ) {
     return 'split';
   }
   if (
     value === 'split' ||
-    value === 'activity' ||
     value === 'settings'
   ) {
     return value;
@@ -66,7 +65,7 @@ export function validateViewMode(value: unknown): ViewMode | null {
 }
 
 export function boardApiModeFromView(view: ViewMode): BoardMode {
-  // bdboard-mkm1.1: 'merged' タブは無くなったが、アクティビティなど
+  // bdboard-mkm1.1: 'merged' タブは無くなったが、設定など
   // ボード一覧以外のビューはサーバーの merged モードで集約したデータ
   // (board.query.data.merged) を引き続き使う (bdboard-mkm1.3 で Next Up が
   // 使わなくなった後もこの前提は変わらない)。分割ビューのときだけ 'split' を

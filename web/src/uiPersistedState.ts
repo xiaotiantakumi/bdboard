@@ -2,7 +2,6 @@
 // このファイルは import 側 (コンポーネント・hooks・テスト) を書き換えないための
 // re-export 入口としてのみ残す。挙動・型は一切変えていない (移動のみ)。
 export * from './uiPersistedState/view';
-export * from './uiPersistedState/listOptions';
 export * from './uiPersistedState/storageKeys';
 export * from './uiPersistedState/validators';
 export * from './uiPersistedState/priorityCeiling';

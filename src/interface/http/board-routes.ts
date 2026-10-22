@@ -1,13 +1,11 @@
 import { Hono } from 'hono';
 import { parseClampedIntQueryParam } from './parse-clamped-int-query-param.js';
-import { getActivityFeed } from '../../application/board/get-activity-feed.js';
 import { getBoard } from '../../application/board/get-board.js';
 import { searchTickets } from '../../application/board/search-tickets.js';
 import { DEFAULT_LIVENESS_THRESHOLDS } from '../../domain/liveness.js';
 import { compareStrings } from '../../domain/compare.js';
 import {
   countIncompleteTicketsFromTickets,
-  toActivityEventDto,
   toBoardViewDto,
   toProjectDto,
   toTicketSearchResultDto,
@@ -20,7 +18,6 @@ import {
 } from './etag.js';
 import {
   buildGetBoardDeps,
-  parseActivityLimit,
   parseProjectIds,
   resolveLivenessThresholds,
 } from './api-route-shared.js';
@@ -30,10 +27,6 @@ import type { ApiDeps } from './api-deps.js';
 const SEARCH_DEFAULT_LIMIT = 30;
 const SEARCH_MIN_LIMIT = 1;
 const SEARCH_MAX_LIMIT = 50;
-
-const ACTIVITY_DEFAULT_DAYS = 1;
-const ACTIVITY_MIN_DAYS = 1;
-const ACTIVITY_MAX_DAYS = 30;
 
 // closed(done)レーンの既定上限。単調増加するdoneチケットが/api/boardペイロードを
 // 支配しないよう、プロジェクトごとにclosedAt降順で上位N件だけを送る(bdboard-3tw.86)。
@@ -46,14 +39,6 @@ function parseSearchLimit(raw: string | undefined): number {
     min: SEARCH_MIN_LIMIT,
     max: SEARCH_MAX_LIMIT,
     defaultValue: SEARCH_DEFAULT_LIMIT,
-  });
-}
-
-function parseActivityDays(raw: string | undefined): number {
-  return parseClampedIntQueryParam(raw, {
-    min: ACTIVITY_MIN_DAYS,
-    max: ACTIVITY_MAX_DAYS,
-    defaultValue: ACTIVITY_DEFAULT_DAYS,
   });
 }
 
@@ -162,20 +147,6 @@ export function createBoardRoutes(deps: ApiDeps): Hono {
 
     const hits = searchTickets(deps.cache, { query, limit });
     return c.json(hits.map(toTicketSearchResultDto));
-  });
-
-  app.get('/api/activity', (c) => {
-    const projectIds = parseProjectIds(c.req.query('projects'));
-    const days = parseActivityDays(c.req.query('days'));
-    const limit = parseActivityLimit(c.req.query('limit'));
-
-    const events = getActivityFeed(deps.cache, deps.now(), {
-      ...(projectIds !== undefined ? { projectIds } : {}),
-      windowDays: days,
-      limit,
-    });
-
-    return c.json(events.map(toActivityEventDto));
   });
 
   return app;

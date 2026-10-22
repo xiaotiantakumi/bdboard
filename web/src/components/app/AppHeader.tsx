@@ -81,7 +81,7 @@ export interface AppHeaderProps {
  * props 爆発を避けるため、このコンポーネント自体は関心ごとにまとめた
  * オブジェクト (connection/sessions/statusDetail/projects/tipsBanner/
  * toolbar) を受け取り、GlobalBar/ViewToolbar 個別の平たい props へ展開する
- * (AppViewContent.tsx の board/boardMeta/nextUp/windows と同じ手法)。
+ * (AppViewContent.tsx の board/boardMeta/nextUp と同じ手法)。
  *
  * onOpenSessionList は GlobalBar/ViewToolbar 双方で元々
  * `() => handleOpenSessionList()` という「呼び出し側からの引数を捨てて

@@ -154,20 +154,6 @@ export function searchTickets(
   return fetchJson<TicketSearchResultDto[]>(`/api/search?${searchParams.toString()}`);
 }
 
-export function fetchActivity(
-  days = 1,
-  limit = 100,
-  projectIds: readonly string[] = [],
-): Promise<ActivityEventDto[]> {
-  const searchParams = new URLSearchParams();
-  searchParams.set('days', String(days));
-  searchParams.set('limit', String(limit));
-  if (projectIds.length > 0) {
-    searchParams.set('projects', projectIds.join(','));
-  }
-  return fetchJson<ActivityEventDto[]>(`/api/activity?${searchParams.toString()}`);
-}
-
 export function fetchTicketTimeline(
   ticketId: string,
   limit = 200,

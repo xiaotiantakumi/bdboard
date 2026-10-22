@@ -19,7 +19,6 @@ describe('useAppUiPreferences', () => {
     expect(result.current.selectedProjectIds).toEqual([]);
     expect(result.current.lastChatProjectId).toBe('');
     expect(result.current.boardFilterPresets).toEqual([]);
-    expect(result.current.activityWindowDays).toBe(1);
     expect(result.current.recentTickets).toEqual([]);
     expect(result.current.tipsBannerDismissed).toBe(DEFAULT_TIPS_BANNER_DISMISSED);
   });
@@ -46,7 +45,6 @@ describe('useAppUiPreferences', () => {
           stalledOnly: false,
         },
       ]);
-      result.current.setActivityWindowDays(7);
       result.current.setRecentTickets([
         { id: 'bdboard-1', title: 'T', projectName: 'Project One' },
       ]);
@@ -61,7 +59,6 @@ describe('useAppUiPreferences', () => {
       JSON.stringify('proj-1'),
     );
     expect(localStorage.getItem(UI_STORAGE_KEYS.boardFilterPresets)).not.toBeNull();
-    expect(localStorage.getItem(UI_STORAGE_KEYS.activityWindowDays)).toBe(JSON.stringify(7));
     expect(localStorage.getItem(UI_STORAGE_KEYS.recentTickets)).not.toBeNull();
     expect(localStorage.getItem(UI_STORAGE_KEYS.tipsBannerDismissed)).toBe(JSON.stringify(true));
   });
@@ -74,8 +71,6 @@ describe('useAppUiPreferences', () => {
 
     expect(result.current.view).toBe('split');
     expect(result.current.tipsBannerDismissed).toBe(true);
-    // Untouched keys still fall back to their documented defaults.
-    expect(result.current.activityWindowDays).toBe(1);
   });
 
   it('migrates a persisted merged view to split on mount', () => {

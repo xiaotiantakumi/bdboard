@@ -254,7 +254,7 @@ describe('useAppActions', () => {
 
   describe('epicFilterId view-switch effect', () => {
     it('does nothing when epicFilterId is undefined', () => {
-      const params = baseParams({ epicFilterId: undefined, view: 'activity' });
+      const params = baseParams({ epicFilterId: undefined, view: 'settings' });
       renderHook(() => useAppActions(params));
 
       expect(params.setView).not.toHaveBeenCalled();
@@ -270,7 +270,7 @@ describe('useAppActions', () => {
       },
     );
 
-    it.each(['activity', 'settings'] as const)(
+    it.each(['settings'] as const)(
       'forces a switch to split when epicFilterId is set and the current view (%s) cannot show the filtered board',
       (view) => {
         const params = baseParams({ epicFilterId: 'epic-1', view });
@@ -283,7 +283,7 @@ describe('useAppActions', () => {
     it('re-subscribes to the latest view on rerender (pins the epicFilterId-only dependency array)', () => {
       // epicFilterId 切り替え effect は「epicFilterId が変わった回」だけ発火する
       // 設計(view の変化では再発火しない)。この rerender で view を
-      // 'activity' に変えても、epicFilterId 自体は変わっていないので
+      // 'settings' に変えても、epicFilterId 自体は変わっていないので
       // setView は呼ばれない。
       const params = baseParams({ epicFilterId: undefined, view: 'split' });
       const { rerender } = renderHook(
@@ -292,10 +292,10 @@ describe('useAppActions', () => {
       );
       expect(params.setView).not.toHaveBeenCalled();
 
-      rerender({ ...params, view: 'activity' });
+      rerender({ ...params, view: 'settings' });
       expect(params.setView).not.toHaveBeenCalled();
 
-      rerender({ ...params, view: 'activity', epicFilterId: 'epic-2' });
+      rerender({ ...params, view: 'settings', epicFilterId: 'epic-2' });
       expect(params.setView).toHaveBeenCalledWith('split');
     });
 
@@ -316,7 +316,7 @@ describe('useAppActions', () => {
       // ユーザーが絞り込みを維持したまま非ボードビューへ自分で移動した場合、
       // このユーザー操作を上書きして split へ強制送還してはいけない
       // (useAppActions.ts のコメント参照: epicFilterId-only は意図的な設計)。
-      rerender({ ...params, epicFilterId: 'epic-1', view: 'activity' });
+      rerender({ ...params, epicFilterId: 'epic-1', view: 'settings' });
       expect(params.setView).not.toHaveBeenCalled();
     });
   });

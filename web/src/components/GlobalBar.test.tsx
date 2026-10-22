@@ -53,7 +53,6 @@ describe('GlobalBar view switcher a11y', () => {
       'true',
     );
     expect(screen.getByRole('button', { name: '分割' })).not.toHaveAttribute('aria-current');
-    expect(screen.getByRole('button', { name: 'アクティビティ' })).not.toHaveAttribute('aria-current');
   });
 
   it('does not use aria-pressed on view switcher buttons', () => {
@@ -104,9 +103,9 @@ describe('GlobalBar view switcher scroll', () => {
   });
 
   it('scrolls the active tab into view on mount with block nearest and inline center', () => {
-    renderGlobalBar({ view: 'activity' });
+    renderGlobalBar({ view: 'settings' });
 
-    const activeButton = screen.getByRole('button', { name: 'アクティビティ' });
+    const activeButton = screen.getByRole('button', { name: '設定' });
     expect(activeButton).toHaveAttribute('aria-current', 'true');
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
@@ -157,11 +156,11 @@ describe('GlobalBar view switcher scroll', () => {
 
     rerender(
       <QueryClientProvider client={queryClient}>
-        <GlobalBar {...props} view="activity" />
+        <GlobalBar {...props} view="settings" />
       </QueryClientProvider>,
     );
 
-    const activeButton = screen.getByRole('button', { name: 'アクティビティ' });
+    const activeButton = screen.getByRole('button', { name: '設定' });
     expect(activeButton).toHaveAttribute('aria-current', 'true');
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: 'nearest',

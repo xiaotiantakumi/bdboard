@@ -18,8 +18,7 @@ const ACTIVITY_DEFAULT_LIMIT = 100;
 const ACTIVITY_MIN_LIMIT = 1;
 const ACTIVITY_MAX_LIMIT = 200;
 
-// /api/activity (board-routes.ts) と /api/tickets/:id/timeline (ticket-read-routes.ts)
-// の両方が使う。
+// /api/tickets/:id/timeline (ticket-read-routes.ts) が使う。
 export function parseActivityLimit(raw: string | undefined): number {
   return parseClampedIntQueryParam(raw, {
     min: ACTIVITY_MIN_LIMIT,

@@ -3,14 +3,12 @@ import {
   DEFAULT_TIPS_BANNER_DISMISSED,
   DEFAULT_VIEW,
   UI_STORAGE_KEYS,
-  validateActivityWindowDays,
   validateBoardFilterPresets,
   validateBoolean,
   validateRecentTickets,
   validateString,
   validateStringArray,
   validateViewMode,
-  type ActivityWindowDays,
   type BoardFilterPreset,
   type RecentTicketEntry,
   type ViewMode,
@@ -27,8 +25,6 @@ export interface AppUiPreferences {
   setLastChatProjectId: PersistedSetter<string>;
   boardFilterPresets: BoardFilterPreset[];
   setBoardFilterPresets: PersistedSetter<BoardFilterPreset[]>;
-  activityWindowDays: ActivityWindowDays;
-  setActivityWindowDays: PersistedSetter<ActivityWindowDays>;
   recentTickets: RecentTicketEntry[];
   setRecentTickets: PersistedSetter<RecentTicketEntry[]>;
   tipsBannerDismissed: boolean;
@@ -39,7 +35,6 @@ export interface AppUiPreferences {
  * App.tsx 直下に並んでいた usePersistedState 呼び出しをひとまとめにする
  * フック (bdboard-62p4 第6段)。現在は8個
  * (view/selectedProjectIds/lastChatProjectId/boardFilterPresets/
- * activityWindowDays/recentTickets/
  * tipsBannerDismissed)。boardFilterState (優先度上限などボードのフィルタ7種)
  * は既に useBoardFilterState.ts に分かれているのでここには含めない。
  * bdboard-mkm1.3: Next Up ビュー削除に伴い、Next Up 専用の表示件数/epic
@@ -57,7 +52,6 @@ export interface AppUiPreferences {
  * boardFilterState/nextUpBatchRun との相対位置を変えても観測可能な挙動は
  * 変わらない。このフック内部での呼び出し順序自体は元の宣言順 (view →
  * selectedProjectIds → lastChatProjectId → boardFilterPresets →
- * activityWindowDays → recentTickets →
  * tipsBannerDismissed) を保っている。
  */
 export function useAppUiPreferences(): AppUiPreferences {
@@ -76,11 +70,6 @@ export function useAppUiPreferences(): AppUiPreferences {
     UI_STORAGE_KEYS.boardFilterPresets,
     [],
     validateBoardFilterPresets,
-  );
-  const [activityWindowDays, setActivityWindowDays] = usePersistedState(
-    UI_STORAGE_KEYS.activityWindowDays,
-    1,
-    validateActivityWindowDays,
   );
   const [recentTickets, setRecentTickets] = usePersistedState(
     UI_STORAGE_KEYS.recentTickets,
@@ -102,8 +91,6 @@ export function useAppUiPreferences(): AppUiPreferences {
     setLastChatProjectId,
     boardFilterPresets,
     setBoardFilterPresets,
-    activityWindowDays,
-    setActivityWindowDays,
     recentTickets,
     setRecentTickets,
     tipsBannerDismissed,
