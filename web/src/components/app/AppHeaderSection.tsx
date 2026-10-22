@@ -16,7 +16,6 @@ export function AppHeaderSection({ controller }: AppHeaderSectionProps) {
   const {
     view,
     setView,
-    notificationEvents,
     overlays,
     streamState,
     connectStalled,
@@ -49,7 +48,6 @@ export function AppHeaderSection({ controller }: AppHeaderSectionProps) {
     <AppHeader
       view={view}
       onViewChange={setView}
-      notificationUnreadCount={notificationEvents.unreadCount}
       issueReportPendingCount={issueReportPending.count}
       onOpenSearch={overlays.handleOpenSearch}
       connection={{

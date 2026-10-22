@@ -172,7 +172,6 @@ function makeController(overrides: Record<string, unknown> = {}): Controller {
     prLinksById: new Map(),
     chatAvailable: true,
     wipLimitsOverrides: {},
-    notificationEvents: { unreadCount: 0 },
     handleRecordRecentTicket: vi.fn(),
     isTicketOnBoard: vi.fn(),
     isRefreshing: false,

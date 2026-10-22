@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PrBadgeDto } from '../../api';
 import { EMPTY_BOARD_FILTER } from '../../boardFilter';
 import type { BoardFilterState } from '../../hooks/useBoardFilterState';
-import type { UseNotificationEventsResult } from '../../hooks/useNotificationEvents';
 import type { ViewMode } from '../../uiPersistedState';
 import type { NextUpRunLoopController } from '../nextUpRunLoop';
 import { AppViewContent, type AppViewContentProps } from './AppViewContent';
@@ -45,11 +44,6 @@ vi.mock('../DependencyGraphView', () => ({
 }));
 vi.mock('../SettingsPanel', () => ({
   SettingsPanel: vi.fn(() => <div data-testid="settings-panel" />),
-}));
-vi.mock('../EventCenterPanel', () => ({
-  EventCenterPanel: vi.fn((props: { unreadCount: number }) => (
-    <div data-testid="event-center-panel">{props.unreadCount}</div>
-  )),
 }));
 vi.mock('../issue-reports/IssueReportsPanel', () => ({
   IssueReportsPanel: vi.fn((props: { reportProject?: { name: string; path: string } }) => <div data-testid="issue-reports-panel">{props.reportProject?.name ?? 'none'}</div>),
@@ -96,21 +90,6 @@ function makeFilterState(): BoardFilterState {
   };
 }
 
-function makeNotificationEvents(): UseNotificationEventsResult {
-  return {
-    events: [],
-    unreadCount: 3,
-    lastReadAt: null,
-    markAllRead: vi.fn(),
-    notificationsEnabled: false,
-    notificationsSupported: false,
-    permission: 'default',
-    enableNotifications: vi.fn(),
-    disableNotifications: vi.fn(),
-    notificationDeliveryError: null,
-  };
-}
-
 function makeProps(overrides: Partial<AppViewContentProps> = {}): AppViewContentProps {
   return {
     view: 'split',
@@ -144,7 +123,6 @@ function makeProps(overrides: Partial<AppViewContentProps> = {}): AppViewContent
       statsWeeks: 8,
       onStatsWeeksChange: vi.fn(),
     },
-    notificationEvents: makeNotificationEvents(),
     ...overrides,
   };
 }
@@ -299,7 +277,6 @@ describe('AppViewContent', () => {
     { view: 'hygiene', testid: 'hygiene-panel' },
     { view: 'graph', testid: 'dependency-graph-view' },
     { view: 'settings', testid: 'settings-panel' },
-    { view: 'events', testid: 'event-center-panel' },
     { view: 'issue-reports', testid: 'issue-reports-panel' },
   ];
 
@@ -354,17 +331,5 @@ describe('AppViewContent', () => {
   it('forwards selectedTicketId as the graph focusTicketId', () => {
     render(<AppViewContent {...makeProps({ view: 'graph', selectedTicketId: 'bdboard-xyz' })} />);
     expect(screen.getByTestId('dependency-graph-view')).toHaveTextContent('bdboard-xyz');
-  });
-
-  it('spreads notificationEvents into EventCenterPanel', () => {
-    render(
-      <AppViewContent
-        {...makeProps({
-          view: 'events',
-          notificationEvents: { ...makeNotificationEvents(), unreadCount: 42 },
-        })}
-      />,
-    );
-    expect(screen.getByTestId('event-center-panel')).toHaveTextContent('42');
   });
 });

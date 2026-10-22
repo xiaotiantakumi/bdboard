@@ -43,7 +43,6 @@ function makeProps(overrides: Partial<AppHeaderProps> = {}): AppHeaderProps {
   return {
     view: 'split',
     onViewChange: vi.fn(),
-    notificationUnreadCount: 7,
     onOpenSearch: vi.fn(),
     connection: {
       streamState: 'open',
@@ -115,7 +114,6 @@ describe('AppHeader', () => {
 
     expect(globalBarProps.view).toBe('split');
     expect(globalBarProps.onViewChange).toBe(props.onViewChange);
-    expect(globalBarProps.notificationUnreadCount).toBe(7);
     expect(globalBarProps.onOpenSearch).toBe(props.onOpenSearch);
     expect(globalBarProps.streamState).toBe('open');
     expect(globalBarProps.connectStalled).toBe(false);

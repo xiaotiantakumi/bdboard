@@ -65,8 +65,8 @@ describe('uiPersistedState', () => {
     expect(validateViewMode('settings')).toBe('settings');
   });
 
-  it('accepts events as a view mode', () => {
-    expect(validateViewMode('events')).toBe('events');
+  it('maps the removed events view to split', () => {
+    expect(validateViewMode('events')).toBe('split');
   });
 
   it('validates stats weeks options', () => {

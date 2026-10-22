@@ -1,7 +1,6 @@
 import { type UseQueryResult } from '@tanstack/react-query';
 import { type BoardCardDto, type BoardViewDto, type PrBadgeDto } from '../../api';
 import { type BoardFilterState } from '../../hooks/useBoardFilterState';
-import { type UseNotificationEventsResult } from '../../hooks/useNotificationEvents';
 import {
   type ActivityWindowDays,
   type StatsWeeks,
@@ -12,7 +11,6 @@ import { VIEW_LABELS } from '../../paletteActions';
 import { ActivityFeed } from '../ActivityFeed';
 import { DependencyGraphView } from '../DependencyGraphView';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { EventCenterPanel } from '../EventCenterPanel';
 import { HygienePanel } from '../HygienePanel';
 import { IssueReportsPanel } from '../issue-reports/IssueReportsPanel';
 import { reportProjectOf } from '../issue-reports/manualDraftAccess';
@@ -73,7 +71,6 @@ export interface AppViewContentProps {
     statsWeeks: StatsWeeks;
     onStatsWeeksChange: (weeks: StatsWeeks) => void;
   };
-  notificationEvents: UseNotificationEventsResult;
 }
 
 export function AppViewContent({
@@ -88,7 +85,6 @@ export function AppViewContent({
   onSessionBadgeClick,
   nextUp,
   windows,
-  notificationEvents,
 }: AppViewContentProps) {
   return (
     // view をキーにして、別ビューへ切り替えたら壊れた状態を持ち越さない。
@@ -141,7 +137,6 @@ export function AppViewContent({
         />
       )}
       {view === 'settings' && <SettingsPanel />}
-      {view === 'events' && <EventCenterPanel {...notificationEvents} />}
       {view === 'issue-reports' && (
         // 「新しく報告」(bdboard-4y8q.6.8): ボードでちょうど 1 つ選んでいるプロジェクトだけを、題名の漏れ検出の鍵として送る。
         <IssueReportsPanel

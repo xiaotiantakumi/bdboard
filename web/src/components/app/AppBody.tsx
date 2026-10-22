@@ -64,7 +64,6 @@ export function AppBody({ controller }: AppBodyProps) {
     pendingDecisionIds,
     prLinksById,
     wipLimitsOverrides,
-    notificationEvents,
     handleRefresh,
     isRefreshing,
   } = controller;
@@ -142,7 +141,6 @@ export function AppBody({ controller }: AppBodyProps) {
             statsWeeks,
             onStatsWeeksChange: setStatsWeeks,
           }}
-          notificationEvents={notificationEvents}
         />
         </BulkSelectionProvider>
         </BoardDnDProvider>
