@@ -6,15 +6,12 @@ import type { CommentReader } from '../../application/ports/comment-reader.js';
 import type { DependencyWriterPort } from '../../application/ports/dependency-writer.js';
 import type { HumanDecisionsPort } from '../../application/ports/human-decisions.js';
 import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
-import type { LeaseReader } from '../../application/ports/lease-reader.js';
-import type { MergeSlotReader } from '../../application/ports/merge-slot-reader.js';
 import type { PrStatusReader } from '../../application/ports/pr-status-reader.js';
 import type { PrBadgeStatusCache } from '../../application/board/get-pr-badges.js';
 import type { ProcessScanner } from '../../application/ports/process-scanner.js';
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
-import type { ReclaimScheduler } from '../../application/lease/reclaim-scheduler.js';
 import type { ReclaimHistory } from '../../application/lease/reclaim-history.js';
 import { resolveBoardThresholds } from '../../domain/board-thresholds.js';
 import type { AgentSession, SessionLink } from '../../domain/session.js';
@@ -48,9 +45,6 @@ export interface BuildApiDepsParams {
   readonly sessionLinkWriter?: SessionLinkWriterPort;
   readonly sessionTail?: SessionTailReader;
   readonly writeAccess?: WriteGuardDeps;
-  readonly leaseReader?: LeaseReader;
-  readonly mergeSlotReader?: MergeSlotReader;
-  readonly reclaimScheduler?: ReclaimScheduler;
   readonly reclaimHistory?: ReclaimHistory;
 }
 

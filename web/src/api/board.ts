@@ -158,39 +158,6 @@ export function fetchPrLinks(
   return fetchJson<PrBadgeDto[]>(path);
 }
 
-export interface GraphNodeDto {
-  ticketId: string;
-  projectId: string;
-  title: string;
-  status: string;
-  priority: number;
-  issueType: string;
-  layer: number;
-}
-
-export interface GraphEdgeDto {
-  from: string;
-  to: string;
-  kind: 'blocks' | 'parent-child';
-}
-
-export interface DependencyGraphDto {
-  nodes: GraphNodeDto[];
-  edges: GraphEdgeDto[];
-}
-
-export function fetchDependencyGraph(
-  projectIds: readonly string[] = [],
-): Promise<DependencyGraphDto> {
-  const searchParams = new URLSearchParams();
-  if (projectIds.length > 0) {
-    searchParams.set('projects', projectIds.join(','));
-  }
-  const query = searchParams.toString();
-  const path = query.length > 0 ? `/api/graph?${query}` : '/api/graph';
-  return fetchJson<DependencyGraphDto>(path);
-}
-
 export function isLaneStatusMismatch(lane: string, status: string): boolean {
   const expected = LANE_EXPECTED_STATUS[lane as Lane];
   if (expected === undefined) {

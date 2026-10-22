@@ -52,8 +52,8 @@ describe('uiPersistedState', () => {
     }
   });
 
-  it('accepts graph as a view mode', () => {
-    expect(validateViewMode('graph')).toBe('graph');
+  it('maps the removed graph view to split', () => {
+    expect(validateViewMode('graph')).toBe('split');
   });
 
   it('maps the removed digest view to split', () => {

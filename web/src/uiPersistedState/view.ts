@@ -5,7 +5,6 @@ import type { BoardMode } from '../api';
 export type ViewMode =
   | 'split'
   | 'activity'
-  | 'graph'
   | 'settings';
 
 export const DEFAULT_VIEW: ViewMode = 'split';
@@ -17,7 +16,6 @@ export const DEFAULT_VIEW: ViewMode = 'split';
 export const VIEW_ITEMS: readonly { view: ViewMode; label: string }[] = [
   { view: 'split', label: '分割' },
   { view: 'activity', label: 'アクティビティ' },
-  { view: 'graph', label: '依存グラフ' },
   { view: 'settings', label: '設定' },
 ];
 
@@ -45,20 +43,21 @@ export function validateViewMode(value: unknown): ViewMode | null {
   // bdboard-i9g4.3: 不具合報告ビュー削除。残る 'issue-reports' も同様に 'split' へ読み替える。
   // bdboard-i9g4.5: 統計ビュー削除。残る 'stats' も同様に 'split' へ読み替える。
   // bdboard-i9g4.6: 健全性ビュー削除。残る 'hygiene' も同様に 'split' へ読み替える。
+  // bdboard-i9g4.7: 依存グラフビュー削除。残る 'graph' も同様に 'split' へ読み替える。
   if (
     value === 'next' ||
     value === 'digest' ||
     value === 'events' ||
     value === 'issue-reports' ||
     value === 'stats' ||
-    value === 'hygiene'
+    value === 'hygiene' ||
+    value === 'graph'
   ) {
     return 'split';
   }
   if (
     value === 'split' ||
     value === 'activity' ||
-    value === 'graph' ||
     value === 'settings'
   ) {
     return value;

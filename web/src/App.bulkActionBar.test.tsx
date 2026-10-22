@@ -60,7 +60,7 @@ describe('App bulk action bar visibility (bdboard-ml0k)', () => {
   });
 
   // 逆向きも1ビューだけだと `view !== 'settings'` のような変異が生き残る。
-  it.each(['設定', '依存グラフ'])(
+  it.each(['設定', 'アクティビティ'])(
     'keeps the bar out of the %s view, which renders no cards',
     async (viewLabel) => {
       const user = userEvent.setup();

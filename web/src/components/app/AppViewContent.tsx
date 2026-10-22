@@ -8,7 +8,6 @@ import {
 import { type WipLimitsOverrides } from '../../wip-limits';
 import { VIEW_LABELS } from '../../paletteActions';
 import { ActivityFeed } from '../ActivityFeed';
-import { DependencyGraphView } from '../DependencyGraphView';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { type NextUpRunLoopController } from '../nextUpRunLoop';
 import { SettingsPanel } from '../SettingsPanel';
@@ -31,7 +30,7 @@ import { AppBoardViewSwitch } from './AppBoardViewSwitch';
  *
  * ボード系ビュー(split)の JSX は ESLint の200行上限のため
  * ./AppBoardViewSwitch.tsx へさらに分けた。ここは ErrorBoundary と
- * ボード以外のビュー(activity/graph/settings)
+ * ボード以外のビュー(activity/settings)
  * の出し分けだけを持つ。
  */
 export interface AppViewContentProps {
@@ -54,7 +53,6 @@ export interface AppViewContentProps {
     selectedProjectIds: readonly string[];
     selectedProjectIdsJoined: string;
   };
-  selectedTicketId: string | null;
   onCardClick: (ticketId: string) => void;
   onSessionBadgeClick: (projectId?: string) => void;
   nextUp: {
@@ -73,7 +71,6 @@ export function AppViewContent({
   onClearEpicFilter,
   board,
   boardMeta,
-  selectedTicketId,
   onCardClick,
   onSessionBadgeClick,
   nextUp,
@@ -106,13 +103,6 @@ export function AppViewContent({
           windowDays={windows.activityWindowDays}
           onWindowDaysChange={windows.onActivityWindowDaysChange}
           onSelectTicket={onCardClick}
-        />
-      )}
-      {view === 'graph' && (
-        <DependencyGraphView
-          projectIds={boardMeta.selectedProjectIds}
-          focusTicketId={selectedTicketId ?? undefined}
-          onCardClick={onCardClick}
         />
       )}
       {view === 'settings' && <SettingsPanel />}

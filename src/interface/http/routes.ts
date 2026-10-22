@@ -5,7 +5,7 @@ import type { ApiDeps } from './api-deps.js';
 import { createPrBadgeShared } from '../../application/board/pr-badge-shared.js';
 import { createHealthStatusRoutes } from './health-status-routes.js';
 import { createBoardRoutes } from './board-routes.js';
-import { createHygieneRoutes } from './hygiene-routes.js';
+import { createPrLinksRoutes } from './pr-links-routes.js';
 import { createTicketReadRoutes } from './ticket-read-routes.js';
 import { createTicketWriteRoutes } from './ticket-write-routes.js';
 import { createCommentRoutes } from './comment-routes.js';
@@ -62,7 +62,14 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   // comments → sessions/processes → refresh/events(SSE)。
   app.route('/', createHealthStatusRoutes(deps));
   app.route('/', createBoardRoutes(deps));
-  app.route('/', createHygieneRoutes(deps, prBadgeShared));
+  app.route(
+    '/',
+    createPrLinksRoutes(deps, {
+      prBadgeCommentCache: prBadgeShared.commentCache,
+      prBadgeStatusCache: prBadgeShared.statusCache,
+      gates: prBadgeShared.gates,
+    }),
+  );
   app.route('/', createTicketReadRoutes(deps, inFlightOverlapMemo));
   app.route('/', createTicketWriteRoutes(deps));
   app.route('/', createCommentRoutes(deps));

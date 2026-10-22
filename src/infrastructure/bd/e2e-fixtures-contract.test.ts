@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import type { CommandRunner } from '../../application/ports/command-runner.js';
 import { detectStaleLeases } from '../../domain/lease.js';
-import { evaluateMergeSlotStatus } from '../../domain/merge-slot.js';
 import {
   bdGateListItemSchema,
   createBdCliHumanDecisions,
@@ -14,10 +13,6 @@ import {
   bdInProgressItemSchema,
   createBdCliLeaseReader,
 } from './bd-cli-lease-reader.js';
-import {
-  bdMergeSlotItemSchema,
-  createBdCliMergeSlotReader,
-} from './bd-cli-merge-slot-reader.js';
 
 // e2e 専用の bd fixture (test/e2e/fixtures/bd/*.json) が、それを実際に読む本番 reader の
 // zod スキーマを満たすことを unit test 段階で固定する (bdboard-0rch)。
@@ -47,7 +42,6 @@ const ROOT = '/fixture-project';
 const NOW = new Date('2026-08-16T10:00:00Z');
 // test/e2e/hygiene-signals.spec.ts が参照する値と同期 (gate / lease / ゴールデン human list で共通の id)。
 const FIXTURE_TICKET_ID = 'bdboard-3tw.8';
-const MERGE_SLOT_HOLDER = 'e2e-fixture-merge-slot-holder';
 
 interface FixtureContractBase {
   readonly file: string;
@@ -82,12 +76,6 @@ const contracts: readonly FixtureContract[] = [
     command: 'bd list --status in_progress --json (BdCliLeaseReader)',
     schema: bdInProgressItemSchema,
   },
-  {
-    file: 'merge-slot.list.json',
-    directory: 'e2e',
-    command: 'bd list --label gt:slot --json (BdCliMergeSlotReader)',
-    schema: bdMergeSlotItemSchema,
-  },
   // bdHumanListItemSchema は reader 内部の実装詳細なので export せず、下の本番 reader
   // 経由テストで契約する。e2e の偽 bd はこの共有 fixture を human list にも返す。
   // 対象外: この human list が e2e で支える stale_pending_decision 行 (src/domain/hygiene.ts が
@@ -118,7 +106,6 @@ interface FakeBdFixtures {
   readonly humanList?: unknown[];
   readonly gateList?: unknown[];
   readonly lease?: unknown[];
-  readonly mergeSlot?: unknown[];
 }
 
 function hasPair(args: readonly string[], flag: string, value: string): boolean {
@@ -144,9 +131,6 @@ function createFakeBdRunner(fixtures: FakeBdFixtures): CommandRunner {
       if (args.includes('list')) {
         if (hasPair(args, '-l', 'human') || hasPair(args, '--label', 'human')) {
           return emit(fixtures.humanList);
-        }
-        if (hasPair(args, '--label', 'gt:slot')) {
-          return emit(fixtures.mergeSlot);
         }
         if (hasPair(args, '--status', 'in_progress')) {
           return emit(fixtures.lease);
@@ -177,23 +161,6 @@ async function assertLeaseFixture(items: unknown[]): Promise<void> {
   expect(detectStaleLeases(leases, 'fixture-project', NOW)).toEqual([
     expect.objectContaining({ ticketId: FIXTURE_TICKET_ID }),
   ]);
-}
-
-async function assertMergeSlotFixture(items: unknown[]): Promise<void> {
-  const signal = await createBdCliMergeSlotReader(createFakeBdRunner({ mergeSlot: items }))
-    .readMergeSlotSignal(ROOT);
-  expect(signal).not.toBeNull();
-  expect(signal!.holder).toBe(MERGE_SLOT_HOLDER);
-  // toSatisfy は JestExtendError を投げるので使わない (下の expectAssertionFailure が名前で判定する)。
-  expect(
-    Number.isFinite(Date.parse(signal!.updatedAt)),
-    `merge-slot updated_at must be parseable: ${signal!.updatedAt}`,
-  ).toBe(true);
-  const status = evaluateMergeSlotStatus('fixture-project', signal, NOW);
-  // hygiene-signals e2e は .badge-stalled の可視性で isLongHeld (しきい値 30 分) に依存する。
-  // updated_at がパース不能だと heldForMs=0 / isLongHeld=false に黙って落ちる。
-  expect(status.heldForMs).toBeGreaterThan(0);
-  expect(status.isLongHeld).toBe(true);
 }
 
 // 負の対照で「検査の不一致で落ちた」ことを確かめる。reader が BdError を投げて落ちた場合は
@@ -301,15 +268,6 @@ describe('e2e bd fixtures preserve production reader and domain semantics', () =
     },
   );
 
-  it('provides a merge-slot updated_at that the domain can use', async () => {
-    await assertMergeSlotFixture(readFixtureItems('merge-slot.list.json'));
-  });
-
-  it('fails the merge-slot assertion when updated_at cannot be parsed', async () => {
-    const items = readFixtureItems('merge-slot.list.json');
-    (items[0] as Record<string, unknown>).updated_at = 'not-a-date';
-    await expectAssertionFailure(assertMergeSlotFixture(items));
-  });
 
   it('reads the shared golden fixture through the human-list branch of the production reader', async () => {
     const humanList = readFixtureItems('bdboard.list.json', 'golden');

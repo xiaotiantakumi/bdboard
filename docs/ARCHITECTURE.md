@@ -40,7 +40,7 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 
 - **`src/domain/`** — 値/エンティティ(`Ticket`, `Project`, `AgentSession`, `SessionLink`, `Run` 等)
   と導出ロジック(`readiness.ts` の ready/blocked 判定、`liveness.ts` のセッション生存度、
-  `dependency-graph.ts`、`board-notifications.ts` の通知遷移検出など)。外部I/Oを一切持たないため
+  `board-notifications.ts` の通知遷移検出など)。外部I/Oを一切持たないため
   フェイク不要でユニットテストが書ける。
 - **`src/application/`** — ユースケース(`board/refresh-projects.ts`、`lease/reclaim-scheduler.ts`、
   `runner/dispatch-run.ts` 等)と、`infrastructure` が実装すべき境界を定義する **ポート**
@@ -69,7 +69,6 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `IssueWriterPort` | `createBdCliIssueWriter` | チケットの状態変更・コメント等の書き込み |
 | `DependencyWriterPort` | `createBdCliDependencyWriter` | 依存関係(blocks等)の追加 |
 | `LeaseReader` / `LeaseReclaimer` | `createBdCliLeaseReader` / `createBdCliLeaseReclaimer` | claim(lease)の読み取り/期限切れ回収 |
-| `MergeSlotReader` | `createBdCliMergeSlotReader` | マージ直列化用スロットの読み取り |
 | `CommentReader` | `createBdCliCommentReader` | チケットコメント取得 |
 | `HumanDecisionsPort` | `createBdCliHumanDecisions` | 人間の意思決定待ちキューの読み書き |
 | `SessionLinkWriterPort` | `createBdCliSessionLinkWriter` | チケット⇔セッションの手動紐付け |

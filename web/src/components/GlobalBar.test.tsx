@@ -104,9 +104,9 @@ describe('GlobalBar view switcher scroll', () => {
   });
 
   it('scrolls the active tab into view on mount with block nearest and inline center', () => {
-    renderGlobalBar({ view: 'graph' });
+    renderGlobalBar({ view: 'activity' });
 
-    const activeButton = screen.getByRole('button', { name: '依存グラフ' });
+    const activeButton = screen.getByRole('button', { name: 'アクティビティ' });
     expect(activeButton).toHaveAttribute('aria-current', 'true');
 
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
@@ -157,11 +157,11 @@ describe('GlobalBar view switcher scroll', () => {
 
     rerender(
       <QueryClientProvider client={queryClient}>
-        <GlobalBar {...props} view="graph" />
+        <GlobalBar {...props} view="activity" />
       </QueryClientProvider>,
     );
 
-    const activeButton = screen.getByRole('button', { name: '依存グラフ' });
+    const activeButton = screen.getByRole('button', { name: 'アクティビティ' });
     expect(activeButton).toHaveAttribute('aria-current', 'true');
     expect(scrollIntoViewMock).toHaveBeenCalledWith({
       block: 'nearest',

@@ -7,6 +7,5 @@ export * from './dto/board.js';
 export * from './dto/activity.js';
 export * from './dto/ticket.js';
 export * from './dto/hygiene-status.js';
-export * from './dto/dependency-graph.js';
 export * from './dto/comment.js';
 export * from './dto/chat.js';

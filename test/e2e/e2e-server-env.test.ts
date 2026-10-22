@@ -21,7 +21,6 @@ function inputs(baseEnv: NodeJS.ProcessEnv = {}, overrides: Partial<E2eServerEnv
     listFixture: path.join(tmp, 'list.json'),
     gateListFixture: path.join(tmp, 'gate.json'),
     leaseFixture: path.join(tmp, 'lease.json'),
-    mergeSlotFixture: path.join(tmp, 'merge-slot.json'),
     webDist: path.join(tmp, 'web-dist'),
     instanceNonce: 'example-nonce',
     ...overrides,
