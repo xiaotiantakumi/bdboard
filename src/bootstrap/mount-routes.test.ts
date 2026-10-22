@@ -217,6 +217,7 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
 
 describe('mountRoutes error handler', () => {
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

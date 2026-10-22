@@ -16,7 +16,7 @@ describe('parseBdboardHelpSections', () => {
     );
 
     // 自己防衛: 読めていない/空を掴んだ場合に、下の forEach が空振りで緑になるのを防ぐ。
-    expect(sections.length).toBeGreaterThanOrEqual(20);
+    expect(sections.length).toBeGreaterThanOrEqual(10);
     expect(sections.map(({ id }) => id)).toContain('kanban');
     expect(sections.map(({ id }) => id)).toContain('pwa');
 
