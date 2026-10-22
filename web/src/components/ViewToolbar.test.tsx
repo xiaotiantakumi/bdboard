@@ -73,7 +73,7 @@ describe('ViewToolbar filter chips a11y', () => {
   });
 
   it('hides board filter chips outside the split view', () => {
-    renderToolbar({ view: 'activity' });
+    renderToolbar({ view: 'settings' });
 
     expect(screen.queryByRole('button', { name: /done レーンを隠す/ })).not.toBeInTheDocument();
   });

@@ -8,7 +8,6 @@ export const UI_STORAGE_KEYS = {
   hideDone: 'bdboard.ui.hideDone',
   collapsedLanes: 'bdboard.ui.collapsedLanes',
   stalledOnly: 'bdboard.ui.stalledOnly',
-  activityWindowDays: 'bdboard.ui.activityWindowDays',
   boardPriorityCeiling: 'bdboard.ui.boardPriorityCeiling',
   boardIssueTypes: 'bdboard.ui.boardIssueTypes',
   boardLabels: 'bdboard.ui.boardLabels',

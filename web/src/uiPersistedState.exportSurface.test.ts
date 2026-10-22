@@ -19,7 +19,6 @@ import * as uiPersistedState from './uiPersistedState';
  * 手本: web/src/api.ts の分割 (PR #527) と web/src/api.exportSurface.test.ts。
  */
 const EXPECTED_VALUE_EXPORTS = [
-  'ACTIVITY_WINDOW_DAYS',
   'BOARD_FILTER_PRESET_NAME_MAX_LENGTH',
   'BOARD_ISSUE_TYPES',
   'DEFAULT_HIDE_DONE',
@@ -29,7 +28,6 @@ const EXPECTED_VALUE_EXPORTS = [
   'RECENT_TICKETS_MAX',
   'UI_STORAGE_KEYS',
   'VIEW_ITEMS',
-  'activityWindowLabel',
   'boardApiModeFromView',
   'boardFilterPresetStatesEqual',
   'createBoardFilterPresetId',
@@ -40,7 +38,6 @@ const EXPECTED_VALUE_EXPORTS = [
   'priorityCeilingValue',
   'recordRecentTicket',
   'sanitizeProjectFilter',
-  'validateActivityWindowDays',
   'validateBoardFilterPresets',
   'validateBoardMode',
   'validateBoolean',

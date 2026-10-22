@@ -119,8 +119,6 @@ function makeController(overrides: Record<string, unknown> = {}): Controller {
     setLastChatProjectId: vi.fn(),
     boardFilterPresets: [],
     setBoardFilterPresets: vi.fn(),
-    activityWindowDays: 7,
-    setActivityWindowDays: vi.fn(),
     recentTickets: [],
     setRecentTickets: vi.fn(),
     tipsBannerDismissed: true,
@@ -234,20 +232,6 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     expect(viewContent?.filterState).toBe(controller.boardFilterState);
     expect(viewContent?.boardMeta.selectedProjectIdsJoined).toBe(
       '__marker_selected_project__',
-    );
-  });
-
-  it('wires activityWindowDays into windows', async () => {
-    capturedViewContentProps.length = 0;
-    const { AppBody } = await import('./AppBody');
-    const controller = makeController();
-
-    renderAppBody(AppBody, controller);
-
-    const viewContent = capturedViewContentProps.at(-1);
-    expect(viewContent?.windows.activityWindowDays).toBe(7);
-    expect(viewContent?.windows.onActivityWindowDaysChange).toBe(
-      controller.setActivityWindowDays,
     );
   });
 

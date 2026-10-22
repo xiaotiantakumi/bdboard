@@ -146,13 +146,13 @@ describe('AppBoardViewSwitch', () => {
     expect(screen.getByTestId('board-filter-bar')).toBeInTheDocument();
     expect(screen.getByTestId('bulk-action-bar')).toBeInTheDocument();
 
-    rerender(<AppBoardViewSwitch {...makeProps({ view: 'activity' })} />);
+    rerender(<AppBoardViewSwitch {...makeProps({ view: 'settings' })} />);
     expect(screen.queryByTestId('board-filter-bar')).not.toBeInTheDocument();
     expect(screen.queryByTestId('bulk-action-bar')).not.toBeInTheDocument();
   });
 
-  it('renders nothing for a non-board view (e.g. activity)', () => {
-    const { container } = render(<AppBoardViewSwitch {...makeProps({ view: 'activity' })} />);
+  it('renders nothing for a non-board view (e.g. settings)', () => {
+    const { container } = render(<AppBoardViewSwitch {...makeProps({ view: 'settings' })} />);
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -163,7 +163,7 @@ describe('AppBoardViewSwitch', () => {
     const { container } = render(
       <AppBoardViewSwitch
         {...makeProps({
-          view: 'activity',
+          view: 'settings',
           epicFilterId: 'bdboard-should-not-show',
           board: {
             query: { data: undefined, isLoading: true, error: null },

@@ -57,7 +57,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   // /api/model-stats で1組だけ共有する。経路ごとに持つと同じ PR を取り直し、ゲートの上限も掛け算される。
   const prBadgeShared = createPrBadgeShared(deps.prBadgeStatusCache);
 
-  // 元の routes.ts の登録順そのまま: health/status → board/projects/search/activity →
+  // 元の routes.ts の登録順そのまま: health/status → board/projects/search →
   // hygiene 系 → tickets 読み取り (catch-all含む) → tickets 書き込み →
   // comments → sessions/processes → refresh/events(SSE)。
   app.route('/', createHealthStatusRoutes(deps));

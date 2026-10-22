@@ -472,34 +472,6 @@ describe('createApiRoutes', () => {
     expect(body.projects[0].board.truncatedClosedIds).toHaveLength(3);
     expect(body.projects[0].board.truncatedClosedIds).toContain('bdboard-closed-4');
   });
-  it('filters activity by projects query', async () => {
-    const cache = createFakeBoardCache();
-    const a = project('/a', '/projects/a');
-    const b = project('/b', '/projects/b');
-    const createdAt = new Date('2026-06-01T08:00:00.000Z');
-
-    cache.putProject({
-      project: a,
-      tickets: [makeTicket({ id: 'bdboard-a', projectId: a.id, createdAt })],
-      fingerprint: 'fp-a',
-      fetchedAt: NOW,
-    });
-    cache.putProject({
-      project: b,
-      tickets: [makeTicket({ id: 'bdboard-b', projectId: b.id, createdAt })],
-      fingerprint: 'fp-b',
-      fetchedAt: NOW,
-    });
-
-    const app = createApiRoutes(createDeps({ cache }));
-    const response = await app.request(`/api/activity?projects=${encodeURIComponent(b.id)}`);
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body).toHaveLength(1);
-    expect(body[0].projectId).toBe(b.id);
-    expect(body[0].id).toBe('bdboard-b');
-  });
   it('returns search results across projects', async () => {
     const cache = createFakeBoardCache();
     const a = project('/a', '/projects/a');
@@ -598,92 +570,6 @@ describe('createApiRoutes', () => {
     const defaultLimit = await app.request('/api/search?q=searchable');
     expect(defaultLimit.status).toBe(200);
     expect((await defaultLimit.json()) as unknown[]).toHaveLength(30);
-  });
-  it('returns activity events with ISO timestamps and no ETag', async () => {
-    const cache = createFakeBoardCache();
-    const a = project('/a', '/projects/a');
-    const createdAt = new Date('2026-06-01T08:00:00.000Z');
-    const startedAt = new Date('2026-06-01T09:00:00.000Z');
-    const closedAt = new Date('2026-06-01T10:00:00.000Z');
-
-    cache.putProject({
-      project: { ...a, name: 'Alpha Project' },
-      tickets: [
-        makeTicket({
-          id: 'bdboard-activity',
-          projectId: a.id,
-          title: 'Activity ticket',
-          createdAt,
-          startedAt,
-          closedAt,
-        }),
-      ],
-      fingerprint: 'fp-a',
-      fetchedAt: NOW,
-    });
-
-    const app = createApiRoutes(createDeps({ cache }));
-    const response = await app.request('/api/activity');
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get('ETag')).toBeNull();
-    expect(body).toHaveLength(3);
-    expect(body[0]).toEqual({
-      kind: 'closed',
-      at: closedAt.toISOString(),
-      id: 'bdboard-activity',
-      projectId: a.id,
-      projectName: 'Alpha Project',
-      title: 'Activity ticket',
-      status: 'open',
-      priority: 2,
-      issueType: 'task',
-    });
-    assertNoDates(body);
-  });
-  it('clamps activity days between 1 and 30 and limit between 1 and 200', async () => {
-    const cache = createFakeBoardCache();
-    const a = project('/a', '/projects/a');
-    const tickets = Array.from({ length: 250 }, (_, index) =>
-      makeTicket({
-        id: `bdboard-${index}`,
-        projectId: a.id,
-        createdAt: new Date(NOW.getTime() - index * 60_000),
-      }),
-    );
-    cache.putProject({
-      project: a,
-      tickets,
-      fingerprint: 'fp-a',
-      fetchedAt: NOW,
-    });
-
-    const app = createApiRoutes(createDeps({ cache }));
-
-    const overLimit = await app.request('/api/activity?limit=500');
-    expect(overLimit.status).toBe(200);
-    expect((await overLimit.json()) as unknown[]).toHaveLength(200);
-
-    const underLimit = await app.request('/api/activity?limit=0');
-    expect(underLimit.status).toBe(200);
-    expect((await underLimit.json()) as unknown[]).toHaveLength(1);
-
-    const defaultLimit = await app.request('/api/activity');
-    expect(defaultLimit.status).toBe(200);
-    expect((await defaultLimit.json()) as unknown[]).toHaveLength(100);
-
-    const overDays = await app.request('/api/activity?days=99');
-    expect(overDays.status).toBe(200);
-    expect((await overDays.json()) as unknown[]).toHaveLength(100);
-
-    const underDays = await app.request('/api/activity?days=0');
-    expect(underDays.status).toBe(200);
-    expect((await underDays.json()) as unknown[]).toHaveLength(100);
-
-    const invalidDays = await app.request('/api/activity?days=abc&limit=xyz');
-    expect(invalidDays.status).toBe(200);
-    expect((await invalidDays.json()) as unknown[]).toHaveLength(100);
   });
   it('returns projects with session fields when provider is present', async () => {
     const cache = createFakeBoardCache();

@@ -1,13 +1,9 @@
 import { type UseQueryResult } from '@tanstack/react-query';
 import { type BoardCardDto, type BoardViewDto, type PrBadgeDto } from '../../api';
 import { type BoardFilterState } from '../../hooks/useBoardFilterState';
-import {
-  type ActivityWindowDays,
-  type ViewMode,
-} from '../../uiPersistedState';
+import { type ViewMode } from '../../uiPersistedState';
 import { type WipLimitsOverrides } from '../../wip-limits';
 import { VIEW_LABELS } from '../../paletteActions';
-import { ActivityFeed } from '../ActivityFeed';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { type NextUpRunLoopController } from '../nextUpRunLoop';
 import { SettingsPanel } from '../SettingsPanel';
@@ -22,7 +18,7 @@ import { AppBoardViewSwitch } from './AppBoardViewSwitch';
  * props はこの塊が依存する state/派生値が25個を超えるため(チケット本文の
  * 分析どおり)、関心ごとにオブジェクトへまとめている: `filterState` は
  * useBoardFilterState() の戻り値をそのまま、`board`/`boardMeta` はボード
- * 表示に必要なクエリ結果と派生 Map/Set、`nextUp`/`windows` は各ビュー固有の
+ * 表示に必要なクエリ結果と派生 Map/Set、`nextUp` は各ビュー固有の
  * ウィンドウ幅・limit 状態。JSX・分岐条件・渡す値は元の App.tsx から一切
  * 変えていない(変数参照をグループ化した prop 経由の参照に置き換えただけ)。
  * bdboard-mkm1.3: Next Up ビュー削除に伴い、`nextUp` は一括実行ループの
@@ -30,7 +26,7 @@ import { AppBoardViewSwitch } from './AppBoardViewSwitch';
  *
  * ボード系ビュー(split)の JSX は ESLint の200行上限のため
  * ./AppBoardViewSwitch.tsx へさらに分けた。ここは ErrorBoundary と
- * ボード以外のビュー(activity/settings)
+ * ボード以外のビュー(settings)
  * の出し分けだけを持つ。
  */
 export interface AppViewContentProps {
@@ -58,10 +54,6 @@ export interface AppViewContentProps {
   nextUp: {
     batchRun: NextUpRunLoopController;
   };
-  windows: {
-    activityWindowDays: ActivityWindowDays;
-    onActivityWindowDaysChange: (days: ActivityWindowDays) => void;
-  };
 }
 
 export function AppViewContent({
@@ -74,7 +66,6 @@ export function AppViewContent({
   onCardClick,
   onSessionBadgeClick,
   nextUp,
-  windows,
 }: AppViewContentProps) {
   return (
     // view をキーにして、別ビューへ切り替えたら壊れた状態を持ち越さない。
@@ -97,14 +88,6 @@ export function AppViewContent({
         onSessionBadgeClick={onSessionBadgeClick}
         nextUp={nextUp}
       />
-      {view === 'activity' && (
-        <ActivityFeed
-          projectIds={boardMeta.selectedProjectIds}
-          windowDays={windows.activityWindowDays}
-          onWindowDaysChange={windows.onActivityWindowDaysChange}
-          onSelectTicket={onCardClick}
-        />
-      )}
       {view === 'settings' && <SettingsPanel />}
     </ErrorBoundary>
   );

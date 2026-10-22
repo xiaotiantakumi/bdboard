@@ -24,11 +24,6 @@ import { AppViewContent, type AppViewContentProps } from './AppViewContent';
 vi.mock('./AppBoardViewSwitch', () => ({
   AppBoardViewSwitch: vi.fn(() => <div data-testid="board-view-switch" />),
 }));
-vi.mock('../ActivityFeed', () => ({
-  ActivityFeed: vi.fn((props: { windowDays: number }) => (
-    <div data-testid="activity-feed">{props.windowDays}</div>
-  )),
-}));
 vi.mock('../SettingsPanel', () => ({
   SettingsPanel: vi.fn(() => <div data-testid="settings-panel" />),
 }));
@@ -43,7 +38,6 @@ const appBoardViewSwitchMock = vi.mocked(AppBoardViewSwitch);
 // その自己ゲートを直接検証している)。よってここでの排他性チェックの対象は
 // ボード以外のリーフ view だけにする。
 const LEAF_TESTIDS = [
-  'activity-feed',
   'settings-panel',
 ];
 
@@ -94,10 +88,6 @@ function makeProps(overrides: Partial<AppViewContentProps> = {}): AppViewContent
     nextUp: {
       batchRun: {} as unknown as NextUpRunLoopController,
     },
-    windows: {
-      activityWindowDays: 1,
-      onActivityWindowDaysChange: vi.fn(),
-    },
     ...overrides,
   };
 }
@@ -114,7 +104,7 @@ function expectOnlyLeaf(testid: string | null) {
 
 describe('AppViewContent', () => {
   it('always delegates to AppBoardViewSwitch regardless of view (self-gating lives there)', () => {
-    for (const view of ['split', 'activity', 'settings'] as ViewMode[]) {
+    for (const view of ['split', 'settings'] as ViewMode[]) {
       const { unmount } = render(<AppViewContent {...makeProps({ view })} />);
       expect(screen.getByTestId('board-view-switch')).toBeInTheDocument();
       unmount();
@@ -194,14 +184,13 @@ describe('AppViewContent', () => {
       },
     });
     // projectRootPaths/selectedProjectIds は AppBoardViewSwitch が使わない
-    // フィールドなので再ピックに含まれない(HygienePanel/ActivityFeed 等の
+    // フィールドなので再ピックに含まれない(SettingsPanel 等の
     // 非ボード leaf 側でだけ使う)。誤って混入していないことも見ておく。
     expect(props?.boardMeta).not.toHaveProperty('projectRootPaths');
     expect(props?.boardMeta).not.toHaveProperty('selectedProjectIds');
   });
 
   const leafCases: { view: ViewMode; testid: string }[] = [
-    { view: 'activity', testid: 'activity-feed' },
     { view: 'settings', testid: 'settings-panel' },
   ];
 
@@ -219,20 +208,5 @@ describe('AppViewContent', () => {
       expectOnlyLeaf(null);
       unmount();
     }
-  });
-
-  it('forwards windows state to the matching view (activity)', () => {
-    render(
-      <AppViewContent
-        {...makeProps({
-          view: 'activity',
-          windows: {
-            activityWindowDays: 7,
-            onActivityWindowDaysChange: vi.fn(),
-          },
-        })}
-      />,
-    );
-    expect(screen.getByTestId('activity-feed')).toHaveTextContent('7');
   });
 });

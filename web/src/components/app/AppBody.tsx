@@ -38,8 +38,6 @@ export function AppBody({ controller }: AppBodyProps) {
     view,
     selectedProjectIds,
     selectedProjectIdsJoined,
-    activityWindowDays,
-    setActivityWindowDays,
     tipsBannerDismissed,
     setTipsBannerDismissed,
     boardFilterState,
@@ -130,10 +128,6 @@ export function AppBody({ controller }: AppBodyProps) {
           onSessionBadgeClick={overlays.handleOpenSessionList}
           nextUp={{
             batchRun: nextUpBatchRun,
-          }}
-          windows={{
-            activityWindowDays,
-            onActivityWindowDaysChange: setActivityWindowDays,
           }}
         />
         </BulkSelectionProvider>

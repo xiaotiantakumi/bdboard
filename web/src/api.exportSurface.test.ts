@@ -33,7 +33,6 @@ const EXPECTED_VALUE_EXPORTS = [
   'deleteTicketLabel',
   'deleteTicketSessionLink',
   'dismissTunnelInterruption',
-  'fetchActivity',
   'fetchAgentProcesses',
   'fetchAgentRun',
   'fetchAgentRunConfig',

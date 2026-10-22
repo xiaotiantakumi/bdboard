@@ -1,7 +1,7 @@
 // bdboard-sso1.12: dto.ts のモジュール分割。チケット検索結果とアクティビティ
 // フィードの DTO。board-routes.ts / ticket-read-routes.ts の両方が参照する
 // (barrel 経由)。
-import type { ActivityEvent } from '../../../application/board/get-activity-feed.js';
+import type { ActivityEvent } from '../../../application/board/activity-events.js';
 import type { TicketSearchHit } from '../../../application/board/search-tickets.js';
 
 export interface TicketSearchResultDto {
