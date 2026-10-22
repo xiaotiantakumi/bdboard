@@ -84,7 +84,7 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
     expect(sentinelGets).not.toContain('/__sentinel/chat');
   });
 
-  it('mounts platform-support routes and the processes/chat feature guards before attachments/inner', () => {
+  it('mounts platform-support routes and the chat feature guard before attachments/inner', () => {
     const app = new Hono();
     mountRoutes(app, buildDeps());
 
@@ -100,18 +100,14 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
     expect(localFilesIndex).toBeGreaterThan(attachmentsIndex);
     expect(localFilesIndex).toBeLessThan(innerIndex);
 
-    // processes ガード (collection + wildcard) と chat ガードは ALL メソッドの
+    // chat ガードは ALL メソッドの
     // ミドルウェアとして platform-support routes の直後に登録される。
     const guardRoutes = app.routes.filter(
       (route) =>
         route.method === 'ALL' &&
-        (route.path === '/api/processes' ||
-          route.path === '/api/processes/*' ||
-          route.path === '/api/chat/*'),
+        route.path === '/api/chat/*',
     );
     expect(guardRoutes.map((route) => route.path)).toEqual([
-      '/api/processes',
-      '/api/processes/*',
       '/api/chat/*',
     ]);
   });

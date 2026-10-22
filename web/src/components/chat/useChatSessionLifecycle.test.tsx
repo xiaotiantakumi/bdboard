@@ -984,22 +984,4 @@ describe('useChatSessionLifecycle', () => {
       });
     });
   });
-
-  describe('handleResumeDiscoveredSession', () => {
-
-    describe('thread-list fetch order (bdboard-z9mn)', () => {
-
-    });
-
-    describe('adopting before the project list is restored (bdboard-oaak)', () => {
-      // 未復元(restoredProjectsRef 未マーク)の採用は、同期的には永続化済みの
-      // activeSessionIds を基点にするしかない(サーバー一覧はまだ無い)。その中に
-      // サーバーがもう持たない id があると、一覧が届いた後も open に残り、
-      // タイトルの引けない「(無題)」タブになる(採用が restoredProjectsRef を立てるので
-      // E7 の応答は open を復元し直さない)。一覧が届いたら、復元の経路
-      // (restoreThreadView)と同じ規則で、基点にした永続化 id のうち一覧に無いものを落とす。
-
-    });
-
-  });
 });

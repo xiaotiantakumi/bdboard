@@ -347,27 +347,21 @@ test.describe('mobile header compact — header height budget (bdboard-k21o)', (
   });
 });
 
-test.describe('mobile header compact — AC2 session list via status pill', () => {
+test.describe('mobile header compact — AC2 status pill popover', () => {
   test.use({
     viewport: MOBILE_VIEWPORT,
     isMobile: true,
     hasTouch: true,
   });
 
-  test('375x812: toolbar session button hidden; status pill opens session list', async ({
+  test('375x812: status pill popover fits within the viewport', async ({
     page,
   }) => {
     await page.goto('/');
     await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
 
-    const toolbarSessionBtn = page.locator('.view-toolbar .meta-text-btn');
-    await expect(toolbarSessionBtn).toHaveCount(1);
-    await expect(toolbarSessionBtn).toBeHidden();
-
     await page.locator('.status-pill').click();
-    const sessionBtn = page.locator('.status-pill-popover .status-pill-session-btn');
-    await expect(sessionBtn).toBeVisible();
-    await expect(sessionBtn).toBeEnabled();
+    await expect(page.locator('.status-pill-popover')).toBeVisible();
 
     const popoverBounds = await page.evaluate(() => {
       const popover = document.querySelector('.status-pill-popover');
@@ -393,12 +387,6 @@ test.describe('mobile header compact — AC2 session list via status pill', () =
         `(left=${popoverBounds.left}, right=${popoverBounds.right}, ` +
         `innerWidth=${popoverBounds.innerWidth})`,
     ).toBe(true);
-
-    await sessionBtn.click();
-
-    const sessionPanel = page.locator('#session-list-title');
-    await expect(sessionPanel).toBeVisible({ timeout: 15_000 });
-    await expect(sessionPanel).toContainText('セッション');
   });
 });
 
@@ -480,7 +468,6 @@ test.describe('mobile header compact — AC4 desktop unchanged', () => {
       const header = document.querySelector('.header');
       const globalBar = document.querySelector('.global-bar');
       const toolbarLeft = document.querySelector('.view-toolbar-left');
-      const metaBtn = document.querySelector('.view-toolbar .meta-text-btn');
       const firstCard = document.querySelector('.card');
       const projectPickerBtn = document.querySelector('.project-picker-button');
       const viewToolbar = document.querySelector('.view-toolbar');
@@ -517,12 +504,6 @@ test.describe('mobile header compact — AC4 desktop unchanged', () => {
         toolbarLeftDisplay: toolbarLeft
           ? getComputedStyle(toolbarLeft).display
           : null,
-        metaBtnVisible:
-          metaBtn instanceof HTMLElement
-            ? metaBtn.offsetParent !== null &&
-              getComputedStyle(metaBtn).display !== 'none' &&
-              getComputedStyle(metaBtn).visibility !== 'hidden'
-            : false,
         firstCardTop: firstCard?.getBoundingClientRect().top ?? Number.NaN,
         globalBarChildCount: childTops.length,
         topSpread,
@@ -560,10 +541,6 @@ test.describe('mobile header compact — AC4 desktop unchanged', () => {
       metrics.toolbarLeftDisplay,
       'mobile display:contents must not apply at desktop width',
     ).not.toBe('contents');
-
-    expect(metrics.metaBtnVisible, 'toolbar session button must stay visible on desktop').toBe(
-      true,
-    );
 
     expect(
       metrics.projectPickerMinHeight,
@@ -610,9 +587,6 @@ test.describe('mobile header compact — status pill popover fits 320px (bdboard
 
     await page.locator('.status-pill').click();
     await expect(page.locator('.status-pill-popover')).toBeVisible();
-
-    const sessionBtn = page.locator('.status-pill-popover .status-pill-session-btn');
-    await expect(sessionBtn).toBeVisible();
 
     const metrics = await page.evaluate((epsilon) => {
       const popover = document.querySelector('.status-pill-popover');

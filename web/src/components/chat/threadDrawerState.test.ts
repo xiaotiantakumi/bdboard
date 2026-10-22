@@ -13,7 +13,6 @@ describe('threadDrawerReducer (bdboard-sso1.83)', () => {
       renamingSessionId: null,
       renameDraft: '',
       confirmingDeleteSessionId: null,
-      showDiscoveredSessions: false,
     });
   });
 
