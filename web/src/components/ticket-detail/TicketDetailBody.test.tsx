@@ -287,13 +287,13 @@ describe('TicketDetailBody', () => {
     expect(getByText('MARK-defer')).toBeInTheDocument();
     // PR バッジ (state: 'open' -> "PR open" というラベルで描画される)。
     expect(getByText('PR open')).toBeInTheDocument();
-    expect(getByText('Notes')).toBeInTheDocument();
+    expect(getByText('これまでの経緯')).toBeInTheDocument();
     expect(localFilesMock.mock.calls.at(-1)?.[0]).toEqual({ ticketId: 'MARK-id' });
     // MarkdownContent はハイフン区切りの語を bead リンクとして解釈し、Notes 本文を
     // 複数のノードに分割し得るため(例: "MARK-notes" と "body-text" が別ボタンになる)、
     // getByText で単一ノード一致を求めず、Notes セクション全体の textContent へ
     // 連結後の文字列で判定する(data.notes に正しくひも付いていることの確認が目的)。
-    const notesSection = getByText('Notes').closest('.detail-section');
+    const notesSection = getByText('これまでの経緯').closest('.detail-section');
     expect(notesSection?.textContent).toContain('MARK-notes-body-text');
 
     const labels = Array.from(container.querySelectorAll('.detail-field-label')).map(
@@ -342,7 +342,7 @@ describe('TicketDetailBody', () => {
     expect(queryByText('MARK-started')).not.toBeInTheDocument();
     expect(queryByText('MARK-closed')).not.toBeInTheDocument();
     expect(queryByText('MARK-defer')).not.toBeInTheDocument();
-    expect(queryByText('Notes')).not.toBeInTheDocument();
+    expect(queryByText('これまでの経緯')).not.toBeInTheDocument();
 
     const labels = Array.from(container.querySelectorAll('.detail-field-label')).map(
       (el) => el.textContent,

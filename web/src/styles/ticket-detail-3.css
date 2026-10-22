@@ -118,3 +118,11 @@
   gap: 5px;
   margin-top: 4px;
 }
+/* bdboard-xfi7: 「これまでの経緯」(notes) は閉じた状態で出し、見出しを summary 内に並べる */
+.ticket-notes-details > summary {
+  cursor: pointer;
+}
+
+.ticket-notes-details > summary h3 {
+  display: inline;
+}
