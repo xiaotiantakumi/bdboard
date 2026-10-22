@@ -213,16 +213,6 @@
     max-width: 90%;
   }
 
-  .bd-command-btn {
-    min-height: 44px;
-    min-width: 44px;
-  }
-
-  .quick-action-btn {
-    min-height: 44px;
-    min-width: 44px;
-  }
-
   .quick-action-confirm-actions .btn {
     min-height: 44px;
     min-width: 44px;

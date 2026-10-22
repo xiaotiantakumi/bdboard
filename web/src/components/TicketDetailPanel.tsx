@@ -137,7 +137,6 @@ export function TicketDetailPanel({
             <TicketDetailSecondaryBody
               data={controller.data}
               ticketId={ticketId}
-              projectRootPath={controller.projectRootPath}
               pendingDecision={pendingDecision}
               isTicketOnBoard={isTicketOnBoard}
               onOpenTicket={onOpenTicket}
@@ -146,7 +145,6 @@ export function TicketDetailPanel({
               decision={controller.decision}
               timeline={controller.timeline}
               comment={controller.comment}
-              quickActions={controller.quickActions}
               agentRun={controller.agentRun}
               copy={controller.copy}
               commentTextareaRef={commentTextareaRef}
