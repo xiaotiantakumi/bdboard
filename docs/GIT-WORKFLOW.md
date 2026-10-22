@@ -1034,8 +1034,7 @@ other tools) reads the imported issue before it round-trips back through that sa
 - **PR 経由必須** (`pull_request`、approvals 0 — ソロ開発)。マージ方式は **squash のみ**
   (`gh pr merge --squash` に揃える)。
 - **required status checks** = `verify` / `e2e` / `commit-parse` (GitHub Actions 発のもの
-  だけを認める)。`verify-windows` は `continue-on-error` のまま必須化しない (判断は
-  bdboard-51qb)。GitGuardian は外部 app なので必須にしない。**strict (up-to-date 必須) は
+  だけを認める)。Windows は非対応で、`verify-windows` ジョブは廃止した (bdboard-l1kt)。GitGuardian は外部 app なので必須にしない。**strict (up-to-date 必須) は
   off** — main が動いたときの追従は上の drift + merge-slot + CAS の運用に任せ、PR ごとの
   rebase → CI 再走を強制しない。strict を on にすると main が動くたびに全 PR の
   update-branch + CI 再走が要り、S0 で枠の中にあった待ちを GitHub 側へ移すだけになる。

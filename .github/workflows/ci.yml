@@ -35,7 +35,7 @@ jobs:
       # パスを export する。下の Node 22 setup-node が 22 の bin を PATH 先頭に足す (14 の bin は
       # 後方に残る) ため以降は 22 のまま。test:server の旧 Node テスト
       # (scripts/node-version-guard.old-node.test.mjs) だけが BDBOARD_OLD_NODE を使う。
-      # ubuntu 限定なので Windows は不変。
+      # ubuntu 限定 (CI は ubuntu のみ。Windows 非対応、bdboard-l1kt)。
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 14.15.0
@@ -93,62 +93,6 @@ jobs:
 
       - run: npm run verify
 
-  # Kept separate from `verify` rather than using a matrix so the existing
-  # check name `verify` stays unchanged — our merge convention waits on that
-  # name, and we do not want to break a future required Windows gate either.
-  verify-windows:
-    # 落ちても PR をブロックしないよう job 全体を continue-on-error にしている。
-    # state は unstable になるだけで、マージは可能。
-    #
-    # このジョブを必須ゲートにするかどうかの判断は bdboard-51qb が持つ。
-    # (以前ここは bdboard-70z.9 を指していたが、70z.9 は「Windows 未対応機能を
-    #  UI で明示する」という別件で、しかも既に closed。判断の持ち主が消えていた。)
-    #
-    # 現況 (実測 2026-09-25、bdboard-51qb): pqhe→npf9→ypjz→qlw1 と、Windows
-    # ランナー固有の git 子プロセス起動オーバーヘッドに起因する per-test
-    # タイムアウトが約1〜2週間おきに別ファイルで再発しており (直近は qlw1,
-    # PR #701, 2026-09-24)、根治 (呼び出し回数そのものを減らす設計変更) は
-    # まだされていない。加えて bdboard-c6nv ([vitest-worker] Timeout の
-    # 偽陽性失敗) が open のまま。
-    #
-    # 裁定: 今は advisory のまま (continue-on-error を維持)。再検討の条件は
-    # (a) bdboard-c6nv が閉じる、(b) 2026-09-24 以降 14 日間 Windows だけの
-    # 失敗が 0。両方を満たしたらユーザーに Yes/No を確認する。
-    continue-on-error: true
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            web/package-lock.json
-      # ubuntu 側 (verify job) と同じ npm ci 所要時間の不安定さ対策。詳細は verify
-      # job のコメント参照 (bdboard-gofm)。
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        id: node-modules-cache
-        with:
-          path: node_modules
-          key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-node22-${{ hashFiles('package-lock.json') }}
-      - if: steps.node-modules-cache.outputs.cache-hit != 'true'
-        run: npm ci
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        id: web-node-modules-cache
-        with:
-          path: web/node_modules
-          key: web-node-modules-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-node22-${{ hashFiles('web/package-lock.json') }}
-      - if: steps.web-node-modules-cache.outputs.cache-hit != 'true'
-        run: npm --prefix web ci
-      # bdboard-2yp で scripts/verify.mjs が Windows 対応になったので、ubuntu 側と
-      # 同じ 1 行に戻した (bdboard-pax)。以前はステップ列として複製していたが、
-      # verify のチェーンが変わるたびに手で追随が要る二重管理になっていた。
-      # verify:steps は直列 (build && build:web && test:server && test:web &&
-      # check:boundaries) なので、test:server で止まると後続は走らない。
-      # 個々の落ち方の内訳は bdboard-9dm に記録済み。
-      - run: npm run verify
   e2e:
     runs-on: ubuntu-latest
     # verify と同じ 15 分。ジョブ時間の支配要因は npm install で、同じコマンドが
