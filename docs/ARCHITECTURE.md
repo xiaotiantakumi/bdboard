@@ -38,16 +38,14 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 
 ### 各層の役割と主なファイル
 
-- **`src/domain/`** — 値/エンティティ(`Ticket`, `Project`, `AgentSession`, `SessionLink`, `Run` 等)
-  と導出ロジック(`readiness.ts` の ready/blocked 判定、`liveness.ts` のセッション生存度、
-  `board-notifications.ts` の通知遷移検出など)。外部I/Oを一切持たないため
+- **`src/domain/`** — 値/エンティティ(`Ticket`, `Project`, `SessionLink`, `Run` 等)
+  と導出ロジック(`readiness.ts` の ready/blocked 判定、`board-notifications.ts` の通知遷移検出など)。外部I/Oを一切持たないため
   フェイク不要でユニットテストが書ける。
 - **`src/application/`** — ユースケース(`board/refresh-projects.ts`、`lease/reclaim-scheduler.ts`、
   `runner/dispatch-run.ts` 等)と、`infrastructure` が実装すべき境界を定義する **ポート**
   (`application/ports/*.ts`。詳細は次節)。
 - **`src/infrastructure/`** — ポートの実アダプタ。`bd/`(bd CLIラッパー群)、`gh/`(PRステータス)、
-  `cache/`(SQLiteキャッシュ)、`discovery/`(プロジェクト走査)、`session/`(Claude Codeセッション
-  検出)、`transcript/`(トランスクリプト走査)、`watch/`(chokidarファイル監視)、`process/`
+  `cache/`(SQLiteキャッシュ)、`discovery/`(プロジェクト走査)、`transcript/`(トランスクリプト走査)、`watch/`(chokidarファイル監視)、`process/`
   (子プロセス実行)、`runners/`(エージェント起動アダプタ。`POST /api/runs` 経由で配線)。
 - **`src/interface/`** — HTTPエントリポイント。`http/routes.ts` が REST API 群、
   `sse/event-hub.ts` がSSE配信用のPub/Subハブ、`http/*-routes.ts` が機能別ルート
@@ -71,19 +69,14 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `LeaseReader` / `LeaseReclaimer` | `createBdCliLeaseReader` / `createBdCliLeaseReclaimer` | claim(lease)の読み取り/期限切れ回収 |
 | `CommentReader` | `createBdCliCommentReader` | チケットコメント取得 |
 | `HumanDecisionsPort` | `createBdCliHumanDecisions` | 人間の意思決定待ちキューの読み書き |
-| `SessionLinkWriterPort` | `createBdCliSessionLinkWriter` | チケット⇔セッションの手動紐付け |
 | `PrStatusReader` | `createGhCliPrStatusReader` | `gh` CLI でPRステータス取得 |
 | `WorktreeScanner` | `createGitWorktreeScanner` | worktree一覧のスキャン |
 | `ProjectDiscovery` | `createFsProjectDiscovery` | スキャンルート配下の `.beads/` プロジェクト検出 |
 | `ProjectFingerprinter` | `createBeadsFingerprinter` | 変化検知用フィンガープリント計算 |
 | `ProjectWatcher` | `createChokidarProjectWatcher` | プロジェクトのファイル変更監視 |
 | `BoardCache` | `createSqliteBoardCache` | 横断ボードの永続キャッシュ(プロジェクト/チケット/セッションリンク/オフセット)。全プロジェクトの読み出し口は `listProjects`(同期・チケット込み)/ `listProjectRefs`(同期・project だけを返す射影でコストは `listProjects` と同じ・省略可)/ `listProjectsChunked`(非同期でイベントループに制御を返す・省略可)の3つで、どれも「id, fingerprint の一括取得 → パース済みキャッシュ → 外れた分だけ行を読む」ので温まっていれば全チケット JSON を読み直さない(cold なら外れた分をパースする)。呼び出し側は三項演算子や `.map(entry => entry.project)` を自前で書かず `application/board/read-cached-projects.ts` の `readProjectEntries` / `readProjectRefs` を使う(bdboard-5lnh) |
-| `SessionRegistry` | `createClaudeSessionRegistry` | `~/.claude/sessions/*.json` + PID生存確認からセッション列挙 |
 | `TranscriptScanner` | `createJsonlTranscriptScanner` | セッショントランスクリプトの増分tail走査(チケットID抽出) |
-| `SessionTailReader` | `createSessionTailReader` | セッションログ末尾の取得 |
 | `InteractionReader` | `createJsonlInteractionReader` | agy等のheadless実行ログ(soft-deny等)読み取り |
-| `ProcessScanner` | `createPsProcessScanner` | `ps` によるエージェントプロセス列挙 |
-| `ProcessProbe` | `NodeProcessProbe` | PID生存確認(`process.kill(pid, 0)`) |
 | `CommandRunner` / `StreamingCommandRunner` | `NodeCommandRunner` / `NodeStreamingCommandRunner` | 子プロセス実行の共通口(`infrastructure/process` 配下限定) |
 | `ChatAgentPort` | `createClaudeChatAgent` 等(`infrastructure/chat`) | チャット機能のエージェントアダプタ(claude常設、codex/cursor/agyはopt-in) |
 | `ChatSessionRepository` / `ChatMessageRepository` | `createSqliteChatSessionRepository` / `createSqliteChatMessageRepository` | チャットセッション・メッセージの永続化 |
@@ -100,7 +93,6 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `BoardThresholdsConfigPort` | `createFileBoardThresholdsConfigStore` | 滞留・liveness 判定しきい値と In Progress の WIP 上限設定の永続化 |
 | `AiQuotaAlertConfigPort` | `createFileAiQuotaAlertConfigStore` | AI残量アラート設定の永続化 |
 | `ApplicationVersionProvider` | `createPackageJsonVersionProvider` | アプリケーションのバージョン取得 |
-| `ChatSessionDiscoveryPort` | `createFsChatSessionDiscovery` | CLI で起動した既存 Claude セッションのトランスクリプトからの検出・所有権(cwd)検証・adopt 時の履歴シード読み取り |
 | `TunnelInterruptionStore` | `createFileTunnelInterruptionStore` | トンネル中断状態の記録と読み取り |
 | `ReleaseSource` | `createGithubReleaseSource` | リリース情報の取得 |
 | `AttachmentStoragePort` | `createFsAttachmentStorage` | チケット添付画像の保存/一覧/読み取り(bdboard-qw26) |
@@ -155,13 +147,11 @@ bdboard 自身は `8787` / `scripts/always-on-server.sh` を宣言している�
    チケット/プロジェクト/セッションリンク/トランスクリプト走査オフセット等を
    保持し、再起動時もここから復元する(トランスクリプトリンクは起動時に
    `hydrateTranscriptLinksFromCache()` でインメモリ `Map` へ再構築)。
-4. **セッション/トランスクリプト観測**: 並行して `SessionRegistry`(`createClaudeSessionRegistry`)が
-   `~/.claude/sessions/*.json` とPID生存確認から稼働中セッションを列挙し
-   (`BDBOARD_SESSION_INTERVAL_MS` 間隔)、`TranscriptScanner`(`createJsonlTranscriptScanner`)が
+4. **トランスクリプト観測**: 並行して `TranscriptScanner`(`createJsonlTranscriptScanner`)が
    セッションのトランスクリプトを増分走査してチケットID⇔セッションIDのリンクを推定する
    (`BDBOARD_TRANSCRIPT_INTERVAL_MS` 間隔)。
 5. **配信**: 何か実際に変化した場合(空更新は抑制)、`interface/sse/event-hub.ts` の `EventHub` へ
-   `board.changed` / `session.changed` / `notification` 等のイベントを `publish()` する。
+   `board.changed` / `notification` 等のイベントを `publish()` する。
 6. **SSE配信**: `interface/http/routes.ts` の `GET /api/events` が `EventHub.subscribe()` して
    Server-Sent Events としてクライアントへ中継する(接続ごとに ping タイマーを持ち、
    `AbortSignal` とレスポンスの両方の切断経路を監視してリークを防ぐ)。`notification` だけは
@@ -275,7 +265,7 @@ bdboard 自身は `8787` / `scripts/always-on-server.sh` を宣言している�
 
 [docs/PLAN.md](./PLAN.md) の「v1 の安全保証」節には「`IssueWriter` ポート(現 `IssueWriterPort`)の infrastructure 実装を
 v1の合成ルートに登録しない」という当初方針が書かれているが、現在の `src/main.ts` は
-`createBdCliIssueWriter` / `createBdCliDependencyWriter` / `createBdCliSessionLinkWriter` 等を
+`createBdCliIssueWriter` / `createBdCliDependencyWriter` 等を
 実際に生成し `createApiRoutes` へ配線している。書き込み機能はその後のスライスで計画通り実装され、
 上記の `write-guard` による認可ゲートに置き換わっている。**Runner(エージェント自動起動)も
 `POST /api/runs` として配線済み**だが、`agent-run-guard` + リモート許可トグル(既定 off)により

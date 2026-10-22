@@ -16,9 +16,6 @@ export function isNotificationPayload(value: unknown): value is NotificationPayl
   if (isTicketNotificationKind(payload.kind)) {
     return typeof payload.ticketId === 'string';
   }
-  if (payload.kind === 'session_died') {
-    return typeof payload.sessionId === 'string' && typeof payload.cwd === 'string';
-  }
   if (payload.kind === 'ai_quota_threshold') {
     return (
       typeof payload.providerId === 'string' &&
@@ -40,11 +37,9 @@ function validateNotificationEventItem(value: unknown): NotificationEventItem | 
     typeof item.id !== 'string' ||
     (item.kind !== 'ticket_ready' &&
       item.kind !== 'decision_pending' &&
-      item.kind !== 'session_died' &&
       item.kind !== 'ai_quota_threshold' &&
       item.kind !== 'watched_lane_changed' &&
-      item.kind !== 'watched_comment_changed' &&
-      item.kind !== 'watched_session_changed') ||
+      item.kind !== 'watched_comment_changed') ||
     typeof item.occurredAt !== 'string'
   ) {
     return null;
@@ -56,15 +51,6 @@ function validateNotificationEventItem(value: unknown): NotificationEventItem | 
     return null;
   }
   if (item.projectId !== undefined && typeof item.projectId !== 'string') {
-    return null;
-  }
-  if (item.sessionId !== undefined && typeof item.sessionId !== 'string') {
-    return null;
-  }
-  if (item.cwd !== undefined && typeof item.cwd !== 'string') {
-    return null;
-  }
-  if (item.name !== undefined && typeof item.name !== 'string') {
     return null;
   }
   if (item.providerId !== undefined && typeof item.providerId !== 'string') {
@@ -95,20 +81,6 @@ function validateNotificationEventItem(value: unknown): NotificationEventItem | 
     return null;
   }
   if (item.commentCount !== undefined && typeof item.commentCount !== 'number') {
-    return null;
-  }
-  if (
-    item.addedSessionIds !== undefined &&
-    (!Array.isArray(item.addedSessionIds) ||
-      !item.addedSessionIds.every((entry) => typeof entry === 'string'))
-  ) {
-    return null;
-  }
-  if (
-    item.removedSessionIds !== undefined &&
-    (!Array.isArray(item.removedSessionIds) ||
-      !item.removedSessionIds.every((entry) => typeof entry === 'string'))
-  ) {
     return null;
   }
   return value as NotificationEventItem;

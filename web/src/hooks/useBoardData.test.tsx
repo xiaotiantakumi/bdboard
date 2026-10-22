@@ -37,8 +37,6 @@ function makeCard(
     blockedBy: [],
     blocks: [],
     unblocksCount: 0,
-    liveness: null,
-    sessions: [],
     stalled: false,
     epicProgress: null,
     deferDays: null,
@@ -168,10 +166,7 @@ describe('useBoardData', () => {
             name: 'Project One',
             rootPath: '/repo',
             prefixes: ['bdboard'],
-            sessionCount: 0,
-            activeSessionCount: 0,
             incompleteTicketCount: 0,
-            sessions: [],
           },
           board: makeBoard({
             lanes: {

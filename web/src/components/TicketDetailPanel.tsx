@@ -134,7 +134,6 @@ export function TicketDetailPanel({
               isTicketOnBoard={isTicketOnBoard}
               onOpenTicket={onOpenTicket}
               dependencies={controller.dependencies}
-              sessionLink={controller.sessionLink}
               decision={controller.decision}
               timeline={controller.timeline}
               comment={controller.comment}

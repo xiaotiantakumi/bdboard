@@ -13,11 +13,6 @@ export function notificationCopy(item: NotificationEventItem): { title: string; 
         title: '決定待ちが発生しました',
         body: `${item.title ?? item.ticketId} (${item.ticketId})`,
       };
-    case 'session_died':
-      return {
-        title: 'セッションが終了しました',
-        body: `${item.name ?? item.cwd}`,
-      };
     case 'ai_quota_threshold':
       return {
         title: 'AIクォータ残量が閾値を下回りました',
@@ -33,13 +28,6 @@ export function notificationCopy(item: NotificationEventItem): { title: string; 
         title: 'ウォッチ中のチケットのコメントが更新されました',
         body: `${ticketLabel}: ${item.previousCommentCount ?? 0} → ${item.commentCount ?? 0}`,
       };
-    case 'watched_session_changed':
-      const added = item.addedSessionIds?.length ?? 0;
-      const removed = item.removedSessionIds?.length ?? 0;
-      return {
-        title: 'ウォッチ中のチケットのセッション紐付けが変わりました',
-        body: `${ticketLabel}: +${added} -${removed}`,
-      };
   }
 }
 
@@ -49,16 +37,12 @@ function kindSummaryLabel(kind: NotificationEventItem['kind'], count: number): s
       return `着手可能 ${count}件`;
     case 'decision_pending':
       return `決定待ち ${count}件`;
-    case 'session_died':
-      return `セッション終了 ${count}件`;
     case 'ai_quota_threshold':
       return `クォータ低下 ${count}件`;
     case 'watched_lane_changed':
       return `ウォッチレーン遷移 ${count}件`;
     case 'watched_comment_changed':
       return `ウォッチコメント ${count}件`;
-    case 'watched_session_changed':
-      return `ウォッチセッション ${count}件`;
   }
 }
 

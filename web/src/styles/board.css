@@ -33,34 +33,6 @@
   letter-spacing: -0.01em;
 }
 
-.session-badge {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 3px 8px;
-  border-radius: var(--radius-pill);
-  background: var(--badge-session-bg);
-  color: var(--badge-session-fg);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  vertical-align: middle;
-}
-
-.session-badge-btn {
-  border: none;
-  cursor: pointer;
-  /* font-size/weight は .session-badge 側を活かす(font ショートハンドだと上書きされる) */
-  font-family: inherit;
-  transition: opacity 0.15s ease;
-}
-
-.session-badge-btn:hover {
-  opacity: 0.85;
-}
-
-.card-project .session-badge {
-  margin-left: 6px;
-}
-
 .project-harness-badges {
   display: inline-flex;
   flex-wrap: wrap;

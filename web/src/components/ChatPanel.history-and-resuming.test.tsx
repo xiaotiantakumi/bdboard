@@ -33,7 +33,6 @@ vi.mock('../api', async (importOriginal) => {
         updatedAt: '2026-01-01T00:00:00Z',
       }),
     ),
-    fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     fetchPlatformSupport: vi.fn(() => Promise.resolve({ platform: 'darwin', limitations: [] })),
   };
 });
@@ -45,7 +44,6 @@ import {
   acknowledgeChatTurn,
   deleteChatThread,
   updateChatThread,
-  fetchDiscoveredChatSessions,
   fetchPlatformSupport,
 } from '../api';
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
@@ -56,7 +54,6 @@ const fetchChatTurnStatusMock = vi.mocked(fetchChatTurnStatus);
 const acknowledgeChatTurnMock = vi.mocked(acknowledgeChatTurn);
 const deleteChatThreadMock = vi.mocked(deleteChatThread);
 const updateChatThreadMock = vi.mocked(updateChatThread);
-const fetchDiscoveredChatSessionsMock = vi.mocked(fetchDiscoveredChatSessions);
 const fetchPlatformSupportMock = vi.mocked(fetchPlatformSupport);
 const defaultWindowInnerWidth = window.innerWidth;
 
@@ -972,206 +969,5 @@ describe('ChatPanel', () => {
     expect(agentSelect).toHaveValue('example-agent');
     expect(screen.queryByText('history from claude session')).not.toBeInTheDocument();
     expect(readPersistedChatThreads()).toEqual({ 'proj-a': { activeSessionIds: [] } });
-  });
-
-  describe('resuming a discovered CLI session (bdboard-3tw.104.3 レビュー M1/M2/S3/S4)', () => {
-    function mockAdoptResponse(
-      fetchImpl: (url: string, init?: RequestInit) => Promise<Response>,
-    ) {
-      fetchMock.mockImplementation(fetchImpl);
-    }
-
-    it('seeds the conversation from seedMessages and skips the ChatMessageRepository fetch', async () => {
-      const user = userEvent.setup();
-      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
-      fetchDiscoveredChatSessionsMock.mockResolvedValue({
-        sessions: [
-          {
-            sessionId: 'discovered-1',
-            lastActivityAt: '2026-08-16T12:00:00.000Z',
-            alreadyAdopted: false,
-          },
-        ],
-      });
-      mockAdoptResponse(async (url: string, init?: RequestInit) => {
-        if (
-          url === '/api/chat/projects/proj-a/discovered-sessions/discovered-1/adopt' &&
-          init?.method === 'POST'
-        ) {
-          return jsonResponse({
-            sessionId: 'discovered-1',
-            agentId: 'claude',
-            seedMessages: [
-              { role: 'user', text: 'seeded question', timestamp: '2026-08-16T11:00:00.000Z' },
-              { role: 'assistant', text: 'seeded answer', timestamp: '2026-08-16T11:00:01.000Z' },
-            ],
-          });
-        }
-        if (url === '/api/chat/message' && init?.method === 'POST') {
-          return jsonResponse({ reply: 'AI reply', sessionId: 'discovered-1', agentId: 'claude' });
-        }
-        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
-      });
-
-      const { container } = renderChatPanel([PROJECT_A]);
-
-      openThreadDrawer(container);
-      await user.click(within(getThreadDrawer(container)).getByRole('button', { name: 'CLIセッションを再開' }));
-      await user.click(await screen.findByRole('button', { name: 'セッション discovered-1 を再開' }));
-
-      // 履歴シードは adopt レスポンス同梱の seedMessages から反映される (M1)。
-      expect(await screen.findByText('seeded question')).toBeInTheDocument();
-      expect(screen.getByText('seeded answer')).toBeInTheDocument();
-
-      // selectedThreadIds が新セッションIDへ retarget され、開いているスレッドが
-      // 1件・選択中であることがスイッチャーの件数表示に反映される (S3)。
-      expect(container.querySelector('.chat-thread-switcher-count')).toHaveTextContent('スレッド 1');
-
-      // openThreadIds に新セッションIDが加わり、writePersistedChatThreadState の
-      // ペイロードが activeSessionIds/selectedSessionId とも正しい (S3/S4)。
-      expect(readPersistedChatThreads()).toEqual({
-        'proj-a': { activeSessionIds: ['discovered-1'], selectedSessionId: 'discovered-1' },
-      });
-
-      // historyLoadedFor が抑止され、通常の ChatMessageRepository 経由の履歴読み込み
-      // (GET /api/chat/sessions/discovered-1/messages) は一度も呼ばれない (S3)。
-      expect(
-        fetchMock.mock.calls.some(([url]) =>
-          String(url).includes('/api/chat/sessions/discovered-1/messages'),
-        ),
-      ).toBe(false);
-    });
-
-    it('falls back to an explanatory note when seedMessages is empty', async () => {
-      const user = userEvent.setup();
-      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
-      fetchDiscoveredChatSessionsMock.mockResolvedValue({
-        sessions: [
-          {
-            sessionId: 'discovered-2',
-            lastActivityAt: '2026-08-16T12:00:00.000Z',
-            alreadyAdopted: false,
-          },
-        ],
-      });
-      mockAdoptResponse(async (url: string, init?: RequestInit) => {
-        if (
-          url === '/api/chat/projects/proj-a/discovered-sessions/discovered-2/adopt' &&
-          init?.method === 'POST'
-        ) {
-          return jsonResponse({ sessionId: 'discovered-2', agentId: 'claude', seedMessages: [] });
-        }
-        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
-      });
-
-      const { container } = renderChatPanel([PROJECT_A]);
-
-      openThreadDrawer(container);
-      await user.click(within(getThreadDrawer(container)).getByRole('button', { name: 'CLIセッションを再開' }));
-      await user.click(await screen.findByRole('button', { name: 'セッション discovered-2 を再開' }));
-
-      expect(
-        await screen.findByText(
-          'このCLIセッションの直近の会話をここに表示できませんでした。続きから会話できます。',
-        ),
-      ).toBeInTheDocument();
-    });
-
-    it('does not let a late-resolving history fetch for the same sessionId overwrite a just-resumed conversation (bdboard-2n8 should-fix)', async () => {
-      // resume 対象のセッションIDが、既に選択中で履歴フェッチが in-flight な
-      // スレッドと同じ場合、currentConversationKey 自体は変わらない。
-      // handleResumeDiscoveredSession が historyRequestIdRef を進めないと、
-      // 後から解決するその古い履歴フェッチが resume 直後の seeded conversation /
-      // agentId を上書きしてしまう。
-      const user = userEvent.setup();
-      writePersistedChatThread('proj-a', {
-        sessionId: 'sess-dup',
-        agentId: 'claude',
-      });
-      fetchChatThreadsMock.mockResolvedValue([
-        {
-          sessionId: 'sess-dup',
-          agentId: 'claude',
-          title: 'existing',
-          pinned: false,
-          updatedAt: '2026-08-16T03:00:00.000Z',
-        },
-      ]);
-      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT, EXAMPLE_AGENT]);
-      fetchDiscoveredChatSessionsMock.mockResolvedValue({
-        sessions: [
-          {
-            sessionId: 'sess-dup',
-            lastActivityAt: '2026-08-16T12:00:00.000Z',
-            alreadyAdopted: true,
-          },
-        ],
-      });
-
-      const messagesDeferred = createDeferred<Response>();
-      mockAdoptResponse(async (url: string, init?: RequestInit) => {
-        if (
-          url.startsWith('/api/chat/sessions/sess-dup/messages') &&
-          (init?.method ?? 'GET') === 'GET'
-        ) {
-          return messagesDeferred.promise;
-        }
-        if (
-          url === '/api/chat/projects/proj-a/discovered-sessions/sess-dup/adopt' &&
-          init?.method === 'POST'
-        ) {
-          return jsonResponse({
-            sessionId: 'sess-dup',
-            agentId: 'example-agent',
-            seedMessages: [
-              { role: 'user', text: 'resumed question', timestamp: '2026-08-16T11:00:00.000Z' },
-            ],
-          });
-        }
-        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
-      });
-
-      const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
-
-      await waitFor(() => {
-        expect(
-          fetchMock.mock.calls.some(
-            ([url, init]) =>
-              String(url).startsWith('/api/chat/sessions/sess-dup/messages') &&
-              ((init as RequestInit | undefined)?.method ?? 'GET') === 'GET',
-          ),
-        ).toBe(true);
-      });
-      expect(await screen.findByText('履歴を読み込み中…')).toBeInTheDocument();
-
-      openThreadDrawer(container);
-      await user.click(within(getThreadDrawer(container)).getByRole('button', { name: 'CLIセッションを再開' }));
-      await user.click(await screen.findByRole('button', { name: 'セッション sess-dup を再開' }));
-
-      expect(await screen.findByText('resumed question')).toBeInTheDocument();
-      expect(screen.getByLabelText('チャットエージェント')).toHaveValue('example-agent');
-
-      // 元の(古い)履歴フェッチが今さら解決し、別内容・別エージェントを返す。
-      messagesDeferred.resolve(
-        jsonResponse({
-          sessionId: 'sess-dup',
-          agentId: 'claude',
-          messages: [
-            { role: 'user', content: 'stale history', createdAt: '2026-08-16T03:00:00.000Z' },
-          ],
-        }),
-      );
-
-      // resolve 後の状態が安定するまで少し待ってから確認する(見えない失敗を
-      // waitFor の即時解決で見逃さないため)。
-      await waitFor(() => {
-        expect(screen.queryByText('履歴を読み込み中…')).not.toBeInTheDocument();
-      });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(screen.getByText('resumed question')).toBeInTheDocument();
-      expect(screen.queryByText('stale history')).not.toBeInTheDocument();
-      expect(screen.getByLabelText('チャットエージェント')).toHaveValue('example-agent');
-    });
   });
 });

@@ -16,13 +16,11 @@ const ALMOST_STALLED_UPDATED_AT = new Date(NOW.getTime() - THRESHOLD_MS + 1);
 function stalledCtx(
   overrides: Partial<{
     now: Date;
-    hasActiveSession: boolean;
     thresholds: { stalledAfterMs: number };
   }> = {},
 ) {
   return {
     now: NOW,
-    hasActiveSession: false,
     ...overrides,
   };
 }
@@ -34,25 +32,10 @@ describe('isStalled', () => {
       updatedAt: NOW,
     });
 
-    expect(
-      isStalled(ticket, stalledCtx({ hasActiveSession: true })),
-    ).toBe(false);
-  });
-
-  it('is false when only hasActiveSession is false', () => {
-    // Genuinely isolates condition 2: the status is wrong AND the ticket was
-    // just updated, so nothing but the missing session could make it stall.
-    const ticket = makeTicket({
-      status: 'open',
-      updatedAt: NOW,
-    });
-
     expect(isStalled(ticket, stalledCtx())).toBe(false);
   });
 
-  it('is false for an in_progress ticket updated moments ago with no session', () => {
-    // The case that matters in practice: work paused for a coffee break must not
-    // be reported as stalled just because no session is running right now.
+  it('is false for an in_progress ticket updated moments ago', () => {
     const ticket = makeTicket({
       status: 'in_progress',
       updatedAt: NOW,
@@ -67,12 +50,10 @@ describe('isStalled', () => {
       updatedAt: STALLED_UPDATED_AT,
     });
 
-    expect(
-      isStalled(ticket, stalledCtx({ hasActiveSession: true })),
-    ).toBe(false);
+    expect(isStalled(ticket, stalledCtx())).toBe(false);
   });
 
-  it('is true when all three conditions are met', () => {
+  it('is true when in_progress and updatedAt is old enough', () => {
     const ticket = makeTicket({
       status: 'in_progress',
       updatedAt: STALLED_UPDATED_AT,

@@ -9,7 +9,6 @@ import type {
   CommentDto,
   PendingDecisionDto,
   ProjectDto,
-  SessionDto,
   StatusDto,
   TicketDetailDto,
 } from '../api';
@@ -58,8 +57,6 @@ const sampleBoardCard: BoardCardDto = {
   blockedBy: [],
   blocks: [],
   unblocksCount: 0,
-  liveness: null,
-  sessions: [],
   stalled: false,
   epicProgress: null,
   deferDays: null,
@@ -78,10 +75,7 @@ export const boardWithCard: BoardViewDto = {
         name: 'Project One',
         rootPath: '/projects/a',
         prefixes: ['bdboard'],
-        sessionCount: 0,
-        activeSessionCount: 0,
         incompleteTicketCount: 1,
-        sessions: [],
       },
       board: {
         lanes: {
@@ -123,7 +117,6 @@ export const sampleTicket: TicketDetailDto = {
   blockedBy: [],
   blocks: [],
   commentCount: 0,
-  sessionLinks: [],
   models: [],
   children: [],
 };
@@ -143,13 +136,9 @@ export function primeAppApiMocks(): void {
       name: 'Project One',
       rootPath: '/projects/a',
       prefixes: ['bdboard'],
-      sessionCount: 0,
-      activeSessionCount: 0,
       incompleteTicketCount: 0,
-      sessions: [],
     } satisfies ProjectDto,
   ]);
-  vi.mocked(api.fetchSessions).mockResolvedValue([] satisfies SessionDto[]);
   vi.mocked(api.fetchStatus).mockResolvedValue({
     lastRefreshAt: '2026-01-01T00:00:00.000Z',
     errors: [],

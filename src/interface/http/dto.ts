@@ -2,7 +2,6 @@
 // このファイルは import 側 (routes・テスト) を書き換えないための re-export 入口としてのみ
 // 残す。挙動・型は一切変えていない (移動のみ)。
 export * from './dto/shared.js';
-export * from './dto/session.js';
 export * from './dto/board.js';
 export * from './dto/activity.js';
 export * from './dto/ticket.js';

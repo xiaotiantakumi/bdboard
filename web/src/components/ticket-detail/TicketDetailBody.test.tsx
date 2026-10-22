@@ -71,7 +71,6 @@ function makeData(overrides: Partial<TicketDetailDto> = {}): TicketDetailDto {
     blockedBy: [],
     blocks: [],
     usage: undefined,
-    sessionLinks: [],
     models: [],
     children: [{ id: 'MARK-child-1', title: 'child', lane: 'ready' }],
     ...overrides,

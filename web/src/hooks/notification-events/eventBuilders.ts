@@ -19,16 +19,6 @@ function watchedEventIdTimeBucket(occurredAt: string): string {
 }
 
 export function buildNotificationEventItem(payload: NotificationPayload): NotificationEventItem {
-  if (payload.kind === 'session_died') {
-    return {
-      id: `${payload.kind}:${payload.sessionId}:${payload.occurredAt}`,
-      kind: payload.kind,
-      occurredAt: payload.occurredAt,
-      sessionId: payload.sessionId,
-      cwd: payload.cwd,
-      name: payload.name,
-    };
-  }
   if (payload.kind === 'ai_quota_threshold') {
     return {
       id: `${payload.kind}:${payload.providerId}:${payload.metricLabel}:${payload.occurredAt}`,
@@ -81,14 +71,6 @@ export function buildWatchedNotificationEventItem(
         kind: 'watched_comment_changed',
         previousCommentCount: event.fromCount,
         commentCount: event.toCount,
-        ...base,
-      };
-    case 'session_links_changed':
-      return {
-        id: `watched_session_changed:${event.ticketId}:${idTimeBucket}`,
-        kind: 'watched_session_changed',
-        addedSessionIds: event.addedSessionIds,
-        removedSessionIds: event.removedSessionIds,
         ...base,
       };
   }

@@ -40,7 +40,6 @@ export interface AppViewContentProps {
   };
   boardMeta: {
     projectNames: Map<string, string>;
-    projectActiveSessions: Map<string, number>;
     projectRootPaths: Map<string, string>;
     pendingDecisionIds: ReadonlySet<string>;
     prLinksById: ReadonlyMap<string, PrBadgeDto>;
@@ -71,7 +70,6 @@ export function AppViewContent({
         board={board}
         boardMeta={{
           projectNames: boardMeta.projectNames,
-          projectActiveSessions: boardMeta.projectActiveSessions,
           pendingDecisionIds: boardMeta.pendingDecisionIds,
           prLinksById: boardMeta.prLinksById,
           wipLimitsOverrides: boardMeta.wipLimitsOverrides,

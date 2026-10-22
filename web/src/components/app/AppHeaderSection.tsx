@@ -21,8 +21,6 @@ export function AppHeaderSection({ controller }: AppHeaderSectionProps) {
     lastContactAtMs,
     boardQuery,
     lastRefreshAt,
-    totalSessionCount,
-    activeSessionCount,
     projectsQuery,
     selectedProjectIds,
     handleToggleProject,
@@ -52,11 +50,6 @@ export function AppHeaderSection({ controller }: AppHeaderSectionProps) {
         lastContactAtMs,
         generatedAt: boardQuery.data?.generatedAt,
         lastRefreshAt,
-      }}
-      sessions={{
-        total: totalSessionCount,
-        active: activeSessionCount,
-        onOpen: overlays.handleOpenSessionList,
       }}
       statusDetail={{
         open: overlays.statusDetailOpen,

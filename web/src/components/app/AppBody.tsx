@@ -46,7 +46,6 @@ export function AppBody({ controller }: AppBodyProps) {
     handleSelectTicket,
     overlays,
     projectNames,
-    projectActiveSessions,
     projectRootPaths,
     statusErrors,
     boardQuery,
@@ -115,7 +114,6 @@ export function AppBody({ controller }: AppBodyProps) {
           }}
           boardMeta={{
             projectNames,
-            projectActiveSessions,
             projectRootPaths,
             pendingDecisionIds,
             prLinksById,

@@ -147,15 +147,15 @@ test.describe('mobile input font-size', () => {
       timeout: 15_000,
     });
 
-    // 実測4（詳細パネルを開いた状態。クイックアクション/エージェント実行の削除後）。下限3は4の75%。
-    // 以下の内訳はクイックアクション削除前の旧記述（実測6）。内訳: ボード2
+    // 実測4 (2026-10-22、#964 でフィルタ入力がポップオーバーへ、#967 で延期期間 select が消えた後)。
+    // 以下は当時の実測6の内訳 (参考)。内訳: ボード2
     // (select#board-priority-ceiling / input[type=search].board-filter-input) +
     // 詳細パネル4 (#label-add-input / #dependency-search / #comment-text /
     // aria-label="延期期間" の select)。延期期間 select は BulkActionBar にもあるが、
     // 一括操作バーが出ている状態では件数が変わるため、この内訳は詳細パネル open 限定。
     // いずれも #comment-text 待機で同一 {data !== undefined} ブロック内に描画される。
     // e2e bd スタブは human-decisions を空配列で返すため #decision-freeform は出ない
-    // (bdboard-sp5q)。下限5は確実な6より下 (5/6≒83%) でフォーム群消失検知用。
+    // (bdboard-sp5q)。下限3は実測4より下でフォーム群消失検知用。
     await expectAllFormElementsAtLeast16px(page, 'ticket detail open', 3);
 
     const closeBtn = dialog.getByRole('button', { name: '閉じる' });

@@ -104,7 +104,6 @@ export interface MainConfig {
   readonly configFilePath: string;
   readonly tunnelLogFilePath: string;
   readonly refreshIntervalMs: number;
-  readonly sessionIntervalMs: number;
   readonly transcriptIntervalMs: number;
   readonly shutdownTimeoutMs: number;
   readonly bdPath: string;
@@ -126,7 +125,6 @@ export function resolveMainConfig(repoRoot: string, isLinkedWorktreeCheckout: bo
     configFilePath: resolveSharedConfigFilePath(dbPath, isLinkedWorktreeCheckout),
     tunnelLogFilePath: resolveSharedTunnelLogFilePath(dbPath, isLinkedWorktreeCheckout),
     refreshIntervalMs: envInt('BDBOARD_REFRESH_INTERVAL_MS', 300_000),
-    sessionIntervalMs: envInt('BDBOARD_SESSION_INTERVAL_MS', 10_000),
     transcriptIntervalMs: envInt('BDBOARD_TRANSCRIPT_INTERVAL_MS', 30_000),
     shutdownTimeoutMs: envInt('BDBOARD_SHUTDOWN_TIMEOUT_MS', DEFAULT_SHUTDOWN_TIMEOUT_MS),
     bdPath: envString('BDBOARD_BD_PATH', 'bd'),

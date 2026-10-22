@@ -16,11 +16,6 @@ export interface AppHeaderProps {
     generatedAt: string | null | undefined;
     lastRefreshAt: string | null | undefined;
   };
-  sessions: {
-    total: number;
-    active: number;
-    onOpen: () => void;
-  };
   statusDetail: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -60,7 +55,6 @@ export function AppHeader({
   onViewChange,
   onOpenSearch,
   connection,
-  sessions,
   statusDetail,
   projects,
   onOpenTunnel,
@@ -83,9 +77,6 @@ export function AppHeader({
             lastContactAtMs: connection.lastContactAtMs,
             generatedAt: connection.generatedAt,
             lastRefreshAt: connection.lastRefreshAt,
-            totalSessionCount: sessions.total,
-            activeSessionCount: sessions.active,
-            onOpenSessionList: () => sessions.onOpen(),
             open: statusDetail.open,
             onOpenChange: statusDetail.onOpenChange,
           }}

@@ -13,7 +13,6 @@ function baseParams(
     tunnelModalOpen: false,
     chatOpen: false,
     searchOpen: false,
-    sessionListOpen: false,
     shortcutsOpen: false,
     selectedTicketId: null,
     onOpenSearch: vi.fn(),
@@ -99,7 +98,6 @@ describe('useAppKeyboardShortcuts', () => {
     ['searchOpen', { searchOpen: true }],
     ['helpOpen', { helpOpen: true }],
     ['chatOpen', { chatOpen: true }],
-    ['sessionListOpen', { sessionListOpen: true }],
     ['tunnelModalOpen', { tunnelModalOpen: true }],
   ] as const)('does not open shortcuts on "?" while %s is true', (_name, overrides) => {
     const params = baseParams(overrides);

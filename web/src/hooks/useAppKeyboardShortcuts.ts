@@ -6,7 +6,6 @@ export interface AppKeyboardShortcutsParams {
   tunnelModalOpen: boolean;
   chatOpen: boolean;
   searchOpen: boolean;
-  sessionListOpen: boolean;
   shortcutsOpen: boolean;
   selectedTicketId: string | null;
   onOpenSearch: () => void;
@@ -44,7 +43,6 @@ export function useAppKeyboardShortcuts(params: AppKeyboardShortcutsParams): voi
     tunnelModalOpen,
     chatOpen,
     searchOpen,
-    sessionListOpen,
     shortcutsOpen,
     selectedTicketId,
     onOpenSearch,
@@ -101,7 +99,6 @@ export function useAppKeyboardShortcuts(params: AppKeyboardShortcutsParams): voi
         searchOpen ||
         helpOpen ||
         chatOpen ||
-        sessionListOpen ||
         tunnelModalOpen ||
         selectedTicketId !== null
       ) {
@@ -120,7 +117,6 @@ export function useAppKeyboardShortcuts(params: AppKeyboardShortcutsParams): voi
     onCloseShortcuts,
     onOpenShortcuts,
     searchOpen,
-    sessionListOpen,
     tunnelModalOpen,
     selectedTicketId,
     shortcutsOpen,

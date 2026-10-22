@@ -89,7 +89,7 @@ describe('TicketDetailPanel models', () => {
 
     renderPanel(new Map());
 
-    await screen.findByRole('heading', { name: 'セッションリンク' });
+    await screen.findByRole('heading', { name: 'Dependencies' });
 
     expect(screen.queryByRole('heading', { name: '使用モデル' })).not.toBeInTheDocument();
   });

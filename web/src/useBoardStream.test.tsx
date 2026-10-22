@@ -53,7 +53,7 @@ function renderBoardStream() {
   return { ...view, invalidateSpy, es };
 }
 
-const ALL_INVALIDATED_KEYS = [...BOARD_CHANGED_QUERY_KEY_ROOTS, 'sessions'];
+const ALL_INVALIDATED_KEYS = [...BOARD_CHANGED_QUERY_KEY_ROOTS];
 
 type InvalidateSpy = ReturnType<typeof renderBoardStream>['invalidateSpy'];
 
@@ -97,21 +97,6 @@ describe('useBoardStream', () => {
     expect([...keys].sort()).toEqual([...BOARD_CHANGED_QUERY_KEY_ROOTS].sort());
     // bdboard-3tw.160 で漏れていた root を明示的に固定する。
     expect(keys).toContain('ticket-in-flight-overlaps');
-  });
-
-  // bdboard-cjsa: /api/hygiene の nonTicketHarnessWorktrees が生存セッションの有無で
-  // 内容を変わるようになったため、session.changed だけが来た場合でも hygiene が
-  // invalidate されることを固定する (board.changed を待たずに追従する必要がある)。
-  it('invalidates sessions, board, and projects when session.changed is dispatched', () => {
-    const { es, invalidateSpy } = renderBoardStream();
-
-    act(() => es.onopen?.());
-    invalidateSpy.mockClear();
-
-    act(() => es.dispatch('session.changed'));
-
-    const keys = invalidatedKeys(invalidateSpy);
-    expect([...keys].sort()).toEqual(['board', 'projects', 'sessions']);
   });
 
   it('revalidates board, session, and related queries after an onerror followed by onopen', () => {

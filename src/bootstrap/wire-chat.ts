@@ -11,7 +11,6 @@ import type { BoardCache } from '../application/ports/board-cache.js';
 import type { WriteGuardDeps } from '../interface/http/write-guard.js';
 import type { CommandRunner } from '../application/ports/command-runner.js';
 import type { StreamingCommandRunner } from '../application/ports/streaming-command-runner.js';
-import type { ChatSessionDiscoveryPort } from '../application/ports/chat-session-discovery.js';
 import { buildChatAgentRegistry } from '../infrastructure/chat/chat-agent-registry-builder.js';
 import { createChatSessionStore } from '../application/chat/chat-session-store.js';
 import {
@@ -30,7 +29,6 @@ export interface WireChatDeps {
   readonly env: NodeJS.ProcessEnv;
   readonly chatDisabled: boolean;
   readonly cache: BoardCache;
-  readonly chatSessionDiscovery: ChatSessionDiscoveryPort;
   readonly dbPath: string;
   readonly commandRunner: CommandRunner;
   readonly streamingCommandRunner: StreamingCommandRunner;
@@ -98,7 +96,6 @@ export function wireChat(deps: WireChatDeps): WireChatResult {
     cache: deps.cache,
     agents: chatAgentRegistry,
     store: chatStore,
-    sessionDiscovery: deps.chatSessionDiscovery,
     messages: chatMessageRepository,
     writeAccess: deps.writeAccess,
     rateLimit: {

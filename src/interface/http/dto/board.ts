@@ -1,14 +1,11 @@
 // bdboard-sso1.12: dto.ts のモジュール分割。ボードカード・ボード・プロジェクト・
 // ボード全体ビューの組み立て DTO。board-routes.ts が参照する (barrel 経由)。
 import type { Board, BoardCard } from '../../../domain/board.js';
-import { computeLiveness, type LivenessThresholds } from '../../../domain/liveness.js';
 import type { Project } from '../../../domain/project.js';
 import { LANES } from '../../../domain/readiness.js';
-import type { AgentSession } from '../../../domain/session.js';
 import type { Ticket } from '../../../domain/ticket.js';
 import type { BoardView } from '../../../application/board/get-board.js';
 import { toTicketSummaryDto, type TicketSummaryDto } from './shared.js';
-import { toSessionDto, type SessionDto } from './session.js';
 
 export interface BoardCardDto {
   ticket: TicketSummaryDto;
@@ -17,8 +14,6 @@ export interface BoardCardDto {
   blockedBy: string[];
   blocks: string[];
   unblocksCount: number;
-  liveness: string | null;
-  sessions: SessionDto[];
   stalled: boolean;
   epicProgress: { total: number; done: number } | null;
   deferDays: number | null;
@@ -51,10 +46,7 @@ export interface ProjectDto {
   name: string;
   rootPath: string;
   prefixes: string[];
-  sessionCount: number;
-  activeSessionCount: number;
   incompleteTicketCount: number;
-  sessions: SessionDto[];
 }
 
 export interface ProjectBoardDto {
@@ -69,11 +61,7 @@ export interface BoardViewDto {
   merged: BoardDto | null;
 }
 
-export function toBoardCardDto(
-  card: BoardCard,
-  now: Date,
-  livenessThresholds: LivenessThresholds,
-): BoardCardDto {
+export function toBoardCardDto(card: BoardCard): BoardCardDto {
   return {
     ticket: toTicketSummaryDto(card.ticket),
     lane: card.lane,
@@ -81,10 +69,6 @@ export function toBoardCardDto(
     blockedBy: [...card.blockedBy],
     blocks: [...card.blocks],
     unblocksCount: card.unblocksCount,
-    liveness: card.liveness,
-    sessions: card.sessions.map((session) =>
-      toSessionDto(session, now, livenessThresholds),
-    ),
     stalled: card.stalled,
     epicProgress:
       card.epicProgress === null
@@ -104,17 +88,13 @@ export interface ToBoardDtoOptions {
 
 export function toBoardDto(
   board: Board,
-  now: Date,
-  livenessThresholds: LivenessThresholds,
   options?: ToBoardDtoOptions,
 ): BoardDto {
   const closedTotal = options?.closedTotal;
   const truncatedClosedIds = options?.truncatedClosedIds;
   const lanes: Record<string, BoardCardDto[]> = {};
   for (const lane of LANES) {
-    lanes[lane] = board.lanes[lane].map((card) =>
-      toBoardCardDto(card, now, livenessThresholds),
-    );
+    lanes[lane] = board.lanes[lane].map((card) => toBoardCardDto(card));
   }
 
   return {
@@ -141,47 +121,25 @@ export function countIncompleteTicketsFromBoard(board: Board): number {
 }
 
 export interface ToProjectDtoOptions {
-  readonly sessions?: readonly AgentSession[];
   readonly incompleteTicketCount?: number;
 }
 
 export function toProjectDto(
   project: Project,
-  now: Date,
-  livenessThresholds: LivenessThresholds,
   options?: ToProjectDtoOptions,
 ): ProjectDto {
-  const sessions = options?.sessions;
   const incompleteTicketCount = options?.incompleteTicketCount ?? 0;
-  const sessionDtos =
-    sessions !== undefined
-      ? sessions.map((session) => toSessionDto(session, now, livenessThresholds))
-      : [];
 
   return {
     id: project.id,
     name: project.name,
     rootPath: project.rootPath,
     prefixes: [...project.prefixes],
-    sessionCount: sessions !== undefined ? sessions.length : 0,
-    activeSessionCount:
-      sessions !== undefined
-        ? sessions.filter(
-            (s) => computeLiveness(now, s, livenessThresholds) === 'active',
-          ).length
-        : 0,
     incompleteTicketCount,
-    sessions: sessionDtos,
   };
 }
 
-export function toBoardViewDto(
-  view: BoardView,
-  livenessThresholds: LivenessThresholds,
-  sessionsByProject?: ReadonlyMap<string, readonly AgentSession[]>,
-): BoardViewDto {
-  const now = view.generatedAt;
-
+export function toBoardViewDto(view: BoardView): BoardViewDto {
   // mode==='merged' では merged が projects の全チケットを既に統合しているので、
   // projects 側もそのままシリアライズすると全チケットが2回送られる(bdboard-3tw.86)。
   // BoardView.projects 自体は application 層の内部表現として常に埋めたままにし
@@ -191,13 +149,12 @@ export function toBoardViewDto(
     view.mode === 'merged'
       ? []
       : view.projects.map((projectBoard) => ({
-          project: toProjectDto(projectBoard.project, now, livenessThresholds, {
-            sessions: sessionsByProject?.get(projectBoard.project.id),
+          project: toProjectDto(projectBoard.project, {
             incompleteTicketCount: countIncompleteTicketsFromBoard(
               projectBoard.board,
             ),
           }),
-          board: toBoardDto(projectBoard.board, now, livenessThresholds, {
+          board: toBoardDto(projectBoard.board, {
             closedTotal: projectBoard.closedTotal,
             truncatedClosedIds: projectBoard.truncatedClosedIds,
           }),
@@ -209,7 +166,7 @@ export function toBoardViewDto(
     projects,
     merged:
       view.merged !== null
-        ? toBoardDto(view.merged, now, livenessThresholds, {
+        ? toBoardDto(view.merged, {
             closedTotal: view.mergedClosedTotal ?? undefined,
             truncatedClosedIds: view.mergedTruncatedClosedIds ?? undefined,
           })

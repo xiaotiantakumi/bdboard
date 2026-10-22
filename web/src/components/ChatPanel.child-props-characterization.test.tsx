@@ -32,7 +32,6 @@ vi.mock('../api', async (importOriginal) => {
     fetchChatThreads: vi.fn(() => Promise.resolve<ChatThreadDto[]>([])),
     fetchChatTurnStatus: vi.fn(() => Promise.resolve<ChatTurnStatusDto>({ state: 'idle' })),
     acknowledgeChatTurn: vi.fn(() => Promise.resolve()),
-    fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     fetchPlatformSupport: vi.fn(() => Promise.resolve({ platform: 'darwin', limitations: [] })),
   };
 });
@@ -42,7 +41,6 @@ import {
   fetchChatAgents,
   fetchChatThreads,
   fetchChatTurnStatus,
-  fetchDiscoveredChatSessions,
   fetchPlatformSupport,
 } from '../api';
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
@@ -102,7 +100,6 @@ describe('ChatPanel child props wiring (pinned before bdboard-sso1.83 第15c段)
     vi.mocked(fetchChatThreads).mockResolvedValue([OPEN_A, OPEN_B, CLOSED_C]);
     vi.mocked(fetchChatTurnStatus).mockResolvedValue({ state: 'idle' });
     vi.mocked(acknowledgeChatTurn).mockResolvedValue();
-    vi.mocked(fetchDiscoveredChatSessions).mockResolvedValue({ sessions: [] });
   });
 
   afterEach(() => {
@@ -133,9 +130,7 @@ describe('ChatPanel child props wiring (pinned before bdboard-sso1.83 第15c段)
     ]);
     expect(keys(drawer())).toEqual([
       'closeButtonRef', 'closedRows', 'drawerRef', 'hasOpenRows', 'hasPinnedRows', 'hasVisibleClosedThreads',
-      'isSending', 'onClose', 'onCloseDiscoveredSessions', 'onResumeDiscoveredSession',
-      'onToggleDiscoveredSessions', 'open', 'openRows', 'pinnedRows', 'selectedProjectId',
-      'showDiscoveredSessions',
+      'onClose', 'open', 'openRows', 'pinnedRows',
     ]);
     expect(keys(settings())).toEqual([
       'agents', 'effectiveModelId', 'isSending', 'onAgentChange', 'onModelChange', 'selectedAgent',
@@ -183,7 +178,6 @@ describe('ChatPanel child props wiring (pinned before bdboard-sso1.83 第15c段)
     expect(projectBar().selectedProjectName).toBe('Project Beta');
     expect(projectBar().projectSelectionHintId).toBeNull();
     expect(onProjectIdChange).toHaveBeenLastCalledWith(PROJECT_B.id);
-    expect(drawer().selectedProjectId).toBe(PROJECT_B.id);
     expect(messageList().selectedProjectId).toBe(PROJECT_B.id);
     expect(composer().quickCommands.selectedProjectId).toBe(PROJECT_B.id);
   });
@@ -212,17 +206,6 @@ describe('ChatPanel child props wiring (pinned before bdboard-sso1.83 第15c段)
     expect(rowKeys(d.openRows)).toEqual([OPEN_A.sessionId]);
     expect(d.hasVisibleClosedThreads).toBe(true);
     expect(rowKeys(d.closedRows)).toEqual([CLOSED_C.sessionId]);
-    expect(d.isSending).toBe(false);
-
-    expect(d.showDiscoveredSessions).toBe(false);
-    act(() => {
-      drawer().onToggleDiscoveredSessions();
-    });
-    expect(drawer().showDiscoveredSessions).toBe(true);
-    act(() => {
-      drawer().onCloseDiscoveredSessions();
-    });
-    expect(drawer().showDiscoveredSessions).toBe(false);
 
     act(() => {
       drawer().onClose();
@@ -247,23 +230,6 @@ describe('ChatPanel child props wiring (pinned before bdboard-sso1.83 第15c段)
     expect(drawer().open).toBe(false);
     expect(switcher().currentThreadTitle).not.toBe(OPEN_A.title);
     expect(messageList().currentConversationKey).not.toBe(keyBefore);
-  });
-
-  it('wires onResumeDiscoveredSession to resume the session and then close the drawer', async () => {
-    persistOpenThreads();
-    renderChatPanel([PROJECT_A], { initialProjectId: PROJECT_A.id, leaveSettingsCollapsed: true });
-    await waitFor(() => expect(switcher().currentThreadTitle).toBe(OPEN_A.title));
-    act(() => {
-      switcher().onToggleDrawer();
-    });
-    expect(drawer().open).toBe(true);
-
-    act(() => {
-      drawer().onResumeDiscoveredSession('sess-vm-discovered', 'claude', []);
-    });
-    expect(drawer().open).toBe(false);
-    await waitFor(() => expect(switcher().openThreadsCount).toBe(3));
-    expect(messageList().currentConversationKey).toContain('sess-vm-discovered');
   });
 
   it('wires the settings panel to the real agent/model state', async () => {

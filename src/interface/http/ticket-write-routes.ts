@@ -4,7 +4,6 @@ import { createTicketQuickActionRoutes } from './ticket-quick-action-routes.js';
 import { createTicketDependencyWriteRoutes } from './ticket-dependency-write-routes.js';
 import { createTicketContentRoutes } from './ticket-content-routes.js';
 import { createTicketLabelWriteRoutes } from './ticket-label-write-routes.js';
-import { createTicketSessionLinkWriteRoutes } from './ticket-session-link-write-routes.js';
 import { createTicketCommentWriteRoutes } from './ticket-comment-write-routes.js';
 import type { ApiDeps } from './api-deps.js';
 
@@ -15,7 +14,7 @@ import type { ApiDeps } from './api-deps.js';
 // GET /api/tickets/:id{.+} 等) との相対順序は routes.ts 側で保たれたまま、この
 // ファイル内では旧ファイルの app.post/patch/delete の出現順そのまま:
 // decision → quick-action(+undo) → dependencies → title/description → labels →
-// session-link → comment、の順で各グループを app.route('/', ...) で載せる。
+// comment、の順で各グループを app.route('/', ...) で載せる。
 //
 // ハンドラ本体・zod スキーマの記述は各グループのファイルへ一字一句そのまま移した
 // (import/export の付け外しとインデント変化のみ)。findProjectRootPathForTicket /
@@ -30,7 +29,6 @@ export function createTicketWriteRoutes(deps: ApiDeps): Hono {
   app.route('/', createTicketDependencyWriteRoutes(deps));
   app.route('/', createTicketContentRoutes(deps));
   app.route('/', createTicketLabelWriteRoutes(deps));
-  app.route('/', createTicketSessionLinkWriteRoutes(deps));
   app.route('/', createTicketCommentWriteRoutes(deps));
 
   return app;
