@@ -10,6 +10,8 @@ import { PrLinkBadge } from '../PrLinkBadge';
 import { formatDateTime } from './formatters';
 import { DetailField } from './DetailField';
 import { TicketIdLink } from './TicketIdLink';
+import { TicketAttributesDetails } from './TicketAttributesDetails';
+import { attributesSummary } from './ticketAttributesSummary';
 import { TicketChildrenSection } from './TicketChildrenSection';
 import { TicketInFlightOverlapsSection } from './TicketInFlightOverlapsSection';
 import { TicketSimilarTicketsSection } from './TicketSimilarTicketsSection';
@@ -64,6 +66,14 @@ export function TicketDetailBody({
           </button>
         )}
       </div>
+      <TicketAttributesDetails
+        summary={attributesSummary({
+          status: data.status,
+          priority: data.priority,
+          issueType: data.issueType,
+          labels: labels.currentLabels,
+        })}
+      >
       <DetailField label="ID">{data.id}</DetailField>
       <DetailField label="Status">{data.status}</DetailField>
       <DetailField label="Priority">P{data.priority}</DetailField>
@@ -104,19 +114,6 @@ export function TicketDetailBody({
           />
         </DetailField>
       )}
-      <TicketChildrenSection
-        children={data.children}
-        isTicketOnBoard={isTicketOnBoard}
-        onOpenTicket={onOpenTicket}
-        onFilterByEpic={() => onFilterByEpic(data.id)}
-      />
-      <TicketInFlightOverlapsSection
-        enabled={inFlightOverlaps.inFlightOverlapsEnabled}
-        error={inFlightOverlaps.inFlightOverlapsError}
-        overlaps={inFlightOverlaps.inFlightOverlaps}
-        isTicketOnBoard={isTicketOnBoard}
-        onOpenTicket={onOpenTicket}
-      />
       <TicketSimilarTicketsSection
         loading={similarTickets.similarTicketsLoading}
         error={similarTickets.similarTicketsError}
@@ -137,6 +134,20 @@ export function TicketDetailBody({
           {formatDateTime(data.deferUntil)}
         </DetailField>
       )}
+      </TicketAttributesDetails>
+      <TicketChildrenSection
+        children={data.children}
+        isTicketOnBoard={isTicketOnBoard}
+        onOpenTicket={onOpenTicket}
+        onFilterByEpic={() => onFilterByEpic(data.id)}
+      />
+      <TicketInFlightOverlapsSection
+        enabled={inFlightOverlaps.inFlightOverlapsEnabled}
+        error={inFlightOverlaps.inFlightOverlapsError}
+        overlaps={inFlightOverlaps.inFlightOverlaps}
+        isTicketOnBoard={isTicketOnBoard}
+        onOpenTicket={onOpenTicket}
+      />
       <TicketDescriptionSection
         description={data.description}
         descriptionEditing={description.descriptionEditing}

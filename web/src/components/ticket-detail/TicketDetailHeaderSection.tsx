@@ -9,6 +9,7 @@ import {
   TicketTitleSection,
   type TicketTitleSectionProps,
 } from './TicketTitleSection';
+import { TicketIdCopyButton } from './TicketIdCopyButton';
 import { mobileBarLabel, useTitleOutOfView } from './useTitleOutOfView';
 
 export interface TicketDetailHeaderSectionProps extends TicketTitleSectionProps {
@@ -41,9 +42,16 @@ export function TicketDetailHeaderSection({
       <div className="detail-header-actions">
         {/* モバイル専用 (デスクトップでは CSS で非表示)。見出しは h2#detail-title が
             担うので読み上げからは外す。 */}
-        <span className="detail-bar-label" aria-hidden="true">
-          {mobileBarLabel(titleOutOfView, ticketId, titleSectionProps.title)}
-        </span>
+        {titleOutOfView && (
+          <span className="detail-bar-label" aria-hidden="true">
+            {mobileBarLabel(titleOutOfView, ticketId, titleSectionProps.title)}
+          </span>
+        )}
+        {/* bdboard-v7sw: チケット番号はタップでコピー。タイトルがバーに出ている間は隠す。 */}
+        <TicketIdCopyButton
+          ticketId={ticketId}
+          className={titleOutOfView ? 'detail-id-copy-hidden' : undefined}
+        />
         {onBackTicket !== undefined && (
           <button
             type="button"
