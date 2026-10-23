@@ -205,6 +205,7 @@ describe('useTicketDetailController', () => {
       ticketId: 'MARK-ticket-id',
       projectRootPaths: params.projectRootPaths,
       pendingDecision: params.pendingDecision,
+      onClose: params.onClose,
       onTicketViewed: params.onTicketViewed,
     });
   });

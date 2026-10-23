@@ -23,6 +23,8 @@ export interface UseTicketDetailQueriesParams {
   ticketId: string;
   projectRootPaths: ReadonlyMap<string, string>;
   pendingDecision: PendingDecisionDto | undefined;
+  /** 回答成功後に詳細パネルを閉じる (bdboard-zjw2)。 */
+  onClose?: () => void;
   onTicketViewed?: (entry: { id: string; title: string; projectId: string }) => void;
 }
 
@@ -30,6 +32,7 @@ export function useTicketDetailQueries({
   ticketId,
   projectRootPaths,
   pendingDecision,
+  onClose,
   onTicketViewed,
 }: UseTicketDetailQueriesParams) {
   const queryClient = useQueryClient();
@@ -53,7 +56,10 @@ export function useTicketDetailQueries({
   const projectRootPath =
     data === undefined ? undefined : projectRootPaths.get(data.projectId);
 
-  const decision = useTicketDecisionAnswer(ticketId, pendingDecision);
+  const decision = useTicketDecisionAnswer(ticketId, pendingDecision, {
+    ...(onClose !== undefined ? { onClose } : {}),
+    notify: undoSnackbar?.showNotice,
+  });
   const commentsEnabled =
     data !== undefined &&
     (data.commentCount > 0 || decision.submittedDecision !== null);

@@ -223,4 +223,29 @@ describe('UndoSnackbar', () => {
       expect(screen.queryByRole('status')).not.toBeInTheDocument();
     });
   });
+
+  it('showNotice shows a message without an undo button and hides after 5 seconds', async () => {
+    function NoticeHarness() {
+      const snackbar = useUndoSnackbar();
+      return (
+        <button type="button" onClick={() => snackbar?.showNotice('OK で回答しました')}>
+          notice
+        </button>
+      );
+    }
+    render(
+      <UndoSnackbarProvider>
+        <NoticeHarness />
+      </UndoSnackbarProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: 'notice' }));
+
+    expect(screen.getByText('OK で回答しました')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '元に戻す' })).not.toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.queryByText('OK で回答しました')).not.toBeInTheDocument();
+  });
 });
