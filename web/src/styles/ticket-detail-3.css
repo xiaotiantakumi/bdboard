@@ -133,3 +133,60 @@
 .ticket-notes-details > summary h3 {
   display: inline;
 }
+
+/* bdboard-v7sw: チケット番号コピーボタン (上部バー) */
+.detail-id-copy {
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-id-copy:hover {
+  color: var(--color-text);
+}
+
+/* bdboard-v7sw: 属性ブロック (既定で畳む <details>) */
+.ticket-attributes {
+  margin-bottom: 12px;
+}
+
+.ticket-attributes-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.ticket-attributes-title {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.ticket-attributes-text {
+  color: var(--color-text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-attributes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+/* ラベル編集・類似チケットなど幅が要るブロックは2列ぶち抜き */
+.ticket-attributes-grid > :not(.detail-field) {
+  grid-column: 1 / -1;
+}

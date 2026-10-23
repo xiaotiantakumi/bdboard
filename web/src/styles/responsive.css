@@ -220,6 +220,17 @@
     color: var(--color-text-secondary);
   }
 
+  .ticket-detail-header .detail-id-copy {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    font-weight: 600;
+  }
+
+  .ticket-detail-header .detail-id-copy-hidden {
+    display: none;
+  }
+
   .ticket-detail-header .detail-maximize {
     display: none;
   }
