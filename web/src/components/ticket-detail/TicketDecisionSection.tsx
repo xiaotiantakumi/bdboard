@@ -3,6 +3,7 @@
 // state・mutation は useTicketDecisionAnswer (親で呼び出し) に残し、値と
 // ハンドラを props で受け取る。JSX・className・aria属性・文言・DOM構造は
 // 移動前から変えていない。
+import { useState } from 'react';
 import type { PendingDecisionDto } from '../../api';
 import { describeWriteError } from '../../writeAccessMessage';
 import type { SubmittedDecision } from './types';
@@ -17,7 +18,7 @@ export interface TicketDecisionSectionProps {
   decisionMutation: {
     isPending: boolean;
     error: unknown;
-    mutate: () => void;
+    mutate: (quick?: { freeform: string }) => void;
   };
   submittedDecision: SubmittedDecision | null;
   onOpenTicket: (ticketId: string) => void;
@@ -34,6 +35,7 @@ export function TicketDecisionSection({
   submittedDecision,
   onOpenTicket,
 }: TicketDecisionSectionProps) {
+  const [freeformOpen, setFreeformOpen] = useState(false);
   return (
     <>
       {pendingDecision !== undefined && (
@@ -59,16 +61,29 @@ export function TicketDecisionSection({
                 ))}
               </div>
             )}
-          <label className="decision-freeform-label" htmlFor="decision-freeform">
-            自由記入
-          </label>
-          <textarea
-            id="decision-freeform"
-            className="decision-freeform-input"
-            value={freeformText}
-            onChange={(event) => onFreeformTextChange(event.target.value)}
-            rows={4}
-          />
+          {/* bdboard-aob1: 即答ボタン (確認ダイアログ無しでその文言を freeform で送る) */}
+          <div className="decision-quick-actions">
+            {['OK', 'レビューしました'].map((text) => (
+              <button
+                key={text}
+                type="button"
+                className="btn decision-ok-btn"
+                disabled={decisionMutation.isPending}
+                onClick={() => decisionMutation.mutate({ freeform: text })}
+              >
+                {text}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="btn decision-freeform-toggle"
+              aria-expanded={freeformOpen}
+              aria-controls="decision-freeform-panel"
+              onClick={() => setFreeformOpen((open) => !open)}
+            >
+              {freeformOpen ? '自由入力 ▴' : '自由入力 ▾'}
+            </button>
+          </div>
           {/*
            * pendingDecision.kind はキャッシュ由来で 'ticket' に倒れうる。
            * 'gate' と判定されたときだけ予告を出す片側運用。'ticket' 側には出さない。
@@ -78,14 +93,31 @@ export function TicketDecisionSection({
               これは質問専用のゲートです。回答するとゲートはクローズされ、ブロックされていたチケットが着手可能になります。
             </p>
           )}
-          <button
-            type="button"
-            className="btn"
-            disabled={!canSubmitDecision || decisionMutation.isPending}
-            onClick={() => decisionMutation.mutate()}
-          >
-            {decisionMutation.isPending ? '送信中…' : '回答を送信'}
-          </button>
+          {freeformOpen && (
+            <div id="decision-freeform-panel">
+              <label className="decision-freeform-label" htmlFor="decision-freeform">
+                自由入力
+              </label>
+              <textarea
+                id="decision-freeform"
+                className="decision-freeform-input"
+                value={freeformText}
+                onChange={(event) => onFreeformTextChange(event.target.value)}
+                rows={4}
+              />
+            </div>
+          )}
+          {/* 選択肢を選んだ場合も、この送信ボタンで送る */}
+          {(freeformOpen || selectedChoice !== undefined) && (
+            <button
+              type="button"
+              className="btn"
+              disabled={!canSubmitDecision || decisionMutation.isPending}
+              onClick={() => decisionMutation.mutate(undefined)}
+            >
+              {decisionMutation.isPending ? '送信中…' : '送信'}
+            </button>
+          )}
           {decisionMutation.error !== null && (
             <p className="error-message">
               {describeWriteError(

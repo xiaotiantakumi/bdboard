@@ -16,6 +16,11 @@ import {
 } from '../../api';
 import type { SubmittedDecision } from './types';
 
+/** bdboard-aob1: 「OK」ボタンなど、入力欄を介さず即送信する回答。 */
+export interface QuickDecisionAnswer {
+  freeform: string;
+}
+
 export function useTicketDecisionAnswer(
   ticketId: string,
   pendingDecision: PendingDecisionDto | undefined,
@@ -40,29 +45,36 @@ export function useTicketDecisionAnswer(
     selectedChoice !== undefined || trimmedFreeform.length > 0;
 
   const decisionMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (quick?: QuickDecisionAnswer) => {
       if (pendingDecision === undefined) {
         throw new Error('pending decision is not available');
       }
 
+      // bdboard-aob1: 「OK」ワンタップは入力欄・選択肢を使わず freeform だけを送る。
+      if (quick !== undefined) {
+        return postTicketDecision(pendingDecision.id, { freeform: quick.freeform });
+      }
       return postTicketDecision(pendingDecision.id, {
         ...(selectedChoice !== undefined ? { choice: selectedChoice } : {}),
         ...(trimmedFreeform.length > 0 ? { freeform: trimmedFreeform } : {}),
       });
     },
-    onSuccess: async (outcome) => {
+    onSuccess: async (outcome, quick) => {
       if (pendingDecision !== undefined) {
+        const sentChoice = quick === undefined ? selectedChoice : undefined;
+        const sentFreeform =
+          quick !== undefined ? quick.freeform : trimmedFreeform;
         const choiceLabel =
-          selectedChoice !== undefined
+          sentChoice !== undefined
             ? pendingDecision.options?.find(
-                (option) => option.value === selectedChoice,
+                (option) => option.value === sentChoice,
               )?.label
             : undefined;
         setSubmittedDecision({
           decisionId: pendingDecision.id,
           outcome,
           ...(choiceLabel !== undefined ? { choiceLabel } : {}),
-          ...(trimmedFreeform.length > 0 ? { freeform: trimmedFreeform } : {}),
+          ...(sentFreeform.length > 0 ? { freeform: sentFreeform } : {}),
         });
       }
       await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });

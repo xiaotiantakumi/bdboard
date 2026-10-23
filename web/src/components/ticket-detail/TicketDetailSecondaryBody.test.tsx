@@ -246,8 +246,8 @@ describe('TicketDetailSecondaryBody', () => {
       expect(indexes.get('attachments-section')).toBeLessThan(
         indexes.get('comments-section') ?? -1,
       );
-      expect(indexes.get('decision-section')).toBeLessThan(
-        indexes.get('attachments-section') ?? -1,
+      expect(indexes.get('decision-section')).toBeGreaterThan(
+        indexes.get('comments-section') ?? -1,
       );
       expect(attachmentsMock).toHaveBeenCalledTimes(1);
       expect(attachmentsMock.mock.calls[0]?.[0]).toEqual({
@@ -310,8 +310,8 @@ describe('TicketDetailSecondaryBody', () => {
       rerender(<TicketDetailSecondaryBody {...resolvedProps} />);
 
       indexes = sectionIndexes(container);
-      expect(indexes.get('decision-section')).toBeLessThan(
-        indexes.get('attachments-section') ?? -1,
+      expect(indexes.get('decision-section')).toBeGreaterThan(
+        indexes.get('comments-section') ?? -1,
       );
       expect(indexes.get('attachments-section')).toBeLessThan(
         indexes.get('comments-section') ?? -1,
