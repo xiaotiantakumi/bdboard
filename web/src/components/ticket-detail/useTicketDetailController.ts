@@ -36,6 +36,7 @@ export interface UseTicketDetailControllerParams {
   projectRootPaths: ReadonlyMap<string, string>;
   pendingDecision: PendingDecisionDto | undefined;
   onClose: () => void;
+  onOpenTicket?: (ticketId: string) => void;
   onTicketViewed?: (entry: { id: string; title: string; projectId: string }) => void;
   availableLabels?: readonly string[];
   /**
@@ -55,6 +56,7 @@ export function useTicketDetailController({
   projectRootPaths,
   pendingDecision,
   onClose,
+  onOpenTicket,
   onTicketViewed,
   availableLabels = [],
   panelRef,
@@ -66,6 +68,7 @@ export function useTicketDetailController({
     projectRootPaths,
     pendingDecision,
     onClose,
+    onOpenTicket,
     onTicketViewed,
   });
   const { queryClient, data, isLoading, error, projectRootPath, decision } =

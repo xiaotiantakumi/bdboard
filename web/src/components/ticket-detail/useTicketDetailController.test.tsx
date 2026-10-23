@@ -206,6 +206,7 @@ describe('useTicketDetailController', () => {
       projectRootPaths: params.projectRootPaths,
       pendingDecision: params.pendingDecision,
       onClose: params.onClose,
+      onOpenTicket: params.onOpenTicket,
       onTicketViewed: params.onTicketViewed,
     });
   });

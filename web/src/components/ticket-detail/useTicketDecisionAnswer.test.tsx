@@ -132,8 +132,10 @@ describe('useTicketDecisionAnswer', () => {
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
     const onClose = vi.fn();
     const notify = vi.fn();
+    const onOpenTicket = vi.fn();
     const { result } = renderHook(
-      () => useTicketDecisionAnswer('bd-1', pendingDecision, { onClose, notify }),
+      () =>
+        useTicketDecisionAnswer('bd-1', pendingDecision, { onClose, notify, onOpenTicket }),
       { wrapper: createWrapper(queryClient) },
     );
 
@@ -142,7 +144,12 @@ describe('useTicketDecisionAnswer', () => {
     });
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(notify).toHaveBeenCalledWith('OK で回答しました');
+    expect(notify).toHaveBeenCalledWith(
+      'bd-1 に「OK」と回答',
+      { label: '開く', onClick: expect.any(Function) },
+    );
+    notify.mock.calls[0]?.[1]?.onClick();
+    expect(onOpenTicket).toHaveBeenCalledWith('bd-1');
     const cached = queryClient.getQueryData<BoardViewDto>(['board', 'merged', '', undefined]);
     expect(cached?.merged?.lanes['awaiting_human']?.map((c) => c.ticket.id)).toEqual(['x']);
     expect(cached?.merged?.cardCount).toBe(2);
@@ -162,7 +169,7 @@ describe('useTicketDecisionAnswer', () => {
       result.current.decisionMutation.mutate({ freeform: 'a'.repeat(100) });
     });
     await waitFor(() => expect(notify).toHaveBeenCalled());
-    expect(notify).toHaveBeenCalledWith(`${'a'.repeat(30)}… で回答しました`);
+    expect(notify).toHaveBeenCalledWith(`bd-1 に「${'a'.repeat(30)}…」と回答`, undefined);
   });
 
   it('on error keeps the panel open, leaves the board cache alone, and does not notify', async () => {
