@@ -63,7 +63,11 @@ export function AppOverlaySection({ controller }: AppOverlaySectionProps) {
         actions: paletteActions,
         recentTickets,
       }}
-      tunnel={{ open: overlays.tunnelModalOpen, onClose: overlays.handleCloseTunnel }}
+      tunnel={{
+        open: overlays.tunnelModalOpen,
+        onClose: overlays.handleCloseTunnel,
+        selectedProjectIds,
+      }}
       chat={{
         open: overlays.chatOpen,
         projects: chatProjects,

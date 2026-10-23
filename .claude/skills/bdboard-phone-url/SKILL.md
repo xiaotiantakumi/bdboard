@@ -16,7 +16,9 @@ main checkout でも worktree でもよい (スクリプトは main checkout の
 BDBOARD_SERVER_CALLER=chair scripts/phone-url.sh
 ```
 
-- 標準出力の 1 行目がスマホで開く URL (`https://<ランダム>.trycloudflare.com/?t=<token>`)。
+- 標準出力の 1 行目がスマホで開く URL (`https://<ランダム>.trycloudflare.com/?t=<token>&projects=<id,id>`)。
+  `projects=` は PC が最後に選んだプロジェクト (サーバーが覚えている `GET /api/ui/selected-projects`) で、
+  スマホはその選択で開く (PC が全プロジェクト表示のときは付かない)。
   そのままユーザーに渡す。qrencode が入っていれば QR も標準エラーに出る (`--no-qr` で抑止)。
 - トークンはワンタイムで期限付き (期限は標準エラーに出る)。1 回ログインすればその端末は
   cookie で入れる。期限が切れたらもう一度実行すればよい (トンネルは張り直さないので URL の
@@ -29,7 +31,7 @@ BDBOARD_SERVER_CALLER=chair scripts/phone-url.sh
 | サーバー停止 (health 000) | `always-on-server.sh start` で起動して health 200 を待つ。`BDBOARD_SERVER_CALLER=chair` が無ければ起動せず exit 2 |
 | トンネル off / error | `POST /api/tunnel/start` (パスワード自動) で張り、`on` になるまで最大 60 秒待つ |
 | トンネル on | そのまま使う (URL は変わらない) |
-| 共通 | `POST /api/tunnel/access-token` でトークンを発行し、`web/src/tunnelQr.ts` の `buildTunnelTokenUrl` と同じ形の URL を出す |
+| 共通 | `POST /api/tunnel/access-token` でトークンを発行し、`web/src/tunnelQr.ts` の `buildTunnelTokenUrl` と同じ形の URL (PC の選択を `projects=` に付けたもの) を出す |
 
 ## 注意
 

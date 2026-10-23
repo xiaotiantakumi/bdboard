@@ -27,6 +27,7 @@ export interface TunnelStatusPanelProps {
   qr: ReturnType<typeof useTunnelQr>;
   stop: ReturnType<typeof useTunnelStop>;
   actionError: string | null;
+  selectedProjectIds?: readonly string[];
 }
 
 export function TunnelStatusPanel({
@@ -39,6 +40,7 @@ export function TunnelStatusPanel({
   qr,
   stop,
   actionError,
+  selectedProjectIds,
 }: TunnelStatusPanelProps) {
   let panelBody: ReactNode;
 
@@ -136,6 +138,7 @@ export function TunnelStatusPanel({
           tokenError={qr.tokenMutation.error}
           tunnelUrl={data.url}
           accessToken={qr.accessToken}
+          selectedProjectIds={selectedProjectIds}
           onStop={() => stop.mutate()}
           stopDisabled={stopDisabled}
           stopPending={stop.isPending}

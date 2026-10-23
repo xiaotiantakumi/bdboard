@@ -8,6 +8,7 @@ import { WatchedTicketsProvider } from './components/WatchedTicketsProvider';
 import { LocalFileViewerPage } from './components/local-files/LocalFileViewerPage';
 import { parseLocalFileViewerRoute } from './localFileViewerRoute';
 import { resolveCredentialRedirect } from './stripUrlCredentials';
+import { bootstrapSelectedProjectsInBrowser } from './selectedProjectsBootstrap';
 
 const REDIRECT_GUARD_KEY = 'bdboard.credential-redirect';
 
@@ -76,5 +77,6 @@ if (credentialFreeUrl !== null) {
   markRedirected();
   window.location.replace(credentialFreeUrl);
 } else {
-  mount();
+  // bdboard-u8p9: 描画前に PC のプロジェクト選択を localStorage へ引き継ぐ (失敗しても起動する)。
+  void bootstrapSelectedProjectsInBrowser().then(mount);
 }

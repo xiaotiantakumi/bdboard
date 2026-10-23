@@ -48,8 +48,25 @@ export function createSessionValidator(
 
 function buildCleanUrl(c: Context): string {
   const url = new URL(c.req.url);
-  url.searchParams.delete(TUNNEL_TOKEN_QUERY_PARAM);
-  const query = url.searchParams.toString();
+  // 生のクエリ文字列から `t` だけを取り除く。URLSearchParams で再シリアライズすると、
+  // `projects=<id>,<id>` (bdboard-u8p9) の区切りの `,` が `%2C` に変わり、ID 内の `%2C` と
+  // 区別できなくなるため、他のパラメータは受け取ったままの形で残す。
+  const query = url.search
+    .replace(/^\?/, '')
+    .split('&')
+    .filter((part) => {
+      if (part.length === 0) return false;
+      const eq = part.indexOf('=');
+      const rawKey = eq === -1 ? part : part.slice(0, eq);
+      let key = rawKey;
+      try {
+        key = decodeURIComponent(rawKey.replace(/\+/g, ' '));
+      } catch {
+        // 壊れたエスケープはそのまま比較する。
+      }
+      return key !== TUNNEL_TOKEN_QUERY_PARAM;
+    })
+    .join('&');
   // "//evil.com/" のようなパスをそのまま Location に載せると、ブラウザはスキーム相対URLと
   // 解釈して外部サイトへ遷移する(オープンリダイレクト)。先頭の連続スラッシュは1本に潰す。
   const path = url.pathname.replace(/^\/+/, '/');

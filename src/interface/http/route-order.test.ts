@@ -21,6 +21,7 @@ const EXPECTED_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   // bodyLimit ミドルウェア + ハンドラの 2 エントリ。
   { method: 'PUT', path: '/api/ui/visible-projects' },
   { method: 'PUT', path: '/api/ui/visible-projects' },
+  { method: 'GET', path: '/api/ui/selected-projects' },
   { method: 'GET', path: '/api/projects' },
   { method: 'GET', path: '/api/board' },
   { method: 'GET', path: '/api/search' },

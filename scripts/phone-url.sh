@@ -8,7 +8,7 @@
 # 2. トンネルが off なら POST /api/tunnel/start で張る (画面の「スマホ公開」と同じ。パスワードは自動)。
 #    既に on ならそのまま使う (URL は変わらない)。
 # 3. POST /api/tunnel/access-token でワンタイムのトークンを発行し、画面の QR と同じ URL
-#    (認証情報を外して ?t=<token> を付けたもの) を出す。qrencode があれば端末に QR も出す。
+#    (認証情報を外して ?t=<token> と、PC の現在のプロジェクト選択 &projects=<id,id> を付けたもの) を出す。qrencode があれば端末に QR も出す。
 #
 # /api/tunnel は localhost からしか叩けない (tunnel-routes.ts の localOnlyGuard) ので、
 # このスクリプトもサーバーと同じマシンで動かす。
@@ -98,12 +98,21 @@ if [ -z "$token" ]; then
   exit 1
 fi
 # web/src/tunnelQr.ts の buildTunnelTokenUrl と同じ組み立て (認証情報を外して ?t= を付ける)。
-phone_url="$(python3 -c '
-import sys, urllib.parse as u
+# bdboard-u8p9: PC が最後に申告したプロジェクト選択 (GET /api/ui/selected-projects) を
+# `projects=<id>,<id>` (ID は URL エンコード、区切りは生の `,`) として付ける。空・未申告・取得失敗なら付けない。
+selected_json="$(curl -sS --max-time 5 "${BASE}/api/ui/selected-projects" 2>/dev/null || true)"
+phone_url="$(printf '%s' "$selected_json" | python3 -c '
+import sys, json, urllib.parse as u
+try:
+    ids = json.loads(sys.stdin.read() or "null").get("projectIds") or []
+except Exception:
+    ids = []
 p = u.urlsplit(sys.argv[1])
 host = p.hostname + (":%d" % p.port if p.port else "")
-q = u.parse_qsl(p.query) + [("t", sys.argv[2])]
-print(u.urlunsplit((p.scheme, host, p.path or "/", u.urlencode(q), p.fragment)))
+query = u.urlencode(u.parse_qsl(p.query) + [("t", sys.argv[2])])
+if ids:
+    query += "&projects=" + ",".join(u.quote(str(i), safe="") for i in ids)
+print(u.urlunsplit((p.scheme, host, p.path or "/", query, p.fragment)))
 ' "$tunnel_url" "$token")"
 
 echo "$phone_url"

@@ -5,6 +5,7 @@ import { readProjectRefs } from '../../application/board/read-cached-projects.js
 import { parseJsonBody } from './request-body.js';
 import { getBoardTimeZoneOverride } from '../../config/board-timezone.js';
 import type { ApiDeps } from './api-deps.js';
+import { isLocalControlRequest } from './local-request.js';
 
 const clientIdSchema = z.string().min(1).max(128);
 const visibleProjectsBodySchema = z.union([
@@ -75,6 +76,11 @@ export function createHealthStatusRoutes(deps: ApiDeps): Hono {
       }
       const parsed = await parseJsonBody(c, visibleProjectsBodySchema);
       if (!parsed.ok) return parsed.response;
+      // bdboard-u8p9: ローカル (非トンネル) からの申告だけを「PC の現在の選択」として覚える。
+      // トンネル書き込みを開けたスマホの申告で PC の選択が上書きされないようにする。
+      if (isLocalControlRequest(c)) {
+        registry.rememberLocalSelection('all' in parsed.data ? [] : parsed.data.projectIds);
+      }
       const before = registry.snapshot();
       registry.report(
         parsed.data.clientId,
@@ -97,6 +103,13 @@ export function createHealthStatusRoutes(deps: ApiDeps): Hono {
       return c.json({ ok: true });
     },
   );
+
+  // bdboard-u8p9: 直近にローカルクライアントが申告したプロジェクト選択 (読み取り専用)。
+  // projectIds が null = まだ申告なし、[] = 全プロジェクト表示。
+  app.get('/api/ui/selected-projects', (c) => {
+    const selection = deps.visibleProjects?.getLocalSelection() ?? null;
+    return c.json({ projectIds: selection });
+  });
 
   return app;
 }

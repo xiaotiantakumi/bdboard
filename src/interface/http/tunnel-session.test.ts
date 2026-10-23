@@ -99,6 +99,33 @@ describe('createTunnelTokenExchangeMiddleware', () => {
     expect(headers['Set-Cookie']).toContain('Path=/');
   });
 
+  it('keeps the projects param (bdboard-u8p9) byte-for-byte while stripping t', async () => {
+    const access = createTunnelAccessService({ now: () => new Date() });
+    access.beginTunnelSession();
+    const issued = access.issueToken();
+    const middleware = createTunnelTokenExchangeMiddleware({ access, secureCookie: false });
+
+    let redirectLocation: string | undefined;
+    const projects = 'projects=%2FUsers%2Fa%2Cb,%2Fp%2Fc';
+    const c = {
+      req: {
+        method: 'GET',
+        query: (name: string) => (name === TUNNEL_TOKEN_QUERY_PARAM ? issued!.token : undefined),
+        url: `http://localhost/?${TUNNEL_TOKEN_QUERY_PARAM}=${issued!.token}&${projects}&x=1`,
+        header: () => undefined,
+      },
+      header: () => {},
+      redirect: (location: string) => {
+        redirectLocation = location;
+        return { location };
+      },
+    } as unknown as Context;
+
+    await middleware(c, async () => {});
+
+    expect(redirectLocation).toBe(`/?${projects}&x=1`);
+  });
+
   it('collapses a leading double slash so the redirect cannot leave the origin', async () => {
     const access = createTunnelAccessService({ now: () => new Date() });
     access.beginTunnelSession();
