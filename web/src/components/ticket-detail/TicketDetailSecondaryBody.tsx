@@ -83,17 +83,6 @@ export function TicketDetailSecondaryBody({
       <TicketModelsSection models={data.models} />
       <TicketUsageSection usage={data.usage} />
       {pendingDecision !== undefined && attachmentsSection}
-      <TicketDecisionSection
-        pendingDecision={pendingDecision}
-        selectedChoice={decision.selectedChoice}
-        onSelectChoice={decision.setSelectedChoice}
-        freeformText={decision.freeformText}
-        onFreeformTextChange={decision.setFreeformText}
-        canSubmitDecision={decision.canSubmitDecision}
-        decisionMutation={decision.decisionMutation}
-        submittedDecision={decision.submittedDecision}
-        onOpenTicket={onOpenTicket}
-      />
       <TicketTimelineSection
         expanded={timeline.timelineExpanded}
         onToggleExpanded={() =>
@@ -116,6 +105,18 @@ export function TicketDetailSecondaryBody({
         onCommentTextChange={comment.setCommentText}
         canSubmit={comment.canSubmitComment}
         mutation={comment.mutation}
+      />
+      {/* bdboard-aob1: 回答欄は最後 (コメントの下) */}
+      <TicketDecisionSection
+        pendingDecision={pendingDecision}
+        selectedChoice={decision.selectedChoice}
+        onSelectChoice={decision.setSelectedChoice}
+        freeformText={decision.freeformText}
+        onFreeformTextChange={decision.setFreeformText}
+        canSubmitDecision={decision.canSubmitDecision}
+        decisionMutation={decision.decisionMutation}
+        submittedDecision={decision.submittedDecision}
+        onOpenTicket={onOpenTicket}
       />
     </>
   );

@@ -100,10 +100,21 @@
   line-height: 1.45;
 }
 
-.decision-ok-btn {
-  display: block;
-  min-height: 44px;
+.decision-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 12px;
+}
+
+.decision-freeform-toggle {
+  min-height: 44px;
+  padding: 10px 20px;
+  font-size: 0.9375rem;
+}
+
+.decision-ok-btn {
+  min-height: 44px;
   padding: 10px 28px;
   background: var(--color-accent);
   color: var(--color-accent-fg);

@@ -68,7 +68,7 @@ describe('useTicketDecisionAnswer', () => {
     });
 
     await act(async () => {
-      result.current.decisionMutation.mutate();
+      result.current.decisionMutation.mutate(undefined);
     });
 
     await waitFor(() =>
@@ -95,7 +95,7 @@ describe('useTicketDecisionAnswer', () => {
       result.current.setSelectedChoice('yes');
     });
     await act(async () => {
-      result.current.decisionMutation.mutate();
+      result.current.decisionMutation.mutate(undefined);
     });
     await waitFor(() => expect(result.current.submittedDecision).not.toBe(null));
 

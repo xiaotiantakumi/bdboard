@@ -92,6 +92,14 @@ function rerenderPanel(
 describe('TicketDetailPanel pending decisions', () => {
   let user: ReturnType<typeof userEvent.setup>;
 
+  async function openFreeform() {
+    const toggle = await screen.findByRole('button', { name: /自由入力/ });
+    if (toggle.getAttribute('aria-expanded') !== 'true') {
+      await user.click(toggle);
+    }
+    return screen.getByLabelText('自由入力');
+  }
+
   beforeEach(() => {
     mockFetchTicket.mockResolvedValue(sampleTicket);
     mockFetchTicketComments.mockResolvedValue([]);
@@ -186,7 +194,7 @@ describe('TicketDetailPanel pending decisions', () => {
     };
     const { rerender } = render(panel(first));
 
-    const freeform = await screen.findByLabelText('ほかの回答 (自由記入)');
+    const freeform = await openFreeform();
     await user.type(freeform, '最初の回答');
     expect(freeform).toHaveValue('最初の回答');
 
@@ -202,7 +210,7 @@ describe('TicketDetailPanel pending decisions', () => {
     );
 
     expect(await screen.findByText('次の質問')).toBeInTheDocument();
-    expect(screen.getByLabelText('ほかの回答 (自由記入)')).toHaveValue('');
+    expect(screen.getByLabelText('自由入力')).toHaveValue('');
   });
 
   it('still clears a selected choice when the pending decision is replaced', async () => {
@@ -246,7 +254,7 @@ describe('TicketDetailPanel pending decisions', () => {
     await user.click(await screen.findByRole('button', { name: 'A案' }));
     expect(screen.getByRole('button', { name: 'A案' })).toHaveClass('active');
     // 選択があるので送信できる状態。
-    expect(screen.getByRole('button', { name: '記入した内容で送信' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '送信' })).toBeEnabled();
 
     rerender(
       panel({
@@ -263,7 +271,7 @@ describe('TicketDetailPanel pending decisions', () => {
     // 身に覚えのない回答をワンクリックで送信できてしまう。
     expect(await screen.findByText('次の質問')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'A案' })).not.toHaveClass('active');
-    expect(screen.getByRole('button', { name: '記入した内容で送信' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '送信' })).not.toBeInTheDocument();
   });
 
   it('hides the pending decision section when pendingDecision is undefined', async () => {
@@ -284,7 +292,33 @@ describe('TicketDetailPanel pending decisions', () => {
 
     expect(await screen.findByText('どちらにしますか?')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'A案' })).not.toBeInTheDocument();
-    expect(screen.getByLabelText('ほかの回答 (自由記入)')).toBeInTheDocument();
+    // 自由入力欄は「自由入力」を開くまで出ない。
+    expect(screen.queryByLabelText('自由入力')).not.toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: /自由入力/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByLabelText('自由入力')).toBeInTheDocument();
+    await user.click(toggle);
+    expect(screen.queryByLabelText('自由入力')).not.toBeInTheDocument();
+  });
+
+  it('posts "レビューしました" immediately when that button is tapped', async () => {
+    renderPanel(new Map(), {
+      id: sampleTicket.id,
+      kind: 'ticket',
+      projectId: sampleTicket.projectId,
+      question: 'どちらにしますか?',
+      allowFreeform: true,
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'レビューしました' }));
+
+    await waitFor(() => {
+      expect(mockPostTicketDecision).toHaveBeenCalledWith(sampleTicket.id, {
+        freeform: 'レビューしました',
+      });
+    });
   });
 
   it('posts "OK" immediately when the OK button is tapped', async () => {
@@ -319,7 +353,7 @@ describe('TicketDetailPanel pending decisions', () => {
     });
 
     await user.click(await screen.findByRole('button', { name: 'A案' }));
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     await waitFor(() => {
       expect(mockPostTicketDecision).toHaveBeenCalledWith(sampleTicket.id, {
@@ -374,7 +408,7 @@ describe('TicketDetailPanel pending decisions', () => {
     });
 
     await user.click(await screen.findByRole('button', { name: 'A案' }));
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     expect(
       await screen.findByText(
@@ -434,7 +468,7 @@ describe('TicketDetailPanel pending decisions', () => {
     );
 
     await user.click(await screen.findByRole('button', { name: 'A案' }));
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     const gateLink = await screen.findByRole('button', { name: 'bdboard-gate-9' });
     expect(gateLink).toBeInTheDocument();
@@ -454,8 +488,8 @@ describe('TicketDetailPanel pending decisions', () => {
       allowFreeform: true,
     });
 
-    await user.type(await screen.findByLabelText('ほかの回答 (自由記入)'), 'ゲート回答');
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.type(await openFreeform(), 'ゲート回答');
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     expect(
       await screen.findByText(
@@ -500,7 +534,7 @@ describe('TicketDetailPanel pending decisions', () => {
     );
 
     await user.click(await screen.findByRole('button', { name: 'A案' }));
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     expect(await screen.findByText('他に 2 件のチケットの確認待ちも解除しました:')).toBeInTheDocument();
     const sib1Link = screen.getByRole('button', { name: 'bdboard-sib-1' });
@@ -530,8 +564,8 @@ describe('TicketDetailPanel pending decisions', () => {
       allowFreeform: true,
     });
 
-    await user.type(await screen.findByLabelText('ほかの回答 (自由記入)'), 'ゲート回答');
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.type(await openFreeform(), 'ゲート回答');
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     expect(await screen.findByText('他に 1 件のチケットの確認待ちも解除しました:')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'bdboard-sib-3' })).toBeInTheDocument();
@@ -584,8 +618,8 @@ describe('TicketDetailPanel pending decisions', () => {
       allowFreeform: true,
     });
 
-    await user.type(await screen.findByLabelText('ほかの回答 (自由記入)'), '再試行前の回答');
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.type(await openFreeform(), '再試行前の回答');
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     expect(
       await screen.findByText(
@@ -602,8 +636,8 @@ describe('TicketDetailPanel pending decisions', () => {
       allowFreeform: true,
     });
 
-    await user.type(await screen.findByLabelText('ほかの回答 (自由記入)'), '自由回答です');
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.type(await openFreeform(), '自由回答です');
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     await waitFor(() => {
       expect(mockPostTicketDecision).toHaveBeenCalledWith(sampleTicket.id, {
@@ -621,8 +655,8 @@ describe('TicketDetailPanel pending decisions', () => {
     };
     const { rerender, queryClient } = renderPanel(new Map(), pendingDecision);
 
-    await user.type(await screen.findByLabelText('ほかの回答 (自由記入)'), '自由回答です');
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.type(await openFreeform(), '自由回答です');
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     await waitFor(() => {
       expect(mockPostTicketDecision).toHaveBeenCalledWith(sampleTicket.id, {
@@ -647,8 +681,8 @@ describe('TicketDetailPanel pending decisions', () => {
       allowFreeform: true,
     });
 
-    await user.type(await screen.findByLabelText('ほかの回答 (自由記入)'), '自由回答です');
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.type(await openFreeform(), '自由回答です');
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     await waitFor(() => {
       expect(mockPostTicketDecision).toHaveBeenCalled();
@@ -668,9 +702,9 @@ describe('TicketDetailPanel pending decisions', () => {
       allowFreeform: true,
     });
 
-    const textarea = await screen.findByLabelText('ほかの回答 (自由記入)');
+    const textarea = await openFreeform();
     await user.type(textarea, '長い自由回答');
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     expect(await screen.findByText(NETWORK_FETCH_HELP)).toBeInTheDocument();
     expect(textarea).toHaveValue('長い自由回答');
@@ -691,9 +725,9 @@ describe('TicketDetailPanel pending decisions', () => {
       allowFreeform: true,
     });
 
-    const textarea = await screen.findByLabelText('ほかの回答 (自由記入)');
+    const textarea = await openFreeform();
     await user.type(textarea, 'トンネル経由の回答');
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.click(screen.getByRole('button', { name: '送信' }));
 
     expect(await screen.findByText(TUNNEL_WRITE_HELP)).toBeInTheDocument();
     expect(textarea).toHaveValue('トンネル経由の回答');
@@ -733,8 +767,8 @@ describe('TicketDetailPanel pending decisions', () => {
       }),
     );
 
-    await user.type(await screen.findByLabelText('ほかの回答 (自由記入)'), '最初の回答');
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.type(await openFreeform(), '最初の回答');
+    await user.click(screen.getByRole('button', { name: '送信' }));
     expect(await screen.findByText(NETWORK_FETCH_HELP)).toBeInTheDocument();
 
     // エージェントが質問1を取り下げて質問2を出した状況。ミューテーションの
@@ -794,8 +828,8 @@ describe('TicketDetailPanel pending decisions', () => {
       }),
     );
 
-    await user.type(await screen.findByLabelText('ほかの回答 (自由記入)'), '最初の回答');
-    await user.click(screen.getByRole('button', { name: '記入した内容で送信' }));
+    await user.type(await openFreeform(), '最初の回答');
+    await user.click(screen.getByRole('button', { name: '送信' }));
     expect(await screen.findByText(NETWORK_FETCH_HELP)).toBeInTheDocument();
 
     // ポーリングは同じ質問を新しいオブジェクトとして返し続ける。id が同じ
