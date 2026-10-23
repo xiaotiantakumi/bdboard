@@ -29,8 +29,14 @@ const TOAST_ANSWER_MAX = 30;
 export interface UseTicketDecisionAnswerOptions {
   /** 回答が確認待ちを解消したとき、詳細パネルを閉じてボードへ戻す。 */
   onClose?: () => void;
-  /** 「<回答> で回答しました」の通知を出す (元に戻す操作は無い)。 */
-  notify?: ((message: string) => void) | undefined;
+  /** 回答済みの通知を出す。「開く」で回答したチケットを開き直せる。 */
+  notify?:
+    | ((
+        message: string,
+        action?: { label: string; onClick: () => void },
+      ) => void)
+    | undefined;
+  onOpenTicket?: (ticketId: string) => void;
 }
 
 function truncateAnswer(text: string): string {
@@ -61,7 +67,7 @@ export function useTicketDecisionAnswer(
   pendingDecision: PendingDecisionDto | undefined,
   options: UseTicketDecisionAnswerOptions = {},
 ) {
-  const { onClose, notify } = options;
+  const { onClose, onOpenTicket, notify } = options;
   const queryClient = useQueryClient();
 
   const [submittedDecision, setSubmittedDecision] =
@@ -149,11 +155,16 @@ export function useTicketDecisionAnswer(
             (old) => old?.filter((decision) => decision.id !== pendingDecision.id),
           );
           const answerText = sentFreeform.length > 0 ? sentFreeform : (choiceLabel ?? sentChoice);
-          if (answerText !== undefined && answerText.length > 0) {
-            notify?.(`${truncateAnswer(answerText)} で回答しました`);
-          } else {
-            notify?.('回答しました');
-          }
+          const message =
+            answerText !== undefined && answerText.length > 0
+              ? `${ticketId} に「${truncateAnswer(answerText)}」と回答`
+              : `${ticketId} に回答しました`;
+          notify?.(
+            message,
+            onOpenTicket !== undefined
+              ? { label: '開く', onClick: () => onOpenTicket(ticketId) }
+              : undefined,
+          );
           onClose?.();
         }
       }

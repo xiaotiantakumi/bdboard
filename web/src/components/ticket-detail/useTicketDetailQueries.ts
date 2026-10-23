@@ -25,6 +25,8 @@ export interface UseTicketDetailQueriesParams {
   pendingDecision: PendingDecisionDto | undefined;
   /** 回答成功後に詳細パネルを閉じる (bdboard-zjw2)。 */
   onClose?: () => void;
+  /** 通知の「開く」で回答したチケットを開き直す (bdboard-zjw2)。 */
+  onOpenTicket?: (ticketId: string) => void;
   onTicketViewed?: (entry: { id: string; title: string; projectId: string }) => void;
 }
 
@@ -33,6 +35,7 @@ export function useTicketDetailQueries({
   projectRootPaths,
   pendingDecision,
   onClose,
+  onOpenTicket,
   onTicketViewed,
 }: UseTicketDetailQueriesParams) {
   const queryClient = useQueryClient();
@@ -58,6 +61,7 @@ export function useTicketDetailQueries({
 
   const decision = useTicketDecisionAnswer(ticketId, pendingDecision, {
     ...(onClose !== undefined ? { onClose } : {}),
+    ...(onOpenTicket !== undefined ? { onOpenTicket } : {}),
     notify: undoSnackbar?.showNotice,
   });
   const commentsEnabled =

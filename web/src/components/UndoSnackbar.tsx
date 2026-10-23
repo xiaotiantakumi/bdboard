@@ -19,8 +19,9 @@ import {
 // 長めに取る。
 const UNDO_VISIBLE_MS = 8000;
 const UNDO_RESULT_MS = 3000;
-// bdboard-zjw2: 元に戻せない操作の完了通知 (回答送信など)。
-const NOTICE_VISIBLE_MS = 5000;
+
+/** 通知に添える操作ボタン (bdboard-zjw2: 「開く」)。 */
+export interface NoticeAction { readonly label: string; readonly onClick: () => void }
 
 export interface UndoSnackbarRequest {
   /** スナックバーに表示するメッセージ(例: "着手しました") */
@@ -33,14 +34,14 @@ type SnackbarState =
   | { kind: 'idle' }
   | { kind: 'visible'; message: string; onUndo: () => Promise<void> }
   | { kind: 'undoing'; message: string }
-  | { kind: 'notice'; message: string }
+  | { kind: 'notice'; message: string; action?: NoticeAction }
   | { kind: 'undone' }
   | { kind: 'undo-failed'; detail: string };
 
 interface UndoSnackbarContextValue {
   showUndo: (request: UndoSnackbarRequest) => void;
-  /** 「元に戻す」無しの短い完了通知 (約5秒で消える)。 */
-  showNotice: (message: string) => void;
+  /** 「元に戻す」無しの通知。自動では消えず、×・操作ボタン・次の通知で消える。 */
+  showNotice: (message: string, action?: NoticeAction) => void;
 }
 
 const UndoSnackbarContext = createContext<UndoSnackbarContextValue | null>(
@@ -103,16 +104,12 @@ export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
   );
 
   const showNotice = useCallback(
-    (message: string) => {
+    (message: string, action?: NoticeAction) => {
       if (!mountedRef.current) {
         return;
       }
       clearPendingTimeout();
-      setState({ kind: 'notice', message });
-      timeoutRef.current = setTimeout(() => {
-        setState({ kind: 'idle' });
-        timeoutRef.current = null;
-      }, NOTICE_VISIBLE_MS);
+      setState({ kind: 'notice', message, ...(action && { action }) });
     },
     [clearPendingTimeout],
   );
@@ -191,6 +188,15 @@ export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
           {state.kind === 'notice' && (
             <>
               <span className="undo-snackbar-message">{state.message}</span>
+              {state.action !== undefined && (
+                <button
+                  type="button"
+                  className="btn undo-snackbar-action"
+                  onClick={() => { state.action?.onClick(); handleDismiss(); }}
+                >
+                  {state.action.label}
+                </button>
+              )}
               <button
                 type="button"
                 className="undo-snackbar-dismiss"
