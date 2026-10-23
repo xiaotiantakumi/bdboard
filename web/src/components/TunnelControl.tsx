@@ -12,9 +12,10 @@ import { TunnelStatusPanel } from './tunnel/TunnelStatusPanel';
 export interface TunnelControlProps {
   open: boolean;
   onClose: () => void;
+  selectedProjectIds?: readonly string[];
 }
 
-export function TunnelControl({ open, onClose }: TunnelControlProps) {
+export function TunnelControl({ open, onClose, selectedProjectIds }: TunnelControlProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [localOnlyNotice, setLocalOnlyNotice] = useState(false);
   const modalPanelRef = useRef<HTMLElement>(null);
@@ -175,6 +176,7 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
               qr={qr}
               stop={stop}
               actionError={actionError}
+              selectedProjectIds={selectedProjectIds}
             />
           </div>
         </div>

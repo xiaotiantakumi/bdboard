@@ -11,12 +11,14 @@ import { TunnelControl } from '../TunnelControl';
 export interface AppTunnelOverlayProps {
   open: boolean;
   onClose: () => void;
+  /** bdboard-u8p9: QR に載せる PC の現在のプロジェクト選択 (空 = 全プロジェクト)。 */
+  selectedProjectIds?: readonly string[];
 }
 
-export function AppTunnelOverlay({ open, onClose }: AppTunnelOverlayProps) {
+export function AppTunnelOverlay({ open, onClose, selectedProjectIds }: AppTunnelOverlayProps) {
   return (
     <ErrorBoundary label="トンネル" resetLabel="閉じる" onReset={onClose} overlay={open}>
-      <TunnelControl open={open} onClose={onClose} />
+      <TunnelControl open={open} onClose={onClose} selectedProjectIds={selectedProjectIds} />
     </ErrorBoundary>
   );
 }

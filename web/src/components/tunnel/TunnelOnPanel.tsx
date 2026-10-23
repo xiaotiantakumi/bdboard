@@ -15,6 +15,7 @@ export interface TunnelOnPanelProps {
   tokenError: unknown;
   tunnelUrl: string;
   accessToken: string | null;
+  selectedProjectIds?: readonly string[];
   onStop: () => void;
   stopDisabled: boolean;
   stopPending: boolean;
@@ -28,6 +29,7 @@ export function TunnelOnPanel({
   tokenError,
   tunnelUrl,
   accessToken,
+  selectedProjectIds,
   onStop,
   stopDisabled,
   stopPending,
@@ -69,7 +71,7 @@ export function TunnelOnPanel({
             {accessToken !== null && (
               <>
                 <QRCodeSVG
-                  value={buildTunnelTokenUrl(tunnelUrl, accessToken)}
+                  value={buildTunnelTokenUrl(tunnelUrl, accessToken, selectedProjectIds)}
                   size={192}
                   level="M"
                   marginSize={2}

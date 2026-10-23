@@ -115,4 +115,54 @@ describe('visible projects reporting (bdboard-o1e5)', () => {
     });
     expect(res.status).toBe(403);
   });
+
+  describe('remembered selection (bdboard-u8p9)', () => {
+    async function getSelection(app: ReturnType<typeof createApiRoutes>) {
+      const res = await app.request('/api/ui/selected-projects', withLocalHost({}), LOCAL_ENV);
+      expect(res.status).toBe(200);
+      return (await res.json()) as { projectIds: string[] | null };
+    }
+
+    it('is null until a local client reports', async () => {
+      const app = makeApp();
+      expect(await getSelection(app)).toEqual({ projectIds: null });
+    });
+
+    it('returns the last selection reported by a local client', async () => {
+      const app = makeApp();
+      await put(app, { clientId: 'pc', projectIds: ['/p/a'] });
+      expect(await getSelection(app)).toEqual({ projectIds: ['/p/a'] });
+      await put(app, { clientId: 'pc', projectIds: ['/p/a', '/p/b'] });
+      expect(await getSelection(app)).toEqual({ projectIds: ['/p/a', '/p/b'] });
+    });
+
+    it('remembers a wildcard (all projects) report as an empty list', async () => {
+      const app = makeApp();
+      await put(app, { clientId: 'pc', projectIds: ['/p/a'] });
+      await put(app, { clientId: 'pc', all: true });
+      expect(await getSelection(app)).toEqual({ projectIds: [] });
+    });
+
+    it('does not remember a report that carries tunnel headers', async () => {
+      const registry = createVisibleProjectsRegistry();
+      const app = makeApp({ visibleProjects: registry });
+      await put(app, { clientId: 'pc', projectIds: ['/p/a'] });
+      // 書き込みガードを通る (ローカル socket) が CF ヘッダ付き = トンネル経由の想定。
+      // ガードが先に 403 にするので、レジストリは PC の選択のまま変わらない。
+      await app.request(
+        '/api/ui/visible-projects',
+        {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/json',
+            host: 'example.trycloudflare.com',
+            'cf-connecting-ip': '203.0.113.1',
+          },
+          body: JSON.stringify({ clientId: 'phone', projectIds: ['/p/b'] }),
+        },
+        LOCAL_ENV,
+      );
+      expect(registry.getLocalSelection()).toEqual(['/p/a']);
+    });
+  });
 });

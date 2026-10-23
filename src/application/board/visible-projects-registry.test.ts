@@ -59,3 +59,23 @@ describe('createVisibleProjectsRegistry', () => {
     expect(r.isVisible('c')).toBe(true);
   });
 });
+
+describe('remembered local selection (bdboard-u8p9)', () => {
+  it('is null before any report and returns a copy afterwards', () => {
+    const registry = createVisibleProjectsRegistry();
+    expect(registry.getLocalSelection()).toBeNull();
+    registry.rememberLocalSelection(['/p/a']);
+    const first = registry.getLocalSelection();
+    expect(first).toEqual(['/p/a']);
+    (first as string[]).push('/p/x');
+    expect(registry.getLocalSelection()).toEqual(['/p/a']);
+  });
+
+  it('does not expire with the visibility TTL and keeps an empty selection', () => {
+    let t = 0;
+    const registry = createVisibleProjectsRegistry({ now: () => t, ttlMs: 10 });
+    registry.rememberLocalSelection([]);
+    t = 1_000_000;
+    expect(registry.getLocalSelection()).toEqual([]);
+  });
+});
