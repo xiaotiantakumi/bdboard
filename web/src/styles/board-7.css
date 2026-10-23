@@ -57,6 +57,8 @@ body:has(.overlay .detail-panel:not(.chat-panel)):not(:has(.chat-panel)) .undo-s
 
 .undo-snackbar-action {
   flex-shrink: 0;
+  min-height: 40px;
+  min-width: 40px;
   padding: 6px 12px;
   border: 1px solid color-mix(in srgb, var(--color-bg-elevated) 55%, transparent);
   border-radius: var(--radius-md);
@@ -68,6 +70,8 @@ body:has(.overlay .detail-panel:not(.chat-panel)):not(:has(.chat-panel)) .undo-s
 }
 
 .undo-snackbar-dismiss {
+  min-height: 40px;
+  min-width: 40px;
   flex-shrink: 0;
   border: none;
   background: transparent;

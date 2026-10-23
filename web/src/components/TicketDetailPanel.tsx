@@ -54,6 +54,7 @@ export function TicketDetailPanel({
     projectRootPaths,
     pendingDecision,
     onClose,
+    onOpenTicket,
     onTicketViewed,
     availableLabels,
     panelRef,

@@ -224,28 +224,68 @@ describe('UndoSnackbar', () => {
     });
   });
 
-  it('showNotice shows a message without an undo button and hides after 5 seconds', async () => {
-    function NoticeHarness() {
-      const snackbar = useUndoSnackbar();
-      return (
-        <button type="button" onClick={() => snackbar?.showNotice('OK で回答しました')}>
+  function NoticeHarness({ onOpen }: { onOpen: () => void }) {
+    const snackbar = useUndoSnackbar();
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() =>
+            snackbar?.showNotice('bd-1 に「OK」と回答', { label: '開く', onClick: onOpen })
+          }
+        >
           notice
         </button>
-      );
-    }
+        <button type="button" onClick={() => snackbar?.showNotice('bd-2 に「承認」と回答')}>
+          notice2
+        </button>
+      </>
+    );
+  }
+
+  it('showNotice stays visible (no auto-dismiss) without an undo button', async () => {
     render(
       <UndoSnackbarProvider>
-        <NoticeHarness />
+        <NoticeHarness onOpen={vi.fn()} />
       </UndoSnackbarProvider>,
     );
     await user.click(screen.getByRole('button', { name: 'notice' }));
 
-    expect(screen.getByText('OK で回答しました')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(screen.getByText('bd-1 に「OK」と回答')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '元に戻す' })).not.toBeInTheDocument();
 
     await act(async () => {
-      vi.advanceTimersByTime(5000);
+      vi.advanceTimersByTime(60_000);
     });
-    expect(screen.queryByText('OK で回答しました')).not.toBeInTheDocument();
+    expect(screen.getByText('bd-1 に「OK」と回答')).toBeInTheDocument();
+  });
+
+  it('notice action runs the callback and dismisses', async () => {
+    const onOpen = vi.fn();
+    render(
+      <UndoSnackbarProvider>
+        <NoticeHarness onOpen={onOpen} />
+      </UndoSnackbarProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: 'notice' }));
+    await user.click(screen.getByRole('button', { name: '開く' }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('notice is closed by the x button and replaced by the next notice', async () => {
+    render(
+      <UndoSnackbarProvider>
+        <NoticeHarness onOpen={vi.fn()} />
+      </UndoSnackbarProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: 'notice' }));
+    await user.click(screen.getByRole('button', { name: 'notice2' }));
+    expect(screen.queryByText('bd-1 に「OK」と回答')).not.toBeInTheDocument();
+    expect(screen.getByText('bd-2 に「承認」と回答')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '開く' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '閉じる' }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });
