@@ -1,3 +1,4 @@
+import { BoardUpdatedAtContext } from '../../boardUpdatedAt';
 import { BoardDnDProvider } from '../BoardDnDProvider';
 import { BulkSelectionProvider } from '../BulkSelectionProvider';
 import { UndoSnackbarProvider } from '../UndoSnackbar';
@@ -100,6 +101,7 @@ export function AppBody({ controller }: AppBodyProps) {
         {/* プロバイダーは境界の外に置く。中に入れると key={view} の再マウントが
             そのまま伝わり、ビューを往復しただけで一括選択が消える (PR#129 レビュー)。
             context を配るだけの薄い描画なので、境界で守る価値もほぼ無い。 */}
+        <BoardUpdatedAtContext.Provider value={boardQuery.dataUpdatedAt}>
         <BoardDnDProvider>
         <BulkSelectionProvider>
         <AppViewContent
@@ -125,6 +127,7 @@ export function AppBody({ controller }: AppBodyProps) {
         />
         </BulkSelectionProvider>
         </BoardDnDProvider>
+        </BoardUpdatedAtContext.Provider>
       </main>
 
       <AppOverlaySection controller={controller} />

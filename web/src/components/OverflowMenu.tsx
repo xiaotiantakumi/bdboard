@@ -18,8 +18,6 @@ export interface OverflowMenuProps {
   view: ViewMode;
   onViewChange: (view: ViewMode) => void;
   onOpenSearch: () => void;
-  onRefresh: () => void;
-  isRefreshing: boolean;
   onOpenHelp: () => void;
   onOpenShortcuts: () => void;
   /** bdboard-h4xs.17: Tips バナーが閉じられ、永続化により非表示になっている状態か。 */
@@ -35,8 +33,6 @@ export function OverflowMenu({
   view,
   onViewChange,
   onOpenSearch,
-  onRefresh,
-  isRefreshing,
   onOpenHelp,
   onOpenShortcuts,
   tipsBannerDismissed,
@@ -107,7 +103,6 @@ export function OverflowMenu({
           {viewItems.map((entry) =>
             item(entry.label, () => onViewChange(entry.view), { current: view === entry.view }),
           )}
-          {item(isRefreshing ? '更新中…' : '手動更新', onRefresh, { disabled: isRefreshing })}
           {item('コマンドパレット (⌘K)', onOpenSearch)}
           <div className="overflow-menu-quota">
             <AiQuotaWidget />
