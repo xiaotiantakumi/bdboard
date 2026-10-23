@@ -19,6 +19,8 @@ import {
 // 長めに取る。
 const UNDO_VISIBLE_MS = 8000;
 const UNDO_RESULT_MS = 3000;
+// bdboard-zjw2: 元に戻せない操作の完了通知 (回答送信など)。
+const NOTICE_VISIBLE_MS = 5000;
 
 export interface UndoSnackbarRequest {
   /** スナックバーに表示するメッセージ(例: "着手しました") */
@@ -31,11 +33,14 @@ type SnackbarState =
   | { kind: 'idle' }
   | { kind: 'visible'; message: string; onUndo: () => Promise<void> }
   | { kind: 'undoing'; message: string }
+  | { kind: 'notice'; message: string }
   | { kind: 'undone' }
   | { kind: 'undo-failed'; detail: string };
 
 interface UndoSnackbarContextValue {
   showUndo: (request: UndoSnackbarRequest) => void;
+  /** 「元に戻す」無しの短い完了通知 (約5秒で消える)。 */
+  showNotice: (message: string) => void;
 }
 
 const UndoSnackbarContext = createContext<UndoSnackbarContextValue | null>(
@@ -97,6 +102,21 @@ export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
     [clearPendingTimeout],
   );
 
+  const showNotice = useCallback(
+    (message: string) => {
+      if (!mountedRef.current) {
+        return;
+      }
+      clearPendingTimeout();
+      setState({ kind: 'notice', message });
+      timeoutRef.current = setTimeout(() => {
+        setState({ kind: 'idle' });
+        timeoutRef.current = null;
+      }, NOTICE_VISIBLE_MS);
+    },
+    [clearPendingTimeout],
+  );
+
   const scheduleAutoDismiss = useCallback(() => {
     timeoutRef.current = setTimeout(() => {
       setState({ kind: 'idle' });
@@ -139,8 +159,8 @@ export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
   }, [clearPendingTimeout]);
 
   const contextValue = useMemo<UndoSnackbarContextValue>(
-    () => ({ showUndo }),
-    [showUndo],
+    () => ({ showUndo, showNotice }),
+    [showUndo, showNotice],
   );
 
   return (
@@ -158,6 +178,19 @@ export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
               >
                 元に戻す
               </button>
+              <button
+                type="button"
+                className="undo-snackbar-dismiss"
+                aria-label="閉じる"
+                onClick={handleDismiss}
+              >
+                ×
+              </button>
+            </>
+          )}
+          {state.kind === 'notice' && (
+            <>
+              <span className="undo-snackbar-message">{state.message}</span>
               <button
                 type="button"
                 className="undo-snackbar-dismiss"

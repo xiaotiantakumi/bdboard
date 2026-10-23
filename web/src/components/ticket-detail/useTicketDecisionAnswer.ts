@@ -12,6 +12,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 import {
   postTicketDecision,
+  type BoardDto,
+  type BoardViewDto,
   type PendingDecisionDto,
 } from '../../api';
 import type { SubmittedDecision } from './types';
@@ -21,10 +23,45 @@ export interface QuickDecisionAnswer {
   freeform: string;
 }
 
+/** bdboard-zjw2: 回答成功後のトースト本文に出す回答文の最大長。 */
+const TOAST_ANSWER_MAX = 30;
+
+export interface UseTicketDecisionAnswerOptions {
+  /** 回答が確認待ちを解消したとき、詳細パネルを閉じてボードへ戻す。 */
+  onClose?: () => void;
+  /** 「<回答> で回答しました」の通知を出す (元に戻す操作は無い)。 */
+  notify?: ((message: string) => void) | undefined;
+}
+
+function truncateAnswer(text: string): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length > TOAST_ANSWER_MAX
+    ? `${oneLine.slice(0, TOAST_ANSWER_MAX)}…`
+    : oneLine;
+}
+
+function dropAwaitingHumanCards(
+  board: BoardDto,
+  ids: ReadonlySet<string>,
+): BoardDto {
+  const lane = board.lanes['awaiting_human'];
+  if (lane === undefined || !lane.some((card) => ids.has(card.ticket.id))) {
+    return board;
+  }
+  const kept = lane.filter((card) => !ids.has(card.ticket.id));
+  return {
+    ...board,
+    lanes: { ...board.lanes, awaiting_human: kept },
+    cardCount: board.cardCount - (lane.length - kept.length),
+  };
+}
+
 export function useTicketDecisionAnswer(
   ticketId: string,
   pendingDecision: PendingDecisionDto | undefined,
+  options: UseTicketDecisionAnswerOptions = {},
 ) {
+  const { onClose, notify } = options;
   const queryClient = useQueryClient();
 
   const [submittedDecision, setSubmittedDecision] =
@@ -76,7 +113,51 @@ export function useTicketDecisionAnswer(
           ...(choiceLabel !== undefined ? { choiceLabel } : {}),
           ...(sentFreeform.length > 0 ? { freeform: sentFreeform } : {}),
         });
+
+        // bdboard-zjw2: 確認待ちが実際に解消した (どの gate も取りこぼしていない)
+        // ときだけ、カードを確認待ちレーンから即座に外し、パネルを閉じる。
+        // ambiguous / unknown は何も resolve していないので、パネルを残して
+        // 「送信した回答」の説明を読ませる。
+        const resolved =
+          outcome.kind !== 'unknown' &&
+          (outcome.ambiguousGateIds === undefined ||
+            outcome.ambiguousGateIds.length === 0);
+        if (resolved) {
+          const dropIds = new Set<string>([
+            pendingDecision.id,
+            ...(outcome.clearedHumanLabelTicketIds ?? []),
+          ]);
+          queryClient.setQueriesData<BoardViewDto>(
+            { queryKey: ['board'] },
+            (old) =>
+              old === undefined
+                ? old
+                : {
+                    ...old,
+                    merged:
+                      old.merged === null
+                        ? null
+                        : dropAwaitingHumanCards(old.merged, dropIds),
+                    projects: old.projects.map((entry) => ({
+                      ...entry,
+                      board: dropAwaitingHumanCards(entry.board, dropIds),
+                    })),
+                  },
+          );
+          queryClient.setQueryData<PendingDecisionDto[]>(
+            ['pending-decisions'],
+            (old) => old?.filter((decision) => decision.id !== pendingDecision.id),
+          );
+          const answerText = sentFreeform.length > 0 ? sentFreeform : (choiceLabel ?? sentChoice);
+          if (answerText !== undefined && answerText.length > 0) {
+            notify?.(`${truncateAnswer(answerText)} で回答しました`);
+          } else {
+            notify?.('回答しました');
+          }
+          onClose?.();
+        }
       }
+      await queryClient.invalidateQueries({ queryKey: ['board'] });
       await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
       await queryClient.invalidateQueries({ queryKey: ['pending-decisions'] });
       await queryClient.invalidateQueries({

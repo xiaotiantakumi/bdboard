@@ -65,6 +65,7 @@ export function useTicketDetailController({
     ticketId,
     projectRootPaths,
     pendingDecision,
+    onClose,
     onTicketViewed,
   });
   const { queryClient, data, isLoading, error, projectRootPath, decision } =
