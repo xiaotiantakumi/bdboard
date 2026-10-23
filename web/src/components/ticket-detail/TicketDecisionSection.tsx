@@ -17,7 +17,7 @@ export interface TicketDecisionSectionProps {
   decisionMutation: {
     isPending: boolean;
     error: unknown;
-    mutate: () => void;
+    mutate: (quick?: { freeform: string }) => void;
   };
   submittedDecision: SubmittedDecision | null;
   onOpenTicket: (ticketId: string) => void;
@@ -42,6 +42,15 @@ export function TicketDecisionSection({
           {pendingDecision.question !== undefined && (
             <p className="detail-pre">{pendingDecision.question}</p>
           )}
+          {/* bdboard-aob1: 即答用の「OK」。確認ダイアログ無しで freeform "OK" を送る。 */}
+          <button
+            type="button"
+            className="btn decision-ok-btn"
+            disabled={decisionMutation.isPending}
+            onClick={() => decisionMutation.mutate({ freeform: 'OK' })}
+          >
+            OK
+          </button>
           {pendingDecision.options !== undefined &&
             pendingDecision.options.length > 0 && (
               <div className="decision-options">
@@ -60,7 +69,7 @@ export function TicketDecisionSection({
               </div>
             )}
           <label className="decision-freeform-label" htmlFor="decision-freeform">
-            自由記入
+            ほかの回答 (自由記入)
           </label>
           <textarea
             id="decision-freeform"
@@ -82,9 +91,9 @@ export function TicketDecisionSection({
             type="button"
             className="btn"
             disabled={!canSubmitDecision || decisionMutation.isPending}
-            onClick={() => decisionMutation.mutate()}
+            onClick={() => decisionMutation.mutate(undefined)}
           >
-            {decisionMutation.isPending ? '送信中…' : '回答を送信'}
+            {decisionMutation.isPending ? '送信中…' : '記入した内容で送信'}
           </button>
           {decisionMutation.error !== null && (
             <p className="error-message">
