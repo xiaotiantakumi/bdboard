@@ -4,6 +4,7 @@ import { useMatchMedia } from '../hooks/useMatchMedia';
 import { MOBILE_LAYOUT_MEDIA_QUERY } from '../mediaQueries';
 import type { ViewMode } from '../uiPersistedState';
 import { HeaderFilterMenu, countHeaderFilters, type HeaderFilterProps } from './header/HeaderFilterMenu';
+import { HeaderRefreshButton, type HeaderRefreshButtonProps } from './header/HeaderRefreshButton';
 import { HeaderSearchField } from './header/HeaderSearchField';
 import { OverflowMenu, type OverflowMenuProps } from './OverflowMenu';
 import { ProjectPicker } from './ProjectPicker';
@@ -27,13 +28,9 @@ export interface GlobalBarProps {
   onOpenChat: () => void;
   menu: Pick<
     OverflowMenuProps,
-    | 'onRefresh'
-    | 'isRefreshing'
-    | 'onOpenHelp'
-    | 'onOpenShortcuts'
-    | 'tipsBannerDismissed'
-    | 'onShowTipsBanner'
-  >;
+    'onOpenHelp' | 'onOpenShortcuts' | 'tipsBannerDismissed' | 'onShowTipsBanner'
+  > &
+    HeaderRefreshButtonProps;
 }
 
 /**
@@ -58,6 +55,7 @@ export function GlobalBar({
   onOpenChat,
   menu,
 }: GlobalBarProps) {
+  const { onRefresh, isRefreshing, ...overflowMenuProps } = menu;
   const isMobile = useMatchMedia(MOBILE_LAYOUT_MEDIA_QUERY);
   const [filterOpen, setFilterOpen] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
@@ -97,6 +95,8 @@ export function GlobalBar({
       />
 
       <span className="header-spacer" aria-hidden="true" />
+
+      <HeaderRefreshButton onRefresh={onRefresh} isRefreshing={isRefreshing} />
 
       {isMobile ? (
         <button
@@ -152,7 +152,7 @@ export function GlobalBar({
               }
             : undefined
         }
-        {...menu}
+        {...overflowMenuProps}
       />
     </div>
   );

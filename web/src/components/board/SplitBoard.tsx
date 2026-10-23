@@ -3,6 +3,7 @@ import { type BoardFilter, isBoardFilterActive } from '../../boardFilter';
 import { useBoardDnD } from '../BoardDnDProvider';
 import { ProjectHarnessBadges } from '../ProjectHarnessBadges';
 import { type WipLimitsOverrides } from '../../wip-limits';
+import { BoardUpdatedAtLabel } from '../../boardUpdatedAt';
 import { BoardLanes } from './BoardLanes';
 import { hasVisibleCards } from './boardLanesHelpers';
 
@@ -66,11 +67,12 @@ export function SplitBoard({
         boardDnD.dndError !== '' && (
           <p className="error-message board-dnd-error">{boardDnD.dndError}</p>
         )}
-      {visibleProjects.map((entry) => (
+      {visibleProjects.map((entry, index) => (
         <section key={entry.project.id} className="board-section">
           <h2 className="board-section-title">
             {entry.project.name} · {entry.board.cardCount} 件
             <ProjectHarnessBadges projectId={entry.project.id} />
+            {index === 0 && <BoardUpdatedAtLabel />}
           </h2>
           <BoardLanes
             board={entry.board}
