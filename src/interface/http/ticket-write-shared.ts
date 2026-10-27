@@ -60,3 +60,34 @@ export function createRefreshAfterWrite(
     }
   };
 }
+
+/** bdboard-z6gg: ユーザーが返信/承認したことを示すラベル (bdboard は付けるだけで外さない)。 */
+export const USER_REPLIED_LABEL = 'user-replied';
+export const USER_APPROVED_LABEL = 'user-approved';
+
+/**
+ * bdboard-z6gg: ユーザーのコメント・決定回答のあとに user-replied を付け、回答本文が
+ * ちょうど「OK」のときは user-approved も付ける。addLabel は冪等 (既存なら何もしない) で、
+ * 失敗してもコメント/回答自体は成功扱いのままにする (ログだけ残して続行)。
+ */
+export async function addUserReplyLabels(
+  deps: ApiDeps,
+  rootPath: string,
+  ticketId: string,
+  options: { readonly approved: boolean },
+): Promise<void> {
+  if (deps.issueWriter === undefined) {
+    return;
+  }
+  const labels = options.approved
+    ? [USER_REPLIED_LABEL, USER_APPROVED_LABEL]
+    : [USER_REPLIED_LABEL];
+  for (const label of labels) {
+    try {
+      await deps.issueWriter.addLabel(rootPath, ticketId, label);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`add ${label} label failed (ticket=${ticketId}): ${detail}`);
+    }
+  }
+}

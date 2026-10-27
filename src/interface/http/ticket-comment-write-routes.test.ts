@@ -68,6 +68,26 @@ describe('createApiRoutes', () => {
       'progress update',
     );
   });
+  it('adds user-replied (only) after a plain comment (bdboard-z6gg)', async () => {
+    const cache = createFakeBoardCache();
+    seedCache(cache, [{ project: project('proj-a', '/root/a'), ticketId: 'bdboard-a' }]);
+    const addLabel = vi.fn(async (_root: string, _id: string, _label: string) => {});
+    const issueWriter = { addComment: vi.fn(async () => {}), addLabel } as unknown as IssueWriterPort;
+
+    const app = createApiRoutes(createDeps({ cache, issueWriter }));
+    const response = await app.request(
+      '/api/tickets/bdboard-a/comment',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'OK' }),
+      }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(addLabel.mock.calls.map((call) => call[2])).toEqual(['user-replied']);
+  });
   it('returns 400 for empty comment body', async () => {
     const issueWriter: IssueWriterPort = {
       claim: vi.fn(async () => {}),

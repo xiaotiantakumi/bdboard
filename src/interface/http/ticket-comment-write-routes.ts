@@ -5,6 +5,7 @@ import { respondBdError } from './bd-error-response.js';
 import {
   findProjectRootPathForTicket,
   createRefreshAfterWrite,
+  addUserReplyLabels,
 } from './ticket-write-shared.js';
 import type { ApiDeps } from './api-deps.js';
 
@@ -36,6 +37,7 @@ export function createTicketCommentWriteRoutes(deps: ApiDeps): Hono {
 
     try {
       await deps.issueWriter.addComment(rootPath, id, parsed.data.text);
+      await addUserReplyLabels(deps, rootPath, id, { approved: false });
 
       await refreshAfterWrite(rootPath);
       return c.json({ ok: true });

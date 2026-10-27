@@ -5,6 +5,7 @@ import { respondBdError } from './bd-error-response.js';
 import {
   findProjectRootPathForTicket,
   createRefreshAfterWrite,
+  addUserReplyLabels,
 } from './ticket-write-shared.js';
 import type { ApiDeps } from './api-deps.js';
 
@@ -47,6 +48,9 @@ export function createTicketDecisionRoutes(deps: ApiDeps): Hono {
 
     try {
       const outcome = await deps.humanDecisions.respond(rootPath, id, responseText);
+      await addUserReplyLabels(deps, rootPath, id, {
+        approved: responseText === 'OK',
+      });
       await refreshAfterWrite(rootPath);
       return c.json({
         ok: true,
