@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createApiRoutes } from './routes.js';
 import type { HumanDecisionsPort } from '../../application/ports/human-decisions.js';
+import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
 import { LOCAL_ENV, withLocalHost, project, createFakeBoardCache, seedCache, createDeps } from './routes-test-support.js';
 
 // bdboard-sso1.7: routes.test.ts (createApiRoutes 総合テスト) を実装側のルート
@@ -147,6 +148,33 @@ describe('createApiRoutes', () => {
         clearedHumanLabelTicketIds: ['bdboard-sibling-1', 'bdboard-sibling-2'],
       },
     });
+  });
+  it.each([
+    ['OK', ['user-replied', 'user-approved']],
+    ['レビューしました', ['user-replied']],
+  ])('adds reply labels after answering %s (bdboard-z6gg)', async (answer, expected) => {
+    const cache = createFakeBoardCache();
+    seedCache(cache, [{ project: project('proj-a', '/projects/a'), ticketId: 'bdboard-a' }]);
+    const humanDecisions: HumanDecisionsPort = {
+      listPendingDecisions: vi.fn(async () => []),
+      respond: vi.fn<HumanDecisionsPort['respond']>(async () => ({ kind: 'ticket', closed: false })),
+    };
+    const addLabel = vi.fn(async (_root: string, _id: string, _label: string) => {});
+    const issueWriter = { addLabel } as unknown as IssueWriterPort;
+
+    const app = createApiRoutes(createDeps({ cache, humanDecisions, issueWriter }));
+    const response = await app.request(
+      '/api/tickets/bdboard-a/decision',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ freeform: answer }),
+      }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(addLabel.mock.calls.map((call) => call[2])).toEqual(expected);
   });
   it('returns 400 when decision body has neither choice nor freeform', async () => {
     const humanDecisions: HumanDecisionsPort = {
