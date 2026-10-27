@@ -13,12 +13,14 @@ import { RM_OPTIONS } from './test-support/quiet-git.mjs';
 
 /**
  * lock が効くのは fetch が tracking ref を更新するときだけ (最新なら lock を取りに行かない)。
- * なので origin の main を 1 コミット進める。remote 名ではなくパスへ push して、手元の
+ * なので origin の main を 1 コミット進める。remote 名ではなく URL へ push して、手元の
  * refs/remotes/origin/main は動かさない (動かすと次の fetch が空振りして lock に当たらない)。
+ * git 2.56 以降、設定済み remote の url と文字列一致する URL への push は tracking ref も更新する。
+ * なので素のパスではなく file:// URL (strcmp 一致しない形) を使い、refs/remotes/origin/main に触れずに origin を進める。
  */
 function moveOriginMainBehindTrackingRef() {
   const peer = peerCommit();
-  git(work, ['push', '-q', path.join(tmp, 'origin.git'), `${peer}:refs/heads/main`]);
+  git(work, ['push', '-q', `file://${path.join(tmp, 'origin.git')}`, `${peer}:refs/heads/main`]);
   return peer;
 }
 
