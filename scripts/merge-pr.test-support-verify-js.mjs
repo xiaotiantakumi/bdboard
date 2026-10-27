@@ -37,7 +37,10 @@ if (conflict && conflict.split(',').every((file) => fs.existsSync(file))) proces
 // SIGTERM が、git が lock ファイルを作ってから後始末の対象に登録するまでの隙間に当たると lock が残り、
 // 以後の fetch が全部落ちる (bdboard-rlvz。負荷で隙間が広がる。SIGKILL は要らない — このテストの猶予は既定の 8 秒)。
 if (process.env.FAKE_VERIFY_MOVE_MAIN) {
-  const originUrl = execFileSync('git', ['remote', 'get-url', 'origin']).toString().trim();
+  let originUrl = execFileSync('git', ['remote', 'get-url', 'origin']).toString().trim();
+  // git 2.56 以降、設定済み remote の url と文字列一致する URL への push は tracking ref も更新する。
+  // 絶対パスなら file:// を付けて strcmp 一致を避け、refs/remotes/origin/main に触れずに origin を進める。
+  if (originUrl.startsWith('/')) originUrl = 'file://' + originUrl;
   execFileSync('git', ['push', '-q', originUrl, process.env.FAKE_VERIFY_MOVE_MAIN + ':refs/heads/main']);
 }
 const sleepMs = Number(process.env.FAKE_VERIFY_SLEEP_MS || 0);
