@@ -83,65 +83,6 @@
     min-height: 34px;
   }
 
-  /* カスタム日付を選ぶと date 入力(16px化で147px)が入って延期グループが 289px まで伸び、
-     .bulk-action-bar-buttons の折り返しが1行増える。カスタムのときだけ独立行にして
-     他のボタンの並びを乱さない (bdboard-h4xs.11)
-     (289px は h4xs.11 時点のより広いビューポートでの値。320px での実寸は下記の 277px。) */
-  .bulk-action-bar-buttons .quick-action-defer-group-custom {
-    flex: 1 1 100%;
-    /* min-width: auto (flex item の既定) だと自動最小サイズが min-content で
-       止まり、flex-basis 100% を割り込めない。320px では中身の実寸が
-       86 + 6 + 147 + 6 + 32 = 277px で、コンテナの内容領域 270px を 7px はみ出す。
-       この 7px は body 基準の overflow 判定 (horizontalOverflow:
-       document.body.scrollWidth > innerWidth) では検出できないが、原因は
-       overflow-x: clip ではない — 標準モードでは clip された in-flow の溢れも
-       body.scrollWidth に現れる (test/e2e/bulk-action-bar-defer-row.spec.ts の
-       「320px カスタム状態について」コメント参照)。実際の理由は次の3つ、どれか
-       1つで足りる独立理由が重なっている: 1) .bulk-action-bar が position: fixed
-       (@media (max-width: 700px) 内の同じ規則で宣言、この 480px 帯でも有効) で、
-       fixed 内の溢れは body.scrollWidth に伝播しない。2) 同じ規則の
-       overflow-y: auto により overflow-x も auto に計算されて、バー自身が
-       スクロールコンテナになる。3) この 480px 帯では .bulk-action-bar が左右
-       12px + border 1px + padding 12px = 25px インセットされており、7px 程度は
-       そもそも body の箱を出ない。実測と切り分けは同 spec コメント
-       (bdboard-h4xs.22) と bdboard-rccf を参照。 */
-    min-width: 0;
-  }
-
-  /* 上の min-width:0 だけではグループ自身が縮めるようになるだけで、中の select と
-     date 入力が min-width:auto のままだと結局縮まない。この2つは font-size:16px
-     (iOS のズーム抑止。下方の @media (hover: none) and (pointer: coarse) 内、
-     :root プレフィックスで詳細度を底上げしたフォーム要素向けルール) で実寸が
-     決まっており、date 入力が 147px を占める。縮小を許可して 7px を吸わせる。
-     グループ3番目の子である「延期」ボタンは上の .bulk-action-bar-buttons .btn
-     { flex: 1 1 auto } を受けており、かつ既に min-content 幅なので追加指定は不要。
-     (「完了」ボタンはこのグループの子ではなくコンテナ直下の兄弟。) */
-  .bulk-action-bar-buttons .quick-action-defer-group-custom > select,
-  .bulk-action-bar-buttons .quick-action-defer-group-custom > input[type='date'] {
-    min-width: 0;
-  }
-
-  /* flex: 1 1 100% で延期グループだけ次行へ落ちると、完了ボタンが1行に単独で残り
-     上の .btn { flex: 1 1 auto } により全幅に伸びる。カスタム延期時だけ先頭の完了だけ
-     伸長させない (bdboard-53my 観測点1)。非カスタム時は flex-grow: 0 を当てないので
-     完了ボタンが行内の残り幅を吸い、行末空白が出ない。
-
-     :first-child という位置依存のセレクタなのは意図的。代案は2つ検討した:
-     - 延期グループに order を振って末尾へ回す → DOM 順と視覚順がずれ、
-       フォーカス順が飛ぶ (WCAG 1.3.2)。本バーの .btn は min-height: 34px で、
-       44px なのは .card-bulk-checkbox (カード側) だけなので order 却下の主因は
-       フォーカス順の一貫性。
-     - :has(.quick-action-defer-group-custom) で全ボタンの伸長を止める広い形は却下した
-       (単独行でない優先度ボタンの行まで見た目が変わる) が、:first-child と組み合わせて
-       先頭ボタンだけに限定した narrowed 形を採用した。
-     位置依存の前提 (先頭 = 完了) が壊れたら
-     test/e2e/bulk-action-bar-defer-row.spec.ts の
-     completeButtonNotSoloFullWidth が落ちるので、結合はテストで守られている。 */
-  .bulk-action-bar-buttons:has(.quick-action-defer-group-custom)
-    > .btn.bulk-action-btn:first-child {
-    flex-grow: 0;
-  }
-
   .bulk-action-bar-summary .btn {
     min-height: 34px;
   }

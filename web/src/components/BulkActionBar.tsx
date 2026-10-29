@@ -1,127 +1,112 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
+import type { BulkIdOutcome } from '../bulkQuickAction';
 import { useBulkBarHeightVar } from '../hooks/useBulkBarHeightVar';
+import { describeWriteError } from '../writeAccessMessage';
 import { useBulkSelection } from './BulkSelectionProvider';
-import { useBulkActions } from './bulk-action/useBulkActions';
-import type { BulkActionBarProps } from './bulk-action/types';
 import { BulkActionSummaryBar } from './bulk-action/BulkActionSummaryBar';
-import { BulkActionDeferGroup } from './bulk-action/BulkActionDeferGroup';
-import { BulkActionLabelGroup } from './bulk-action/BulkActionLabelGroup';
-import { BulkActionMessages } from './bulk-action/BulkActionMessages';
-import { BulkActionConfirmPanel } from './bulk-action/BulkActionConfirmPanel';
+import type { BulkActionBarProps } from './bulk-action/types';
+import { useBulkRespond } from './bulk-action/useBulkRespond';
 
 export type { BulkActionBarProps } from './bulk-action/types';
 
-export function BulkActionBar({
-  cardsById,
-  availableLabels = [],
-}: BulkActionBarProps) {
+const QUICK_ANSWERS = ['OK', 'レビューしました'];
+
+export function BulkActionBar({ cardsById, pendingDecisionIds }: BulkActionBarProps) {
   const bulkSelection = useBulkSelection();
   const barRef = useRef<HTMLDivElement>(null);
-  const {
-    selectedCount,
-    confirmingAction,
-    deferPeriodKind,
-    customDeferDate,
-    closeReason,
-    bulkLabelInput,
-    lastOutcome,
-    trimmedBulkLabelInput,
-    bulkLabelSuggestions,
-    canSubmitBulkLabel,
-    canRaiseAny,
-    canLowerAny,
-    confirmingTargetCount,
-    actionsDisabled,
-    deferSubmitDisabled,
-    mutationPending,
-    mutationError,
-    confirmPanelRef,
-    cancelConfirmRef,
-    setDeferPeriodKind,
-    setCustomDeferDate,
-    setCloseReason,
-    setBulkLabelInput,
-    setConfirmingAction,
-    handleCancelConfirm,
-    handleConfirm,
-    handleDeferBulkAction,
-    handleBulkLabelAction,
-  } = useBulkActions(cardsById, availableLabels, bulkSelection);
+  const [comment, setComment] = useState('');
+  const [lastOutcome, setLastOutcome] = useState<BulkIdOutcome | null>(null);
+  const selectedCount = bulkSelection?.selectedIds.size ?? 0;
 
-  useBulkBarHeightVar(barRef, selectedCount > 0);
+  const mutation = useBulkRespond(
+    cardsById,
+    pendingDecisionIds,
+    bulkSelection,
+    setLastOutcome,
+  );
 
-  if (bulkSelection === null || selectedCount === 0) {
+  const visible = selectedCount > 0 || lastOutcome !== null;
+  useBulkBarHeightVar(barRef, visible);
+
+  if (bulkSelection === null || !visible) {
     return null;
   }
+
+  const trimmed = comment.trim();
+  const send = (text: string, clearInput: boolean) => {
+    setLastOutcome(null);
+    mutation.mutate(text, {
+      onSuccess: (outcome) => {
+        if (clearInput && outcome.failed.length === 0) {
+          setComment('');
+        }
+      },
+    });
+  };
 
   return (
     <div ref={barRef} className="bulk-action-bar">
       <BulkActionSummaryBar
         selectedCount={selectedCount}
-        mutationPending={mutationPending}
-        onClear={() => bulkSelection.clear()}
+        mutationPending={mutation.isPending}
+        onClear={() => {
+          bulkSelection.clear();
+          setLastOutcome(null);
+        }}
       />
+      {selectedCount > 0 && (
+      <>
       <div className="bulk-action-bar-buttons">
-        <button
-          type="button"
-          className="btn btn-small bulk-action-btn"
-          disabled={actionsDisabled}
-          onClick={() => setConfirmingAction({ kind: 'close' })}
-        >
-          完了
-        </button>
-        <BulkActionDeferGroup
-          deferPeriodKind={deferPeriodKind}
-          onDeferPeriodKindChange={setDeferPeriodKind}
-          customDeferDate={customDeferDate}
-          onCustomDeferDateChange={setCustomDeferDate}
-          actionsDisabled={actionsDisabled}
-          deferSubmitDisabled={deferSubmitDisabled}
-          onDeferBulkAction={handleDeferBulkAction}
-        />
-        <button
-          type="button"
-          className="btn btn-small bulk-action-btn"
-          disabled={actionsDisabled || !canRaiseAny}
-          onClick={() => setConfirmingAction({ kind: 'priority-up' })}
-        >
-          優先度を上げる
-        </button>
-        <button
-          type="button"
-          className="btn btn-small bulk-action-btn"
-          disabled={actionsDisabled || !canLowerAny}
-          onClick={() => setConfirmingAction({ kind: 'priority-down' })}
-        >
-          優先度を下げる
-        </button>
-        <BulkActionLabelGroup
-          bulkLabelInput={bulkLabelInput}
-          onBulkLabelInputChange={setBulkLabelInput}
-          actionsDisabled={actionsDisabled}
-          canSubmitBulkLabel={canSubmitBulkLabel}
-          bulkLabelSuggestions={bulkLabelSuggestions}
-          trimmedBulkLabelInput={trimmedBulkLabelInput}
-          onBulkLabelAction={handleBulkLabelAction}
-          onSelectSuggestion={(label) => {
-            setBulkLabelInput(label);
-            setConfirmingAction({ kind: 'add-label', label });
-          }}
-        />
+        {QUICK_ANSWERS.map((text) => (
+          <button
+            key={text}
+            type="button"
+            className="btn btn-small bulk-action-btn"
+            disabled={mutation.isPending}
+            onClick={() => send(text, false)}
+          >
+            {text}
+          </button>
+        ))}
       </div>
-      <BulkActionMessages lastOutcome={lastOutcome} mutationError={mutationError} />
-      {confirmingAction !== null && (
-        <BulkActionConfirmPanel
-          confirmingAction={confirmingAction}
-          confirmingTargetCount={confirmingTargetCount}
-          closeReason={closeReason}
-          onCloseReasonChange={setCloseReason}
-          mutationPending={mutationPending}
-          onCancel={handleCancelConfirm}
-          onConfirm={handleConfirm}
-          confirmPanelRef={confirmPanelRef}
-          cancelConfirmRef={cancelConfirmRef}
+      <div className="bulk-action-comment">
+        <textarea
+          className="bulk-action-comment-input"
+          aria-label="一括コメント"
+          placeholder="選択中の全チケットへのコメント"
+          rows={2}
+          value={comment}
+          onChange={(event) => setComment(event.target.value)}
         />
+        <button
+          type="button"
+          className="btn btn-small bulk-action-btn"
+          disabled={mutation.isPending || trimmed.length === 0}
+          onClick={() => send(trimmed, true)}
+        >
+          {mutation.isPending ? '送信中…' : 'コメント送信'}
+        </button>
+      </div>
+      </>
+      )}
+      {lastOutcome !== null && (
+        <p
+          className={
+            lastOutcome.failed.length > 0 ? 'bulk-action-failure' : 'bulk-action-result'
+          }
+          role={lastOutcome.failed.length > 0 ? 'alert' : 'status'}
+        >
+          {`${lastOutcome.succeeded.length}件成功`}
+          {lastOutcome.failed.length > 0 &&
+            ` / ${lastOutcome.failed.length}件失敗: ${lastOutcome.failed
+              .map((entry) => entry.id)
+              .join(', ')}`}
+        </p>
+      )}
+      {mutation.error !== null && (
+        <p className="error-message bulk-action-error">
+          {describeWriteError(mutation.error, '一括送信に失敗しました')}
+        </p>
       )}
     </div>
   );

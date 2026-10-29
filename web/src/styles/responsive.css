@@ -130,19 +130,6 @@
     padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   }
 
-  /*
-   * 下に出すと画面外で到達不能になるため上へ反転する。375x812 の実測では ul が
-   * 809–847.58px と innerHeight 812 を超え、候補ボタン中心の elementFromPoint は null。
-   * bottom:100% は入力行の上（バーの内側）に出るため、バーの overflow-y で消えない。
-   */
-  .bulk-label-suggestions {
-    top: auto;
-    bottom: 100%;
-    max-height: 40vh;
-    max-height: 40dvh;
-    overflow-y: auto;
-  }
-
   /* bdboard-pj9e: スマホ幅はレーン選択 (LanePicker) で選んだ 1 レーンだけを表示するので、
      横スクロールとスナップは持たない。 */
   .lanes-row {
