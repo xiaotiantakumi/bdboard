@@ -406,21 +406,17 @@ describe('AppBoardViewSwitch', () => {
     });
   });
 
-  it('forwards the actual availableLabels to BulkActionBar instead of defaulting to an empty array', () => {
-    const availableLabels = ['bug', 'marker-label'];
+  it('forwards pendingDecisionIds to BulkActionBar', () => {
+    const pendingDecisionIds = new Set(['t-1']);
     render(
       <AppBoardViewSwitch
         {...makeProps({
           view: 'split',
-          board: {
-            query: { data: undefined, isLoading: false, error: null },
-            cardsById: new Map(),
-            availableLabels,
-          },
+          boardMeta: { ...makeProps().boardMeta, pendingDecisionIds },
         })}
       />,
     );
     const props = bulkActionBarMock.mock.calls.at(-1)?.[0];
-    expect(props).toMatchObject({ availableLabels });
+    expect(props).toMatchObject({ pendingDecisionIds });
   });
 });

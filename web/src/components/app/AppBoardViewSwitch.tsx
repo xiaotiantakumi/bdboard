@@ -77,7 +77,7 @@ export function AppBoardViewSwitch({
       {view === 'split' && (
         <BulkActionBar
           cardsById={board.cardsById}
-          availableLabels={board.availableLabels ?? []}
+          pendingDecisionIds={boardMeta.pendingDecisionIds}
         />
       )}
       {board.query.data !== undefined && view === 'split' && (
