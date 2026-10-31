@@ -154,7 +154,9 @@ EOF
   （前節「description は「今の依頼」だけ」の手順）、description は今回の動画だけにする。
 - 本文の組み立て・notes への退避・human ラベル付き作成は `scripts/post-review-ticket.py` に
   任せられる（`--spec <json>` に動画のパス・見るポイント・判断してほしいことを渡す。
-  `--dry-run` で本文だけ確認。キーは同ファイル冒頭の docstring）。
+  `--dry-run` で本文だけ確認。キーと制約は同じ `scripts/post-review-ticket.schema.json` が正本で、
+  `--help` にも出る。動画パスの実在・points/decision の必須・行数上限などに違反した spec は、
+  理由を 1 件ずつ出して非 0 終了する）。
 
 ### スクリーンショットの添付手順（bdboard-qw26 の添付画像 API）
 
