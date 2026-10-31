@@ -53,14 +53,12 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 手順:
 
-1. `bd gate create --type=human --blocks <id> --title "Gate: <一行>"` で作成、id を控える。
-2. `bd update <gate-id> --description "<選択肢・帰結・推奨・再開手順>"`（今の依頼だけ）。
-3. `bd comment <id> "質問は gate <gate-id> 参照"` + `bd label add <id> human`（1行のみ・
-   `bd update --label` は無い）。
-4. **回答を待たず次へ。** worktree は残し heartbeat の対象に含め続ける。
-5. 変わったら旧本文の要点を `--append-notes` に移して手順2で全文置換。
-6. 回答が来たら `bd label remove <id> human` して再開（close しない）。
-7. **例外**: 破壊的・不可逆・外向きの操作はその場で確認する。
+1. `python3 scripts/ask-human-gate.py --spec <json>` で gate 作成〜コメント〜human ラベルまで
+   一括（キーと制約は `--help`、`--dry-run` で本文確認。最終行が gate id）。
+2. **回答を待たず次へ。** worktree は残し heartbeat の対象に含め続ける。
+3. 変わったら旧本文の要点を `--append-notes` に移して gate 本文を全文置換。
+4. 回答が来たら `bd label remove <id> human` して再開（close しない）。
+5. **例外**: 破壊的・不可逆・外向きの操作はその場で確認する。
 
 詳細: `question-template.md`
 

@@ -26,52 +26,26 @@
 
 ## 手順（SKILL.md 規律3 の実体）
 
-`--reason` はそのまま渡すと `bd` 側が "Ad-hoc gate blocking <id>\n\nReason: <reason>" という
-定型文を前置してしまう（bd 1.2.1 で実測）。良い実例のような素のテンプレ本文にするには、
-**作成時は `--title` だけ渡し、本体は直後の `bd update --description` で上書きする**。
-
 ```bash
-GATE_ID=$(bd gate create --type=human --blocks <id> \
-  --title "Gate: <一行: 何を決めてほしいか>" --json \
-  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["id"] if isinstance(d, dict) else d[0]["id"])')
-
-bd update "$GATE_ID" --description "$(cat <<'EOF'
-<下のテンプレで書いた質問本文>
-EOF
-)"
-
-bd comment <id> "質問は gate $GATE_ID を参照（bd show $GATE_ID）"
-bd label add <id> human
-# 任意: 確認待ちで先に見てほしいチケットがあるときだけ（並び順だけ。ブロックはしない）
-#   bd update <id> --set-metadata bdboard.review_after=<先のid>
-# → 回答を待たずに次の ready へ進む
+python3 scripts/ask-human-gate.py --spec <spec.json> [--review-after <先に見てほしいid>] [--dry-run]
 ```
 
-**確認の順番は `bdboard.review_after` で付ける — `bd dep add` を使わない**（bdboard-iuiu）。
-`bd dep add <id> --blocked-by <先のid>` で並べると、回答後に human ラベルを外した瞬間 `<id>` は
-本物のブロッカーを持つチケットとしてブロックレーンへ移り、`bd ready` からも消える（続きの
-作業があって後でまた確認待ちに戻したいときに破綻する）。`review_after` は確認待ちレーンの
-並びにだけ効き、bd の ready / blocked には一切効かない。付けるのは**作業チケット `<id>` だけ**
-でよい — `<id>` を止めている確認待ちのカード（gate 等）はボード側で `<id>` の `review_after` を
-受け継ぐ。`blocks` 依存と食い違う指定は無視される（依存の並びが優先）。
-`--set-metadata` は値を上書きするので、先行が複数なら `bd show <id> --json` で既存の値を読み、
-`A,C` のようにカンマで足して書き直す。本当に「先のチケットが終わるまで進められない」ときだけ
-`blocks` 依存を使う。
+`bd gate create`・`bd update --description`・`bd comment`・`bd label add human` を 1 本で
+行い、最終行に gate id を出す。spec のキー・必須・上限は `--help`（正本は
+`scripts/ask-human-gate.schema.json`）。本文の見出し（決めてほしいこと / 背景 / 選択肢 /
+推奨 / 視覚的な確認 / 回答後の再開手順）はスクリプトが組み立てる。違反（選択肢が 2 件未満・
+帰結なし・推奨も理由もない・worktree が実在しない等）は `ERROR: spec.<path>: <理由>` を
+全件出して終了し、bd は 1 つも呼ばない。`--dry-run` で本文だけ確認できる。
 
-**create → update の間で中断したら**: `bd gate list <id>` で当該チケットをブロックしている
-gate を出し、`bd show <gate-id>` の description が `Ad-hoc gate blocking <id>` のままの
-ものを見つける（**プレーンな `bd gate list`（引数なし）は全 gate を `title`/`description` 抜きで
-一覧するだけで、この特定には使えない**）。`GATE_ID=<その id>` を入れ直して（シェル変数は
-中断で失われている）、上の `bd update "$GATE_ID" --description` から手順をやり直す
-（`bd gate create` は再実行しない — gate が二重になる）。実害は小さい（gate は残るだけで
-壊れない）。
+理由 1 行: `--reason` を渡すと bd が定型文を前置するので、本体は create 後の
+`--description` で上書きする（スクリプトが担う）。確認の順番は `--review-after`
+（`bdboard.review_after`）で付け、`bd dep add` は使わない（回答後にブロックレーンへ落ちる。
+bdboard-iuiu）。途中で失敗したら gate は作成済みなので `gate create` を再実行せず、
+失敗した `bd` だけ手で打ち直す。
 
-回答が来たら: bdboard の確認待ちレーンは gate と作業チケットの両方をカードとして出すため、
-**回答がどちらに付くかは固定されない**（作業チケット側で回答されると gate は自動では
-resolve されない — bdboard-vy0h）。`bd show <gate-id>` と `bd show <id>` の**両方**を見て
-回答コメントを探す → gate がまだ open なら `bd gate resolve <gate-id>` する → `bd label
-remove <id> human` → gate 本文の「回答後の再開手順」に書いた地点から作業を再開する
-（作業チケットは close しない — close はマージ成功後だけ、SKILL.md 規律4）。
+回答が来たら: 回答は gate と作業チケットのどちらに付くか固定されない（bdboard-vy0h）。
+`bd show` を**両方**見て回答コメントを探し、gate がまだ open なら `bd gate resolve <gate-id>`
+→ `bd label remove <id> human` → 再開手順から再開する（作業チケットは close しない）。
 
 ## 質問が変わったとき — 訂正コメントを積まない、gate 本体を全文書き換える
 
@@ -251,7 +225,7 @@ id にだけ POST すればよい。
 （bd 1.2.1 で実測、bdboard-axl）。bd は同じ向きの2者間に複数タイプの辺を持てず、通すには
 `bd dep remove` が要る = 発見元の来歴を消すことになる。一方 `bd gate` は **`Gate: human`
 という新しいノードを作ってそこへ `blocks` 辺を張る**ので、辺の相手が親チケットではなく別の
-ノードになり、既存の来歴と衝突しない。これが手順1が `bd dep` ではなく `bd gate` である理由。
+ノードになり、既存の来歴と衝突しない。これが手順1（スクリプト）が `bd dep` ではなく `bd gate` である理由。
 （gate が依存グラフの外にあるわけではない点に注意 — gate ノードは `bd dep tree <id>` に
 `[blocks]` の辺として現れる。）
 
@@ -269,7 +243,7 @@ human gate は親が close しても自動解除されず `bd gate resolve` が�
   `description` を素のテンプレ本文にしたいときは `--reason` を使わず `bd update --description`
   で上書きする。
 
-## ノンブロッキングの規律（SKILL.md 規律3 手順4・6・7 の実体。質問専用チケットの本則もここ）
+## ノンブロッキングの規律（SKILL.md 規律3 手順2・4・5 の実体。質問専用チケットの本則もここ）
 
 - **回答をチャットで待たない。** そのまま `bd ready` の次のチケットへ進む。ブロックした
   チケットの worktree は残してよい（撤退不要。gate 解除後に再開する）。
@@ -281,38 +255,6 @@ human gate は親が close しても自動解除されず `bd gate resolve` が�
 - **例外 — その場で確認するもの**: 破壊的・不可逆・外向きの操作（本番デプロイ、データ削除、
   push/publish/送信、課金）は、レーンに載せて先へ進む方式にしない。実行前にその場で
   ユーザーに確認する。確認待ちの間、**その操作に依存しない別チケット**を進めるのは構わない。
-
-## テンプレ（gate の `description` にそのまま書く本文）
-
-```markdown
-## 今回見てほしいもの
-<見る対象（パス・URL・添付）があるときだけ書き、あるなら必ず先頭に置く。見る場所、見る
- ポイント、判断してほしいこと。動画なら通しを先、直した箇所を次。見る対象が無く判断だけを
- 求める gate なら、この節ごと省いて「決めてほしいこと」から始めてよい>
-
-## 決めてほしいこと
-<1〜2文。疑問文で明確に。「どうしましょう」ではなく選択式に落とす>
-
-## 背景
-<2〜4行。なぜこの判断が必要になったか。関連ファイル・チケットがあればIDで参照>
-
-## 選択肢
-- **A: <案>** — 帰結: <採ったらどうなるか。コスト/リスク>
-- **B: <案>** — 帰結: <同上>
-- (C: <案> — 帰結: <同上>)
-
-## 推奨
-<AかBか + 理由1行。推奨が無いなら「判断材料が拮抗しており推奨なし」と明記>
-
-## 視覚的な確認が要る場合
-<スクショを添付した場合はその旨（手順は本ファイル「スクリーンショットの添付手順」節。
- gate なら gate 本体と作業チケットの両方に POST 済みと明記）、プレビューURLがあれば
- それも書く。無ければどう用意したかをここに書く。視覚確認が不要ならこの節ごと省いてよい>
-
-## 回答後の再開手順
-<回答を受けたセッションが何をすればよいか。worktree のパス、着手済みの変更の場所、
- 選択肢ごとに分岐するなら「Aなら〜、Bなら〜」まで書く>
-```
 
 ## 書き方の規律
 
