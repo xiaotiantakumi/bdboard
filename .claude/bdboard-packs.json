@@ -2,7 +2,7 @@
   "packs": [
     {
       "name": "bdboard-harness",
-      "version": "0.60.0",
+      "version": "0.61.0",
       "injectedAt": "2026-10-03T20:53:53.392Z",
       "files": [
         ".claude/skills/bdboard-harness/SKILL.md",
@@ -22,6 +22,8 @@
         ".claude/skills/bdboard-harness/references/verification.md",
         ".claude/skills/bdboard-harness/references/worktree-pr-flow.md",
         ".claude/skills/bdboard-harness/scripts/aimix-run.sh",
+        ".claude/skills/bdboard-harness/scripts/ask-human-gate.py",
+        ".claude/skills/bdboard-harness/scripts/ask-human-gate.schema.json",
         ".claude/skills/bdboard-harness/scripts/bd-heartbeat.sh",
         ".claude/skills/bdboard-harness/scripts/post-review-ticket.py",
         ".claude/skills/bdboard-harness/scripts/post-review-ticket.schema.json",
