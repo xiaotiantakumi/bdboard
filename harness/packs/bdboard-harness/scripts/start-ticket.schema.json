@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "start-ticket.schema.json",
+  "title": "start-ticket.py --spec",
+  "description": "チケット着手 (worktree 作成 → 成功時のみ claim) の spec。この 1 ファイルが --spec の検査と --help の正本。拡張キーワード x-parent-dir-exists は「値のパスの親ディレクトリが実在する」(相対パスはメインチェックアウト基準)。ticket が bd に実在し status が open/ready であることは、スキーマでは書けないのでスクリプトが bd show で補って検査する。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ticket", "complexity"],
+  "properties": {
+    "ticket": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(\\.[A-Za-z0-9]+)*$",
+      "description": "着手するチケットの id (例: bdboard-7yfj.3)。bd に実在し status が open/ready であること。"
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 100,
+      "pattern": "^bd/[A-Za-z0-9.-]+$",
+      "description": "作るブランチ。省略時は bd/<ticket>。形式は bd/<英数字・ドット・ハイフン>。"
+    },
+    "worktree": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^\\S(?:[^\\n]*\\S)?$",
+      "x-parent-dir-exists": true,
+      "description": "worktree のパス。省略時は .claude/worktrees/<ticket>。親ディレクトリが実在すること。相対パスはメインチェックアウト基準 (ネスト防止)。"
+    },
+    "base": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9/._-]*$",
+      "description": "起点。省略時は origin/main。"
+    },
+    "complexity": {
+      "type": "string",
+      "enum": ["low", "med", "high"],
+      "description": "複雑度。bd の metadata bdboard.complexity に記録する。"
+    }
+  }
+}
