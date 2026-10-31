@@ -15,7 +15,10 @@ spec JSON のキーと制約は同じ scripts/ の open-pr.schema.json が正本
 動作: verifyQuick → git push -u origin <branch> → gh pr create → bd comment <ticket> "PR: <url>"
 → complexity が low/med なら gh pr merge --auto --squash --delete-branch (high は打たず
 「議長のレビュー待ち」と出す)。stdout の最終行は PR URL。--dry-run は実行するコマンドを出すだけ。
---skip-verify <理由> は verifyQuick を飛ばし、理由を bd comment に残す。
+--skip-verify <理由> は verifyQuick を飛ばし、理由を bd comment に残す (コメントには契約の verifyQuick の実コマンドを書く)。
+bd の external-ref が gh-<N> で、summary に issue #N を指す Closes/Fixes/Resolves/Refs が無いときは、
+本文の末尾に `Closes #N` を自動で足す (旧 merge-pr prepare の検査の移設。複数チケットで 1 issue を分けるときは
+summary に `Refs #N` を書けば足さない)。
 """
 from __future__ import annotations
 
@@ -227,8 +230,27 @@ def check_git_state(ticket: str, branch: str, commit_check: str, errors: list[st
     return True
 
 
-def build_body(spec: dict) -> str:
-    return f"Closes: {spec['ticket']}\n\n{spec['summary'].strip()}\n\n{GENERATED_LINE}"
+def issue_number_from_external_ref(issue: dict | None) -> int | None:
+    ref = issue.get("external_ref") if isinstance(issue, dict) else None
+    m = re.fullmatch(r"gh-(\d+)", ref.strip(), re.IGNORECASE) if isinstance(ref, str) else None
+    return int(m.group(1)) if m else None
+
+
+def references_issue(summary: str, number: int) -> bool:
+    """summary (コードブロックを除く) が #number を Closes/Fixes/Resolves/Refs 系の語で指しているか。"""
+    text = re.sub(r"`[^`\n]*`", " ", re.sub(r"```[\s\S]*?```", " ", summary))
+    return re.search(rf"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s*:?\s*#{number}\b", text, re.IGNORECASE) is not None
+
+
+def build_body(spec: dict, issue_number: int | None = None) -> str:
+    summary = spec["summary"].strip()
+    if issue_number is not None and not references_issue(summary, issue_number):
+        summary += f"\n\nCloses #{issue_number}"
+    return f"Closes: {spec['ticket']}\n\n{summary}\n\n{GENERATED_LINE}"
+
+
+def skip_verify_comment(verify_cmd: list[str], reason: str) -> str:
+    return f"{shlex.join(verify_cmd)} を省略: {reason.strip()}"
 
 
 def main() -> int:
@@ -268,8 +290,10 @@ def main() -> int:
 
     verify_cmd, commit_check = read_contract_commands(errors)
     complexity = spec.get("complexity") if spec.get("complexity") in ("low", "med", "high") else None
+    issue_number: int | None = None
     if ticket and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9]+)*", ticket):
         issue = read_ticket(ticket, errors)
+        issue_number = issue_number_from_external_ref(issue)
         if issue is not None and "complexity" not in spec:
             meta = issue.get("metadata")
             value = meta.get("bdboard.complexity") if isinstance(meta, dict) else None
@@ -287,7 +311,7 @@ def main() -> int:
 
     assert ticket and complexity
     branch = f"bd/{ticket}"
-    body = build_body(spec)
+    body = build_body(spec, issue_number)
     steps: list[tuple[str, list[str]]] = []
     if args.skip_verify is None:
         steps.append(("verify", verify_cmd))
@@ -295,7 +319,7 @@ def main() -> int:
 
     if args.dry_run:
         if args.skip_verify is not None:
-            print(f"+ bd comment {ticket} {json.dumps('verify:quick を省略: ' + args.skip_verify.strip(), ensure_ascii=False)}")
+            print(f"+ bd comment {ticket} {json.dumps(skip_verify_comment(verify_cmd, args.skip_verify), ensure_ascii=False)}")
         for _, cmd in steps:
             print("+ " + " ".join(cmd))
         print(f"+ gh pr create --title {json.dumps(spec['title'], ensure_ascii=False)} --body {json.dumps(body, ensure_ascii=False)}")
@@ -307,7 +331,7 @@ def main() -> int:
         return 0
 
     if args.skip_verify is not None:
-        run_checked(["bd", "comment", ticket, "verify:quick を省略: " + args.skip_verify.strip()], "bd comment (skip-verify の理由)")
+        run_checked(["bd", "comment", ticket, skip_verify_comment(verify_cmd, args.skip_verify)], "bd comment (skip-verify の理由)")
     for what, cmd in steps:
         run_checked(cmd, what)
     created = run_checked(["gh", "pr", "create", "--title", spec["title"], "--body", body], "gh pr create")

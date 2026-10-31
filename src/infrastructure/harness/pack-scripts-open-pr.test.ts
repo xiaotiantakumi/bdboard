@@ -87,7 +87,10 @@ describe.skipIf(process.platform === 'win32' || !HAS_TOOLS)(
         '        sys.stderr.write("not found\\n"); sys.exit(1)',
         '    st = "open" if a[1] == "proj-open" else "in_progress"',
         '    meta = {} if a[1] == "proj-nometa" else {"bdboard.complexity": "high" if a[1] == "proj-high" else "low"}',
-        '    print(json.dumps([{"id": a[1], "status": st, "metadata": meta}]))',
+        '    issue = {"id": a[1], "status": st, "metadata": meta}',
+        '    if a[1] in ("proj-ext", "proj-extref"):',
+        '        issue["external_ref"] = "gh-42"',
+        '    print(json.dumps([issue]))',
       ]);
       stub(binDir, 'gh', [
         'if a[:2] == ["pr", "create"]:',
@@ -244,6 +247,38 @@ describe.skipIf(process.platform === 'win32' || !HAS_TOOLS)(
       expect(r.exitCode, r.stderr).toBe(0);
       expect(calls().some((x) => x.tool === 'npm' && x.args.includes('verify:quick'))).toBe(false);
       expect(calls().some((x) => x.tool === 'bd' && x.args[0] === 'comment' && (x.args[2] ?? '').includes('docs のみ'))).toBe(true);
+    });
+
+    it('--skip-verify comment names the contract verifyQuick command, not a fixed verify:quick', async () => {
+      await makeWorktree('proj-low');
+      mkdirSync(path.join(wt, '.claude'), { recursive: true });
+      writeFileSync(path.join(wt, '.claude', 'bdboard-harness.json'), JSON.stringify({ verifyQuick: 'npm run lint-only' }), 'utf8');
+      await git(wt, 'add', '-A');
+      await git(wt, 'commit', '-m', 'feat(proj-low): contract');
+      const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'med' }), '--skip-verify', 'docs のみ']);
+      expect(r.exitCode, r.stderr).toBe(0);
+      const c = calls().find((x) => x.tool === 'bd' && x.args[0] === 'comment' && (x.args[2] ?? '').includes('docs のみ'));
+      expect(c?.args[2]).toBe('npm run lint-only を省略: docs のみ');
+    });
+
+    it('appends Closes #N to the body when the ticket external-ref is gh-N and the summary does not mention it', async () => {
+      await makeWorktree('proj-ext');
+      const r = await run(['--spec', writeSpec({ ...baseSpec('proj-ext'), complexity: 'low' })]);
+      expect(r.exitCode, r.stderr).toBe(0);
+      const create = calls().find((x) => x.tool === 'gh' && x.args[1] === 'create');
+      const body = create?.args[create.args.indexOf('--body') + 1] ?? '';
+      expect(body).toContain('Closes: proj-ext');
+      expect(body).toContain('Closes #42');
+    });
+
+    it('does not add Closes #N when the summary already says Refs #N', async () => {
+      await makeWorktree('proj-extref');
+      const r = await run(['--spec', writeSpec({ ...baseSpec('proj-extref'), summary: '要約\n\nRefs #42', complexity: 'low' })]);
+      expect(r.exitCode, r.stderr).toBe(0);
+      const create = calls().find((x) => x.tool === 'gh' && x.args[1] === 'create');
+      const body = create?.args[create.args.indexOf('--body') + 1] ?? '';
+      expect(body).toContain('Refs #42');
+      expect(body).not.toContain('Closes #42');
     });
 
     it('--dry-run prints the commands and runs none of the side effects', async () => {

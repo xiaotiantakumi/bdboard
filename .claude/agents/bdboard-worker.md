@@ -40,10 +40,10 @@ isolation: worktree
 9. 触ったファイルに絞って `npx vitest related --run <変更した src/scripts/test のパス>` を run_in_background で実行する (末尾に `&` を付けない。出力は `> logs/verify.log 2>&1` へ。sleep で待たず完了通知を待つ。web/ 配下のテストは CI に任せる)。落ちたら直す。直せなければ PR 本文に落ちたテスト名と理由を書いて進む (push は止めない)。終わったら `bd -C $MAIN comment <id> "milestone: verify:quick clean"`。
 10. `bd -C $MAIN update <id> --set-metadata "bdboard.model.implement=<使用したモデル>"`。
 11. Write で `logs/commit-msg.txt` (`<type>(<id>): <要約>` + 帰属の行) に書き、`git commit -F logs/commit-msg.txt`。
-12. `git push -u origin bd/<id>`。
-13. Write で `logs/pr-body.md` (先頭 `Closes: <id>`) に書き、`gh pr create --fill --body-file logs/pr-body.md`。
-14. `bd -C $MAIN comment <id> "PR: <url>"` (PR 作成のマイルストーン。議長はこの3つのコメントで進み具合を見る)。
-15. 複雑度が `low`/`med` なら `gh pr merge <N> --auto --squash --delete-branch` を打つ (required checks が緑になれば GitHub がマージする。即時マージ・`--admin` は打たない)。`high` なら打たない — 議長がレビュー後に打つ。
+12. Write で spec JSON (`logs/pr-spec.json`) を書き、`python3 .claude/skills/bdboard-harness/scripts/open-pr.py --spec logs/pr-spec.json` を打つ。spec の作り方 (キーと制約) は同スクリプトの `--help` を参照 (複雑度は `complexity` に渡す)。スクリプトが verify → push → `gh pr create` (本文は `Closes: <id>` 始まり。external-ref が gh-N なら `Closes #N` も付く) → `bd comment <id> "PR: <url>"` (PR 作成のマイルストーン。議長はこの3つのコメントで進み具合を見る) → 手順 15 の auto-merge までを 1 回で行う。`git push`・`gh pr create`・`gh pr merge` は直接打たない。違反は `ERROR:` で全件出て止まる (直して打ち直す)。
+13. (手順 12 に含まれる)
+14. (手順 12 に含まれる)
+15. 複雑度が `low`/`med` なら open-pr.py が `gh pr merge --auto --squash --delete-branch` まで打つ (required checks が緑になれば GitHub がマージする。即時マージ・`--admin` は打たない)。`high` なら打たない — 議長がレビュー後に打つ。
 16. 報告して終了する (status: pr-created。この worktree で追加作業を続けない)。
 
 ## git の引数はリテラルで書く
