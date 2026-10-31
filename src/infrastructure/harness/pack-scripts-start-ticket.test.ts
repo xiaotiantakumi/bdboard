@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CommandResult } from '../../application/ports/command-runner.js';
 import { NodeCommandRunner } from '../process/node-command-runner.js';
+import { RM_OPTIONS, quietGitEnv } from '../../../scripts/test-support/quiet-git.mjs';
 
 /**
  * bdboard-harness パックの scripts/start-ticket.py の統合テスト (bdboard-7yfj.3)。
@@ -88,7 +89,8 @@ describe.skipIf(process.platform === 'win32' || !HAS_TOOLS)(
         GIT_AUTHOR_EMAIL: 't@example.com',
         GIT_COMMITTER_NAME: 't',
         GIT_COMMITTER_EMAIL: 't@example.com',
-        GIT_CONFIG_GLOBAL: '/dev/null',
+        // bdboard-5py8: git の自動保守を止める (後始末の rmSync と競わないように)
+        ...quietGitEnv(tmpRoot),
         GIT_CONFIG_SYSTEM: '/dev/null',
       };
       const origin = path.join(tmpRoot, 'origin.git');
@@ -105,7 +107,7 @@ describe.skipIf(process.platform === 'win32' || !HAS_TOOLS)(
     });
 
     afterEach(() => {
-      rmSync(tmpRoot, { recursive: true, force: true });
+      rmSync(tmpRoot, RM_OPTIONS);
     });
 
     function writeSpec(spec: Record<string, unknown>): string {
