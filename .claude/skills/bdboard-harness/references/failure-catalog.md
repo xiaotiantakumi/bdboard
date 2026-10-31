@@ -82,6 +82,11 @@ hook 由来のエントリのテンプレ（効果/害は必須。他は上と�
 - 防止: claim 直後・実装前に `git grep` と `bd search --status in_progress` を各1回、見つかれば再利用（本則: SKILL.md 規律2 手順4）。レビュー依頼の観点にも「同 PR 内・直近 main の重複実装」を入れる（verification.md）
 - 出典: bdboard-dh7c / 3zpw / x4ky / yd3g / a1g5 / nrw0 / os16 / h3wg / 3tw.79 / sm7r / b4o、docs/HARNESS-EVALUATION.md §3.2(b)
 
+### main-checkout-sessions-missing-from-ccd-registry — main checkout で動いたセッションが CCD の list_sessions/get_session から消えた（2026-08-17）
+- 原因: CCD 側のレジストリ登録漏れ（原因は特定不能。worktree 側のセッションは正常に出る）。データは無事で `~/.claude/projects/<project>/<uuid>.jsonl` と `~/.claude/session-env/<uuid>/` が残る
+- 防止: 「セッションが消えた」と言われたら、まず jsonl の mtime/サイズで実在を確かめ、「一覧に出ないだけで中身は読める」と伝える。孤立セッション kill 説は棄却済み（kill してもレジストリからは消えない）
+- 出典: Claude Code auto-memory `main-checkout-sessions-missing-from-ccd-registry`（bdboard-7yfj.7 で還流）
+
 ## マージ・PR
 
 ### merge-slot-misclaim — merge-slot bead を「最優先の着手可能チケット」として claim し、他セッションのマージを停止（実測）
@@ -226,6 +231,21 @@ hook 由来のエントリのテンプレ（効果/害は必須。他は上と�
 - 原因: bg ジョブ（verify/Playwright）を投げてターンを終えただけの中間報告が status=completed で届き、放棄と誤判定した
 - 防止: pgrep/lsof/lease は判定材料にならない。報告本文が最終報告の体裁か中間状態かを読んでから再委譲を判断する（本則: verification.md「完了通知（completed）は最終報告とは限らない」）
 - 出典: bdboard-bdsd
+
+### mjs-split-test-hollowing — scripts/*.mjs をサブディレクトリへ分割すると、入口ファイルだけを一時ディレクトリへコピーして走らせる CLI テストが落ちる、または空振りする（PR #619: 39 件中 23 件）
+- 原因: テストが入口 1 ファイルだけを tmp へコピーするため、分割後は ERR_MODULE_NOT_FOUND になる。`import.meta.url` 起点の REPO_ROOT も 1 階層深くなってずれる
+- 防止: サブディレクトリも丸ごとコピーするようテストを直し、REPO_ROOT は `('..')` を `('..','..')` に直す。分割前版を `git show origin/main:<path>` で取り出し、同じ入力で終了コードと stdout/stderr のバイト一致を比べる
+- 出典: PR #619
+
+### parallel-cursor-worktree-cross-contamination — isolation:worktree で並列投入した 2 本の cursor-implementer が、別チケットなのにほぼ同一の差分を持った（2026-08-15）
+- 原因: git の分離は効いていたが、上で動く Cursor 側の状態（インデックス・セッション）が worktree 間で共有され、後発が先発の直近タスクを拾ったと推測（未確定）。「isolation:worktree なら並列は絶対安全」は誤り
+- 防止: 並列投入後は各 worktree の `git diff --stat` が指示したファイル群と一致するか個別に確認してから commit/merge する。食い違えば破棄して単発で再投入する（実際にこれで再現しなかった）
+- 出典: bdboard-3tw.48 / .49 / .29、Claude Code auto-memory `parallel-cursor-worktree-cross-contamination`（bdboard-7yfj.7 で還流）
+
+### dont-relay-secret-values-through-agent-messages — 委譲ブリーフに「生成したパスワードを SendMessage で返して」と書き、値が transcript に平文で残る設計になりかけた（2026-08-14）
+- 原因: SendMessage の内容は transcript(JSONL) に平文で残る。議長経由でユーザーへ再度伝える経路は、Secrets 方針（値を出さない）に対し経路を増やすだけで実利が無い
+- 防止: ブリーフには「値は `.env` 等にのみ書き、ファイルパスと変数名だけ報告。値はメッセージに含めない」と明記し、ユーザーへも値でなく在り処を案内する。固定のユーザー名など実質公開の情報は例外
+- 出典: bdboard-3tw.16、Claude Code auto-memory `dont-relay-secret-values-through-agent-messages`（bdboard-7yfj.7 で還流）
 
 ## 多層ハーネス・配布
 
