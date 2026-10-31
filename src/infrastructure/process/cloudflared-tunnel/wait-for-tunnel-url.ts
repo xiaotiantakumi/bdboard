@@ -8,6 +8,7 @@ import type { TunnelStartResult } from '../../../application/ports/tunnel.js';
 import type { SpawnedProcess } from './spawned-process.js';
 import type { LogSink } from './log-sink.js';
 import { maskSecrets } from './log-sink.js';
+import { createConnectionMonitor } from './connection-monitor.js';
 import { appendStartupOutputBuffer, extractTunnelUrl } from './startup-buffer.js';
 import { notifyUnexpectedExit, type TunnelRuntimeState } from './runtime-state.js';
 
@@ -26,6 +27,15 @@ export function waitForTunnelUrl(
 
   return new Promise<TunnelStartResult>((resolve, reject) => {
     let settled = false;
+    // bdboard-7yfj.8: URL 発行後も出力を見続け、全接続が落ちたら通知する。
+    const monitor = createConnectionMonitor((health) => {
+      if (state.child !== processHandle) {
+        return;
+      }
+      for (const listener of state.connectionHealthListeners) {
+        listener(health);
+      }
+    });
 
     const fail = (err: Error): void => {
       if (settled) {
@@ -50,6 +60,7 @@ export function waitForTunnelUrl(
     const onData = (chunk: Buffer | string): void => {
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
       logSink.write(maskSecrets(text));
+      monitor.feed(text);
 
       if (settled) {
         return;

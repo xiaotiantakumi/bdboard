@@ -59,6 +59,7 @@ if [ "$code" != "200" ]; then
 fi
 
 # --- 2. トンネル ---------------------------------------------------------------
+ensure_tunnel() {
 state_json="$(curl -sS --max-time 40 "${BASE}/api/tunnel")"
 state="$(printf '%s' "$state_json" | json_field state)"
 if [ "$(printf '%s' "$state_json" | json_field authEnabled)" != "True" ]; then
@@ -88,6 +89,51 @@ if [ "$state" != "on" ]; then
   exit 1
 fi
 tunnel_url="$(printf '%s' "$state_json" | json_field url)"
+tunnel_degraded="$(printf '%s' "$state_json" | json_field degraded)"
+}
+
+# bdboard-7yfj.8: 発行した URL が外から届くか確かめる。cloudflared が再試行ループに入ると
+# /api/tunnel は state=on のまま (degraded だけ立つ) で、URL は 530/000 になる。
+# 1.1.1.1 で引いた IP に --resolve して /api/health を叩き、200/401 なら OK
+# (ローカル DNS のネガティブキャッシュに引きずられない)。dig が無ければ確認を省く。
+REACH_DETAIL=""
+tunnel_reachable() {
+  if [ "$tunnel_degraded" = "True" ]; then
+    REACH_DETAIL="トンネルが degraded です ($(printf '%s' "$state_json" | json_field lastError))"
+    return 1
+  fi
+  if ! command -v dig >/dev/null 2>&1; then
+    echo "phone-url: dig が無いので到達確認を省きます。" >&2
+    return 0
+  fi
+  local host ip rc
+  host="$(printf '%s' "$tunnel_url" | python3 -c 'import sys,urllib.parse as u; print(u.urlsplit(sys.stdin.read().strip()).hostname or "")')"
+  for _ in $(seq 1 15); do
+    ip="$(dig +short @1.1.1.1 "$host" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+    if [ -n "$ip" ]; then
+      rc="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${host}:443:${ip}" "https://${host}/api/health" 2>/dev/null || true)"
+      if [ "$rc" = "200" ] || [ "$rc" = "401" ]; then
+        return 0
+      fi
+      REACH_DETAIL="https://${host}/api/health が ${rc:-000} (ip=${ip})"
+    else
+      REACH_DETAIL="${host} を 1.1.1.1 で引けません"
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+ensure_tunnel
+if ! tunnel_reachable; then
+  echo "phone-url: トンネルに届きません (${REACH_DETAIL})。停止して作り直します (1 回だけ)…" >&2
+  curl -sS --max-time 60 -X POST "${BASE}/api/tunnel/stop" >/dev/null || true
+  ensure_tunnel
+  if ! tunnel_reachable; then
+    echo "phone-url: 作り直してもトンネルに届きません (${REACH_DETAIL})。cloudflared のログ (~/.bdboard/logs/cloudflared-tunnel.log) を確認してください。" >&2
+    exit 1
+  fi
+fi
 
 # --- 3. トークン付き URL ---------------------------------------------------------
 token_json="$(curl -sS --max-time 10 -X POST "${BASE}/api/tunnel/access-token")"

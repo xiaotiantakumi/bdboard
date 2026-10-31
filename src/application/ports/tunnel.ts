@@ -15,4 +15,11 @@ export interface TunnelProcess {
    * 呼び出し側が明示的に stop() した場合は呼ばれない。任意実装(未実装のportもありうる)。
    */
   onUnexpectedExit?(listener: () => void): void;
+  /**
+   * プロセスは生きたまま、エッジとの接続が全部落ちた/回復したときに呼ばれる
+   * (bdboard-7yfj.8)。任意実装。
+   */
+  onConnectionHealth?(
+    listener: (health: { readonly degraded: boolean; readonly lastError?: string }) => void,
+  ): void;
 }

@@ -212,6 +212,26 @@ describe('createTunnelService', () => {
     expect(service.getState()).toEqual({ kind: 'off' });
   });
 
+  it('marks an on tunnel degraded with lastError and clears it on recovery (7yfj.8)', async () => {
+    let fire: (h: { degraded: boolean; lastError?: string }) => void = () => {};
+    const tunnel = createFakeTunnel();
+    const service = createService({
+      ...tunnel,
+      onConnectionHealth: (l) => {
+        fire = l;
+      },
+    });
+    await service.start();
+    fire({ degraded: true, lastError: 'Retrying connection' });
+    const degraded = service.getState();
+    expect(degraded.kind).toBe('on');
+    expect(degraded.kind === 'on' && degraded.degraded).toBe(true);
+    expect(degraded.kind === 'on' && degraded.lastError).toBe('Retrying connection');
+    fire({ degraded: false });
+    const ok = service.getState();
+    expect(ok.kind === 'on' && ok.degraded).toBeUndefined();
+  });
+
   it('does not fire error state for onUnexpectedExit after a deliberate stop()', async () => {
     const tunnel = createFakeTunnel();
     const service = createService(tunnel);
