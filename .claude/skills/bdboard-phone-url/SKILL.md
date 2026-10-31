@@ -42,3 +42,14 @@ BDBOARD_SERVER_CALLER=chair scripts/phone-url.sh
 - トンネルを止める・再起動でトンネルが落ちる件は `bdboard-server-ops` の
   「cloudflared トンネルの同居確認」。デプロイ後は URL が変わるので、もう一度このスクリプトを打つ。
 - `/api/tunnel*` は localhost からしか受け付けない。サーバーと同じ Mac で実行する。
+
+## トンネルが "starting" で固まる / cloudflared が再試行ループに入ったとき
+
+- 症状: 発行した URL のホストが引けない (NXDOMAIN)、または `/api/tunnel` の状態が "starting" のまま動かない。
+  phone-url.sh はトンネルが off / error のときしか起動し直さないので、この状態では古い URL を返し続ける。
+- 対処: 先に `curl -X POST http://127.0.0.1:8787/api/tunnel/stop` (localhost のみ) で止め、
+  `BDBOARD_SERVER_CALLER=chair scripts/phone-url.sh --no-qr` を再実行する。
+- 到達確認: 発行したホストの `/api/health` を curl して 401 なら外から届いている (ログイン前)。
+- 発行直後に到達確認すると、Mac 側 DNS が NXDOMAIN を負キャッシュして数分 000 になり続けることがある
+  (トンネル状態は on・ログも Registered なのに)。誤判定しないよう `dig +short @1.1.1.1 <host>` で引いた IP を
+  `curl --resolve <host>:443:<IP> https://<host>/api/health` に渡して確かめる (401 なら到達)。
