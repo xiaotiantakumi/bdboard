@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "close-ticket.schema.json",
+  "title": "close-ticket.py --spec",
+  "description": "チケット close (マージ確認 → 証拠コメント → bd close → worktree 掃除) の spec。この 1 ファイルが --spec の検査と --help の正本。ticket が bd に実在し status が closed でないこと、pr_url の PR が MERGED で mergeCommit が origin/main に含まれること、worktree を他プロセスが使っていないことは、スキーマでは書けないのでスクリプトが bd show / gh pr view / git / lsof (どれも読み取りのみ) で補って検査する。close はマージ後だけ。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ticket", "pr_url"],
+  "properties": {
+    "ticket": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(\\.[A-Za-z0-9]+)*$",
+      "description": "close するチケットの id (例: bdboard-7yfj.5)。bd に実在し status が closed でないこと。"
+    },
+    "pr_url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^https://github\\.com/[^/]+/[^/]+/pull/\\d+$",
+      "description": "マージ済みの PR の URL (https://github.com/<owner>/<repo>/pull/<N>)。state が MERGED であること。"
+    },
+    "worktree": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^\\S(?:[^\\n]*\\S)?$",
+      "description": "掃除する worktree のパス。省略時は .claude/worktrees/<ticket> (相対パスはメインチェックアウト基準)。無ければ掃除を飛ばす。"
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 100,
+      "pattern": "^bd/[A-Za-z0-9.-]+$",
+      "description": "掃除するブランチ。省略時は bd/<ticket>。形式は bd/<英数字・ドット・ハイフン>。"
+    }
+  }
+}

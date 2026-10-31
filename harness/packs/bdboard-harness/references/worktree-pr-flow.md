@@ -570,16 +570,10 @@ S2 は S1 の層2 だけを変える（gate / finish / 台帳は S1 のまま）
 
 ### 6. close と掃除
 
-マージ成功後（GitHub の auto-merge が着地させてから。§5）。**`bd close` の前に
-[close-template.md](close-template.md) の書式で証拠コメントを残す**:
-
-```bash
-bd comment <id> "<close-template.md の4行: 検証 / PR・CI / レビュー / 未了>"
-bd close <id>
-git worktree remove .claude/worktrees/<id>
-git branch -d bd/<id>          # squash マージ後は -D が必要なことがある
-git remote prune origin
-```
+マージ成功後（GitHub の auto-merge が着地させてから。§5）。`python3 scripts/close-ticket.py --spec <json>`
+（メインチェックアウトで。キーと手順は `--help`、確認は `--dry-run`）が MERGED・main 到達・worktree
+未使用を検査し、`PR:` 証拠コメント → `bd close` → worktree 削除・`branch -D`・`git remote prune origin` を行う。
+検証/レビュー行を足すなら先に [close-template.md](close-template.md) の書式で `bd comment` する。
 
 掃除はマージした本人の責務。残骸は全セッションの空き確認（規律2）を狂わせる。
 **常時稼働サーバーの再起動は掃除に含めない** — 契約に `alwaysOnServer` がある注入先では
