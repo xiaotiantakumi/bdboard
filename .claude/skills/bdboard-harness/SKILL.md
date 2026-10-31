@@ -1,22 +1,22 @@
 ---
 name: bdboard-harness
-description: .beads/ を持つプロジェクトでチケット作業・自律作業・並列セッション作業を始めるときに必ず適用する作業規律。セッション開始(bd prime→stale lease確認→bd ready)、worktree-first 排他と claim、確認待ちのノンブロッキング化(bd human + human gate)、close はマージ成功後だけ、ハーネス失敗の学習ループ(failure-catalog 照合・brushup・層判定と還流)、複雑度別のモデル振り分けの6規律を定める。
+description: .beads/ を持つプロジェクトでチケット作業・自律作業・並列セッション作業を始めるときに必ず適用する作業規律。セッション開始、worktree-first 排他と claim、確認待ちのノンブロッキング化(human gate)、close はマージ成功後だけ、ハーネス失敗の学習ループ、複雑度別のモデル振り分けの6規律を定める。操作はスクリプト経由。
 ---
 
 # bdboard-harness — bd 運用プロジェクトの自律作業規律
 
 ## 前提
 
-- 対象は `.beads/` を持つプロジェクト。**複数セッションが同時に走る**前提で書かれている
-  （単独でも同じ規律を守る — いつ並列になるか自分からは分からない）。
-- **プロジェクト固有の値はここに書かない。** 検証コマンド・ブランチ命名・マージ方式・
-  サーバー/ポートは注入先の CLAUDE.md / AGENTS.md（と検証コントラクト）に従う。
-- **本文は骨格。各規律の `詳細:` が挙げるファイルはすべて `references/` 配下**（先頭が手順の全文）。着手前に開く。
+- 対象は `.beads/` を持つプロジェクト。**複数セッションが同時に走る**前提（単独でも同じ規律を守る）。
+- **プロジェクト固有の値はここに書かない。** 検証コマンド・ブランチ命名・マージ方式・サーバー/ポートは
+  注入先の CLAUDE.md / AGENTS.md（と検証コントラクト）に従う。
+- **操作はスクリプト経由。** 本文は「なぜ」と「どれを呼ぶか」だけ。各規律の `詳細:` は `references/` 配下（着手前に開く）。
+  議長だけが呼ぶのは start-ticket / close-ticket、worker も呼ぶのは open-pr / ask-human-gate / post-review-ticket。
 
 ## 規律1: セッション開始 — prime → stale lease 確認 → ready
 
-なぜ: 死んだセッションの残骸（stale lease・worktree）を見ないまま着手すると、誰も作業して
-いないチケットを永久に避け続けるか、生きている作業を横取りするかの事故になる。
+なぜ: 死んだセッションの残骸（stale lease・worktree）を見ないまま着手すると、放置チケットを
+避け続けるか、生きている作業を横取りする事故になる。
 
 手順:
 
@@ -31,29 +31,29 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 ## 規律2: 排他と claim — 排他の正本は worktree、claim は台帳記録
 
-なぜ: 並列セッションは全て同じ assignee で動くため `bd update --claim` は先行 claim を検出
-できず両方成功しうる。`git worktree add -b` は先着1名しか成功しない。**排他は git が裁く**。
+なぜ: 並列セッションは同じ assignee なので `bd update --claim` は両方成功しうる。
+`git worktree add -b` は先着1名しか成功しない。**排他は git が裁く**。
 
 手順（この順序を厳守）:
 
-1〜3. **`python3 scripts/start-ticket.py --spec <json>`**（メインチェックアウトで。キーは `--help`）が
-   空き確認 → `git worktree add -b`（成否が排他。失敗なら次の候補へ）→ 成功後だけ `--claim`。
+1〜3. **`python3 scripts/start-ticket.py --spec <json>`**（**議長がメインチェックアウトで**。worker は
+   isolation で worktree をもらうので呼ばない。キーは `--help`）が空き確認 → `git worktree add -b`
+   （成否が排他。失敗なら次の候補へ）→ 成功後だけ claim。
 4. 実装前に既存実装を1回探す（`git grep -n` と `bd search --status in_progress` を各1回）。
-5. **heartbeat は scripts/bd-heartbeat.sh で**保持中の全チケットへ。失敗＝所有権喪失、直ちに停止。worktree 保護を当てにしない。
-6. **負けたら**相手を戻さない・kill しない（成果は patch へ退避）。空の worktree を「放棄」
-   と断定しない。
+5. **heartbeat は scripts/bd-heartbeat.sh で**保持中の全チケットへ。失敗＝所有権喪失、直ちに停止。
+6. **負けたら**相手を戻さない・kill しない（成果は patch へ退避）。空の worktree を「放棄」と断定しない。
 
 詳細: `worktree-pr-flow.md` / `lease-params.md`
 
 ## 規律3: 確認待ち — 質問は gate 本体に書き、回答を待たずに次へ進む
 
-なぜ: 質問して待つとセッションが止まる。`--title`/`--reason` を省くと全ゲートが同じ見た目
-になり中身が読めない（bdboard-p5l.26）。
+なぜ: 質問して待つとセッションが止まる。title を省くと全 gate が同じ見た目で読めない（bdboard-p5l.26）。
 
 手順:
 
-1. `python3 scripts/ask-human-gate.py --spec <json>` で gate 作成〜コメント〜human ラベルまで
-   一括（キーと制約は `--help`、`--dry-run` で本文確認。最終行が gate id）。
+1. `python3 scripts/ask-human-gate.py --spec <json>`（**worker も使う**）で gate 作成〜コメント〜
+   human ラベルまで一括（キーと制約は `--help`、`--dry-run` で本文確認。最終行が gate id）。
+   見て OK/NG を返すだけの確認は `scripts/post-review-ticket.py`（同じく worker も使う）。
 2. **回答を待たず次へ。** worktree は残し heartbeat の対象に含め続ける。
 3. 変わったら旧本文の要点を `--append-notes` に移して gate 本文を全文置換。
 4. 回答が来たら `bd label remove <id> human` して再開（close しない）。
@@ -63,14 +63,15 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 ## 規律4: セッションクローズ — close はマージ成功後だけ
 
-なぜ: PR を開いた時点で close すると `bd ready` と進捗表示が「landed していない作業を完了」
-と偽り、並列セッションの判断を狂わせる。close =「main に入った」の不変条件を守る。
+なぜ: PR を開いた時点で close すると `bd ready` が「landed していない作業を完了」と偽る。
+close =「main に入った」の不変条件を守る。
 
 手順:
 
-1. 軽い検証 → PR → auto-merge → マージ、まで完走する。フル検証（`.claude/bdboard-harness.json`
-   の `verify`）は CI に任せる（worktree-pr-flow.md §3・§5）。
-2〜4. **マージ成功後に `python3 scripts/close-ticket.py --spec <json>`**（メインチェックアウトで。
+1. 軽い検証 → PR → auto-merge → マージ、まで完走する。PR は **`scripts/open-pr.py --spec <json>`**
+   （**worker も使う**。契約 `.claude/bdboard-harness.json` の `verifyQuick`/`commitCheck` で検証 → push →
+   `Closes:` 付き PR → `PR:` コメント → low/med は auto-merge）。フル検証（契約の `verify`）は CI に任せる。
+2〜4. **マージ成功後に議長が `python3 scripts/close-ticket.py --spec <json>`**（メインチェックアウトで。
    キーは `--help`、`--dry-run` で確認）が MERGED と main 到達と worktree 未使用を検査 →
    `PR:` 証拠コメント → `bd close` → worktree/ブランチ掃除。**未マージは拒否される。マージ前に close しない**。
 5. 残作業・気づきはチケット化する（`--deps discovered-from:<元>`）。
@@ -80,8 +81,7 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 ## 規律5: ハーネス失敗の学習ループ — 同じ失敗を二度踏まない
 
-なぜ: 規律は事故の集積で網羅は不完全。復旧だけで終えると教訓は散逸し、
-同じ失敗が再生産される。
+なぜ: 復旧だけで終えると教訓が散逸し、同じ失敗が再生産される。
 
 手順:
 
@@ -117,6 +117,6 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 ## references
 
-`references/` の全量: session-start / worktree-pr-flow / lease-params / question-template /
+`references/` 配下: session-start / worktree-pr-flow / lease-params / question-template /
 close-template / verification / failure-catalog / brushup-protocol / layering /
-model-routing / frontend-gotchas（web 実装の罠）。
+model-routing / frontend-gotchas。
