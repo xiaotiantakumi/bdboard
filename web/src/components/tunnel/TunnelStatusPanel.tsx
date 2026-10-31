@@ -129,6 +129,13 @@ export function TunnelStatusPanel({
         <p className="tunnel-qr-status">公開を開始しています…</p>
       )}
 
+      {data?.state === 'on' && data.degraded === true && (
+        <p className="tunnel-error-message" role="alert">
+          接続が切れています (degraded)。いったん停止して公開し直してください。
+          {data.lastError !== undefined ? ` ${data.lastError}` : ''}
+        </p>
+      )}
+
       {data?.state === 'on' && (
         <TunnelOnPanel
           writeAccess={data.writeAccess}

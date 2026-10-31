@@ -12,6 +12,9 @@ export type TunnelState =
       readonly username: string;
       readonly password: string;
       readonly startedAt: Date;
+      /** cloudflared の接続が全部落ちている (bdboard-7yfj.8)。URL は届かない。 */
+      readonly degraded?: boolean;
+      readonly lastError?: string;
     }
   | { readonly kind: 'error'; readonly message: string };
 

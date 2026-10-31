@@ -3,6 +3,7 @@
 // unexpectedExitListeners) として持っていたものを、spawn・出力監視・kill の各関心へ渡せる
 // ように明示的なオブジェクトへまとめた。オブジェクト参照を共有して直接書き換える点は、元の
 // クロージャ変数を複数の内部関数から書き換えていたのと同じ意味論(挙動は変えていない)。
+import type { ConnectionHealth } from './connection-monitor.js';
 import type { SpawnedProcess } from './spawned-process.js';
 
 export interface TunnelRuntimeState {
@@ -13,6 +14,8 @@ export interface TunnelRuntimeState {
   outputBuffer: string;
   /** onUnexpectedExit() で登録されたリスナー。 */
   readonly unexpectedExitListeners: Array<() => void>;
+  /** onConnectionHealth() で登録されたリスナー (bdboard-7yfj.8)。 */
+  readonly connectionHealthListeners: Array<(health: ConnectionHealth) => void>;
 }
 
 export function createTunnelRuntimeState(): TunnelRuntimeState {
@@ -20,6 +23,7 @@ export function createTunnelRuntimeState(): TunnelRuntimeState {
     child: null,
     outputBuffer: '',
     unexpectedExitListeners: [],
+    connectionHealthListeners: [],
   };
 }
 

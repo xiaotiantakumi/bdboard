@@ -46,7 +46,19 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
     }
   });
 
-  const getAvailability = (): boolean => ctx.availability?.value === true;
+  // bdboard-7yfj.8: プロセスは生きたまま全接続が落ちた/回復した場合。state は on のまま
+  // degraded/lastError を足す (stop → 再作成の判断は呼び出し側 = phone-url.sh)。
+  deps.tunnel.onConnectionHealth?.((health) => {
+    if (ctx.state.kind !== 'on') {
+      return;
+    }
+    const { degraded: _d, lastError: _e, ...rest } = ctx.state;
+    ctx.state = health.degraded
+      ? { ...rest, degraded: true, lastError: health.lastError ?? 'tunnel connections lost' }
+      : rest;
+  });
+
+  const getAvailability =(): boolean => ctx.availability?.value === true;
 
   const isWriteAllowed = (): boolean => ctx.state.kind === 'on' && ctx.writeAllowed;
 

@@ -32,6 +32,7 @@ import type {
   TunnelProcess,
   TunnelStartResult,
 } from '../../application/ports/tunnel.js';
+import type { ConnectionHealth } from './cloudflared-tunnel/connection-monitor.js';
 import {
   resolveDefaultTunnelLogFilePath,
   DEFAULT_LOG_MAX_BYTES,
@@ -136,9 +137,16 @@ export function createCloudflaredTunnel(
     state.unexpectedExitListeners.push(listener);
   };
 
+  const onConnectionHealth = (
+    listener: (health: ConnectionHealth) => void,
+  ): void => {
+    state.connectionHealthListeners.push(listener);
+  };
+
   return {
     start,
     onUnexpectedExit,
+    onConnectionHealth,
     stop,
     isAvailable,
   };

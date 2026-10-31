@@ -24,6 +24,9 @@ export interface TunnelDtoOn extends TunnelDtoBase {
   /** トンネル経由の書き込みが開いているか(bdboard-9rz)。短いパスワードで起動した
    *  トンネルは読み取り専用になるので、UI 側で理由を説明するのに使える。 */
   writeAccess?: boolean;
+  /** cloudflared の接続が全部落ちている (bdboard-7yfj.8)。URL は届かない。 */
+  degraded?: boolean;
+  lastError?: string;
 }
 
 export interface TunnelDtoError extends TunnelDtoBase {

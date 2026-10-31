@@ -35,6 +35,12 @@ function toPublicState(
     // 短いパスワードで起動したトンネルは読み取り専用になる(bdboard-9rz)。
     // スマホから書き込めない理由が UI 側で説明できるように状態として返す。
     base.writeAccess = writeAccess;
+    // bdboard-7yfj.8: 接続が全部落ちている間は degraded: true。state は 'on' のまま
+    // (既存クライアントの互換のため)。
+    if (state.degraded === true) {
+      base.degraded = true;
+      base.lastError = state.lastError;
+    }
   } else if (state.kind === 'error') {
     base.message = state.message;
   }
