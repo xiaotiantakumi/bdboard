@@ -36,9 +36,8 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 手順（この順序を厳守）:
 
-1. 空き確認は worktree とブランチの**両方**が「無い」こと。
-2. **`git worktree add <path> -b <branch>` の成否が排他** — 失敗（既存）なら次の候補へ。
-3. **成功して初めて `bd update <id> --claim`。** claim を worktree より先に打たない。
+1〜3. **`python3 scripts/start-ticket.py --spec <json>`**（メインチェックアウトで。キーは `--help`）が
+   空き確認 → `git worktree add -b`（成否が排他。失敗なら次の候補へ）→ 成功後だけ `--claim`。
 4. 実装前に既存実装を1回探す（`git grep -n` と `bd search --status in_progress` を各1回）。
 5. **heartbeat は scripts/bd-heartbeat.sh で**保持中の全チケットへ。失敗＝所有権喪失、直ちに停止。worktree 保護を当てにしない。
 6. **負けたら**相手を戻さない・kill しない（成果は patch へ退避）。空の worktree を「放棄」

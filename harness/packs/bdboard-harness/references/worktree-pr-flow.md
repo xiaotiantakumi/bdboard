@@ -36,9 +36,9 @@ CLAUDE.md / AGENTS.md が正。以下では既定の推奨としてブランチ 
 SKILL.md 規律2 の手順の全文。本文には骨格だけを残している（brushup-protocol.md §7 の予算）。
 手順番号は本文と同じ。
 
-1. 空き確認は worktree とブランチの**両方**が「無い」こと。
-2. **`git worktree add <path> -b <branch>` の成否が排他** — 失敗（既存）なら次の候補へ。
-3. **成功して初めて `bd update <id> --claim`。** claim を worktree より先に打たない。
+1〜3. `python3 scripts/start-ticket.py --spec <json>`（メインチェックアウトで）。worktree とブランチの
+   両方が無いことの確認 → `git worktree add -b`（成否が排他。失敗 = 次の候補へ）→ 成功後だけ
+   `bd update <id> --claim`。spec のキーと制約は `--help`（正本は scripts/start-ticket.schema.json）。
 4. 実装前に既存実装を1回探す（`git grep -n` と `bd search --status in_progress` を各1回）。
 5. **heartbeat は scripts/bd-heartbeat.sh で**（保持中の全チケット・寿命はセッション束縛）。失敗＝所有権喪失、直ちに停止。
    ただし **heartbeat は排他の最後の砦ではない** — bdboard の reclaim は `bd/<id>` ブランチか
@@ -63,31 +63,15 @@ SKILL.md 規律2 の手順の全文。本文には骨格だけを残している
 拒否するので、先着1名だけが成功する。よって**排他はチケット台帳ではなく git が裁く**
 （SKILL.md 規律2）。
 
-**着手前の空き確認は worktree とブランチの両方を見る。** ブランチだけが先に存在する
-ケースがあり、片方だけでは取りこぼす:
+**着手は `python3 scripts/start-ticket.py --spec <json>` を呼ぶ**（キー・既定値・制約は `--help`）。
+ブランチだけが先に存在するケースがあるので、worktree とブランチの両方を見る。起点は
+`origin/<mainBranch>`（既定 origin/main）。
 
-```bash
-ls .claude/worktrees/<id>          # 「存在しない」ことを確認
-git rev-parse --verify bd/<id>     # 「存在しない」ことを確認
-```
-
-両方の不存在を確認してから:
-
-```bash
-git -C <メインチェックアウト> fetch origin
-git -C <メインチェックアウト> worktree add .claude/worktrees/<id> -b bd/<id> origin/<mainBranch>
-```
-
-- `origin/<mainBranch>` 起点で作る（ローカルの main が古くても最新から始められる）。
-- 成功 = 排他獲得。失敗（ブランチ/パス既存）= 他セッションが着手中。別チケットへ。
-- 成功したら `bd update <id> --claim`。
-- **複数チケットを一括で並列着手するときも、2本目以降を毎回この `git -C
-  <メインチェックアウト>` 形式で実行する**（生シェルで cd している場合は `pwd` で
-  メインチェックアウトに居ることを確認してから）。cwd が既存 worktree の中のまま
-  相対パスで add すると、新しい worktree がその worktree の**内側にネストして**作られる
-  （実測: 2026-08-17、`.claude/worktrees/<A>/.claude/worktrees/<B>/`）。ネストを発見したら
-  **内側の worktree から先に** `git worktree remove` する — 外側から消すと内側の作業ごと
-  再帰的に破壊される（failure-catalog.md の nested-worktree）。
+- 成功 = 排他獲得 → claim → `bdboard.complexity` を記録。stdout 最終行が worktree の絶対パス。
+- 失敗（ブランチ/パス既存。終了コード 2）= 他セッションが着手中。claim せず別チケットへ。
+- メインチェックアウトで実行する（linked worktree の中では拒否する）。cwd が既存 worktree の
+  中だと新しい worktree が**内側にネスト**する（実測: 2026-08-17。failure-catalog.md の
+  nested-worktree。ネストは**内側から先に** `git worktree remove`）。
 
 ### 2. worktree 内でのセットアップと実装
 
