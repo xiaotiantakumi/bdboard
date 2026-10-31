@@ -44,6 +44,8 @@
   フルの検証チェーンを回す。コマンドは (1) 注入先の検証コントラクト
   `.claude/bdboard-harness.json` の `verify` → (2) 無い/壊れていれば CLAUDE.md / AGENTS.md →
   (3) どちらにも無ければ検証せずに進めない、の順で決める（SKILL.md 規律4 手順1）。
+  PR 前の軽い検証は契約の任意キー `verifyQuick`（既定 `npm run verify:quick`）で、`open-pr.py` が読む
+  （キーの表は worktree-pr-flow.md）。ここでいう「フル」は `verify` のほう。
 - **レビューを別モデルへ依頼するときは、観点に「重複実装」を必ず入れる。** 定型:
   「同 PR 内、および直近の main（`git log -20 --stat`）に、同目的のヘルパー/ユーティリティが
   既に無いか。あれば統合を指摘すること」。並列セッションが同じヘルパーを別々に書くのは実測で

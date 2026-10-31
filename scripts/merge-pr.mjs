@@ -8,8 +8,8 @@
 // release の数十秒に縮め、着地後検証は枠の外で行って GitHub commit status
 // (bdboard/landed-verify) に記録する。次の merger はその台帳を層3 のゲートとして読む。
 //
-// 手順の正本: harness/packs/bdboard-harness/references/worktree-pr-flow.md §5「S1」、
-// bdboard 固有の値と事故: docs/GIT-WORKFLOW.md「Merge serialization」。
+// 手順の正本: docs/GIT-WORKFLOW.md「Merge serialization」(旧 S1 手順の全文は pack 1.0.0 より前の
+// worktree-pr-flow.md §5 にあった。S1/S2 は廃止済みでコード削除は後続チケット)。
 import { pathToFileURL } from 'node:url';
 
 import { main } from './merge-pr/cli.mjs';

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "open-pr.schema.json",
   "title": "open-pr.py --spec",
-  "description": "PR 作成 (verify:quick → push → gh pr create → bd comment PR: → auto-merge) の spec。この 1 ファイルが --spec の検査と --help の正本。スキーマでは書けない次の検査はスクリプトが git/bd/npm (読み取りのみ) で補う: ticket が bd に実在し status が in_progress / カレントが linked worktree でブランチが bd/<ticket> / 未コミットが無い / origin/main より先行コミットがある / .beads/ 配下の変更が diff に無い / コミットメッセージが check:commits を通る / title の括弧の中が ticket と一致する。complexity を省略したときは bd metadata bdboard.complexity を読み、無ければ拒否する。",
+  "description": "PR 作成 (verify:quick → push → gh pr create → bd comment PR: → auto-merge) の spec。この 1 ファイルが --spec の検査と --help の正本。スキーマでは書けない次の検査はスクリプトが git/bd/npm (読み取りのみ) で補う: ticket が bd に実在し status が in_progress / カレントが linked worktree でブランチが bd/<ticket> / 未コミットが無い / origin/main より先行コミットがある / .beads/ 配下の変更が diff に無い / コミットメッセージが契約の commitCheck を通る / title の括弧の中が ticket と一致する。complexity を省略したときは bd metadata bdboard.complexity を読み、無ければ拒否する。検証コマンドは注入先の契約 .claude/bdboard-harness.json の任意キー verifyQuick (PR 前の軽い検証。既定 `npm run verify:quick`) と commitCheck (コミットメッセージ検査。`{range}` が origin/main..HEAD になる。既定 `npm run check:commits -- --range {range}`) から読む。キーがあるのに 1 行の文字列でなければ拒否する。",
   "type": "object",
   "additionalProperties": false,
   "required": ["ticket", "title", "summary", "help_content_checked"],

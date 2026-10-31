@@ -1,5 +1,5 @@
 // bdboard-ulxa.1: エージェントに次の行動を指示する定型文。文言の正本は
-// harness/packs/bdboard-harness/references/worktree-pr-flow.md §5「S1」と docs/GIT-WORKFLOW.md。
+// docs/GIT-WORKFLOW.md (旧 S1 手順の全文は pack 1.0.0 より前の worktree-pr-flow.md §5 にあった)。
 import { shellQuote } from './exec.mjs';
 
 /** main が壊れている (着地後検証 failure) ときの手順 (設計 §3.6)。 */

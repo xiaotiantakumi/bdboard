@@ -1,6 +1,8 @@
 {
   "version": 1,
   "verify": "npm run verify",
+  "verifyQuick": "npm run verify:quick",
+  "commitCheck": "npm run check:commits -- --range {range}",
   "prFlow": "pr",
   "mainBranch": "main",
   "alwaysOnServer": {
