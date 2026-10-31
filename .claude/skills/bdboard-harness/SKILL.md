@@ -70,9 +70,9 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 1. 軽い検証 → PR → auto-merge → マージ、まで完走する。フル検証（`.claude/bdboard-harness.json`
    の `verify`）は CI に任せる（worktree-pr-flow.md §3・§5）。
-2. **マージ成功後、`bd close` の前に証拠コメント**（**`PR:` 行必須**）。
-3. **その上で `bd close <id>`。マージ前に close しない**。
-4. worktree を掃除する（remove → ブランチ削除 → `git remote prune origin`）。
+2〜4. **マージ成功後に `python3 scripts/close-ticket.py --spec <json>`**（メインチェックアウトで。
+   キーは `--help`、`--dry-run` で確認）が MERGED と main 到達と worktree 未使用を検査 →
+   `PR:` 証拠コメント → `bd close` → worktree/ブランチ掃除。**未マージは拒否される。マージ前に close しない**。
 5. 残作業・気づきはチケット化する（`--deps discovered-from:<元>`）。
 6. `bd dolt push` はセッション末に1回（外向き操作。許可が無ければ確認）。
 
