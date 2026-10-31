@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "post-review-ticket.schema.json",
+  "title": "post-review-ticket.py --spec",
+  "description": "確認チケットの本文を組み立てる spec。この 1 ファイルが --spec の検査と --help の正本。拡張キーワード x-path-exists は「ファイルが実在し空でない (相対パスは実行時のカレントディレクトリ基準)」、x-unique-main は「main_video のパスが他の欄に出てこない」を意味する (標準の JSON Schema では書けない検査をスクリプトが補う)。",
+  "type": "object",
+  "minProperties": 1,
+  "additionalProperties": false,
+  "properties": {
+    "main_video": {
+      "$ref": "#/$defs/videoPath",
+      "description": "通しの動画のパス。本文では「今回見てほしいもの」に一度だけ出る。あるときは points と decision が必須。"
+    },
+    "main_video_label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^[^\\n]*\\S[^\\n]*$",
+      "description": "通しの動画の見出しに添える 1 行の説明 (例: 3分12秒・8場面)。main_video が必須。"
+    },
+    "fix_videos": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/videoPath" },
+      "description": "直した箇所の確認動画のパスの配列。あるときは fixed が必須。"
+    },
+    "ear_videos": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/videoPath" },
+      "description": "耳で確かめる確認動画のパスの配列。あるときは ear が必須。"
+    },
+    "points": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80,
+        "pattern": "^(?!.*\\.\\s)[^\\n。！？!?]*[^\\s。！？!?][。！？!?]?$"
+      },
+      "description": "見るポイントの配列。各要素は 1 文 (改行・句点の途中出現なし) で 80 字まで、最大 8 件。"
+    },
+    "decision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^(?=[\\s\\S]*\\S)(?:[^\\n]*\\n){0,4}[^\\n]*\\n?$",
+      "description": "判断してほしいこと。300 字・5 行まで。"
+    },
+    "fixed": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 3000,
+      "pattern": "^(?=[\\s\\S]*\\S)(?:[^\\n]*\\n){0,39}[^\\n]*\\n?$",
+      "description": "「直したところ」の本文 (Markdown)。40 行まで。fix_videos があるとき必須。"
+    },
+    "ear": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "^(?=[\\s\\S]*\\S)(?:[^\\n]*\\n){0,19}[^\\n]*\\n?$",
+      "description": "「耳で聞いてほしいところ」の本文 (Markdown)。20 行まで (疑い一覧を丸ごと貼らない)。ear_videos があるとき必須。"
+    },
+    "materials": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300,
+        "pattern": "^[^\\n]*\\S[^\\n]*$"
+      },
+      "description": "「資料」のパス/URL の配列 (最大 20 件)。"
+    },
+    "other": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "^(?=[\\s\\S]*\\S)(?:[^\\n]*\\n){0,19}[^\\n]*\\n?$",
+      "description": "「そのほか」の本文 (Markdown)。20 行まで。"
+    }
+  },
+  "dependentRequired": {
+    "main_video": ["points", "decision"],
+    "main_video_label": ["main_video"],
+    "fix_videos": ["points", "decision", "fixed"],
+    "ear_videos": ["points", "decision", "ear"]
+  },
+  "x-unique-main": "main_video",
+  "$defs": {
+    "videoPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^\\S(?:[^\\n]*\\S)?\\.(?:mp4|mov|m4v|webm|mkv)$",
+      "x-path-exists": true,
+      "description": "動画ファイルのパス (絶対パス、またはプロジェクト相対)。拡張子は小文字の mp4/mov/m4v/webm/mkv。実在して空でないこと。"
+    }
+  }
+}
