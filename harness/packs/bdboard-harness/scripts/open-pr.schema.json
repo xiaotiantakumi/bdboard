@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "open-pr.schema.json",
+  "title": "open-pr.py --spec",
+  "description": "PR 作成 (verify:quick → push → gh pr create → bd comment PR: → auto-merge) の spec。この 1 ファイルが --spec の検査と --help の正本。スキーマでは書けない次の検査はスクリプトが git/bd/npm (読み取りのみ) で補う: ticket が bd に実在し status が in_progress / カレントが linked worktree でブランチが bd/<ticket> / 未コミットが無い / origin/main より先行コミットがある / .beads/ 配下の変更が diff に無い / コミットメッセージが check:commits を通る / title の括弧の中が ticket と一致する。complexity を省略したときは bd metadata bdboard.complexity を読み、無ければ拒否する。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ticket", "title", "summary", "help_content_checked"],
+  "properties": {
+    "ticket": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(\\.[A-Za-z0-9]+)*$",
+      "description": "PR を出すチケットの id (例: bdboard-7yfj.4)。bd に実在し status が in_progress であること。ブランチは bd/<ticket>。"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 120,
+      "pattern": "^(feat|fix|chore|docs|test|refactor)\\([^()\\n]+\\): \\S[^\\n]*$",
+      "description": "PR タイトル (1 行)。`<type>(<ticket>): <要約>` で始める。type は feat|fix|chore|docs|test|refactor、括弧の中は ticket と一致すること。"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1500,
+      "pattern": "^(?=[\\s\\S]*\\S)[^\\n]*\\S[^\\n]*(?:\\n[^\\n]*){1,9}\\n?$",
+      "description": "PR 本文の要約。2〜10 行・1500 字まで。本文の先頭の `Closes: <ticket>` と末尾の生成行はスクリプトが付ける。"
+    },
+    "complexity": {
+      "type": "string",
+      "enum": ["low", "med", "high"],
+      "description": "複雑度。low/med は auto-merge を有効にし、high は有効にせず議長のレビューを待つ。省略時は bd metadata bdboard.complexity を読み、無ければ拒否。"
+    },
+    "help_content_checked": {
+      "type": "boolean",
+      "const": true,
+      "description": "docs/help-content.json の追従を確認した宣言 (更新不要という結論でもよい)。false は拒否。"
+    }
+  }
+}
