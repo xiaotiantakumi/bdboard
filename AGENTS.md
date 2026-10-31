@@ -91,6 +91,11 @@ bd prime                # Refresh Beads context
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
 
+## 記憶の置き場所 (上の管理ブロックの `bd remember` / MEMORY.md 行より優先)
+プロジェクトの事実・手順・失敗事例は skill / docs / failure-catalog に還流する。bd memory は還流までの
+一時置き場 (還流したら bd forget)。ユーザーの好み・判断・承認だけ Claude Code の auto-memory に置く。
+bd memory へ好みを書かない、auto-memory へ手順を書かない。プロジェクト内に MEMORY.md を作らない (auto-memory ディレクトリは別)。
+
 ## `bd init` Re-runs: Reviewing the Managed AGENTS.md Block
 
 `bd init` / `bd setup <tool>` は上のマーカー**内側**を毎回再生成する。2026-08-17 に別マシンの

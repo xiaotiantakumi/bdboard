@@ -429,6 +429,20 @@ worktree-cwd case above, where every attempt reproduces (2/2).
   ended while a tunnel was active (bdboard-8v8), but that post-hoc notice is
   not a substitute for this advance warning. See bdboard-8v8.
 
+## トンネルを作った(作り直した)とき: URL と Basic 認証の案内を同じメッセージで
+
+背景: 認証なしの quick tunnel は、URL を知っていれば誰でも実メールアドレス・絶対パス・全プロジェクトの
+非公開チケットを見られた。そこで全ルートに簡易 Basic 認証を一律適用した (bdboard-3tw.16)。quick tunnel は
+起動のたびにランダムなサブドメインが発行されるので、「URL だけ伝えて認証情報を伝え忘れる」事故が起きやすい。
+
+- トンネルを新規生成・再生成したら、発行した URL と**認証情報の在り処**を**必ず同じメッセージ**でユーザーに伝える。
+  片方だけで終わらない (mobile-preview-tunnel / bdboard-phone-url 使用時も同じ)。
+- 認証情報の値は `.env` 等の環境変数経由で管理し、チケット本文・コミット・チャットに平文で残さない。
+  伝えるのは「`<path>` にあります、ユーザー名は `<固定値>`」の形 (固定のユーザー名など実質公開の情報は書いてよい。
+  秘密値を SendMessage で議長に返させる設計は避ける — failure-catalog の dont-relay-secret-values-through-agent-messages)。
+- サブエージェントがトンネルを生成した場合も、URL と在り処を議長が受け取ってからユーザーへ提示する
+  (サブエージェントが直接ユーザーへ認証情報を送らない)。
+
 ## 停止・kill の禁止事項
 
 - **Never kill the server** except for that post-merge restart (or an explicit
