@@ -246,13 +246,9 @@ describe.skipIf(process.platform === 'win32' || !HAS_PYTHON)(
           'fix_videos があるとき fixed も必須',
         );
         await reject(
-          {
-            ...base,
-            main_video: undefined,
-            fix_videos: ['out/fix.mp4'],
-            fixed: 'x',
-          },
-          'points も必須',
+          { fix_videos: ['out/fix.mp4'], fixed: 'x' },
+          'fix_videos があるとき points も必須',
+          'decision も必須',
         );
       });
 
