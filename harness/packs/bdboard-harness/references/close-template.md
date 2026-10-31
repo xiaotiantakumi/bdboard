@@ -15,20 +15,17 @@ SKILL.md 規律4 の手順の全文。本文には骨格だけを残している
 
 1. 検証 → PR → CI → マージ、まで完走する。検証コマンドは **`.claude/bdboard-harness.json`
    の `verify` → CLAUDE.md / AGENTS.md → 無ければ検証せず進めない**の順で決める。
-2. **マージ成功後、`bd close` の前に証拠コメント**（`close-template.md` の書式。**`PR:` 行必須**）。
-3. **その上で `bd close <id>`。マージ前に close しない**（未到達なら in_progress のまま現状
-   をコメントに残す）。
-4. worktree を掃除する（remove → ブランチ削除 → `git remote prune origin`）。
+2〜4. **マージ成功後に `python3 scripts/close-ticket.py --spec <json>`**（キーと手順は `--help`、
+   `--dry-run` で確認）。MERGED・main 到達・worktree 未使用を検査してから `PR:` 証拠コメント →
+   `bd close` → 掃除をする。**マージ前に close しない**（未到達なら in_progress のまま現状をコメントに残す）。
 5. 残作業・気づきはチケット化する（`--deps discovered-from:<元>` で来歴を辺に残す。先に
    brushup-protocol.md §8 の停止規則を見る）。
 6. `bd dolt push` はセッション末に1回。外向き操作なので、許可が無ければ実行前に確認する。
 
-## 手順（SKILL.md 規律4 手順2 の実体）
+## 手順（SKILL.md 規律4 手順2〜4 の実体）
 
-```bash
-bd comment <id> "<下のテンプレで書いた本文>"
-# → マージ成功を確認してから bd close <id>（close はマージ後だけ — 規律4 手順3）
-```
+`scripts/close-ticket.py` が最小の証拠コメント（`PR: <url> merged (<短縮 SHA>)`）を自動で残す。
+下のテンプレの検証/レビュー行を足したいときは、スクリプトの前に `bd comment <id> "<本文>"` で別に残す。
 
 ## テンプレ
 
