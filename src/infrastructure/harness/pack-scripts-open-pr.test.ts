@@ -187,6 +187,47 @@ describe.skipIf(process.platform === 'win32' || !HAS_TOOLS)(
       expect(remote.stdout).toContain('refs/heads/bd/proj-low');
     });
 
+    it('reads verifyQuick / commitCheck from .claude/bdboard-harness.json when the contract has them (bdboard-7yfj.6)', async () => {
+      await makeWorktree('proj-low', {
+        'b.txt': 'b\n',
+        '.claude/bdboard-harness.json': JSON.stringify({
+          version: 1,
+          verify: 'make verify',
+          prFlow: 'pr',
+          verifyQuick: 'npm run my-quick',
+          commitCheck: 'npm run my-commits -- --range {range}',
+        }),
+      });
+      const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'low' })]);
+      expect(r.exitCode, r.stderr).toBe(0);
+      const npm = calls().filter((x) => x.tool === 'npm').map((x) => x.args.join(' '));
+      expect(npm).toContain('run my-quick');
+      expect(npm).toContain('run my-commits -- --range origin/main..HEAD');
+      expect(npm).not.toContain('run verify:quick');
+      expect(npm.some((a) => a.includes('check:commits'))).toBe(false);
+    });
+
+    it('falls back to the npm script names when the contract is absent, unparsable or has no such keys', async () => {
+      await makeWorktree('proj-low', {
+        'b.txt': 'b\n',
+        '.claude/bdboard-harness.json': '{not json',
+      });
+      const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'low' }), '--dry-run']);
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(r.stdout).toContain('+ npm run verify:quick');
+    });
+
+    it('rejects a contract verifyQuick that is not a single-line string', async () => {
+      await makeWorktree('proj-low', {
+        'b.txt': 'b\n',
+        '.claude/bdboard-harness.json': JSON.stringify({ version: 1, verify: 'x', prFlow: 'pr', verifyQuick: 'a\nb' }),
+      });
+      const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'low' })]);
+      expect(r.exitCode).toBe(1);
+      expect(r.stderr).toContain('verifyQuick');
+      expect(sideEffects()).toEqual([]);
+    });
+
     it('high (from bd metadata): no auto-merge, says waiting for the chair', async () => {
       await makeWorktree('proj-high');
       const r = await run(['--spec', writeSpec(baseSpec('proj-high'))]);

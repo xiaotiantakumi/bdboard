@@ -2,24 +2,27 @@
 """PR 作成 (verify:quick → push → gh pr create → bd comment PR: → auto-merge) を 1 コマンドにする (bdboard-7yfj.4)。
 
 worktree-pr-flow.md の「PR 作成」を 1 本にし、`Closes: <ticket>` と `PR:` コメントの欠落を機械で防ぐ。
-プロジェクト固有の場所や名前は持たない (npm の verify:quick / check:commits は package.json の
-スクリプト名で呼ぶ)。
+検証コマンドは注入先の契約 `.claude/bdboard-harness.json` から読む (任意キー verifyQuick・commitCheck。
+commitCheck の {range} は origin/main..HEAD に置き換える)。契約が無い・読めない・キーが無いときの既定は
+`npm run verify:quick` と `npm run check:commits -- --range {range}`。キーがあるのに 1 行の文字列でなければ
+拒否する (契約の不備で検証が黙って省かれないように)。
 
 spec JSON のキーと制約は同じ scripts/ の open-pr.schema.json が正本 (--help にも同じ内容を出す)。
 --spec は副作用の前にこのスキーマと、git/bd/npm (読み取りのみ) の状態検査で調べ、違反は 1 件ずつ
 `ERROR: spec.<path>: <理由>` / `ERROR: <理由>` を全件出して終了コード 1 で止まる (dry-run も同じ)。
 副作用 (verify・push・gh pr create・bd comment・auto-merge) は検査の後だけ。
 
-動作: npm run verify:quick → git push -u origin <branch> → gh pr create → bd comment <ticket> "PR: <url>"
+動作: verifyQuick → git push -u origin <branch> → gh pr create → bd comment <ticket> "PR: <url>"
 → complexity が low/med なら gh pr merge --auto --squash --delete-branch (high は打たず
 「議長のレビュー待ち」と出す)。stdout の最終行は PR URL。--dry-run は実行するコマンドを出すだけ。
---skip-verify <理由> は verify:quick を飛ばし、理由を bd comment に残す。
+--skip-verify <理由> は verifyQuick を飛ばし、理由を bd comment に残す。
 """
 from __future__ import annotations
 
 import argparse
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +30,9 @@ from pathlib import Path
 SCHEMA_PATH = Path(__file__).resolve().with_name("open-pr.schema.json")
 GENERATED_LINE = "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 BASE = "origin/main"
+CONTRACT_REL = ".claude/bdboard-harness.json"
+DEFAULT_VERIFY_QUICK = "npm run verify:quick"
+DEFAULT_COMMIT_CHECK = "npm run check:commits -- --range {range}"
 
 
 # ---- spec の検査 (JSON Schema の必要な範囲だけを標準ライブラリで実装) ----------------------
@@ -118,6 +124,36 @@ def load_spec(path: str) -> dict:
     return spec
 
 
+# ---- 検証コマンドの契約 (読み取りのみ) ---------------------------------------------------
+
+
+def read_contract_commands(errors: list[str]) -> tuple[list[str], str]:
+    """(verifyQuick の argv, commitCheck のテンプレ文字列) を返す。契約が無い・壊れているときは既定。"""
+    quick, commit = DEFAULT_VERIFY_QUICK, DEFAULT_COMMIT_CHECK
+    top = run(["git", "rev-parse", "--show-toplevel"]).stdout.strip()
+    try:
+        with open(Path(top or ".") / CONTRACT_REL, encoding="utf-8") as f:
+            contract = json.load(f)
+    except (OSError, ValueError):
+        contract = None
+    if isinstance(contract, dict):
+        for key in ("verifyQuick", "commitCheck"):
+            if key not in contract:
+                continue
+            value = contract[key]
+            if not isinstance(value, str) or not value.strip() or len(value) > 200 or re.search(r"[\x00-\x1f\x7f]", value):
+                errors.append(f"{CONTRACT_REL}: {key} は 1 行 (200 字以内) の空でない文字列である必要があります")
+            elif key == "verifyQuick":
+                quick = value.strip()
+            else:
+                commit = value.strip()
+    try:
+        return shlex.split(quick), commit
+    except ValueError:
+        errors.append(f"{CONTRACT_REL}: verifyQuick を解釈できません (引用符が閉じていません)")
+        return shlex.split(DEFAULT_VERIFY_QUICK), commit
+
+
 # ---- 状態の検査 (読み取りのみ) ------------------------------------------------------------
 
 
@@ -157,7 +193,7 @@ def read_ticket(ticket: str, errors: list[str]) -> dict | None:
     return obj
 
 
-def check_git_state(ticket: str, branch: str, errors: list[str]) -> bool:
+def check_git_state(ticket: str, branch: str, commit_check: str, errors: list[str]) -> bool:
     """git の状態を検査する。linked worktree でなければ以降を調べず False を返す。"""
     gd = run(["git", "rev-parse", "--path-format=absolute", "--git-dir"]).stdout.strip()
     common = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout.strip()
@@ -179,10 +215,15 @@ def check_git_state(ticket: str, branch: str, errors: list[str]) -> bool:
     beads = [n for n in names if n == ".beads" or n.startswith(".beads/")]
     if beads:
         errors.append(f".beads/ 配下の変更が diff に含まれています (PR に含めない): {', '.join(beads[:5])}")
-    cc = run(["npm", "run", "check:commits", "--", "--range", f"{BASE}..HEAD"])
+    try:
+        cc_cmd = shlex.split(commit_check.replace("{range}", f"{BASE}..HEAD"))
+    except ValueError:
+        errors.append(f"{CONTRACT_REL}: commitCheck を解釈できません (引用符が閉じていません)")
+        return True
+    cc = run(cc_cmd)
     if cc.returncode != 0:
         detail = (cc.stdout or cc.stderr or "").strip().splitlines()
-        errors.append("コミットメッセージが check:commits を通りません: " + (" / ".join(detail[-3:]) if detail else "(出力なし)"))
+        errors.append(f"コミットメッセージが検査 ({' '.join(cc_cmd[:3])}) を通りません: " + (" / ".join(detail[-3:]) if detail else "(出力なし)"))
     return True
 
 
@@ -202,7 +243,7 @@ def main() -> int:
     )
     ap.add_argument("--spec", required=True, help="spec JSON のパス (- で標準入力)")
     ap.add_argument("--dry-run", action="store_true", help="実行するコマンドを出すだけ (副作用なし)")
-    ap.add_argument("--skip-verify", metavar="REASON", default=None, help="verify:quick を飛ばす。理由を bd comment に残す")
+    ap.add_argument("--skip-verify", metavar="REASON", default=None, help="契約の verifyQuick (既定 npm run verify:quick) を飛ばす。理由を bd comment に残す")
     args = ap.parse_args()
 
     try:
@@ -225,6 +266,7 @@ def main() -> int:
         if m and m.group(1) != ticket:
             errors.append(f"spec.title: 括弧の中が ticket と一致しません ({m.group(1)} != {ticket})")
 
+    verify_cmd, commit_check = read_contract_commands(errors)
     complexity = spec.get("complexity") if spec.get("complexity") in ("low", "med", "high") else None
     if ticket and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9]+)*", ticket):
         issue = read_ticket(ticket, errors)
@@ -235,7 +277,7 @@ def main() -> int:
                 complexity = value
             else:
                 errors.append("spec.complexity: 省略時は bd metadata bdboard.complexity が要りますが、ありません (spec に書くか start-ticket で記録)")
-        check_git_state(ticket, f"bd/{ticket}", errors)
+        check_git_state(ticket, f"bd/{ticket}", commit_check, errors)
 
     if errors:
         for err in errors:
@@ -248,7 +290,7 @@ def main() -> int:
     body = build_body(spec)
     steps: list[tuple[str, list[str]]] = []
     if args.skip_verify is None:
-        steps.append(("verify", ["npm", "run", "verify:quick"]))
+        steps.append(("verify", verify_cmd))
     steps.append(("push", ["git", "push", "-u", "origin", branch]))
 
     if args.dry_run:

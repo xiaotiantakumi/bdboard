@@ -38,11 +38,13 @@ hook 由来のエントリのテンプレ（効果/害は必須。他は上と�
 ### worktree-double-claim — 同一チケットを2セッションが二重着手し、同じファイル群を書き合った（2026-08-16）
 - 原因: claim（bd）は同一 assignee 間で排他にならず、worktree 作成前の open 状態が bd ready に見え続けた
 - 防止: 排他の正本は `git worktree add` の成否。着手前に worktree とブランチ両方の不存在を確認（本則: SKILL.md 規律2）
+- → start-ticket.py が拒否する（worktree とブランチの両方の不存在を確認し、`git worktree add -b` の成功後だけ claim する）
 - 出典: bdboard-3tw.104.4 / bd memory `bdboard-concurrent-session-claim-race`, `bdboard-worktree-not-abandoned`
 
 ### nested-worktree — 並列一括着手で worktree が別 worktree の内側にネストして作られた（2026-08-17）
 - 原因: 2本目の `git worktree add` を、cwd が1本目の worktree 内のまま相対パスで実行した
 - 防止: 一括作成では毎回 `git -C <メインチェックアウト>` 形式で実行（本則: worktree-pr-flow.md §1）。発見時は**内側から先に** remove（外側から消すと内側の作業ごと破壊）
+- → start-ticket.py が拒否する（linked worktree の中からの実行は拒否。メインチェックアウトで実行する）
 - 出典: bdboard-3tw.102.4 in .110 / bd memory `bdboard-2026-08-17-nested-worktree-102.4-in-110`
 
 ### live-worktree-removal — 実行中プロセスの残る worktree を削除し、シェルが CPU 1コアを102分専有（2026-08-15）
@@ -90,21 +92,22 @@ hook 由来のエントリのテンプレ（効果/害は必須。他は上と�
 ### merge-chain-semicolon — マージ手順の1行連結で acquire 失敗後も `;` 区切りの後半（bd close 含む）が無条件実行された（2026-08-16）
 - 原因: `bd merge-slot acquire` の誤構文（slot 名を引数に渡すと unknown command）＋ `;` はエラーで止まらない
 - 防止: マージ手順は1行連結にせず1コマンドずつ（または `set -euo pipefail` スクリプトで）実行し、close はマージ成功後にのみ到達させる（本則: worktree-pr-flow.md §5）
+- → close-ticket.py が拒否する（MERGED と main 到達を確かめてからでないと `bd close` に進まない。未マージの close は起きない）
 - 出典: bd memory `bdboard-merge-slot-syntax`
 
 ### merge-gate-pipe-masked — `bd merge-slot acquire 2>&1 | tail -2 && gh pr merge ...` がパイプの終了ステータスで acquire 失敗を隠し、スロット外マージが発生（2026-09-04, PR #296）
 - 原因: acquire は「slot held by: fable-chair-pkr6」で失敗していたが、パイプの終了ステータスは末尾 `tail` の exit 0 になり `&&` 後続の `gh pr merge` が素通りした（merge-chain-semicolon とは別の機序＝`;` ではなくパイプ。同機序: verify-exit-masked）
-- 防止: ゲート判定コマンド（`bd merge-slot acquire`・検証コマンド等）はパイプせず単独実行して `$?` を見るか、リダイレクト後に `echo "EXIT=$?"` を取る（本則: worktree-pr-flow.md §5「ゲート判定コマンドをパイプに通して `&&` で繋がない」節）
+- 防止: ゲート判定コマンド（`bd merge-slot acquire`・検証コマンド等）はパイプせず単独実行して `$?` を見るか、リダイレクト後に `echo "EXIT=$?"` を取る（本則: worktree-pr-flow.md §5 の最終項）
 - 出典: PR #296 / bdboard-pkr6.22.2（索引化: bdboard-9one）
 
 ### merge-slot-waiters-stale — `bd merge-slot` の waiters 残骸を先頭待ちの根拠にして、available なのに acquire せず永久停滞した（2026-09-20）
 - 原因: `bd merge-slot acquire`（`--wait` 無し）は `status` だけで可否判定し `metadata.waiters` を見ないが、waiters には release 後も消えない残骸（2026-09-04 以来の3件 + マージ済み PR #480 の1件）が溜まっており、2エージェントがそれを「自分より先に並んでいる」根拠として誤読した
-- 防止: available なら waiters の中身に関わらず即 acquire する。`acquire --wait` は使わない（残骸を増やすだけ）。先頭待ちのポーリングを自作しない（本則: worktree-pr-flow.md §5 層1「waiters は参考情報」節）。waiters の自動失効・acquire/release時のエントリ除去など bd 本体側の改修は harness-upstream チケット（bdboard-c6wu）へ
+- 防止: available なら waiters の中身に関わらず即 acquire する。`acquire --wait` は使わない（残骸を増やすだけ）。先頭待ちのポーリングを自作しない（merge-slot 運用は廃止済み。旧手順は docs/GIT-WORKFLOW.md）。waiters の自動失効・acquire/release時のエントリ除去など bd 本体側の改修は harness-upstream チケット（bdboard-c6wu）へ
 - 出典: bdboard-5avg（起票: bdboard-wadg / PR #480 マージ時のキュー飛び観測、停滞事故: 議長観測 2026-09-20）
 
 ### merge-slot-held-through-ci — merge-slot を握ったまま rebase → CI 待ち → verify を回し、11 時間中 7.6 時間（約 70%）枠が埋まってマージ間隔が約 12 分に張り付いた（2026-09-23）
 - 原因: 「CAS は rebase 元と一致すること」を枠の中で満たそうとして、CAS 負け → rebase → CI 5–9 分 → CAS のやり直しをすべて枠の中で行っていた（待機ループ ≈250 分、CI 待ち ≈140 分、verify ≈80 分）。ruleset は strict=false で、この待ちは GitHub の要求ではない
-- 防止: 契約の `merge.mode: S1`（S2 も同じ） — 枠は acquire → CAS → gh pr merge → release だけ、着地後検証は枠の外で commit status 台帳へ（本則: worktree-pr-flow.md §5「S1」、bdboard の `npm run merge-pr`）
+- 防止: 契約の `merge.mode: S1`（S2 も同じ） — 枠は acquire → CAS → gh pr merge → release だけ、着地後検証は枠の外で commit status 台帳へ（旧 S1/S2 は廃止。設計は docs/GIT-WORKFLOW.md、bdboard の `npm run merge-pr`）
 - 出典: bdboard-iaqg（計測）/ bdboard-ulxa（設計）/ bdboard-ulxa.1（S1 実装）
 
 ### ci-webhook-drop — GitHub 障害中の force-push で CI が起動せず、pending と誤認して待ち続けた（2026-08-17）
@@ -241,11 +244,13 @@ hook 由来のエントリのテンプレ（効果/害は必須。他は上と�
 ### blocking-chat-question — ユーザーへの質問をチャットで投げて回答待ちし、セッション全体が停止（実測）
 - 原因: 確認待ちを台帳に載せる手段を使わず、同期の質問にした
 - 防止: gate 本体（title/description）を質問の正本にし、作業チケット側は pointer comment + human ラベルに留めて次のチケットへ進む（本則: SKILL.md 規律3, question-template.md）
+- → ask-human-gate.py が拒否する（title/選択肢と帰結/推奨/再開手順の欠けた spec は bd を 1 つも呼ばずに止まる）
 - 出典: SKILL.md 規律3 の動機事例 / bdboard-p5l.26
 
 ### dep-instead-of-gate — 確認待ちを `bd dep add` で表現しようとして既存の discovered-from 辺と衝突・失敗（bd 1.2.1 実測）
 - 原因: bd は同じ向きの2者間に複数タイプの辺を持てない
 - 防止: 確認待ちは `bd gate create --type=human`（別ノードへの blocks 辺なので既存来歴と衝突しない）（本則: SKILL.md 規律3 手順1）
+- → ask-human-gate.py は `bd gate create --type=human` を使う（`bd dep add` の経路を持たない）
 - 出典: bdboard-axl
 
 ### bd-notes-backtick-shell-injection — bd ノート本文中のバッククォートがシェルにコマンド置換され、ノートが壊れ引数無し git checkout/restore が実行された（2026-09-05）
