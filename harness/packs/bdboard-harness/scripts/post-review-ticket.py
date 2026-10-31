@@ -12,17 +12,9 @@
   ## 資料
   ## そのほか
 
-spec JSON のキー (すべて任意):
-  main_video        通しの動画のパス (本文では「今回見てほしいもの」に一度だけ出す)
-  main_video_label  通しの動画の見出しに添える説明 (例: "3分12秒・8場面")
-  fix_videos        直した箇所の確認動画のパス/導線の配列
-  ear_videos        耳で確かめる確認動画のパス/導線の配列
-  points            見るポイントの文字列の配列
-  decision          判断してほしいこと
-  fixed             「直したところ」の本文 (Markdown)
-  ear               「耳で聞いてほしいところ」の本文 (Markdown)
-  materials         「資料」のパス/URL の配列
-  other             「そのほか」の本文 (Markdown)
+spec JSON のキーと制約は同じ scripts/ の post-review-ticket.schema.json が正本 (--help にも
+同じ内容を出す)。--spec は本文を組み立てる前にこのスキーマで検査し、違反は 1 件ずつ理由を
+出して終了コード 1 で止まる (dry-run も同じ)。
 
 更新 (--ticket) では、旧本文の要点を `bd update <id> --append-notes "YYYY-MM-DD: ..."` で
 先に移してから description を全文置換する (--notes は使わない)。旧本文が空、または新しい
@@ -32,14 +24,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 from datetime import date
+from pathlib import Path
 
 HEADING_RE = re.compile(r"^##\s+(.+)$")
 TICKET_ID_RE = re.compile(r"[A-Za-z0-9]+-[A-Za-z0-9.]+")
 SUMMARY_MAX = 400
+SCHEMA_PATH = Path(__file__).resolve().with_name("post-review-ticket.schema.json")
 
 
 def _as_list(value: object) -> list[str]:
@@ -149,6 +144,148 @@ def parse_ticket_id(stdout: str) -> str | None:
     return m.group(0) if m else None
 
 
+# ---- spec の検査 (JSON Schema の必要な範囲だけを標準ライブラリで実装) ----------------------
+# 対応: $ref(#/$defs/..), type, enum, minProperties, required, properties,
+#       additionalProperties:false, dependentRequired, minLength, maxLength, pattern,
+#       minItems, maxItems, uniqueItems, items, x-path-exists, x-unique-main。
+
+
+def load_schema() -> dict:
+    with open(SCHEMA_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+_TYPES = {
+    "object": dict,
+    "array": list,
+    "string": str,
+    "boolean": bool,
+    "integer": int,
+    "number": (int, float),
+}
+
+
+def _type_ok(value: object, name: str) -> bool:
+    if isinstance(value, bool) and name in ("integer", "number"):
+        return False
+    return isinstance(value, _TYPES[name])
+
+
+def _resolve(ref: str, root: dict) -> dict:
+    node: object = root
+    for part in ref.removeprefix("#/").split("/"):
+        node = node[part]  # type: ignore[index]
+    return node  # type: ignore[return-value]
+
+
+def _short(value: object) -> str:
+    text = json.dumps(value, ensure_ascii=False)
+    return text if len(text) <= 60 else text[:57] + "..."
+
+
+def _check_path_exists(value: str, where: str, errors: list[str]) -> None:
+    if not os.path.exists(value):
+        errors.append(f"{where}: ファイルが存在しません: {value}")
+    elif not os.path.isfile(value):
+        errors.append(f"{where}: ファイルではありません: {value}")
+    elif os.path.getsize(value) == 0:
+        errors.append(f"{where}: ファイルが空です: {value}")
+
+
+def _validate(value: object, schema: dict, root: dict, where: str, errors: list[str]) -> None:
+    if "$ref" in schema:
+        _validate(value, _resolve(schema["$ref"], root), root, where, errors)
+    expected = schema.get("type")
+    if expected and not _type_ok(value, expected):
+        errors.append(f"{where}: {expected} である必要があります (実際: {type(value).__name__})")
+        return
+    if "enum" in schema and value not in schema["enum"]:
+        errors.append(f"{where}: {_short(schema['enum'])} のいずれかである必要があります")
+    if isinstance(value, str):
+        if len(value) < schema.get("minLength", 0):
+            errors.append(f"{where}: 空、または短すぎます (最小 {schema['minLength']} 字)")
+        elif len(value) > schema.get("maxLength", len(value)):
+            errors.append(f"{where}: 長すぎます ({len(value)} 字 > 上限 {schema['maxLength']} 字)")
+        elif "pattern" in schema and not re.search(schema["pattern"], value):
+            errors.append(f"{where}: 形式が合いません {_short(value)} — {schema.get('description', '')}")
+        elif schema.get("x-path-exists"):
+            _check_path_exists(value, where, errors)
+    elif isinstance(value, list):
+        if len(value) < schema.get("minItems", 0):
+            errors.append(f"{where}: 要素が少なすぎます (最小 {schema['minItems']} 件。使わないなら キーごと省く)")
+        if len(value) > schema.get("maxItems", len(value)):
+            errors.append(f"{where}: 要素が多すぎます ({len(value)} 件 > 上限 {schema['maxItems']} 件)")
+        if schema.get("uniqueItems"):
+            dup = sorted({json.dumps(v, ensure_ascii=False) for i, v in enumerate(value) if v in value[:i]})
+            for d in dup:
+                errors.append(f"{where}: 重複した要素があります: {d}")
+        if "items" in schema:
+            for i, item in enumerate(value):
+                _validate(item, schema["items"], root, f"{where}[{i}]", errors)
+    elif isinstance(value, dict):
+        if len(value) < schema.get("minProperties", 0):
+            errors.append(f"{where}: キーが 1 つもありません")
+        props = schema.get("properties", {})
+        for key in schema.get("required", []):
+            if key not in value:
+                errors.append(f"{where}: 必須キー {key} がありません")
+        if schema.get("additionalProperties") is False:
+            for key in value:
+                if key not in props:
+                    errors.append(f"{where}.{key}: 未知のキーです (使えるキー: {', '.join(props)})")
+        for key, sub in props.items():
+            if key in value:
+                _validate(value[key], sub, root, f"{where}.{key}", errors)
+        for key, needed in schema.get("dependentRequired", {}).items():
+            if key in value:
+                for n in needed:
+                    if n not in value:
+                        errors.append(f"{where}: {key} があるとき {n} も必須です")
+
+
+def _check_unique_main(spec: dict, key: str, errors: list[str]) -> None:
+    main = spec.get(key)
+    if not isinstance(main, str) or not main.strip():
+        return
+    for name, value in spec.items():
+        if name in (key, f"{key}_label"):
+            continue
+        texts = value if isinstance(value, list) else [value]
+        if any(isinstance(t, str) and main in t for t in texts):
+            errors.append(f"spec.{name}: {key} のパスを重複して書かないでください ({main})。本文では一度だけ出ます")
+
+
+def validate_spec(spec: object, schema: dict | None = None) -> list[str]:
+    """spec をスキーマで検査し、違反の理由を 1 件 1 行で返す (空なら適合)。"""
+    schema = schema or load_schema()
+    errors: list[str] = []
+    _validate(spec, schema, schema, "spec", errors)
+    if isinstance(spec, dict) and schema.get("x-unique-main"):
+        _check_unique_main(spec, schema["x-unique-main"], errors)
+    return errors
+
+
+def schema_help(schema: dict) -> str:
+    """--help の末尾に出す、スキーマから生成したキーの一覧。"""
+    defs = schema.get("$defs", {})
+    deps = schema.get("dependentRequired", {})
+    lines = ["spec のキー (正本: " + SCHEMA_PATH.name + "。未知のキーは拒否):"]
+    for key, sub in schema.get("properties", {}).items():
+        resolved = {**defs.get(sub.get("$ref", "").rsplit("/", 1)[-1], {}), **sub}
+        kind = resolved.get("type", "?")
+        if kind == "array" and "items" in resolved:
+            item = resolved["items"]
+            item = {**defs.get(item.get("$ref", "").rsplit("/", 1)[-1], {}), **item}
+            kind = f"array<{item.get('type', '?')}>"
+        need = deps.get(key)
+        lines.append(f"  {key} ({kind}): {resolved.get('description', '')}")
+        if need:
+            lines.append(f"      あるとき必須: {', '.join(need)}")
+    lines.append("")
+    lines.append(schema.get("description", ""))
+    return "\n".join(lines)
+
+
 def load_spec(path: str) -> dict:
     text = sys.stdin.read() if path == "-" else open(path, encoding="utf-8").read()
     spec = json.loads(text)
@@ -158,7 +295,15 @@ def load_spec(path: str) -> dict:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Create or update a bd review ticket body.")
+    try:
+        epilog = schema_help(load_schema())
+    except (OSError, ValueError) as e:
+        epilog = f"(スキーマを読めません: {e})"
+    ap = argparse.ArgumentParser(
+        description="Create or update a bd review ticket body.",
+        epilog=epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("--spec", required=True, help="spec JSON のパス (- で標準入力)")
     ap.add_argument("--title", default=None, help="チケットの title (新規では必須)")
     ap.add_argument("--ticket", default=None, help="更新するチケット id (無ければ新規作成)")
@@ -171,6 +316,17 @@ def main() -> int:
         spec = load_spec(args.spec)
     except (OSError, ValueError) as e:
         print(f"ERROR: spec を読めません: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        errors = validate_spec(spec)
+    except (OSError, ValueError, KeyError) as e:
+        print(f"ERROR: スキーマを読めません: {e}", file=sys.stderr)
+        return 1
+    if errors:
+        for err in errors:
+            print(f"ERROR: {err}", file=sys.stderr)
+        print(f"ERROR: spec が {len(errors)} 件の制約に違反しています (本文は作っていません)", file=sys.stderr)
         return 1
 
     date_str = args.date or date.today().isoformat()
