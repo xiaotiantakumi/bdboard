@@ -261,6 +261,11 @@ rebase 後には必ず `npm run check:file-size` を単体で再実行し、他 
 一覧が欲しいだけなら `npm run check:file-size -- --report` で、baseline の有無を添えた全対象
 ファイルを行数降順で表示できる (これは診断用で、pass/fail の判定自体は変えない)。
 
+分割リファクタを委譲するときは「親ファイルも 190 行以下にして allowlist の行を消す。不可能なら
+理由と残課題チケット」と依頼文に明記する。分割エージェントは可変状態を共有するクロージャや
+分岐ディスパッチャを親に残したまま allowlist の上限値だけ下げて「残課題なし」と報告しがち
+(#617, #623)。議長は最終報告の親行数と eslint.config.mjs の差分を確認する。
+
 ## e2e は verify に含まれない (`npm run test:e2e`)
 
 `npm run verify` が回すのは build / build:web / test:server / test:web / check:boundaries だけで、

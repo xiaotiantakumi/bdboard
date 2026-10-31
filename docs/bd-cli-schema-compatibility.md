@@ -129,3 +129,10 @@ sql-server モードでは dolt プロセスが 1 つ DB を保持し、各 `bd`
   repo（bdboard は bd77eb3 以降、ルート `.gitignore` の `/.beads/` で
   丸ごと対象外）には適用されない。追跡している他リポジトリ向けの注意
   として残す。
+
+## --readonly は停止中の Dolt サーバーを自動起動しない (bd 1.2.1)
+
+bdboard のリフレッシュは全て --readonly なので、サーバーが止まったプロジェクトは誰かが素の bd を
+打つまで dolt server unreachable / Expected port: 0 の [unknown] エラーを出し続ける。素の bd list は
+自動起動する。診断で注入先に素の bd を打つと Dolt サーバーを起こす副作用がある。確認は
+bd dolt status と bd --readonly -C <root> list --limit 1 --json。

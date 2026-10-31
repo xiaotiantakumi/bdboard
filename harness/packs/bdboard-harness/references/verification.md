@@ -197,6 +197,10 @@ TZ=UTC npm run verify   # CI と同じ条件
   の探索・指摘は対象外（brushup-protocol.md §5/§2 分類 E）。実事故・通常手順の形をした穴は
   引き続き対象
 
+変異テストを頼むレビュアーには、変異体ごとに `NODE_OPTIONS=--max-old-space-size=1024` と短い
+timeout (例 120s) を付けさせる。無限ループする変異体が数秒で 4 GB を食い、並走する verify の
+横で V8 OOM (.ips, exit 134) を起こす (bdboard-mmt1)。
+
 ## 委譲ブリーフの git 制約 — 宛先別の定型
 
 なぜ: git 操作の制約は、宛先によって逆向きの事故を生む。外部 CLI（Codex 等）は禁止を無視して
