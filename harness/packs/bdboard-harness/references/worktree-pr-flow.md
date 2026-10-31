@@ -126,11 +126,12 @@ rebase と再検証も不要（GitHub の mergeable 判定で衝突は止まり�
 ### 4. PR 作成
 
 ```bash
-gh pr create --fill --body "Closes: <id>
-
-<変更サマリ>"
-bd comment <id> "PR: <url>"
+python3 .claude/skills/bdboard-harness/scripts/open-pr.py --spec <spec.json>   # キーと検査は --help
 ```
+
+verify:quick → push → `gh pr create` (本文は `Closes: <id>` 始まり) → `bd comment <id> "PR: <url>"`
+→ low/med は auto-merge、high は議長待ち、までを 1 本で行う。`Closes:` と `PR:` コメントの欠落を
+機械で防ぐための入口なので、手で `gh pr create` を打たない。
 
 PR を開いた時点では **close しない**（SKILL.md 規律4）。CI が緑になるのを待つ
 （待ち時間に他チケットを進めてよい）。
