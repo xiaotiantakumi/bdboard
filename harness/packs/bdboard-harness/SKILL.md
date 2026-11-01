@@ -111,8 +111,8 @@ close =「main に入った」の不変条件を守る。
 
 ## 機械ガード（hooks）— 文章で防げない操作は hook / deny が止める
 
-- `hooks/` の2本 (stop-ticket-gate.sh / worktree-freshness.sh) は状態だけを見る。コマンド/
-  パスを読む禁止判定は `permissions.deny` へ移した（詳細: `hooks/README.md`）。
+- `hooks/` の3本 (stop-ticket-gate / worktree-freshness / deferred-due) は状態だけを見る。
+  コマンド/パスの禁止判定は `permissions.deny` へ（詳細: `hooks/README.md`）。
 - **hook/deny に止められたら回避策を探さない。** 案内に従う。不具合は `harness-upstream` へ。
 
 ## references

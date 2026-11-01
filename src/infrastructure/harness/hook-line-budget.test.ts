@@ -7,7 +7,8 @@ const HOOKS_DIR = fileURLToPath(new URL('../../../harness/packs/bdboard-harness/
 
 // 602 = 2026-09-26 の実測 (bdboard-cm2q.10、regex hook 廃止後)。663 はその +10% 切り上げ。
 // 上げるときは、ここに理由のチケット ID を書き足す。
-const HOOK_LINE_BUDGET = 663;
+// 780 = bdboard-aqyg (deferred-due.sh 追加、実測 709 の +10% 切り上げ)。
+const HOOK_LINE_BUDGET = 780;
 // Raising this budget requires recording the reason as a ticket ID in the same commit/PR.
 const README_LINE_BUDGET = 400;
 

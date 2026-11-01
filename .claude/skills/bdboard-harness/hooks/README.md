@@ -10,7 +10,7 @@ bdboard-cm2q.10 (2026-09) で、コマンド文字列/パスを正規表現や a
 (bdboard-cm2q の 2026-09-26 のコメント「bdboard ガードの棚卸しと置き換え方針」) で、これらの判定が `bash -c`・絶対パス・
 `FOO=1` 前置き・引用符崩れ等で構造的にすり抜けられ、保守コストに見合わなくなったため。
 今この `hooks/` に残るのは、コマンド文字列を読まずセッション/リポジトリの**状態**だけを
-見る 2 本 (`stop-ticket-gate.sh` と `worktree-freshness.sh`) だけ。削除した判定が
+見る 3 本 (`stop-ticket-gate.sh` / `worktree-freshness.sh` / `deferred-due.sh`) だけ。削除した判定が
 守っていたリスクは、下の「deny・隔離・merge-pr との分担」にある別の機構が引き継ぐ。
 
 ## deny・隔離・merge-pr との分担
@@ -43,7 +43,7 @@ kill だけは元々これを説明する hook 側の案内が無く、deny が�
 再起動は議長が `scripts/always-on-server.sh`、Claude が起動したバックグラウンドタスクの
 停止は `TaskStop`、それ以外は議長かユーザーに聞く。
 
-## 共通の約束 (残る 2 本)
+## 共通の約束 (残る 3 本)
 
 - **allow は exit 0 で無出力。どちらも「止める」ための hook ではない** —
   `stop-ticket-gate.sh` だけがセッション終了を差し戻す (exit 2)。`worktree-freshness.sh`
@@ -156,6 +156,22 @@ hook を直している PR worktree は自分のコミットでは警告され�
 - 閾値は 1 / 3 の固定値。`.claude/bdboard-packs.json` の `injectedAt` だけの更新もハーネスの
   コミットとして数える。
 
+## deferred-due.sh — SessionStart (matcher なし)
+
+`bd defer --until <date>` のスヌーズは、期日後に `bd ready` を読んだ瞬間に open へ戻り、
+`defer_until` の痕跡が消える (bdboard-aqyg)。セッション開始時に機械的に知らせるための hook。
+
+- 対象は `bd list --deferred --defer-before=now` (到来済みのみ。近日分は出さない) と、
+  印として付けた label `due` の open / in_progress。`additionalContext` に
+  `⏰ 期日到来: <id> <title> (期日 <date>)` を並べる。0 件なら stdout 空・exit 0。
+- **台帳へ書く唯一の例外**: 到来済みで label `due` が無い票にだけ、`bd label add <id> due` と
+  `bd comment <id> "期日到来 (deferred until <date>)"` を 1 回ずつ打つ (冪等。label があれば
+  何も書かない)。status / assignee には触らない。他の hook は台帳を読むだけ。
+- 閉じるか `bd label remove <id> due` するまで、以後のセッション開始でも毎回出る。
+- `bd` 不在・失敗は exit 0 で黙る。`bd list --json` を読むため jq か python3 が要る (無ければ黙る)。
+- `bd prime` / `bd list` / `bd show` は undefer しない (消すのは `bd ready` だけ) ので、
+  `bd prime` と並走して安全。
+
 ## 守らないもの（既知の限界）
 
 hook を削除して deny・isolation・merge-pr の宣言的なゲートに置き換えたことで、
@@ -195,8 +211,8 @@ failure-catalog に追加する。
 
 各エントリは `event` / `matcher` / `script` / `timeout` を持つ。P1b (bdboard-pkr6.2) が
 `.claude/settings.json` へ登録するときは、**この 4 つをそのまま書き写す**。現在の
-エントリは 2 スクリプト・4 エントリ — `stop-ticket-gate.sh` (Stop) と `worktree-freshness.sh`
-(SessionStart / UserPromptSubmit / PostToolUse) — で、PreToolUse の登録は無い
+エントリは 3 スクリプト・5 エントリ — `stop-ticket-gate.sh` (Stop)・`worktree-freshness.sh`
+(SessionStart / UserPromptSubmit / PostToolUse)・`deferred-due.sh` (SessionStart。timeout 15) — で、PreToolUse の登録は無い
 (コマンド文字列/パスを読む hook を bdboard-cm2q.10 で全廃したため)。
 
 - **`timeout` は秒。契約値として `10` を宣言してある** — P1b は自分で決めずこの値を
