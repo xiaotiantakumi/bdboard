@@ -59,11 +59,17 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness deferred-due.sh',
       input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }),
       cwd: root,
       timeoutMs: 20_000,
-      env: { PATH: pathValue ?? `${binDir}:${process.env.PATH ?? '/usr/bin:/bin'}`, STUB_DIR: root },
+      // 期日はローカル日付で出す (bdboard-mlc9)。TZ を固定して、どのマシンでも同じ日付になるようにする。
+      env: {
+        PATH: pathValue ?? `${binDir}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+        STUB_DIR: root,
+        TZ: 'Asia/Tokyo',
+      },
     });
   }
 
-  const ITEM = { id: 'x-1', title: 'メモを読む', defer_until: '2026-11-07T00:00:00Z', labels: [] as string[] };
+  // bd defer --until=2026-11-07 (JST) は UTC では前日の 15:00 になる。表示は JST の 2026-11-07 でなければならない。
+  const ITEM = { id: 'x-1', title: 'メモを読む', defer_until: '2026-11-06T15:00:00Z', labels: [] as string[] };
 
   it('stays silent and writes nothing when nothing is due', async () => {
     const result = await run();
