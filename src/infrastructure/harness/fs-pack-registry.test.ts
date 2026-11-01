@@ -155,6 +155,7 @@ describe('createFsPackRegistry (repo fixture)', () => {
     expect(pack?.hooks.map((hook) => [hook.event, hook.script])).toEqual([
       ['Stop', 'hooks/stop-ticket-gate.sh'],
       ['SessionStart', 'hooks/worktree-freshness.sh'],
+      ['SessionStart', 'hooks/deferred-due.sh'],
       ['UserPromptSubmit', 'hooks/worktree-freshness.sh'],
       ['PostToolUse', 'hooks/worktree-freshness.sh'],
     ]);
