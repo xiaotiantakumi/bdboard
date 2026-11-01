@@ -2,11 +2,12 @@
   "packs": [
     {
       "name": "bdboard-harness",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "injectedAt": "2026-10-03T20:53:53.392Z",
       "files": [
         ".claude/skills/bdboard-harness/SKILL.md",
         ".claude/skills/bdboard-harness/hooks/README.md",
+        ".claude/skills/bdboard-harness/hooks/deferred-due.sh",
         ".claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh",
         ".claude/skills/bdboard-harness/hooks/worktree-freshness.sh",
         ".claude/skills/bdboard-harness/references/brushup-protocol.md",
@@ -38,6 +39,7 @@
       "hooks": [
         "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh\"",
         "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/worktree-freshness.sh\"",
+        "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/deferred-due.sh\"",
         "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/worktree-freshness.sh\"",
         "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/worktree-freshness.sh\""
       ]

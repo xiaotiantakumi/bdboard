@@ -47,6 +47,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/deferred-due.sh\"",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "PreToolUse": [
