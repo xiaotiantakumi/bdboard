@@ -34,20 +34,31 @@ rows() {
     jq)
       jq -r '
         if type == "array" then .[] else empty end
-        | [ .id, ((.title // "") | gsub("[\t\r\n]"; " ")), ((.defer_until // "") | .[0:10]),
+        | [ .id, ((.title // "") | gsub("[\t\r\n]"; " ")),
+            ((.defer_until // "") | if . == "" then "" else
+              (try (sub("\\.[0-9]+"; "") | fromdateiso8601 | strflocaltime("%Y-%m-%d")) catch .[0:10]) end),
             (((.labels // []) | index("due")) != null | tostring) ]
         | join("\u001f")' 2>/dev/null
       ;;
     python3)
       python3 -c '
 import json, sys
+from datetime import datetime
 try:
     data = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
+def local_day(s):
+    # bd の defer_until は UTC (Z) なので、このマシンのローカル日付に直す (bdboard-mlc9)
+    if not s:
+        return ""
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d")
+    except Exception:
+        return s[:10]
 for i in data if isinstance(data, list) else []:
     title = " ".join(str(i.get("title") or "").split())
-    print("\x1f".join([str(i.get("id", "")), title, str(i.get("defer_until") or "")[:10],
+    print("\x1f".join([str(i.get("id", "")), title, local_day(str(i.get("defer_until") or "")),
                        "true" if "due" in (i.get("labels") or []) else "false"]))
 ' 2>/dev/null
       ;;
