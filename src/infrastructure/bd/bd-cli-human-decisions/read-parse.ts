@@ -16,7 +16,7 @@ const decisionOptionSchema = z.object({
 const bdHumanListItemSchema = z.object({
   id: z.string(),
   issue_type: z.string().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const bdGateListItemSchema = z.object({
@@ -24,7 +24,7 @@ export const bdGateListItemSchema = z.object({
   issue_type: z.string().optional(),
   await_type: z.string().optional(),
   description: z.string().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 function parseAllowFreeform(value: unknown): boolean {

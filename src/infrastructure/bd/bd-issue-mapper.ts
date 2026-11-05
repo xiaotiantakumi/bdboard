@@ -40,10 +40,10 @@ type OptionalTicketFields = {
     | 'reviewAfter']?: Ticket[K];
 };
 
-function summarizeZodError(error: { issues: readonly { path: readonly (string | number)[]; message: string }[] }): string {
+function summarizeZodError(error: { issues: readonly { path: readonly PropertyKey[]; message: string }[] }): string {
   return error.issues
     .slice(0, MAX_ZOD_ISSUES)
-    .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+    .map((issue) => `${issue.path.map(String).join('.')}: ${issue.message}`)
     .join('; ');
 }
 

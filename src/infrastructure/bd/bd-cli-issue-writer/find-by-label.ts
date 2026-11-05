@@ -14,7 +14,7 @@ const bdListLabelItemSchema = z.object({
   // (確認済み)、将来 bd 側の挙動が変わって明示的に null を返すようになっても
   // ルート全体が 502 に落ちないよう .optional() ではなく .nullish() にしておく
   // (bdShowDescriptionItemSchema と同じ防御方針、レビュー指摘)。
-  metadata: z.record(z.unknown()).nullish(),
+  metadata: z.record(z.string(), z.unknown()).nullish(),
 });
 
 export async function readOpenTicketByLabel(
