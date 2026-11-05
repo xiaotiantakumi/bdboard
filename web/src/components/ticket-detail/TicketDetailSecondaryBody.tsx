@@ -9,7 +9,6 @@ import { TicketIdListSection } from './TicketIdListSection';
 import { TicketDependenciesSection } from './TicketDependenciesSection';
 import { TicketModelsSection } from './TicketModelsSection';
 import { TicketUsageSection } from './TicketUsageSection';
-import { TicketDecisionSection } from './TicketDecisionSection';
 import { TicketTimelineSection } from './TicketTimelineSection';
 import { TicketAttachments } from '../TicketAttachments';
 import { TicketCommentsSection } from './TicketCommentsSection';
@@ -24,7 +23,6 @@ export interface TicketDetailSecondaryBodyProps {
   isTicketOnBoard: (ticketId: string) => boolean;
   onOpenTicket: (ticketId: string) => void;
   dependencies: Controller['dependencies'];
-  decision: Controller['decision'];
   timeline: Controller['timeline'];
   comment: Controller['comment'];
   commentTextareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -37,11 +35,11 @@ export function TicketDetailSecondaryBody({
   isTicketOnBoard,
   onOpenTicket,
   dependencies,
-  decision,
   timeline,
   comment,
   commentTextareaRef,
 }: TicketDetailSecondaryBodyProps) {
+  // bdboard-qmuk: 回答欄 (TicketDecisionSection) はパネル上部 (TicketDetailPanel) へ移した。
   // bdboard-u6hf レビュー指摘: このセクションは pendingDecision の有無で2つの
   // JSX 位置のどちらかにだけ出る(同じ fragment の子として)。key を付けないと
   // 位置が変わるたびに unmount/remount され、ライトボックスの開閉状態が失われ、
@@ -105,18 +103,6 @@ export function TicketDetailSecondaryBody({
         onCommentTextChange={comment.setCommentText}
         canSubmit={comment.canSubmitComment}
         mutation={comment.mutation}
-      />
-      {/* bdboard-aob1: 回答欄は最後 (コメントの下) */}
-      <TicketDecisionSection
-        pendingDecision={pendingDecision}
-        selectedChoice={decision.selectedChoice}
-        onSelectChoice={decision.setSelectedChoice}
-        freeformText={decision.freeformText}
-        onFreeformTextChange={decision.setFreeformText}
-        canSubmitDecision={decision.canSubmitDecision}
-        decisionMutation={decision.decisionMutation}
-        submittedDecision={decision.submittedDecision}
-        onOpenTicket={onOpenTicket}
       />
     </>
   );
