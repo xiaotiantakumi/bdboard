@@ -23,9 +23,6 @@ vi.mock('./TicketModelsSection', () => ({
 vi.mock('./TicketUsageSection', () => ({
   TicketUsageSection: vi.fn(() => <div data-testid="usage-section" />),
 }));
-vi.mock('./TicketDecisionSection', () => ({
-  TicketDecisionSection: vi.fn(() => <div data-testid="decision-section" />),
-}));
 vi.mock('./TicketTimelineSection', () => ({
   TicketTimelineSection: vi.fn(() => <div data-testid="timeline-section" />),
 }));
@@ -40,7 +37,6 @@ import { TicketIdListSection } from './TicketIdListSection';
 import { TicketDependenciesSection } from './TicketDependenciesSection';
 import { TicketModelsSection } from './TicketModelsSection';
 import { TicketUsageSection } from './TicketUsageSection';
-import { TicketDecisionSection } from './TicketDecisionSection';
 import { TicketTimelineSection } from './TicketTimelineSection';
 import { TicketAttachments } from '../TicketAttachments';
 import { TicketCommentsSection } from './TicketCommentsSection';
@@ -53,7 +49,6 @@ const idListMock = vi.mocked(TicketIdListSection);
 const dependenciesMock = vi.mocked(TicketDependenciesSection);
 const modelsMock = vi.mocked(TicketModelsSection);
 const usageMock = vi.mocked(TicketUsageSection);
-const decisionMock = vi.mocked(TicketDecisionSection);
 const timelineMock = vi.mocked(TicketTimelineSection);
 const attachmentsMock = vi.mocked(TicketAttachments);
 const commentsMock = vi.mocked(TicketCommentsSection);
@@ -103,15 +98,6 @@ function makeProps(
       handleAddDependency: vi.fn(),
       error: 'MARK-dep-error',
     } as unknown as TicketDetailSecondaryBodyProps['dependencies'],
-    decision: {
-      selectedChoice: 'MARK-choice',
-      setSelectedChoice: vi.fn(),
-      freeformText: 'MARK-freeform',
-      setFreeformText: vi.fn(),
-      canSubmitDecision: true,
-      decisionMutation: { mutate: vi.fn(), isPending: true, error: null },
-      submittedDecision: { decisionId: 'MARK-decision-id' },
-    } as unknown as TicketDetailSecondaryBodyProps['decision'],
     timeline: {
       timelineExpanded: true,
       setTimelineExpanded: vi.fn(),
@@ -178,21 +164,9 @@ describe('TicketDetailSecondaryBody', () => {
     expect(usageMock.mock.calls.at(-1)?.[0]).toEqual({ usage: props.data.usage });
   });
 
-  it('forwards decision/timeline/attachments/comments props with marker values', () => {
+  it('forwards timeline/attachments/comments props with marker values', () => {
     const props = makeProps();
     render(<TicketDetailSecondaryBody {...props} />);
-
-    expect(decisionMock.mock.calls.at(-1)?.[0]).toEqual({
-      pendingDecision: undefined,
-      selectedChoice: 'MARK-choice',
-      onSelectChoice: props.decision.setSelectedChoice,
-      freeformText: 'MARK-freeform',
-      onFreeformTextChange: props.decision.setFreeformText,
-      canSubmitDecision: true,
-      decisionMutation: props.decision.decisionMutation,
-      submittedDecision: props.decision.submittedDecision,
-      onOpenTicket: props.onOpenTicket,
-    });
 
     expect(timelineMock.mock.calls.at(-1)?.[0]).toEqual({
       expanded: true,
@@ -246,16 +220,13 @@ describe('TicketDetailSecondaryBody', () => {
       expect(indexes.get('attachments-section')).toBeLessThan(
         indexes.get('comments-section') ?? -1,
       );
-      expect(indexes.get('decision-section')).toBeGreaterThan(
-        indexes.get('comments-section') ?? -1,
-      );
       expect(attachmentsMock).toHaveBeenCalledTimes(1);
       expect(attachmentsMock.mock.calls[0]?.[0]).toEqual({
         ticketId: 'MARK-ticket-id',
       });
     });
 
-    it('places attachments between usage and decision while a decision is pending', () => {
+    it('places attachments between usage and timeline while a decision is pending', () => {
       const pendingDecision: PendingDecisionDto = {
         id: 'MARK-pending-id',
         kind: 'ticket',
@@ -268,9 +239,6 @@ describe('TicketDetailSecondaryBody', () => {
 
       expect(indexes.get('attachments-section')).toBeGreaterThan(
         indexes.get('usage-section') ?? -1,
-      );
-      expect(indexes.get('attachments-section')).toBeLessThan(
-        indexes.get('decision-section') ?? -1,
       );
       expect(indexes.get('attachments-section')).toBeLessThan(
         indexes.get('timeline-section') ?? -1,
@@ -300,7 +268,7 @@ describe('TicketDetailSecondaryBody', () => {
 
       let indexes = sectionIndexes(container);
       expect(indexes.get('attachments-section')).toBeLessThan(
-        indexes.get('decision-section') ?? -1,
+        indexes.get('timeline-section') ?? -1,
       );
       expect(
         container.querySelectorAll('[data-testid="attachments-section"]'),
@@ -310,8 +278,8 @@ describe('TicketDetailSecondaryBody', () => {
       rerender(<TicketDetailSecondaryBody {...resolvedProps} />);
 
       indexes = sectionIndexes(container);
-      expect(indexes.get('decision-section')).toBeGreaterThan(
-        indexes.get('comments-section') ?? -1,
+      expect(indexes.get('attachments-section')).toBeGreaterThan(
+        indexes.get('timeline-section') ?? -1,
       );
       expect(indexes.get('attachments-section')).toBeLessThan(
         indexes.get('comments-section') ?? -1,

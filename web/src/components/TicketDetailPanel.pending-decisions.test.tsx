@@ -281,6 +281,34 @@ describe('TicketDetailPanel pending decisions', () => {
     expect(screen.queryByText('ユーザー確認待ち')).not.toBeInTheDocument();
   });
 
+  // bdboard-qmuk: 回答欄はヘッダー直下 (本文・コメントより上) に出す。
+  it('places the pending decision section above the ticket body and comments', async () => {
+    mockFetchTicket.mockResolvedValue({
+      ...sampleTicket,
+      description: 'body-description',
+    });
+    renderPanel(new Map(), {
+      id: sampleTicket.id,
+      kind: 'ticket',
+      projectId: sampleTicket.projectId,
+      question: 'どちらにしますか?',
+      allowFreeform: true,
+    });
+
+    const decisionHeading = await screen.findByRole('heading', {
+      name: 'ユーザー確認待ち',
+    });
+    const header = screen.getByRole('heading', { name: 'Sample ticket' });
+    const description = await screen.findByText('body-description');
+    const commentsHeading = await screen.findByRole('heading', { name: 'コメント' });
+    const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(header.compareDocumentPosition(decisionHeading) & FOLLOWING).toBeTruthy();
+    expect(decisionHeading.compareDocumentPosition(description) & FOLLOWING).toBeTruthy();
+    expect(
+      decisionHeading.compareDocumentPosition(commentsHeading) & FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it('shows only freeform when question exists without options', async () => {
     renderPanel(new Map(), {
       id: sampleTicket.id,

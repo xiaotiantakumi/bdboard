@@ -21,6 +21,7 @@ import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { type TicketDetailPanelProps } from './ticket-detail/types';
 import { TicketDetailHeaderSection } from './ticket-detail/TicketDetailHeaderSection';
 import { TicketLocalFileLinksProvider } from './local-files/TicketLocalFileLinks';
+import { TicketDecisionSection } from './ticket-detail/TicketDecisionSection';
 import { TicketDetailBody } from './ticket-detail/TicketDetailBody';
 import { TicketDetailSecondaryBody } from './ticket-detail/TicketDetailSecondaryBody';
 import { useTicketDetailController } from './ticket-detail/useTicketDetailController';
@@ -117,6 +118,18 @@ export function TicketDetailPanel({
         )}
         {controller.data !== undefined && (
           <TicketLocalFileLinksProvider ticketId={controller.data.id}>
+            {/* bdboard-qmuk: 回答欄はヘッダー直下 (本文より上) */}
+            <TicketDecisionSection
+              pendingDecision={pendingDecision}
+              selectedChoice={controller.decision.selectedChoice}
+              onSelectChoice={controller.decision.setSelectedChoice}
+              freeformText={controller.decision.freeformText}
+              onFreeformTextChange={controller.decision.setFreeformText}
+              canSubmitDecision={controller.decision.canSubmitDecision}
+              decisionMutation={controller.decision.decisionMutation}
+              submittedDecision={controller.decision.submittedDecision}
+              onOpenTicket={onOpenTicket}
+            />
             <TicketDetailBody
               data={controller.data}
               prLink={prLink}
@@ -136,7 +149,6 @@ export function TicketDetailPanel({
               isTicketOnBoard={isTicketOnBoard}
               onOpenTicket={onOpenTicket}
               dependencies={controller.dependencies}
-              decision={controller.decision}
               timeline={controller.timeline}
               comment={controller.comment}
               commentTextareaRef={commentTextareaRef}
