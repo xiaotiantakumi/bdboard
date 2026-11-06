@@ -106,6 +106,8 @@ function createHarnessApp(options?: {
           version: '0.1.0',
           description: 'test pack',
           hooks: [],
+          role: 'base' as const,
+          requires: [],
         },
       ]),
       getPack: vi.fn(async (name: string) =>
@@ -115,6 +117,8 @@ function createHarnessApp(options?: {
               version: '0.1.0',
               description: 'test pack',
               hooks: [],
+              role: 'base' as const,
+              requires: [],
               files: [{ relativePath: 'SKILL.md' }],
             }
           : undefined,
@@ -163,6 +167,8 @@ describe('createHarnessRoutes', () => {
         version: '0.2.0',
         description: 'test pack',
         hooks: [],
+        role: 'base' as const,
+        requires: [],
       },
     ]);
     const registry: PackRegistryPort = {
@@ -247,6 +253,37 @@ describe('createHarnessRoutes', () => {
         name: 'bdboard-harness',
         version: '0.1.0',
         description: 'test pack',
+        role: 'base',
+        requires: [],
+      },
+    ]);
+  });
+
+  it('lists the role and requires of an optional pack (bdboard-l1m1.2)', async () => {
+    const app = createHarnessApp({
+      registry: {
+        listPacks: vi.fn(async () => [
+          {
+            name: 'video-pack',
+            version: '0.1.0',
+            description: 'optional pack',
+            hooks: [],
+            role: 'optional' as const,
+            requires: ['bdboard-harness'],
+          },
+        ]),
+        getPack: vi.fn(async () => undefined),
+      },
+    });
+    const response = await app.request('/api/harness/packs');
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual([
+      {
+        name: 'video-pack',
+        version: '0.1.0',
+        description: 'optional pack',
+        role: 'optional',
+        requires: ['bdboard-harness'],
       },
     ]);
   });

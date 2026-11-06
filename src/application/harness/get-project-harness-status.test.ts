@@ -58,6 +58,8 @@ function fakeRegistry(
         version: pack.version,
         description: pack.description ?? '',
         hooks: pack.hooks ?? [],
+        role: 'base' as const,
+        requires: [],
       }));
     },
     async getPack(name) {
@@ -70,6 +72,8 @@ function fakeRegistry(
         version: pack.version,
         description: pack.description ?? '',
         hooks: pack.hooks ?? [],
+        role: 'base' as const,
+        requires: [],
         files: [],
       };
     },

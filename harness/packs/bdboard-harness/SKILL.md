@@ -1,13 +1,14 @@
 ---
 name: bdboard-harness
-description: .beads/ を持つプロジェクトでチケット作業・自律作業・並列セッション作業を始めるときに必ず適用する作業規律。セッション開始、worktree-first 排他と claim、確認待ちのノンブロッキング化(human gate)、close はマージ成功後だけ、ハーネス失敗の学習ループ、複雑度別のモデル振り分けの6規律を定める。操作はスクリプト経由。
+description: .beads/ を持つプロジェクトのベースのハーネス。チケット作業・自律作業・並列セッション作業を始めるときに必ず適用する。セッション開始、worktree-first 排他と claim、確認待ちのノンブロッキング化(human gate)、close はマージ成功後だけ、ハーネス失敗の学習ループ、複雑度別のモデル振り分けの6規律を定める。操作はスクリプト経由。
 ---
 
-# bdboard-harness — bd 運用プロジェクトの自律作業規律
+# bdboard-harness — bd 運用プロジェクトの自律作業規律（ベース）
 
 ## 前提
 
 - 対象は `.beads/` を持つプロジェクト。**複数セッションが同時に走る**前提（単独でも同じ規律を守る）。
+- **ベースのハーネス。** 任意パックはこれを前提に別パックで載る。依存してよい前提と制約は `layering.md`。
 - **プロジェクト固有の値はここに書かない。** 検証コマンド・ブランチ命名・マージ方式・サーバー/ポートは
   注入先の CLAUDE.md / AGENTS.md（と検証コントラクト）に従う。
 - **操作はスクリプト経由。** 本文は「なぜ」と「どれを呼ぶか」だけ。各規律の `詳細:` は `references/` 配下（着手前に開く）。
@@ -111,12 +112,9 @@ close =「main に入った」の不変条件を守る。
 
 ## 機械ガード（hooks）— 文章で防げない操作は hook / deny が止める
 
-- `hooks/` の3本 (stop-ticket-gate / worktree-freshness / deferred-due) は状態だけを見る。
-  コマンド/パスの禁止判定は `permissions.deny` へ（詳細: `hooks/README.md`）。
+- `hooks/` の hook は状態だけを見る。コマンド/パスの禁止判定は `permissions.deny` へ（詳細: `hooks/README.md`）。
 - **hook/deny に止められたら回避策を探さない。** 案内に従う。不具合は `harness-upstream` へ。
 
 ## references
 
-`references/` 配下: session-start / worktree-pr-flow / lease-params / question-template /
-close-template / verification / failure-catalog / brushup-protocol / layering /
-model-routing / frontend-gotchas。
+`references/` 配下: 各規律の `詳細:` が指すファイルと frontend-gotchas。

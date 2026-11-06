@@ -44,6 +44,9 @@ describe('createFsPackRegistry', () => {
         version: '0.1.0',
         description: 'test pack',
         hooks: [],
+        // role / requires を持たない旧形式の pack.json は「ベース・依存なし」と読む。
+        role: 'base',
+        requires: [],
       },
     ]);
 
@@ -110,6 +113,88 @@ describe('createFsPackRegistry', () => {
     expect(await registry.listPacks()).toEqual([]);
   });
 
+  it('reads role and requires of an optional pack', async () => {
+    const registry = makeRegistry();
+    const packDir = path.join(packsRoot, 'video-pack');
+    mkdirSync(packDir, { recursive: true });
+    writeFileSync(
+      path.join(packDir, 'pack.json'),
+      JSON.stringify({
+        name: 'video-pack',
+        version: '0.1.0',
+        description: 'optional',
+        role: 'optional',
+        requires: ['bdboard-harness'],
+      }),
+      'utf8',
+    );
+
+    const pack = await registry.getPack('video-pack');
+    expect(pack).toMatchObject({ role: 'optional', requires: ['bdboard-harness'] });
+    expect(await registry.listPacks()).toEqual([
+      expect.objectContaining({ name: 'video-pack', role: 'optional', requires: ['bdboard-harness'] }),
+    ]);
+  });
+
+  it('reads an explicit base role with no requires', async () => {
+    const registry = makeRegistry();
+    const packDir = path.join(packsRoot, 'base-pack');
+    mkdirSync(packDir, { recursive: true });
+    writeFileSync(
+      path.join(packDir, 'pack.json'),
+      JSON.stringify({ name: 'base-pack', version: '0.1.0', description: 'b', role: 'base' }),
+      'utf8',
+    );
+
+    expect(await registry.getPack('base-pack')).toMatchObject({ role: 'base', requires: [] });
+  });
+
+  it('ignores unknown top-level fields so that future pack.json keys do not break the registry', async () => {
+    const registry = makeRegistry();
+    const packDir = path.join(packsRoot, 'future-pack');
+    mkdirSync(packDir, { recursive: true });
+    writeFileSync(
+      path.join(packDir, 'pack.json'),
+      JSON.stringify({
+        name: 'future-pack',
+        version: '0.1.0',
+        description: 'f',
+        someFutureKey: { nested: true },
+      }),
+      'utf8',
+    );
+
+    expect(await registry.getPack('future-pack')).toMatchObject({ role: 'base', requires: [] });
+  });
+
+  it.each([
+    ['role is an unknown string', { role: 'plugin' }],
+    ['role is not a string', { role: 1 }],
+    ['role is null', { role: null }],
+    ['requires is not an array', { requires: 'bdboard-harness' }],
+    ['requires has a non-string entry', { requires: ['bdboard-harness', 3] }],
+    ['requires has an empty entry', { requires: [''] }],
+    ['requires has duplicates', { requires: ['bdboard-harness', 'bdboard-harness'] }],
+    ['requires names the pack itself', { requires: ['broken-pack'] }],
+  ])('rejects the whole pack when %s', async (_name, extra) => {
+    const registry = makeRegistry();
+    const packDir = path.join(packsRoot, 'broken-pack');
+    mkdirSync(packDir, { recursive: true });
+    writeFileSync(
+      path.join(packDir, 'pack.json'),
+      JSON.stringify({
+        name: 'broken-pack',
+        version: '0.1.0',
+        description: 'broken',
+        ...extra,
+      }),
+      'utf8',
+    );
+
+    expect(await registry.getPack('broken-pack')).toBeUndefined();
+    expect(await registry.listPacks()).toEqual([]);
+  });
+
   it('excludes pack.json from file listing', async () => {
     const registry = makeRegistry();
     const packDir = path.join(packsRoot, 'sample-pack');
@@ -139,6 +224,9 @@ describe('createFsPackRegistry (repo fixture)', () => {
 
     expect(pack).toMatchObject({
       name: 'bdboard-harness',
+      // bdboard-harness は「ベースのハーネス」(bdboard-l1m1.2)。依存先は持たない。
+      role: 'base',
+      requires: [],
     });
     expect(pack?.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(pack?.files.some((file) => file.relativePath === 'SKILL.md')).toBe(true);

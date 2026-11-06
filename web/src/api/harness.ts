@@ -1,9 +1,15 @@
 import { fetchJson } from './http';
 
+/** pack.json の `role`。`base` はベースのハーネス、`optional` は任意パック。 */
+export type HarnessPackRoleDto = 'base' | 'optional';
+
 export interface HarnessPackSummaryDto {
   name: string;
   version: string;
   description: string;
+  role: HarnessPackRoleDto;
+  /** 依存先のパック名 (任意パックなら通常 `bdboard-harness`)。依存なしは空配列。 */
+  requires: string[];
 }
 
 /**

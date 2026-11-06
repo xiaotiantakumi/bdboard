@@ -3,10 +3,25 @@ import type { HarnessHooksState, PackHookDeclaration } from './harness-hooks.js'
 
 export type { PackHookDeclaration };
 
+/**
+ * パックの役割 (pack.json の `role`)。
+ * - `base`: ベースのハーネス。bd 運用プロジェクトへ従来どおり入れる土台。
+ * - `optional`: 任意パック。ベースを前提に載せる (`requires` で依存先を宣言する)。
+ */
+export const PACK_ROLES = ['base', 'optional'] as const;
+export type PackRole = (typeof PACK_ROLES)[number];
+
+/** pack.json に `role` が無い旧形式のパックの解釈。既存の注入先はこれで動き続ける。 */
+export const DEFAULT_PACK_ROLE: PackRole = 'base';
+
 export interface PackSummary {
   readonly name: string;
   readonly version: string;
   readonly description: string;
+  /** 役割。pack.json に無ければ `DEFAULT_PACK_ROLE` (= base)。 */
+  readonly role: PackRole;
+  /** 依存先のパック名。pack.json に無ければ空 (依存なし)。 */
+  readonly requires: readonly string[];
   /**
    * hook 宣言。`files` と違いディレクトリ走査が要らず、Hygiene の hooksState
    * 算出 (= パック一覧しか持たない経路) でも必要になるので、`PackDefinition`

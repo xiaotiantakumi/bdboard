@@ -14,6 +14,55 @@
 | **プロジェクト層** | 各プロジェクト自身の `.claude/skills/project-harness/` と CLAUDE.md / AGENTS.md | そのプロジェクトの repo で git 管理（bdboard は触らない） | そのプロジェクト固有の値・環境・失敗事例（検証コマンド、ポート、ツールの癖、固有の failure-catalog） |
 | **グローバル層** | ユーザーの `~/.claude/skills/` 等（orchestration の lessons-learned など） | ユーザー個人の資産。**編集は常に要ユーザー確認** | プロジェクトにも bd にも依存しない一般則。転記先であって本則の置き場にしない |
 
+## ベースのハーネスと任意パック — 他のパックが依存してよい前提
+
+bdboard-harness は**ベースのハーネス**。bd 運用プロジェクトには従来どおり各プロジェクトへ
+入れる。動画向けなどの任意パックは**別パック**にし、ベースを前提に載せる（ベースへ混ぜない）。
+
+### pack.json の役割項目（bdboard-l1m1.2）
+
+| 項目 | 値 | 省略時 |
+|---|---|---|
+| `role` | `base`（ベース）/ `optional`（任意パック） | `base` |
+| `requires` | 依存先のパック名の配列（任意パックは通常 `["bdboard-harness"]`） | `[]`（依存なし） |
+
+- **旧形式（両項目なし）の pack.json はベース・依存なしとして読む。** 既存の注入先は何も変えずに動き続ける。
+- 不正な値（`role` が上記以外、`requires` が文字列の配列でない・空文字・重複・自分自身を含む）は、
+  hooks の不正と同じくパックごと一覧から外れる。見るのは形だけで、`base` なのに `requires` がある・
+  `optional` なのに空・依存先が実在するか、といった組み合わせの判定はレジストリの外（呼び出し側）の仕事。
+- レジストリは未知の項目を無視する。`GET /api/harness/packs` は `role` / `requires` を返す。
+
+### 依存してよい前提（ベースが保証するもの）
+
+任意パックはこの表の行だけに依存してよい。表に無いもの（references の本文・手順番号・スクリプト
+内部の実装など）には依存しない。**行は後から追記する**（追記する PR は pack.json の `version` を
+上げる）。hook は本数で数えず、pack.json の `hooks` に宣言されたものを指す。
+
+| 区分 | 保証すること | 出どころ |
+|---|---|---|
+| 排他 | 着手は worktree-first（1 チケット = 1 worktree = 1 ブランチ。排他の正本は git）。claim は台帳記録 | SKILL.md 規律2 |
+| チケット規律 | close はマージ成功後だけ。PR 本文は `Closes:` 始まり、`PR:` コメントを残す | 規律4 |
+| 確認待ち | 質問は human gate に書き、回答を待たずに次へ進む | 規律3 |
+| 検証コントラクト | 注入先の `.claude/bdboard-harness.json`（`verify` / `prFlow` / `mainBranch` / 任意で `models`）が検証・PR 経路・モデル振り分けの正本 | `verification.md` |
+| 入口スクリプト | `scripts/` の start-ticket / open-pr / close-ticket / ask-human-gate / post-review-ticket は、`--spec <json>` を同梱の `*.schema.json` で検査し、違反を理由付きで拒否する | 規律2〜4 |
+| 機械ガード | pack.json の `hooks` に宣言された hook を、注入が `.claude/settings.json` へ登録する。hook は状態だけを見る | `hooks/README.md` |
+| 学習ループ | ハーネス失敗は failure-catalog に記録し、直せないものは `harness` ラベルで起票する | 規律5 |
+
+### 保証しないもの
+
+- `permissions.deny`（注入は `permissions` を運ばない。`references/settings-snippet.json` を注入先が自分で貼る）。
+- 注入先固有の値（検証コマンド・ブランチ命名・マージ方式・ポート）。CLAUDE.md / AGENTS.md と契約に従う。
+- グローバル skill（orchestration など）の存在。
+- hook の本数・登録順・個々のスクリプト名。
+
+### 任意パックの制約
+
+- ベースのファイル（`.claude/skills/bdboard-harness/` 配下）を上書き・編集しない。自パックの
+  ファイルは自分のディレクトリ（`.claude/skills/<パック名>/`）にだけ置く。
+- ベースの hook を差し替えない・無効にしない。hook は自パックの `hooks/` から自パックの宣言で足す。
+- 規律の意味を変えない（逸脱が要るときは「3つの層」と同じく、理由を明示してアップストリームへ起票する）。
+- ベースの入口スクリプトを迂回して同じ操作（PR 作成・close など）をする別経路を作らない。
+
 ## いまどの立場に居るかの判定（編集先を決める最初の分岐）
 
 上から順に判定し、**最初に一致した分岐を採る**（bdboard repo 自身は分岐2の条件も

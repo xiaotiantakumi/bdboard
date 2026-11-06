@@ -39,6 +39,8 @@ export function createHarnessStatusRoutes(
         name: pack.name,
         version: pack.version,
         description: pack.description,
+        role: pack.role,
+        requires: pack.requires,
       })),
     );
   });

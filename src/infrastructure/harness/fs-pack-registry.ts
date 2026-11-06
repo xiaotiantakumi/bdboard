@@ -7,6 +7,7 @@ import {
   type PackHookDeclaration,
 } from '../../domain/harness-hooks.js';
 import type { PackDefinition, PackFileEntry, PackSummary } from '../../domain/harness-pack.js';
+import { parsePackRequires, parsePackRole } from './pack-json-fields.js';
 import type { PackRegistryPort } from '../../application/ports/pack-registry.js';
 
 const PACK_MANIFEST_FILE = 'pack.json';
@@ -16,6 +17,8 @@ interface PackJson {
   readonly version?: unknown;
   readonly description?: unknown;
   readonly hooks?: unknown;
+  readonly role?: unknown;
+  readonly requires?: unknown;
 }
 
 /**
@@ -108,11 +111,23 @@ function parsePackJson(content: string): PackSummary | undefined {
     return undefined;
   }
 
+  const role = parsePackRole(parsed.role);
+  if (role === undefined) {
+    return undefined;
+  }
+
+  const requires = parsePackRequires(parsed.requires, parsed.name);
+  if (requires === undefined) {
+    return undefined;
+  }
+
   return {
     name: parsed.name,
     version: parsed.version,
     description: parsed.description,
     hooks,
+    role,
+    requires,
   };
 }
 
