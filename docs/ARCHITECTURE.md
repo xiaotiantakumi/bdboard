@@ -127,6 +127,33 @@ bdboard 自身は `8787` / `scripts/always-on-server.sh` を宣言している�
 一切表示しない — bd 運用プロジェクトの多くは未注入なので、そこへ一斉に警告を出すと
 ボード健全性が無視される警告で埋まる(bdboard-pkr6.3)。
 
+### ハーネスパックを外す (uninject スクリプト)
+
+パックを**外す**操作は bdboard のサーバーに載せない。bdboard が注入先へ書くのは注入 API
+(`POST /api/projects/<id>/harness/inject`) だけ、という方針は変わらず、外す側は
+`scripts/harness-uninject.mjs` というユーザー実行のスクリプトにしてある (bdboard-l1m1.7)。
+
+```bash
+node <bdboard のルート>/scripts/harness-uninject.mjs --project <注入先のパス> --pack <パック名> [--yes]
+```
+
+- **実行するのはユーザーで、エージェントは実行しない (コマンドを提示するだけ)**。既定は dry-run
+  (何を消すかの一覧だけ。何も変えない)。実際に外す `--yes` は対話端末 (標準入力が TTY) でしか
+  実行できず、TTY の無いエージェントの Bash は機械的に拒否される (拒否文に「ユーザーが自分の端末で
+  実行する」と出る)。ボードの画面は外すコマンドを表示してコピーさせるだけで、サーバーは実行しない。
+- 戻すもの: 注入記録 (`.claude/bdboard-packs.json`) に載った skill ファイル・`settings.json` と
+  `settings.local.json` の**両方**のマーカー付き hook entry (他の hook は変えない)・注入記録の
+  該当 entry (最後のパックなら記録ファイルごと)・`.gitignore` の自分のパックの管理行。
+  `.gitignore` の `.claude/settings.local.json` の行は全パック共有でユーザー自身も使うので戻さない。
+  注入先の作業ツリーに差分が出うるが、スクリプトは commit しない。
+- 拒否するもの: 自己注入先 (パック原本を抱える repo。bdboard 自身)、注入記録に無いパック、
+  注入済みの他のパックが `requires` (推移的) で前提にしているパック (ベースを外すのは任意パックを
+  先に外した後だけ)。
+- 規則は TypeScript (`domain/harness-pack-removability.ts` の `evaluatePackRemovability`、
+  `domain/harness-gitignore-removal.ts`、`settings-hooks.ts` の `planHookRemoval`) が正で、
+  スクリプト本体は `tsx` で読み込んで呼ぶ薄い殻 (注入側の `evaluatePackInjectability` と同じ
+  `requires` を読む逆向きの規則を、スクリプト側に複製しない)。
+
 ## データフロー: bd CLI → キャッシュ → SSE → UI
 
 `src/main.ts` が起動時に組み立てる定期リフレッシュ + イベント通知のパイプライン:
