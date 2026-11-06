@@ -217,11 +217,15 @@ describe('createHarnessRoutes', () => {
           packs: [
             {
               name: 'bdboard-harness',
+              description: 'test pack',
+              role: 'base',
+              requires: [],
               availableVersion: '0.2.0',
               installedVersion: '0.1.0',
               drift: true,
               hooksState: 'none-declared',
               missingHooks: [],
+              injectable: { ok: true },
             },
           ],
           contract: { state: 'missing' },
@@ -231,11 +235,15 @@ describe('createHarnessRoutes', () => {
           packs: [
             {
               name: 'bdboard-harness',
+              description: 'test pack',
+              role: 'base',
+              requires: [],
               availableVersion: '0.2.0',
               installedVersion: '0.2.0',
               drift: false,
               hooksState: 'none-declared',
               missingHooks: [],
+              injectable: { ok: true },
             },
           ],
           contract: { state: 'missing' },
@@ -318,11 +326,15 @@ describe('createHarnessRoutes', () => {
       packs: [
         {
           name: 'bdboard-harness',
+          description: 'test pack',
+          role: 'base',
+          requires: [],
           availableVersion: '0.1.0',
           installedVersion: '0.1.0',
           drift: false,
           hooksState: 'none-declared',
           missingHooks: [],
+          injectable: { ok: true },
         },
       ],
       contract: { state: 'missing' },
@@ -374,6 +386,73 @@ describe('createHarnessRoutes', () => {
       expect.objectContaining({ name: 'bdboard-harness' }),
       new Date('2026-08-16T10:00:00.000Z'),
     );
+  });
+
+  it('rejects an optional pack with 409 and a reason while its base is not injected (bdboard-l1m1.1)', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('/tmp/proj-a', '/tmp/proj-a');
+    cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
+
+    const basePack = {
+      name: 'bdboard-harness',
+      version: '0.1.0',
+      description: 'base',
+      hooks: [],
+      role: 'base' as const,
+      requires: [] as string[],
+    };
+    const optionalPack = {
+      ...basePack,
+      name: 'video-pack',
+      description: 'video',
+      role: 'optional' as const,
+      requires: ['bdboard-harness'],
+    };
+    const registry: PackRegistryPort = {
+      listPacks: vi.fn(async () => [basePack, optionalPack]),
+      getPack: vi.fn(async (name: string) =>
+        [basePack, optionalPack]
+          .filter((entry) => entry.name === name)
+          .map((entry) => ({ ...entry, files: [] }))[0],
+      ),
+    };
+    const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
+      readManifest: vi.fn(async () => ({ packs: [] })),
+      injectPack: vi.fn(),
+    };
+
+    const app = createHarnessApp({ cache, registry, injector });
+    const inject = (pack: string) =>
+      app.request(
+        `/api/projects/${encodeURIComponent(proj.id)}/harness/inject`,
+        withLocalHost({
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ pack }),
+        }),
+        LOCAL_ENV,
+      );
+
+    const response = await inject('video-pack');
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string; code: string; reason: string };
+    expect(body.error).toBe('pack not injectable');
+    expect(body.code).toBe('requires-not-injected');
+    expect(body.reason).toContain('bdboard-harness');
+    expect(injector.injectPack).not.toHaveBeenCalled();
+
+    // GET 側も同じ判定を injectable として返す (UI は表示するだけ)。
+    const statusResponse = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness`,
+    );
+    const status = (await statusResponse.json()) as {
+      packs: { name: string; injectable: { ok: boolean; code?: string; reason?: string } }[];
+    };
+    const video = status.packs.find((entry) => entry.name === 'video-pack');
+    expect(video?.injectable).toMatchObject({ ok: false, code: 'requires-not-injected' });
+    expect(video?.injectable.reason).toContain('bdboard-harness');
   });
 
   it('reports contract not-applicable for a project with no injected pack', async () => {

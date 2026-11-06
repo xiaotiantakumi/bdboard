@@ -101,13 +101,69 @@ describe('getProjectHarnessStatus', () => {
     expect(status.packs).toEqual([
       {
         name: 'bdboard-harness',
+        description: '',
+        role: 'base',
+        requires: [],
         availableVersion: '0.2.0',
         installedVersion: '0.1.0',
         drift: true,
         hooksState: 'none-declared',
         missingHooks: [],
+        injectable: { ok: true },
       },
     ]);
+  });
+
+  it('marks an optional pack as not injectable until its base is in the injection record (bdboard-l1m1.1)', async () => {
+    const registry: PackRegistryPort = {
+      async listPacks() {
+        return [
+          {
+            name: 'base-pack',
+            version: '1.0.0',
+            description: 'ベース',
+            hooks: [],
+            role: 'base' as const,
+            requires: [],
+          },
+          {
+            name: 'video-pack',
+            version: '1.0.0',
+            description: '動画',
+            hooks: [],
+            role: 'optional' as const,
+            requires: ['base-pack'],
+          },
+        ];
+      },
+      async getPack() {
+        return undefined;
+      },
+    };
+    const installedBase: HarnessManifest = {
+      packs: [
+        { name: 'base-pack', version: '1.0.0', injectedAt: '2026-11-06T00:00:00.000Z', files: [] },
+      ],
+    };
+
+    const without = await getProjectHarnessStatus(registry, { packs: [] }, NOT_APPLICABLE, null);
+    const withBase = await getProjectHarnessStatus(registry, installedBase, NOT_APPLICABLE, null);
+
+    const videoWithout = without.packs.find((entry) => entry.name === 'video-pack');
+    expect(videoWithout).toMatchObject({
+      role: 'optional',
+      requires: ['base-pack'],
+      injectable: { ok: false, code: 'requires-not-injected' },
+    });
+    expect(
+      videoWithout?.injectable.ok === false && videoWithout.injectable.reason,
+    ).toContain('base-pack');
+    expect(without.packs.find((entry) => entry.name === 'base-pack')?.injectable).toEqual({
+      ok: true,
+    });
+    expect(withBase.packs.find((entry) => entry.name === 'video-pack')?.injectable).toEqual({
+      ok: true,
+    });
   });
 
   it('reports no drift when versions match', async () => {
@@ -151,11 +207,15 @@ describe('getProjectHarnessStatus', () => {
     expect(status.packs).toEqual([
       {
         name: 'bdboard-harness',
+        description: '',
+        role: 'base',
+        requires: [],
         availableVersion: '0.1.0',
         installedVersion: null,
         drift: false,
         hooksState: 'none-declared',
         missingHooks: [],
+        injectable: { ok: true },
       },
     ]);
   });
@@ -183,19 +243,27 @@ describe('getProjectHarnessStatus', () => {
     expect(status.packs).toEqual([
       {
         name: 'alpha-pack',
+        description: '',
+        role: 'base',
+        requires: [],
         availableVersion: '1.0.0',
         installedVersion: null,
         drift: false,
         hooksState: 'none-declared',
         missingHooks: [],
+        injectable: { ok: true },
       },
       {
         name: 'beta-pack',
+        description: '',
+        role: 'base',
+        requires: [],
         availableVersion: '2.0.0',
         installedVersion: '1.0.0',
         drift: true,
         hooksState: 'none-declared',
         missingHooks: [],
+        injectable: { ok: true },
       },
     ]);
   });

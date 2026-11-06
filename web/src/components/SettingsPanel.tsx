@@ -7,6 +7,7 @@ import { DbStatsSection } from './settings/DbStatsSection';
 import { BoardThresholdsSection } from './settings/BoardThresholdsSection';
 import { WipLimitsSection } from './settings/WipLimitsSection';
 import { AiQuotaAlertSection } from './settings/AiQuotaAlertSection';
+import { HarnessPacksSection } from './settings/HarnessPacksSection';
 import { useAiQuotaAlertForm } from './settings/useAiQuotaAlertForm';
 import { useScanRootsForm } from './settings/useScanRootsForm';
 import { useBoardThresholdsForm } from './settings/useBoardThresholdsForm';
@@ -126,6 +127,7 @@ export function SettingsPanel() {
         onSubmit={aiQuotaAlertForm.onSubmit}
         feedback={aiQuotaAlertForm.feedback}
       />
+      <HarnessPacksSection />
       <DbStatsSection isPending={dbStatsQuery.isPending} isError={dbStatsQuery.isError} data={dbStatsQuery.data} />
       <div className="settings-panel-footer">
         <button

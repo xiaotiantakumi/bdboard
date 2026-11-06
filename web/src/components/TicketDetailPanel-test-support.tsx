@@ -37,11 +37,15 @@ export function harnessStatus(
     packs: [
       {
         name: 'bdboard-harness',
+        description: '',
+        role: 'base',
+        requires: [],
         availableVersion: '1.0.0',
         installedVersion: '1.0.0',
         drift: false,
         hooksState: 'ok',
         missingHooks: [],
+        injectable: { ok: true },
         ...packOverrides,
       },
     ],

@@ -21,6 +21,13 @@ import {
 import { expectNoA11yViolations } from '../test/axe';
 import { SettingsPanel } from './SettingsPanel';
 
+// bdboard-l1m1.1: ハーネスパック選択はプロジェクト名を並べるので、このファイルの
+// テキスト検索 (/configured など) と衝突する。中身は HarnessPacksSection.test.tsx で
+// 検証し、ここは設定画面に載っていることだけ確かめる。
+vi.mock('./settings/HarnessPacksSection', () => ({
+  HarnessPacksSection: () => <div data-testid="harness-packs-section" />,
+}));
+
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
   return {
@@ -131,6 +138,12 @@ describe('SettingsPanel', () => {
 
     await screen.findByText('/configured');
     await expectNoA11yViolations(container);
+  });
+
+  it('mounts the harness pack selection section (bdboard-l1m1.1)', async () => {
+    renderSettings();
+
+    expect(await screen.findByTestId('harness-packs-section')).toBeInTheDocument();
   });
 
   it('shows effective roots with the user-configured badge', async () => {

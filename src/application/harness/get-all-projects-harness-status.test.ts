@@ -109,11 +109,15 @@ describe('getAllProjectsHarnessStatus', () => {
           packs: [
             {
               name: 'bdboard-harness',
+              description: '',
+              role: 'base',
+              requires: [],
               availableVersion: '0.2.0',
               installedVersion: '0.1.0',
               drift: true,
               hooksState: 'none-declared',
               missingHooks: [],
+              injectable: { ok: true },
             },
           ],
           contract: MISSING_CONTRACT,
@@ -125,11 +129,15 @@ describe('getAllProjectsHarnessStatus', () => {
           packs: [
             {
               name: 'bdboard-harness',
+              description: '',
+              role: 'base',
+              requires: [],
               availableVersion: '0.2.0',
               installedVersion: '0.2.0',
               drift: false,
               hooksState: 'none-declared',
               missingHooks: [],
+              injectable: { ok: true },
             },
           ],
           contract: MISSING_CONTRACT,
