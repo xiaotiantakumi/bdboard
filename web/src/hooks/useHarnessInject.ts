@@ -12,26 +12,6 @@ import { useAutoClearedValue } from './useAutoClearedValue';
 
 const FEEDBACK_MS = 4000;
 
-/** サーバー (harness-inject-routes.ts) の 409 の error 文字列。web/ から src/ は import できないので二重定義。 */
-const SERVER_PACK_NOT_INJECTABLE = 'pack not injectable';
-
-/**
- * 注入の失敗を文言にする。パックの組み合わせ検査で弾かれた 409 (bdboard-l1m1.1) は
- * 「他セッションが先に変更した」ではなくサーバーが返した理由をそのまま出す。
- * それ以外は書き込み共通の説明 (describeWriteError)。
- */
-export function describeHarnessInjectError(error: unknown): string {
-  if (
-    error instanceof ApiError &&
-    error.status === 409 &&
-    error.errorMessage === SERVER_PACK_NOT_INJECTABLE &&
-    error.reason !== undefined
-  ) {
-    return `注入できません: ${error.reason}`;
-  }
-  return describeWriteError(error, 'ハーネスの注入に失敗しました');
-}
-
 export interface UseHarnessInjectOptions {
   readonly onSuccess?: (message: string) => void;
   readonly onError?: (message: string) => void;
@@ -57,8 +37,17 @@ export function useHarnessInject(options?: UseHarnessInjectOptions) {
         buildHarnessInjectSuccessMessage(result.pack.name, result.pack),
       );
     },
-    onError: (error) => {
-      options?.onError?.(describeHarnessInjectError(error));
+    onError: (error, vars) => {
+      // 409 (pack not injectable など) は「手元の一覧が古い」ことを示す。取り直さないと、
+      // 古い GET の結果で押せるボタンが残り、同じ 409 を繰り返してしまう (bdboard-l1m1.14)。
+      // 失敗の表示を待たせないよう await しない (bdboard-ty72 と同じく、表示は即時)。
+      if (error instanceof ApiError && error.status === 409) {
+        void queryClient.invalidateQueries({
+          queryKey: ['project-harness', vars.projectId],
+        });
+      }
+      // 409 (pack not injectable) の文言も describeWriteError が持つ。
+      options?.onError?.(describeWriteError(error, 'ハーネスの注入に失敗しました'));
     },
   });
 }

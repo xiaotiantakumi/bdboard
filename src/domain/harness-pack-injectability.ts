@@ -114,10 +114,31 @@ export function evaluatePackInjectability(
   const installed = new Set(manifest.packs.map((entry) => entry.name));
   const notInjected = target.requires.filter((dependency) => !installed.has(dependency));
   if (notInjected.length > 0) {
-    return reject(
-      'requires-not-injected',
-      `${target.name} は ${notInjected.join(', ')} が未注入のため注入できません。先に ${notInjected.join(', ')} を注入してください`,
-    );
+    // 未注入の依存先が、それ自体は注入できない (pack.json が不正など) ときに「先に注入して
+    // ください」と案内すると、注入できない物を勧めてしまう。依存先ごとに 1 段だけ判定し、
+    // 依存先がさらに別の依存先の未注入で止まっているだけなら従来どおり (先に注入すれば進む)
+    // 扱う。循環は上で弾いているので、この 1 段の再帰は必ず終わる。
+    const broken: { readonly name: string; readonly reason: string }[] = [];
+    const injectable: string[] = [];
+    for (const dependency of notInjected) {
+      const entry = byName.get(dependency);
+      const verdict =
+        entry === undefined ? INJECTABLE : evaluatePackInjectability(entry, available, manifest);
+      if (!verdict.ok && verdict.code !== 'requires-not-injected') {
+        broken.push({ name: dependency, reason: verdict.reason });
+      } else {
+        injectable.push(dependency);
+      }
+    }
+    const names = notInjected.join(', ');
+    const parts = [`${target.name} は ${names} が未注入のため注入できません。`];
+    if (injectable.length > 0) {
+      parts.push(`先に ${injectable.join(', ')} を注入してください。`);
+    }
+    for (const entry of broken) {
+      parts.push(`${entry.name} 自体が注入できない状態です (${entry.reason})。`);
+    }
+    return reject('requires-not-injected', parts.join(''));
   }
 
   return INJECTABLE;

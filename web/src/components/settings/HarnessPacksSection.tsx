@@ -6,6 +6,7 @@
 // を表示するだけで、規則はここに複製しない。パックを外す操作はサーバーが実行せず
 // (bdboard が注入先へ書くのは注入 API だけ)、ユーザーが自分の端末で実行するコマンドを
 // 表示してコピーさせる。
+import { useId } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   fetchProjectHarnessStatus,
@@ -19,69 +20,27 @@ import {
   harnessInjectButtonLabel,
 } from '../../harnessDisplay';
 import {
-  buildHarnessUninjectCommand,
   formatHarnessPackRole,
   formatHarnessPackRoleDetail,
   isHarnessPackSelected,
 } from '../../harnessPackSelection';
-import { useAutoClearedValue } from '../../hooks/useAutoClearedValue';
 import { useHarnessFeedback, useHarnessInject } from '../../hooks/useHarnessInject';
-import { copyText, COPY_FEEDBACK_MS } from '../ticket-detail/TicketIdCopyButton';
-
-function UninjectCommand({
-  projectRootPath,
-  packName,
-}: {
-  readonly projectRootPath: string;
-  readonly packName: string;
-}) {
-  const command = buildHarnessUninjectCommand(projectRootPath, packName);
-  const { value: copyState, show } = useAutoClearedValue<'' | 'copied' | 'error'>(
-    '',
-    COPY_FEEDBACK_MS,
-  );
-
-  return (
-    <details className="harness-pack-uninject">
-      <summary>外す</summary>
-      <p className="settings-panel-subtitle">
-        bdboard はパックを外しません。次のコマンドを、あなた自身の端末で実行してください
-        (エージェントには実行させないでください)。
-      </p>
-      <div className="harness-pack-uninject-row">
-        <code className="harness-pack-uninject-command">{command}</code>
-        <button
-          type="button"
-          className="harness-pack-action"
-          aria-label={`${packName} を外すコマンドをコピー`}
-          onClick={() => {
-            void copyText(command).then((ok) => {
-              show(ok ? 'copied' : 'error');
-            });
-          }}
-        >
-          コピー
-        </button>
-        <span aria-live="polite" className="harness-pack-copy-feedback">
-          {copyState === 'copied' && 'コピーしました'}
-          {copyState === 'error' && 'コピーできませんでした'}
-        </span>
-      </div>
-    </details>
-  );
-}
+import { UninjectCommand } from './HarnessPackUninject';
 
 function PackRow({
   project,
+  bdboardRootPath,
   pack,
   pending,
   onInject,
 }: {
   readonly project: ProjectDto;
+  readonly bdboardRootPath: string | undefined;
   readonly pack: ProjectHarnessPackStatusDto;
   readonly pending: boolean;
   readonly onInject: (pack: ProjectHarnessPackStatusDto) => void;
 }) {
+  const blockedNoteId = useId();
   const selected = isHarnessPackSelected(pack);
   const canAct = !selected || pack.drift || harnessHooksNeedAttention(pack);
   const blockedReason = pack.injectable.ok ? null : pack.injectable.reason;
@@ -103,6 +62,7 @@ function PackRow({
             className="harness-pack-action"
             disabled={pending || blockedReason !== null}
             aria-label={`${project.name} に ${pack.name} を${actionLabel}`}
+            aria-describedby={blockedReason !== null ? blockedNoteId : undefined}
             onClick={() => {
               onInject(pack);
             }}
@@ -114,12 +74,16 @@ function PackRow({
       <p className="harness-pack-description">{pack.description}</p>
       <p className="harness-pack-role-detail">{formatHarnessPackRoleDetail(pack)}</p>
       {blockedReason !== null && (
-        <p className="harness-pack-blocked" role="note">
+        <p id={blockedNoteId} className="harness-pack-blocked" role="note">
           選べません: {blockedReason}
         </p>
       )}
       {selected && (
-        <UninjectCommand projectRootPath={project.rootPath} packName={pack.name} />
+        <UninjectCommand
+          projectRootPath={project.rootPath}
+          bdboardRootPath={bdboardRootPath}
+          pack={pack}
+        />
       )}
     </li>
   );
@@ -168,6 +132,7 @@ function ProjectPacks({ project }: { readonly project: ProjectDto }) {
             <PackRow
               key={pack.name}
               project={project}
+              bdboardRootPath={query.data.bdboardRootPath}
               pack={pack}
               pending={injectMutation.isPending}
               onInject={(target) => {

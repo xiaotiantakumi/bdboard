@@ -89,7 +89,7 @@ export function createHarnessInjectRoutes(
       contract,
       settingsJson,
     );
-    return c.json(toHarnessStatusJson(status));
+    return c.json(toHarnessStatusJson(status, deps.bdboardRootPath));
   });
 
   return app;

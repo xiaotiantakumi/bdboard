@@ -74,7 +74,7 @@ export function createHarnessStatusRoutes(
       return c.json({ error: 'project not found' }, 404);
     }
 
-    return c.json(toHarnessStatusJson(status));
+    return c.json(toHarnessStatusJson(status, deps.bdboardRootPath));
   });
 
   return app;

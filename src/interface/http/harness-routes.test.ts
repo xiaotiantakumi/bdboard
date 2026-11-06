@@ -95,6 +95,7 @@ function createHarnessApp(options?: {
   readonly contractReader?: HarnessContractReaderPort;
   readonly issueWriter?: IssueWriterPort;
   readonly refreshProjectByRootPath?: (rootPath: string) => Promise<void>;
+  readonly bdboardRootPath?: string;
 }): Hono {
   const cache = options?.cache ?? createFakeBoardCache();
   const registry: PackRegistryPort =
@@ -150,6 +151,7 @@ function createHarnessApp(options?: {
     now: () => new Date('2026-08-16T10:00:00.000Z'),
     issueWriter: options?.issueWriter,
     refreshProjectByRootPath: options?.refreshProjectByRootPath,
+    bdboardRootPath: options?.bdboardRootPath,
   });
 }
 
@@ -453,6 +455,60 @@ describe('createHarnessRoutes', () => {
     const video = status.packs.find((entry) => entry.name === 'video-pack');
     expect(video?.injectable).toMatchObject({ ok: false, code: 'requires-not-injected' });
     expect(video?.injectable.reason).toContain('bdboard-harness');
+  });
+
+  it('answers 500 injection failed when the injection record cannot be read (bdboard-l1m1.14)', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('/tmp/proj-a', '/tmp/proj-a');
+    cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
+
+    const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => [null, null]),
+      readManifest: vi.fn(async () => {
+        throw new Error('manifest unreadable');
+      }),
+      injectPack: vi.fn(),
+    };
+
+    const app = createHarnessApp({ cache, injector });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness/inject`,
+      withLocalHost({
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pack: 'bdboard-harness' }),
+      }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: 'injection failed',
+      detail: 'manifest unreadable',
+    });
+    // 記録を読めないまま注入に進まない (依存の検査を飛ばさない)。
+    expect(injector.injectPack).not.toHaveBeenCalled();
+  });
+
+  it('adds the bdboard root to the single-project status only when it is configured (bdboard-l1m1.14)', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('/tmp/proj-a', '/tmp/proj-a');
+    cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
+    const url = `/api/projects/${encodeURIComponent(proj.id)}/harness`;
+
+    const withRoot = createHarnessApp({ cache, bdboardRootPath: '/opt/bdboard' });
+    const bodyWith = (await (await withRoot.request(url)).json()) as { bdboardRootPath?: string };
+    expect(bodyWith.bdboardRootPath).toBe('/opt/bdboard');
+
+    // 一括の status には付けない (プロジェクトごとの案内にしか使わない)。
+    const all = (await (await withRoot.request('/api/harness/status')).json()) as {
+      projects: Record<string, unknown>[];
+    };
+    expect(all.projects.every((entry) => !('bdboardRootPath' in entry))).toBe(true);
+
+    const withoutRoot = createHarnessApp({ cache });
+    const bodyWithout = (await (await withoutRoot.request(url)).json()) as Record<string, unknown>;
+    expect('bdboardRootPath' in bodyWithout).toBe(false);
   });
 
   it('reports contract not-applicable for a project with no injected pack', async () => {

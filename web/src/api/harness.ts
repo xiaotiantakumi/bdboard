@@ -74,6 +74,12 @@ export type ProjectHarnessContractDto =
   | { state: 'not-applicable' };
 
 export interface ProjectHarnessStatusDto {
+  /**
+   * この bdboard のチェックアウトのルート (絶対パス)。単一プロジェクトの取得・注入の
+   * レスポンスだけに付く (一括の `/api/harness/status` には付かない)。「外す」コマンドの
+   * 組み立てに使う。無ければ画面は `<BDBOARD_ROOT>` のプレースホルダを出す。
+   */
+  bdboardRootPath?: string;
   packs: ProjectHarnessPackStatusDto[];
   contract: ProjectHarnessContractDto;
 }

@@ -292,6 +292,83 @@ describe('ProjectHarnessBadges', () => {
     expect(await screen.findByText('bdboard-harness v0.2.0')).toBeInTheDocument();
   });
 
+  it('shows the base pack version in the menu even when an optional pack is listed first (bdboard-l1m1.14)', async () => {
+    const basePack = {
+      name: 'bdboard-harness',
+      description: '',
+      role: 'base' as const,
+      requires: [],
+      availableVersion: '1.3.0',
+      installedVersion: '1.3.0',
+      drift: false,
+      hooksState: 'none-declared' as const,
+      missingHooks: [],
+      injectable: { ok: true as const },
+    };
+    const optionalPack = {
+      ...basePack,
+      name: 'video-pack',
+      role: 'optional' as const,
+      requires: ['bdboard-harness'],
+      availableVersion: '0.4.0',
+      installedVersion: '0.4.0',
+    };
+    // 任意パックのほうが先に並ぶ順でも、ベースの版を代表として出す。
+    fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
+      packs: [optionalPack, basePack],
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProjectHarnessVersion projectId="/tmp/example-project" />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('bdboard-harness v1.3.0')).toBeInTheDocument();
+    expect(screen.queryByText(/video-pack/)).not.toBeInTheDocument();
+  });
+
+  it('falls back to the first installed pack when no base pack is installed', async () => {
+    fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
+      packs: [
+        {
+          name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
+          availableVersion: '1.3.0',
+          installedVersion: null,
+          drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
+          injectable: { ok: true },
+        },
+        {
+          name: 'video-pack',
+          description: '',
+          role: 'optional',
+          requires: ['bdboard-harness'],
+          availableVersion: '0.4.0',
+          installedVersion: '0.4.0',
+          drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
+          injectable: { ok: true },
+        },
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProjectHarnessVersion projectId="/tmp/example-project" />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('video-pack v0.4.0')).toBeInTheDocument();
+  });
+
   it('shows success feedback after inject succeeds', async () => {
     const user = userEvent.setup();
     fetchProjectHarnessStatusMock.mockResolvedValue({

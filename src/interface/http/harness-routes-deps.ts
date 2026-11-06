@@ -21,6 +21,12 @@ export interface HarnessRoutesDeps {
   readonly injector: HarnessInjectorPort;
   readonly contractReader: HarnessContractReaderPort;
   readonly now?: () => Date;
+  /**
+   * この bdboard 自身のチェックアウトのルート (絶対パス)。画面の「外す」案内が
+   * `node <ルート>/scripts/harness-uninject.mjs ...` を実際に実行できる形で出すために
+   * 単一プロジェクトのハーネス状態へ添える (bdboard-l1m1.14)。未指定なら添えない。
+   */
+  readonly bdboardRootPath?: string;
   readonly writeAccess?: WriteGuardDeps;
   /**
    * 検証コントラクト不足のチケット起票 (`POST .../harness/contract-ticket`,

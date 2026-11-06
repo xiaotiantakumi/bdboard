@@ -37,6 +37,7 @@ export function wireHarness(deps: WireHarnessDeps) {
     registry: packRegistry,
     injector: harnessInjector,
     contractReader: deps.harnessContractReader,
+    bdboardRootPath: deps.repoRoot,
     writeAccess: deps.writeAccess,
     issueWriter: deps.issueWriter,
     refreshProjectByRootPath: deps.refreshProjectByRootPath,

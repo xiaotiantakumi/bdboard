@@ -24,6 +24,7 @@ const SERVER_CHAT_CSRF_BLOCKED = 'cross-site chat request blocked';
  *
  * - tunnel-routes.ts の /api/tunnel/access-token: トンネルが起動していない。
  * - chat-routes.ts: 同一プロジェクトの別メッセージを処理中。
+ * - harness-inject-routes.ts: パックの組み合わせ検査で注入を拒否 (bdboard-l1m1.14)。
  *
  * これら以外の 409 (issue-writer 系の楽観ロック競合など) は CONFLICT_WRITE_HELP に
  * フォールバックする — 呼び出し側(ChatPanel.tsx / TunnelControl.tsx など)は今のところ
@@ -32,6 +33,22 @@ const SERVER_CHAT_CSRF_BLOCKED = 'cross-site chat request blocked';
  */
 const SERVER_TUNNEL_NOT_RUNNING = 'tunnel is not running';
 const SERVER_CHAT_BUSY = 'chat is busy for this project';
+/**
+ * harness-inject-routes.ts: パックの組み合わせ検査 (role/requires・依存先の未注入) で
+ * 注入を拒否した 409。`reason` に画面へそのまま出せる理由が入る (bdboard-l1m1.14)。
+ */
+const SERVER_PACK_NOT_INJECTABLE = 'pack not injectable';
+
+/** 409('pack not injectable') で `reason` が無かったときの説明。 */
+export const PACK_NOT_INJECTABLE_HELP =
+  'このパックは今のプロジェクトには注入できません。パックの状態を再読み込みして、理由を確認してください。';
+
+/** 409('pack not injectable'): サーバーが返した理由をそのまま添える。 */
+function packNotInjectableMessage(reason: string | undefined): string {
+  return reason !== undefined && reason.length > 0
+    ? `注入できません: ${reason}`
+    : PACK_NOT_INJECTABLE_HELP;
+}
 
 /** トンネル経由で書き込めないときの説明。理由が 2 つあるので両方を出す。 */
 export const TUNNEL_WRITE_HELP =
@@ -172,6 +189,8 @@ export function describeWriteError(error: unknown, fallback: string): string {
         return TUNNEL_NOT_RUNNING_HELP;
       case SERVER_CHAT_BUSY:
         return CHAT_BUSY_HELP;
+      case SERVER_PACK_NOT_INJECTABLE:
+        return packNotInjectableMessage(error.reason);
       default:
         // issue-writer 系の楽観ロック競合(および未知の 409)は従来どおりここに落とす。
         return CONFLICT_WRITE_HELP;

@@ -22,6 +22,7 @@ import {
 } from './harnessDisplay';
 import {
   buildHarnessUninjectCommand,
+  buildHarnessUninjectYesCommand,
   formatHarnessPackRole,
   formatHarnessPackRoleDetail,
   isHarnessPackSelected,
@@ -553,5 +554,30 @@ describe('harnessDisplay pack selection (bdboard-l1m1.1)', () => {
     expect(command).toContain("'video-pack'");
     expect(command).not.toContain('<PROJECT_PATH>');
     expect(command).not.toContain('<PACK_NAME>');
+  });
+
+  it('builds the uninject command around the real script, with the bdboard root as an absolute path', () => {
+    expect(buildHarnessUninjectCommand('/tmp/example-project', 'video-pack', '/opt/bdboard')).toBe(
+      "node '/opt/bdboard/scripts/harness-uninject.mjs' --project '/tmp/example-project' --pack 'video-pack'",
+    );
+    // 末尾のスラッシュは重ねない。
+    expect(buildHarnessUninjectCommand('/tmp/p', 'v', '/opt/bdboard/')).toContain(
+      "'/opt/bdboard/scripts/harness-uninject.mjs'",
+    );
+    // ルートに引用符があっても 1 語のまま。
+    expect(buildHarnessUninjectCommand('/tmp/p', 'v', "/opt/it's")).toContain(
+      "'/opt/it'\\''s/scripts/harness-uninject.mjs'",
+    );
+  });
+
+  it('keeps the <BDBOARD_ROOT> placeholder when the root is unknown, and --yes is only on the second command', () => {
+    const dryRun = buildHarnessUninjectCommand('/tmp/p', 'video-pack');
+    expect(dryRun).toBe(
+      "node <BDBOARD_ROOT>/scripts/harness-uninject.mjs --project '/tmp/p' --pack 'video-pack'",
+    );
+    expect(dryRun).not.toContain('--yes');
+    expect(buildHarnessUninjectYesCommand('/tmp/p', 'video-pack')).toBe(`${dryRun} --yes`);
+    // 空文字のルートもプレースホルダのまま。
+    expect(buildHarnessUninjectCommand('/tmp/p', 'video-pack', '')).toBe(dryRun);
   });
 });

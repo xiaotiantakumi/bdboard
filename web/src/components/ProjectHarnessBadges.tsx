@@ -29,7 +29,10 @@ export function ProjectHarnessVersion({
     queryKey: ['project-harness', projectId],
     queryFn: () => fetchProjectHarnessStatus(projectId),
   });
-  const pack = query.data?.packs.find((entry) => entry.installedVersion !== null);
+  // 注入済みが複数あるときは、ベースを優先して出す (任意パックの版が代表に見えないように)。
+  const installedPacks = query.data?.packs.filter((entry) => entry.installedVersion !== null);
+  const pack =
+    installedPacks?.find((entry) => entry.role === 'base') ?? installedPacks?.[0];
   if (pack === undefined) {
     return null;
   }
