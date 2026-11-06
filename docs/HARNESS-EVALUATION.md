@@ -314,8 +314,9 @@ M11 (worker の続行と結末) の読み方の注意 (bdboard-5iwh):
 
 **目的**: 他プロジェクトでもフィードバックループが必ず存在する状態にする。
 
-- 注入先に `.claude/bdboard-harness.json` (または pack.json 側の `requires`) を置き、
+- 注入先に `.claude/bdboard-harness.json` を置き、
   `verify` (フル検証コマンド)、`prFlow` (pr / direct / none)、`mainBranch` を宣言させる。
+  (pack.json の `requires` は依存先パック名の配列で、この宣言の置き場所ではない。)
   SKILL.md 規律 4 と worktree-pr-flow は「注入先 CLAUDE.md を読め」ではなく、この
   宣言を読むように書き換える (CLAUDE.md は人向けの説明として残す)。
 - 注入時 preflight: 宣言が無い / コマンドが存在しない (`npm run <script>` が package.json に
