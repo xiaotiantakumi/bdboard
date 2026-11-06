@@ -10,7 +10,7 @@ bdboard-cm2q.10 (2026-09) で、コマンド文字列/パスを正規表現や a
 (bdboard-cm2q の 2026-09-26 のコメント「bdboard ガードの棚卸しと置き換え方針」) で、これらの判定が `bash -c`・絶対パス・
 `FOO=1` 前置き・引用符崩れ等で構造的にすり抜けられ、保守コストに見合わなくなったため。
 今この `hooks/` に残るのは、コマンド文字列を読まずセッション/リポジトリの**状態**だけを
-見る 3 本 (`stop-ticket-gate.sh` / `worktree-freshness.sh` / `deferred-due.sh`) だけ。削除した判定が
+見る hook (pack.json の `hooks` に宣言されたもの。現状は `stop-ticket-gate.sh` / `worktree-freshness.sh` / `deferred-due.sh`) だけ。削除した判定が
 守っていたリスクは、下の「deny・隔離・merge-pr との分担」にある別の機構が引き継ぐ。
 
 ## deny・隔離・merge-pr との分担
@@ -43,7 +43,7 @@ kill だけは元々これを説明する hook 側の案内が無く、deny が�
 再起動は議長が `scripts/always-on-server.sh`、Claude が起動したバックグラウンドタスクの
 停止は `TaskStop`、それ以外は議長かユーザーに聞く。
 
-## 共通の約束 (残る 3 本)
+## 共通の約束 (残る hook)
 
 - **allow は exit 0 で無出力。どちらも「止める」ための hook ではない** —
   `stop-ticket-gate.sh` だけがセッション終了を差し戻す (exit 2)。`worktree-freshness.sh`

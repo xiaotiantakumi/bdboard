@@ -44,6 +44,8 @@ describe('injectHarnessPack', () => {
         version: '0.1.0',
         description: 'test',
         hooks: [],
+        role: 'base' as const,
+        requires: [],
         files: [{ relativePath: 'SKILL.md' }],
       })),
     };

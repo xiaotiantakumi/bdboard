@@ -35,6 +35,8 @@ function fakeRegistry(
       version: pack.version,
       description: pack.description ?? '',
       hooks: [],
+      role: 'base' as const,
+      requires: [],
     })),
   );
 
@@ -50,6 +52,8 @@ function fakeRegistry(
         version: pack.version,
         description: pack.description ?? '',
         hooks: [],
+        role: 'base' as const,
+        requires: [],
         files: [],
       };
     },
