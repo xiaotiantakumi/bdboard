@@ -20,12 +20,16 @@ export class HarnessPathTraversalError extends HarnessInjectionError {
 export interface HarnessInjectorPort {
   readManifest(projectRootPath: string): Promise<HarnessManifest>;
   /**
-   * 注入先の `.claude/settings.json` の本文。無い/読めないときは null。
+   * hook の登録先になりうる設定ファイル (`.claude/settings.json` と
+   * `.claude/settings.local.json`) の本文を `[settings.json, settings.local.json]` の
+   * 順で返す。無い/読めないものは null。
    *
-   * hook 登録状況 (hooksState) の判定に要る。読み書きどちらも同じファイルなので
-   * 専用 port を足さず、既に settings.json を書いている injector に相乗りさせる。
+   * hook 登録状況 (hooksState) の判定に要る。書き込み先は通常 settings.local.json だが、
+   * 自己注入と移行前の注入先では settings.json にあるので、**和集合**で判定できるよう
+   * 両方を返す (bdboard-l1m1.8)。専用 port を足さず、既に設定を書いている injector に
+   * 相乗りさせる。
    */
-  readSettings(projectRootPath: string): Promise<string | null>;
+  readSettings(projectRootPath: string): Promise<readonly (string | null)[]>;
   injectPack(
     projectRootPath: string,
     pack: PackDefinition,
