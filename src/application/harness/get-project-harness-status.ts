@@ -19,7 +19,14 @@ import type { HarnessInjectorPort } from '../ports/harness-injector.js';
 import type { PackRegistryPort } from '../ports/pack-registry.js';
 
 /**
- * @param settingsJson 注入先の `.claude/settings.json` 本文 (無ければ null)。
+ * 注入先の設定ファイル本文。1 本 (無ければ null) でも、複数 (`readSettings` の戻り値
+ * そのまま) でもよい。複数のときは hook 登録の和集合で判定する (bdboard-l1m1.8)。
+ */
+type HarnessSettingsTexts = Parameters<typeof evaluateHooksState>[0];
+
+/**
+ * @param settingsJson 注入先の `.claude/settings.json` / `.claude/settings.local.json` の
+ *   本文 (無ければ null。両方の和集合で判定する)。
  *   hook 登録状況はここからしか分からない — マニフェストの `hooks` は「注入時に
  *   何を書いたか」の記録で、その後に人が消した場合を検知できない。
  */
@@ -27,7 +34,7 @@ export function computeProjectHarnessStatus(
   availablePacks: readonly PackSummary[],
   manifest: HarnessManifest,
   contract: ContractState,
-  settingsJson: string | null,
+  settingsJson: HarnessSettingsTexts,
 ): ProjectHarnessStatus {
   const installedByName = new Map(manifest.packs.map((entry) => [entry.name, entry]));
 
@@ -104,7 +111,7 @@ export async function getProjectHarnessStatus(
   registry: PackRegistryPort,
   manifest: HarnessManifest,
   contract: ContractState,
-  settingsJson: string | null,
+  settingsJson: HarnessSettingsTexts,
 ): Promise<ProjectHarnessStatus> {
   const availablePacks = await registry.listPacks();
   return computeProjectHarnessStatus(availablePacks, manifest, contract, settingsJson);

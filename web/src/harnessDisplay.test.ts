@@ -345,9 +345,9 @@ describe('harnessDisplay hooks state', () => {
     });
     expect(formatHarnessHooksLabel(pack)).toBe('hook 未登録 (1)');
     expect(formatHarnessHooksDetail(pack)).toContain('再注入');
-    expect(formatHarnessHooksDetail(pack)).toContain('.claude/settings.json');
+    expect(formatHarnessHooksDetail(pack)).toContain('.claude/settings.local.json');
     expect(buildHarnessHooksMessage(pack)).toBe(
-      'bdboard-harness: hook 1 件が .claude/settings.json に未登録です (再注入で解消)',
+      'bdboard-harness: hook 1 件が .claude/settings.local.json (または .claude/settings.json) に未登録です (再注入で解消)',
     );
   });
 });
@@ -408,6 +408,20 @@ describe('formatHarnessContractDetail with models', () => {
         modelExclusionWarnings: [],
       }),
     ).toBe('検証: npm run verify / PR 必須 / main: main');
+  });
+
+  it('labels the local-merge prFlow (bdboard-l1m1.12)', () => {
+    expect(
+      formatHarnessContractDetail({
+        state: 'ok',
+        verify: 'make check',
+        prFlow: 'local-merge',
+        mainBranch: 'main',
+        models: null,
+        expiredExcludeCount: 0,
+        modelExclusionWarnings: [],
+      }),
+    ).toBe('検証: make check / ローカルマージ (PR なし) / main: main');
   });
 
   it('appends the routing summary when models is declared', () => {

@@ -66,7 +66,7 @@ describe('getAllProjectsHarnessStatus', () => {
   it('loads available packs once and returns status for every project', async () => {
     const registry = fakeRegistry([{ name: 'bdboard-harness', version: '0.2.0' }]);
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async (rootPath: string) => {
         if (rootPath === '/tmp/proj-a') {
           return {
@@ -149,7 +149,7 @@ describe('getAllProjectsHarnessStatus', () => {
   it('returns an empty list when there are no projects', async () => {
     const registry = fakeRegistry([{ name: 'bdboard-harness', version: '0.1.0' }]);
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(),
       injectPack: vi.fn(),
     };
@@ -170,7 +170,7 @@ describe('getAllProjectsHarnessStatus', () => {
     // 出すと Hygiene が無視される警告で埋まるので、未注入は not-applicable に倒す。
     const registry = fakeRegistry([{ name: 'bdboard-harness', version: '0.2.0' }]);
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async (rootPath: string) =>
         rootPath === '/tmp/injected'
           ? {
@@ -210,7 +210,7 @@ describe('getAllProjectsHarnessStatus', () => {
   it('evaluates the contract per project root', async () => {
     const registry = fakeRegistry([{ name: 'bdboard-harness', version: '0.2.0' }]);
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({
         packs: [
           {

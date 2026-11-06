@@ -10,7 +10,7 @@ describe('injectHarnessPack', () => {
       getPack: vi.fn(async () => undefined),
     };
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(),
     };
@@ -50,7 +50,7 @@ describe('injectHarnessPack', () => {
       })),
     };
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(async () => manifest),
     };

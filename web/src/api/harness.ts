@@ -13,7 +13,7 @@ export interface HarnessPackSummaryDto {
 }
 
 /**
- * `.claude/settings.json` への hook 登録状況。`none-declared` は「そのパックが
+ * `.claude/settings.local.json` / `.claude/settings.json` への hook 登録状況 (両方の和集合)。`none-declared` は「そのパックが
  * hook を宣言していない」で、警告の対象外 (bdboard-pkr6.2)。
  */
 export type HarnessHooksStateDto = 'ok' | 'missing' | 'partial' | 'none-declared';
@@ -42,7 +42,7 @@ export interface ProjectHarnessPackStatusDto {
   injectable: HarnessPackInjectabilityDto;
 }
 
-export type HarnessPrFlowDto = 'pr' | 'direct' | 'none';
+export type HarnessPrFlowDto = 'pr' | 'direct' | 'none' | 'local-merge';
 
 /** `models` 節の要約 1 工程ぶん。候補列そのものは API に出さない。 */
 export interface ProjectHarnessModelStageDto {

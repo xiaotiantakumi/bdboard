@@ -378,6 +378,61 @@ describe.skipIf(process.platform === 'win32' || !HAS_TOOLS)(
       expect(sideEffects()).toEqual([]);
     });
 
+    it.each(['local-merge', 'direct', 'none'])(
+      'stops before any side effect when the contract says prFlow=%s (bdboard-l1m1.12)',
+      async (prFlow) => {
+        await makeWorktree('proj-low', {
+          'b.txt': 'b\n',
+          '.claude/bdboard-harness.json': JSON.stringify({ version: 1, verify: 'x', prFlow }),
+        });
+        const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'low' })]);
+        expect(r.exitCode).toBe(1);
+        expect(r.stderr).toContain('この契約では PR を使いません');
+        expect(r.stderr).toContain(`prFlow=${prFlow}`);
+        expect(sideEffects()).toEqual([]);
+        const remote = await git(repo, 'ls-remote', '--heads', 'origin', 'bd/proj-low');
+        expect(remote.stdout).toBe('');
+      },
+    );
+
+    it('stops for prFlow!=pr even with --dry-run', async () => {
+      await makeWorktree('proj-low', {
+        'b.txt': 'b\n',
+        '.claude/bdboard-harness.json': JSON.stringify({ prFlow: 'local-merge' }),
+      });
+      const spec = writeSpec({ ...baseSpec('proj-low'), complexity: 'low' });
+      const r = await run(['--spec', spec, '--dry-run']);
+      expect(r.exitCode).toBe(1);
+      expect(r.stderr).toContain('この契約では PR を使いません');
+    });
+
+    it('uses the contract mainBranch as the base instead of a fixed origin/main', async () => {
+      await git(repo, 'push', 'origin', 'main:trunk');
+      await git(repo, 'fetch', 'origin');
+      await git(repo, 'worktree', 'add', wt, '-b', 'bd/proj-low', 'origin/trunk');
+      mkdirSync(path.join(wt, '.claude'), { recursive: true });
+      writeFileSync(path.join(wt, '.claude', 'bdboard-harness.json'), JSON.stringify({ prFlow: 'pr', mainBranch: 'trunk' }), 'utf8');
+      await git(wt, 'add', '-A');
+      await git(wt, 'commit', '-m', 'feat(proj-low): contract');
+      const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'low' })]);
+      expect(r.exitCode, r.stderr).toBe(0);
+      const npm = calls().filter((x) => x.tool === 'npm').map((x) => x.args.join(' '));
+      expect(npm).toContain('run check:commits -- --range origin/trunk..HEAD');
+      const create = calls().find((x) => x.tool === 'gh' && x.args[1] === 'create');
+      expect(create?.args.slice(-2)).toEqual(['--base', 'trunk']);
+    });
+
+    it('reports an unresolvable origin/<mainBranch> by name', async () => {
+      await makeWorktree('proj-low', {
+        'b.txt': 'b\n',
+        '.claude/bdboard-harness.json': JSON.stringify({ prFlow: 'pr', mainBranch: 'trunk' }),
+      });
+      const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'low' })]);
+      expect(r.exitCode).toBe(1);
+      expect(r.stderr).toContain('origin/trunk を解決できません');
+      expect(sideEffects()).toEqual([]);
+    });
+
     it('prints the schema-derived key list with --help', async () => {
       const r = await run(['--help'], repo);
       expect(r.exitCode).toBe(0);

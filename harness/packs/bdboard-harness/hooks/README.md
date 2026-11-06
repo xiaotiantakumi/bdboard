@@ -68,12 +68,24 @@ kill だけは元々これを説明する hook 側の案内が無く、deny が�
 4. `bd -C <cwd> comments <id> --json` に `PR:` を含むコメントがある、または最新コメントが
    4 時間以内なら通過 (痕跡は残っている。旧 15 分の窓を bdboard-cm2q.10 で拡げた —
    短い窓は「調査だけで一区切りついたセッション」を頻繁に差し戻していた)。
-5. それ以外で `git status --porcelain` が非空、または `origin/<mainBranch>..HEAD` に
+5. それ以外で `git status --porcelain` が非空、または `<base>..HEAD` に
    `<mainBranch>` へ未取り込みのコミットがあれば、まず
    `${TMPDIR:-/tmp}/bdboard-stop-ticket-gate/` の session_id マーカーを確認する。
    **同じセッションで一度案内済みならそのまま通過**(繰り返し差し戻さない)。未案内なら
    **exit 2** で差し戻し、マーカーを書いてから終える。
 6. それ以外は通過。
+
+手順 5 は契約 `.claude/bdboard-harness.json` を読む (bdboard-l1m1.10 / .11 / .12。契約が無い・壊れている・
+キーの形が違うときはすべて従来どおり = fail-open):
+
+- `stopGate.ignorePaths` (文字列の配列): 未コミット差分の数え方から外す git pathspec
+  (`git status --porcelain -- . ':(exclude)<path>'`、リポジトリルート基準)。生成物が常に未コミットの repo が
+  毎回差し戻されないため。絶対パス・`..` を含む値と文字列以外は無視。
+- `<base>`: `origin/<mainBranch>`、無ければローカルの `<mainBranch>` (remote の無い repo)。どちらも無ければ
+  未取り込みの判定は skip。`prFlow=local-merge` はローカルの `<mainBranch>` が正本なので順序が逆。
+- `prFlow`: `direct` / `none` / `local-merge` のとき、差し戻し文は PR を求めず「現状と残作業を `bd comment`
+  に残す」だけを求める。`direct` / `none` は未取り込みのコミットを数えない (マージの概念が無い)。
+  `pr`・無指定・未知の値は従来の文面 (PR か記録のどちらか)。
 
 `bd` が PATH に無い場合・JSON ツールが無い場合はいずれも通過する。`bd` はすべて
 `-C <hook の cwd>` 付きで呼ぶ — Stop hook のプロセス cwd は Claude Code 側の都合で
@@ -100,7 +112,10 @@ hook も**親と同じ** `$CLAUDE_PROJECT_DIR` から読まれる。何日も動
 
 見る checkout は `$CLAUDE_PROJECT_DIR` (未設定なら hook 入力の `cwd`) の toplevel。cwd では
 ない — 議長が別 worktree へ `cd` しても hook の読み込み元は変わらないため。既定ブランチは
-検証コントラクトの `mainBranch` (無ければ `main`)、比較先は `origin/<mainBranch>`。
+検証コントラクトの `mainBranch` (無ければ `main`)、比較先 (以下 `origin/<main>` と書く) は
+`origin/<mainBranch>`、それが解決できなければローカルの `<mainBranch>` (remote の無い repo。bdboard-l1m1.11。
+案内のコマンドも `git merge main` の形になる)。`prFlow=local-merge` はローカルの `<mainBranch>` が正本なので
+先に見て、無ければ `origin/<mainBranch>`。どちらも無ければ黙る。
 
 | 状態 | 条件 | 案内 |
 |---|---|---|

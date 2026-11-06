@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { LOCAL_SETTINGS_RELATIVE_PATH } from './harness-hooks.js';
 import {
   appendGitignoreEntries,
   GITIGNORE_MANAGED_HEADER,
@@ -68,7 +69,7 @@ describe('harness-path', () => {
   it('appends gitignore lines idempotently', () => {
     const first = appendGitignoreEntries('', 'alpha-pack');
     expect(first).toBe(
-      `${GITIGNORE_MANAGED_HEADER}\n${MANIFEST_RELATIVE_PATH}\n.claude/skills/alpha-pack/\n`,
+      `${GITIGNORE_MANAGED_HEADER}\n${MANIFEST_RELATIVE_PATH}\n${LOCAL_SETTINGS_RELATIVE_PATH}\n.claude/skills/alpha-pack/\n`,
     );
 
     const second = appendGitignoreEntries(first, 'alpha-pack');
@@ -76,7 +77,7 @@ describe('harness-path', () => {
 
     const withBeta = appendGitignoreEntries(first, 'beta-pack');
     expect(withBeta).toBe(
-      `${GITIGNORE_MANAGED_HEADER}\n${MANIFEST_RELATIVE_PATH}\n.claude/skills/alpha-pack/\n.claude/skills/beta-pack/\n`,
+      `${GITIGNORE_MANAGED_HEADER}\n${MANIFEST_RELATIVE_PATH}\n${LOCAL_SETTINGS_RELATIVE_PATH}\n.claude/skills/alpha-pack/\n.claude/skills/beta-pack/\n`,
     );
     expect(gitignoreLinesToAppend(withBeta, 'alpha-pack')).toEqual([]);
     expect(gitignoreLinesToAppend(withBeta, 'beta-pack')).toEqual([]);

@@ -289,6 +289,53 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
     expect(output.systemMessage).toContain('origin/trunk');
   });
 
+  describe('without origin/<mainBranch> (bdboard-l1m1.11)', () => {
+    /** mainClone の main (= ローカルの既定ブランチ) だけを 1 コミット進める。origin には触れない。 */
+    async function advanceLocalMain(relPath: string, content: string): Promise<void> {
+      writeRepoFile(mainClone, relPath, content);
+      await commitAll(mainClone, `local ${relPath}`);
+    }
+
+    it('compares against the local main when the repository has no remote', async () => {
+      await git(mainClone, ['remote', 'remove', 'origin']);
+      await advanceLocalMain('.claude/settings.json', `${JSON.stringify(SETTINGS)}\n`);
+
+      const output = parse(await runFreshness(SESSION_START));
+      expect(output.systemMessage).toContain('hook 関連 1');
+      expect(output.systemMessage).not.toContain('origin/');
+      const context = output.hookSpecificOutput?.additionalContext ?? '';
+      expect(context).toContain(`git -C '${worktree}' merge --ff-only main`);
+      expect(context).not.toContain('origin/');
+    });
+
+    it('stays silent for a no-remote repository whose worktree is up to date', async () => {
+      await git(mainClone, ['remote', 'remove', 'origin']);
+      expectSilent(await runFreshness(SESSION_START));
+    });
+
+    it('stays silent when neither origin/<main> nor the local <main> exists', async () => {
+      await git(mainClone, ['remote', 'remove', 'origin']);
+      await advanceLocalMain('.claude/settings.json', '{}\n');
+      await git(mainClone, ['branch', '-m', 'main', 'elsewhere']);
+      expectSilent(await runFreshness(SESSION_START));
+    });
+
+    it('keeps preferring origin/<main> when it exists (prFlow=pr)', async () => {
+      await advanceLocalMain('.claude/settings.json', '{}\n');
+      expectSilent(await runFreshness(SESSION_START));
+    });
+
+    it('prefers the local main when the contract says prFlow=local-merge', async () => {
+      writeRepoFile(worktree, '.claude/bdboard-harness.json', JSON.stringify({ prFlow: 'local-merge' }));
+      await commitAll(worktree, 'contract: local-merge');
+      await advanceLocalMain('.claude/settings.json', '{}\n');
+
+      const output = parse(await runFreshness(SESSION_START));
+      expect(output.systemMessage).toContain('hook 関連 1');
+      expect(output.hookSpecificOutput?.additionalContext).toContain('merge main');
+    });
+  });
+
   it('fails open outside a git repository', async () => {
     const plain = path.join(tmpRoot, 'plain');
     mkdirSync(plain);

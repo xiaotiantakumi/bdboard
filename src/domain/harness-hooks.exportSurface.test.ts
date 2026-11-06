@@ -18,6 +18,7 @@ import * as harnessHooks from './harness-hooks.js';
  */
 const EXPECTED_VALUE_EXPORTS = [
   'SETTINGS_RELATIVE_PATH',
+  'LOCAL_SETTINGS_RELATIVE_PATH', // bdboard-l1m1.8 で追加
   'CLAUDE_PROJECT_DIR_PLACEHOLDER',
   'DEFAULT_PACK_HOOK_TIMEOUT_SECONDS',
   'PACK_HOOKS_DIR',

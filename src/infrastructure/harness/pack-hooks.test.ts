@@ -847,6 +847,129 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
           expect(bdCalls.some((call) => call.includes(' comments '))).toBe(true);
         });
       });
+
+      // bdboard-l1m1.10 / .11 / .12: 除外パス・prFlow・remote なしのローカル main。
+      describe(`stopGate.ignorePaths / prFlow / local main via ${jsonTool}`, () => {
+        const CONTRACT_REL = path.join('.claude', 'bdboard-harness.json');
+
+        async function setup(
+          contract: unknown,
+        ): Promise<{ repo: string; env: Record<string, string> }> {
+          const { repo, env } = await setupTicketWorktree({
+            branch: 'bd/test-1',
+            comments: '[]',
+            dirty: false,
+            jsonTool,
+          });
+          mkdirSync(path.join(repo, '.claude'), { recursive: true });
+          writeFileSync(
+            path.join(repo, CONTRACT_REL),
+            typeof contract === 'string' ? contract : `${JSON.stringify(contract)}\n`,
+            'utf8',
+          );
+          await commitPath(repo, env, CONTRACT_REL);
+          return { repo, env };
+        }
+
+        function stop(repo: string, env: Record<string, string>): Promise<CommandResult> {
+          return runHook(STOP_TICKET_GATE, { hook_event_name: 'Stop', cwd: repo }, { cwd: repo, env });
+        }
+
+        it('passes when only ignored paths are dirty (untracked generated files)', async () => {
+          const { repo, env } = await setup({
+            stopGate: { ignorePaths: ['render_times.tsv', 'output/'] },
+          });
+          writeFileSync(path.join(repo, 'render_times.tsv'), 'x\n', 'utf8');
+          mkdirSync(path.join(repo, 'output'), { recursive: true });
+          writeFileSync(path.join(repo, 'output', 'a.json'), '{}\n', 'utf8');
+
+          const result = await stop(repo, env);
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+        });
+
+        it('still blocks, counting only the non-ignored files', async () => {
+          const { repo, env } = await setup({ stopGate: { ignorePaths: ['render_times.tsv'] } });
+          writeFileSync(path.join(repo, 'render_times.tsv'), 'x\n', 'utf8');
+          writeFileSync(path.join(repo, 'dirty.txt'), 'wip\n', 'utf8');
+
+          const result = await stop(repo, env);
+          expect(result.exitCode).toBe(2);
+          expect(result.stderr).toContain('未コミット差分: 1 ファイル');
+        });
+
+        it('drops unsafe ignorePaths entries (absolute, parent) instead of crashing', async () => {
+          const { repo, env } = await setup({ stopGate: { ignorePaths: ['/', '../x', '', 7] } });
+          writeFileSync(path.join(repo, 'dirty.txt'), 'wip\n', 'utf8');
+
+          const result = await stop(repo, env);
+          expect(result.exitCode).toBe(2);
+          expect(result.stderr).toContain('未コミット差分: 1 ファイル');
+        });
+
+        it.each<unknown>(['{ not json', { stopGate: { ignorePaths: 'render_times.tsv' } }])(
+          'keeps the old behaviour when the contract is broken or ignorePaths is not a list (%j)',
+          async (contract) => {
+            const { repo, env } = await setup(contract);
+            writeFileSync(path.join(repo, 'render_times.tsv'), 'x\n', 'utf8');
+
+            const result = await stop(repo, env);
+            expect(result.exitCode).toBe(2);
+            expect(result.stderr).toContain('コミットして PR を開き');
+          },
+        );
+
+        it.each(['direct', 'none', 'local-merge'])(
+          'does not ask for a PR when prFlow=%s',
+          async (prFlow) => {
+            const { repo, env } = await setup({ prFlow });
+            writeFileSync(path.join(repo, 'dirty.txt'), 'wip\n', 'utf8');
+
+            const result = await stop(repo, env);
+            expect(result.exitCode).toBe(2);
+            expect(result.stderr).toContain(`prFlow=${prFlow}`);
+            expect(result.stderr).toContain('bd comment test-1');
+            expect(result.stderr).not.toContain('PR を開き');
+            expect(result.stderr.trim().split('\n').length).toBeLessThanOrEqual(3);
+          },
+        );
+
+        it('ignores unmerged commits when prFlow=direct (nothing to merge)', async () => {
+          const { repo, env } = await setup({ prFlow: 'direct' });
+          await addOriginRemote(repo, env, 'main');
+          await commitExtra(repo, env, 'unpushed.txt');
+
+          const result = await stop(repo, env);
+          expect(result.exitCode).toBe(0);
+        });
+
+        it('uses the local main for the unmerged count when there is no remote', async () => {
+          const { repo, env } = await setup({});
+          await runGit(repo, ['branch', 'main'], env);
+          await commitExtra(repo, env, 'unmerged.txt');
+
+          const result = await stop(repo, env);
+          expect(result.exitCode).toBe(2);
+          expect(result.stderr).toContain('main 未取り込みのコミット: 1 件');
+        });
+
+        it('prFlow=local-merge counts against the local main even when origin/main exists, and passes once merged', async () => {
+          const { repo, env } = await setup({ prFlow: 'local-merge' });
+          await addOriginRemote(repo, env, 'main');
+          await runGit(repo, ['branch', 'main'], env);
+          await commitExtra(repo, env, 'unmerged.txt');
+
+          const blocked = await stop(repo, env);
+          expect(blocked.exitCode).toBe(2);
+          expect(blocked.stderr).toContain('main 未取り込みのコミット: 1 件');
+          expect(blocked.stderr).not.toContain('PR を開き');
+
+          // ローカルの main に取り込めば (origin/main は古いまま) 通る。
+          await runGit(repo, ['branch', '-f', 'main', 'HEAD'], env);
+          const merged = await stop(repo, env);
+          expect(merged.exitCode).toBe(0);
+        });
+      });
     }
   });
 

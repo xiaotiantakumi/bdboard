@@ -458,6 +458,17 @@ describe('getProjectHarnessStatus hooksState', () => {
     expect(status.packs[0]?.missingHooks).toHaveLength(2);
   });
 
+  it('reports ok when the hooks are registered only in the second settings file (settings.local.json, bdboard-l1m1.8)', async () => {
+    const status = await getProjectHarnessStatus(
+      REGISTRY,
+      INJECTED_MANIFEST,
+      NOT_APPLICABLE,
+      [null, settingsWithAllHooks()],
+    );
+
+    expect(status.packs[0]?.hooksState).toBe('ok');
+  });
+
   it('reports ok once the hooks are registered', async () => {
     const status = await getProjectHarnessStatus(
       REGISTRY,

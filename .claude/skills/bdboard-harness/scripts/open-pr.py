@@ -3,7 +3,7 @@
 
 worktree-pr-flow.md の「PR 作成」を 1 本にし、`Closes: <ticket>` と `PR:` コメントの欠落を機械で防ぐ。
 検証コマンドは注入先の契約 `.claude/bdboard-harness.json` から読む (任意キー verifyQuick・commitCheck。
-commitCheck の {range} は origin/main..HEAD に置き換える)。契約が無い・読めない・キーが無いときの既定は
+commitCheck の {range} は origin/<mainBranch>..HEAD に置き換える。mainBranch は契約の値、省略時は main)。契約が無い・読めない・キーが無いときの既定は
 `npm run verify:quick` と `npm run check:commits -- --range {range}`。キーがあるのに 1 行の文字列でなければ
 拒否する (契約の不備で検証が黙って省かれないように)。
 
@@ -11,6 +11,8 @@ spec JSON のキーと制約は同じ scripts/ の open-pr.schema.json が正本
 --spec は副作用の前にこのスキーマと、git/bd/npm (読み取りのみ) の状態検査で調べ、違反は 1 件ずつ
 `ERROR: spec.<path>: <理由>` / `ERROR: <理由>` を全件出して終了コード 1 で止まる (dry-run も同じ)。
 副作用 (verify・push・gh pr create・bd comment・auto-merge) は検査の後だけ。
+契約の prFlow が pr 以外 (direct / none / local-merge) のときは PR を使わない運用なので、何も検査・実行せず
+`この契約では PR を使いません` と明示して終了コード 1 で止まる (bdboard-l1m1.12。契約が無い・読めないときは pr 扱い)。
 
 動作: verifyQuick → git push -u origin <branch> → gh pr create → bd comment <ticket> "PR: <url>"
 → complexity が low/med なら gh pr merge --auto --squash --delete-branch (high は打たず
@@ -32,7 +34,7 @@ from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().with_name("open-pr.schema.json")
 GENERATED_LINE = "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
-BASE = "origin/main"
+DEFAULT_MAIN_BRANCH = "main"
 CONTRACT_REL = ".claude/bdboard-harness.json"
 DEFAULT_VERIFY_QUICK = "npm run verify:quick"
 DEFAULT_COMMIT_CHECK = "npm run check:commits -- --range {range}"
@@ -130,16 +132,41 @@ def load_spec(path: str) -> dict:
 # ---- 検証コマンドの契約 (読み取りのみ) ---------------------------------------------------
 
 
-def read_contract_commands(errors: list[str]) -> tuple[list[str], str]:
-    """(verifyQuick の argv, commitCheck のテンプレ文字列) を返す。契約が無い・壊れているときは既定。"""
-    quick, commit = DEFAULT_VERIFY_QUICK, DEFAULT_COMMIT_CHECK
+def load_contract() -> dict | None:
+    """契約 JSON を読む。無い・壊れている・オブジェクトでないときは None (呼び出し側は既定に倒す)。"""
     top = run(["git", "rev-parse", "--show-toplevel"]).stdout.strip()
     try:
         with open(Path(top or ".") / CONTRACT_REL, encoding="utf-8") as f:
             contract = json.load(f)
     except (OSError, ValueError):
-        contract = None
-    if isinstance(contract, dict):
+        return None
+    return contract if isinstance(contract, dict) else None
+
+
+def contract_pr_flow(contract: dict | None) -> str:
+    """契約の prFlow。契約が無い・prFlow が無いときは pr (従来どおり)。"""
+    if contract is None or "prFlow" not in contract:
+        return "pr"
+    value = contract["prFlow"]
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+def contract_main_branch(contract: dict | None, errors: list[str]) -> str | None:
+    """契約の mainBranch (明示されたときだけ)。git が別の意味に読む形は拒否する。"""
+    if contract is None or "mainBranch" not in contract:
+        return None
+    value = contract["mainBranch"]
+    name = value.strip() if isinstance(value, str) else ""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", name) or ".." in name or name.endswith(("/", ".lock", ".")):
+        errors.append(f"{CONTRACT_REL}: mainBranch は英数字と . _ / - だけのブランチ名である必要があります")
+        return None
+    return name
+
+
+def read_contract_commands(contract: dict | None, errors: list[str]) -> tuple[list[str], str]:
+    """(verifyQuick の argv, commitCheck のテンプレ文字列) を返す。契約が無い・壊れているときは既定。"""
+    quick, commit = DEFAULT_VERIFY_QUICK, DEFAULT_COMMIT_CHECK
+    if contract is not None:
         for key in ("verifyQuick", "commitCheck"):
             if key not in contract:
                 continue
@@ -196,7 +223,7 @@ def read_ticket(ticket: str, errors: list[str]) -> dict | None:
     return obj
 
 
-def check_git_state(ticket: str, branch: str, commit_check: str, errors: list[str]) -> bool:
+def check_git_state(ticket: str, branch: str, base: str, commit_check: str, errors: list[str]) -> bool:
     """git の状態を検査する。linked worktree でなければ以降を調べず False を返す。"""
     gd = run(["git", "rev-parse", "--path-format=absolute", "--git-dir"]).stdout.strip()
     common = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout.strip()
@@ -208,18 +235,18 @@ def check_git_state(ticket: str, branch: str, commit_check: str, errors: list[st
         errors.append(f"カレントのブランチが {branch} ではありません (実際: {current or '(detached)'})")
     if run(["git", "status", "--porcelain"]).stdout.strip():
         errors.append("未コミットの変更があります。コミットしてから実行してください")
-    ahead = run(["git", "rev-list", "--count", f"{BASE}..HEAD"])
+    ahead = run(["git", "rev-list", "--count", f"{base}..HEAD"])
     if ahead.returncode != 0:
-        errors.append(f"{BASE} を解決できません (git fetch origin を先に)")
+        errors.append(f"{base} を解決できません (git fetch origin を先に)")
         return True
     if int(ahead.stdout.strip() or "0") == 0:
-        errors.append(f"{BASE} より先行するコミットがありません")
-    names = run(["git", "diff", "--name-only", f"{BASE}...HEAD"]).stdout.splitlines()
+        errors.append(f"{base} より先行するコミットがありません")
+    names = run(["git", "diff", "--name-only", f"{base}...HEAD"]).stdout.splitlines()
     beads = [n for n in names if n == ".beads" or n.startswith(".beads/")]
     if beads:
         errors.append(f".beads/ 配下の変更が diff に含まれています (PR に含めない): {', '.join(beads[:5])}")
     try:
-        cc_cmd = shlex.split(commit_check.replace("{range}", f"{BASE}..HEAD"))
+        cc_cmd = shlex.split(commit_check.replace("{range}", f"{base}..HEAD"))
     except ValueError:
         errors.append(f"{CONTRACT_REL}: commitCheck を解釈できません (引用符が閉じていません)")
         return True
@@ -268,6 +295,18 @@ def main() -> int:
     ap.add_argument("--skip-verify", metavar="REASON", default=None, help="契約の verifyQuick (既定 npm run verify:quick) を飛ばす。理由を bd comment に残す")
     args = ap.parse_args()
 
+    # PR を使わない契約 (prFlow が pr 以外) では、spec の検査より前に明示して止まる (副作用なし)。
+    contract = load_contract()
+    pr_flow = contract_pr_flow(contract)
+    if pr_flow != "pr":
+        print(
+            f"ERROR: この契約では PR を使いません ({CONTRACT_REL}: prFlow={pr_flow})。verify・push・PR 作成はしていません。"
+            "ブランチ bd/<ticket> の作業は契約の運用 (references/worktree-pr-flow.md の「prFlow ごとの手順」) に従ってください"
+            "(local-merge ならローカルで main へ --no-ff マージ → close-ticket.py)",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         spec = load_spec(args.spec)
     except (OSError, ValueError) as e:
@@ -288,7 +327,10 @@ def main() -> int:
         if m and m.group(1) != ticket:
             errors.append(f"spec.title: 括弧の中が ticket と一致しません ({m.group(1)} != {ticket})")
 
-    verify_cmd, commit_check = read_contract_commands(errors)
+    verify_cmd, commit_check = read_contract_commands(contract, errors)
+    explicit_main = contract_main_branch(contract, errors)
+    main_branch = explicit_main or DEFAULT_MAIN_BRANCH
+    base = f"origin/{main_branch}"
     complexity = spec.get("complexity") if spec.get("complexity") in ("low", "med", "high") else None
     issue_number: int | None = None
     if ticket and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9]+)*", ticket):
@@ -301,7 +343,7 @@ def main() -> int:
                 complexity = value
             else:
                 errors.append("spec.complexity: 省略時は bd metadata bdboard.complexity が要りますが、ありません (spec に書くか start-ticket で記録)")
-        check_git_state(ticket, f"bd/{ticket}", commit_check, errors)
+        check_git_state(ticket, f"bd/{ticket}", base, commit_check, errors)
 
     if errors:
         for err in errors:
@@ -312,6 +354,8 @@ def main() -> int:
     assert ticket and complexity
     branch = f"bd/{ticket}"
     body = build_body(spec, issue_number)
+    # 契約が mainBranch を明示したときだけ --base を渡す (未指定ならリポジトリの既定ブランチ = 従来どおり)。
+    base_args = ["--base", explicit_main] if explicit_main else []
     steps: list[tuple[str, list[str]]] = []
     if args.skip_verify is None:
         steps.append(("verify", verify_cmd))
@@ -322,7 +366,7 @@ def main() -> int:
             print(f"+ bd comment {ticket} {json.dumps(skip_verify_comment(verify_cmd, args.skip_verify), ensure_ascii=False)}")
         for _, cmd in steps:
             print("+ " + " ".join(cmd))
-        print(f"+ gh pr create --title {json.dumps(spec['title'], ensure_ascii=False)} --body {json.dumps(body, ensure_ascii=False)}")
+        print(f"+ gh pr create --title {json.dumps(spec['title'], ensure_ascii=False)} --body {json.dumps(body, ensure_ascii=False)}" + "".join(f" {a}" for a in base_args))
         print(f'+ bd comment {ticket} "PR: <url>"')
         if complexity == "high":
             print("(complexity high: auto-merge は打たない。議長のレビュー待ち)")
@@ -334,7 +378,7 @@ def main() -> int:
         run_checked(["bd", "comment", ticket, skip_verify_comment(verify_cmd, args.skip_verify)], "bd comment (skip-verify の理由)")
     for what, cmd in steps:
         run_checked(cmd, what)
-    created = run_checked(["gh", "pr", "create", "--title", spec["title"], "--body", body], "gh pr create")
+    created = run_checked(["gh", "pr", "create", "--title", spec["title"], "--body", body, *base_args], "gh pr create")
     lines = [l.strip() for l in created.stdout.splitlines() if l.strip()]
     url = lines[-1] if lines else ""
     if not url.startswith("http"):

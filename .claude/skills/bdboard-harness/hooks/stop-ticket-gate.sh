@@ -118,6 +118,27 @@ sys.stdout.write("%d\t%d\n" % (pr_count, latest))
   esac
 }
 
+# 契約の stopGate.ignorePaths (文字列の配列) を 1 行 1 パスで返す。配列でない・文字列以外は捨てる。
+contract_ignore_paths() {
+  case "$JSON_TOOL" in
+    jq)
+      printf '%s' "$1" | jq -r '(.stopGate.ignorePaths? // empty) | if type == "array" then .[] | strings else empty end' 2>/dev/null
+      ;;
+    python3)
+      printf '%s' "$1" | python3 -c '
+import json, sys
+try:
+    items = json.load(sys.stdin)["stopGate"]["ignorePaths"]
+except Exception:
+    sys.exit(0)
+for item in items if isinstance(items, list) else []:
+    if isinstance(item, str):
+        print(item)
+' 2>/dev/null
+      ;;
+  esac
+}
+
 # 入力 JSON から使うフィールドは 1 回の呼び出しでまとめて取り出す (フィールドごとに
 # JSON ツールを起動すると python3 経路で数百 ms かかる)。区切りは US(0x1f)。
 US_SEPARATOR=$'\037'
@@ -247,28 +268,61 @@ if [ "$LATEST_EPOCH" -gt 0 ] && [ "$NOW_EPOCH" -gt 0 ] &&
 fi
 
 # 5. 未コミット差分 / main 未取り込みのコミットが残っていれば差し戻す。
-DIRTY_COUNT="$(git -C "$HOOK_CWD" status --porcelain 2>/dev/null | wc -l | tr -d '[:space:]')"
+#    契約 (.claude/bdboard-harness.json) の mainBranch / prFlow / stopGate.ignorePaths を読む
+#    (bdboard-l1m1.10)。契約が無い・壊れている・形が違うときは従来どおり (fail-open)。
+MAIN_BRANCH='main'
+PR_FLOW=''
+IGNORE_COUNT=0
+IGNORE_PATHSPEC=()
+REPO_ROOT="$(git -C "$HOOK_CWD" rev-parse --show-toplevel 2>/dev/null)"
+if [ -n "$REPO_ROOT" ] && [ -r "$REPO_ROOT/.claude/bdboard-harness.json" ]; then
+  CONTRACT_JSON="$(cat "$REPO_ROOT/.claude/bdboard-harness.json" 2>/dev/null)"
+  CONTRACT_MAIN="$(json_field "$CONTRACT_JSON" mainBranch)"
+  [ -z "$CONTRACT_MAIN" ] || MAIN_BRANCH="$CONTRACT_MAIN"
+  PR_FLOW="$(json_field "$CONTRACT_JSON" prFlow)"
+  while IFS= read -r ignore_path; do
+    case "$ignore_path" in '' | /* | .. | ../* | */.. | */../*) continue ;; esac
+    IGNORE_PATHSPEC+=(":(exclude)$ignore_path")
+    IGNORE_COUNT=$((IGNORE_COUNT + 1))
+  done <<EOF
+$(contract_ignore_paths "$CONTRACT_JSON")
+EOF
+fi
+
+# 除外パスは差分の数え方から外す (生成物が常に未コミットの repo で毎回差し戻されないように)。
+if [ "$IGNORE_COUNT" -gt 0 ]; then
+  DIRTY_COUNT="$(git -C "$REPO_ROOT" status --porcelain -- . "${IGNORE_PATHSPEC[@]}" 2>/dev/null | wc -l | tr -d '[:space:]')"
+else
+  DIRTY_COUNT="$(git -C "$HOOK_CWD" status --porcelain 2>/dev/null | wc -l | tr -d '[:space:]')"
+fi
 case "$DIRTY_COUNT" in
   '' | *[!0-9]*) DIRTY_COUNT=0 ;;
 esac
 
-MAIN_BRANCH='main'
-REPO_ROOT="$(git -C "$HOOK_CWD" rev-parse --show-toplevel 2>/dev/null)"
-if [ -n "$REPO_ROOT" ] && [ -r "$REPO_ROOT/.claude/bdboard-harness.json" ]; then
-  CONTRACT_MAIN="$(json_field "$(cat "$REPO_ROOT/.claude/bdboard-harness.json" 2>/dev/null)" mainBranch)"
-  [ -z "$CONTRACT_MAIN" ] || MAIN_BRANCH="$CONTRACT_MAIN"
-fi
-
-# origin/$MAIN_BRANCH..HEAD を数える: これは「push していない」ではなく「main へまだ
-# マージされていない」コミット数であり、ブランチを push した後もマージまでは減らない
-# (bdboard-pkr6.25)。origin/$MAIN_BRANCH が無ければこの判定は skip する (fail-open)。
+# <main>..HEAD を数える: これは「push していない」ではなく「main へまだマージされていない」
+# コミット数であり、ブランチを push した後もマージまでは減らない (bdboard-pkr6.25)。
+# 比較先は origin/<main>、無ければローカルの <main> (remote の無い repo。bdboard-l1m1.11)。
+# prFlow=local-merge はローカルの <main> が正本なので順序を逆にする。direct / none は
+# マージの概念が無いので数えない。どちらの ref も無ければこの判定は skip する (fail-open)。
 UNMERGED_COUNT=0
-if git -C "$HOOK_CWD" rev-parse --verify --quiet "origin/$MAIN_BRANCH" >/dev/null 2>&1; then
-  UNMERGED_COUNT="$(git -C "$HOOK_CWD" rev-list --count "origin/$MAIN_BRANCH..HEAD" 2>/dev/null)"
-  case "$UNMERGED_COUNT" in
-    '' | *[!0-9]*) UNMERGED_COUNT=0 ;;
-  esac
-fi
+case "$PR_FLOW" in
+  direct | none) ;;
+  *)
+    if git check-ref-format --branch "$MAIN_BRANCH" >/dev/null 2>&1; then
+      UNMERGED_CANDIDATES="refs/remotes/origin/$MAIN_BRANCH refs/heads/$MAIN_BRANCH"
+      [ "$PR_FLOW" != 'local-merge' ] || UNMERGED_CANDIDATES="refs/heads/$MAIN_BRANCH refs/remotes/origin/$MAIN_BRANCH"
+      for candidate in $UNMERGED_CANDIDATES; do
+        if git -C "$HOOK_CWD" rev-parse --verify --quiet "$candidate^{commit}" >/dev/null 2>&1; then
+          UNMERGED_COUNT="$(git -C "$HOOK_CWD" rev-list --count "$candidate..HEAD" 2>/dev/null)"
+          case "$UNMERGED_COUNT" in
+            '' | *[!0-9]*) UNMERGED_COUNT=0 ;;
+          esac
+          break
+        fi
+      done
+    fi
+    ;;
+esac
 
 if [ "$DIRTY_COUNT" -gt 0 ] || [ "$UNMERGED_COUNT" -gt 0 ]; then
   if [ -n "$SESSION_ID" ]; then
@@ -279,10 +333,21 @@ if [ "$DIRTY_COUNT" -gt 0 ] || [ "$UNMERGED_COUNT" -gt 0 ]; then
     mkdir -p "$MARKER_ROOT" >/dev/null 2>&1 || true
     : 2>/dev/null >"$MARKER_FILE" || true
   fi
-  printf '%s\n' \
-    "bdboard-harness: チケット $TICKET_ID は in_progress ですが、PR も直近4時間のコメントもありません。" \
-    "終える前に次のどちらかを行ってください: (1) コミットして PR を開き bd comment $TICKET_ID \"PR: <url>\"、(2) 現状と残作業を bd comment $TICKET_ID \"...\" に残す。" \
-    "（未コミット差分: $DIRTY_COUNT ファイル / $MAIN_BRANCH 未取り込みのコミット: $UNMERGED_COUNT 件）" >&2
+  case "$PR_FLOW" in
+    direct | none | local-merge)
+      # PR を使わない運用では PR を求めず、現状の記録だけを求める。
+      printf '%s\n' \
+        "bdboard-harness: チケット $TICKET_ID は in_progress ですが、直近4時間のコメントがありません (prFlow=$PR_FLOW: この契約では PR を使いません)。" \
+        "終える前に、現状と残作業を bd comment $TICKET_ID \"...\" に残してください (未コミットの変更はコミットする)。" \
+        "（未コミット差分: $DIRTY_COUNT ファイル / $MAIN_BRANCH 未取り込みのコミット: $UNMERGED_COUNT 件）" >&2
+      ;;
+    *)
+      printf '%s\n' \
+        "bdboard-harness: チケット $TICKET_ID は in_progress ですが、PR も直近4時間のコメントもありません。" \
+        "終える前に次のどちらかを行ってください: (1) コミットして PR を開き bd comment $TICKET_ID \"PR: <url>\"、(2) 現状と残作業を bd comment $TICKET_ID \"...\" に残す。" \
+        "（未コミット差分: $DIRTY_COUNT ファイル / $MAIN_BRANCH 未取り込みのコミット: $UNMERGED_COUNT 件）" >&2
+      ;;
+  esac
   exit 2
 fi
 
