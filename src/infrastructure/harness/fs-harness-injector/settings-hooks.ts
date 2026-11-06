@@ -99,30 +99,45 @@ async function writeSettings(
   }
 }
 
-interface PlannedWrite {
+function isNonEmptyObject(value: unknown): boolean {
+  return (
+    typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length > 0
+  );
+}
+
+export interface PlannedWrite {
   readonly absolute: string;
-  readonly content: string;
+  /** 書き込む本文。`null` はファイルごと削除する (取り除いた結果が空の設定になるとき)。 */
+  readonly content: string | null;
 }
 
 /**
- * 移行: 旧登録 (`.claude/settings.json` にある我々の entry) を取り除く計画を立てる。
+ * `relativePath` の設定ファイルから、パックの hook entry (マーカー付き) だけを取り除く計画を立てる。
  *
- * 書き込み先を settings.local.json に切り替えると、移行前の注入先では同じ hook が
- * 両方のファイルに載って二重に走る。再注入のたびに、マーカー (パックの hooks/ ディレクトリ)
- * を含む entry だけを settings.json から外す。他人の entry は一切変えない。
+ * 再注入時の移行 (settings.json にある旧登録の除去。bdboard-l1m1.8) と、パックを外す
+ * uninject (settings.json / settings.local.json の両方。bdboard-l1m1.7) の共通の経路。
+ * 書き込み先を settings.local.json に切り替えると、移行前の注入先では同じ hook が両方の
+ * ファイルに載って二重に走る。マーカー (パックの hooks/ ディレクトリ) を含む entry だけを
+ * 外し、他人の entry は一切変えない (`mergeHarnessHooks(existing, {name, hooks: []})`)。
  *
  * - マーカーを含まないファイルは**読むだけで書かない** (人が整形したファイルを
  *   `JSON.stringify` の形に書き換えて、無意味な git 差分を作らないため)。
  * - マーカーがあるのに JSON として解釈できないときは、重複が無いと確かめられないので
- *   注入ごと失敗させる (壊れたファイルは上書きしない)。
+ *   失敗させる (壊れたファイルは上書きしない)。
  * - 取り除くものが無かったときは null (書かない)。
+ * - `pruneEmpty` (uninject 用): 我々の entry を取り除いた結果 `hooks` が空になったときだけ
+ *   `hooks` キーごと落とす (もともと空だった `hooks` は触らない)。設定全体が空 (`{}`) になったら、
+ *   `deleteIfEmpty` ならファイルごと削除する計画 (`content: null`)、そうでなければ `{}` を書いて残す。
+ *   注入が作った settings.local.json を、往復で元の「無い」状態に戻すため (settings.json は消さない)。
  */
-async function planLegacyRegistrationRemoval(
+export async function planHookRemoval(
   projectRootPath: string,
   packName: string,
+  relativePath: string,
+  options: { readonly pruneEmpty?: boolean; readonly deleteIfEmpty?: boolean } = {},
 ): Promise<PlannedWrite | null> {
-  const absolute = resolveSettingsAbsolute(projectRootPath, SETTINGS_RELATIVE_PATH);
-  const existing = await readSettingsForWrite(absolute, SETTINGS_RELATIVE_PATH);
+  const absolute = resolveSettingsAbsolute(projectRootPath, relativePath);
+  const existing = await readSettingsForWrite(absolute, relativePath);
   if (existing === null || !existing.includes(harnessHookMarker(packName))) {
     return null;
   }
@@ -131,11 +146,11 @@ async function planLegacyRegistrationRemoval(
     existing,
     { name: packName, hooks: [] },
     CLAUDE_PROJECT_DIR_PLACEHOLDER,
-    SETTINGS_RELATIVE_PATH,
+    relativePath,
   );
   if (!stripped.ok) {
     throw new HarnessInjectionError(
-      `failed to remove legacy harness hooks from ${SETTINGS_RELATIVE_PATH}: ${stripped.error}`,
+      `failed to remove harness hooks from ${relativePath}: ${stripped.error}`,
     );
   }
 
@@ -145,7 +160,32 @@ async function planLegacyRegistrationRemoval(
     return null;
   }
 
-  return { absolute, content: stripped.settingsJson };
+  if (options.pruneEmpty !== true) {
+    return { absolute, content: stripped.settingsJson };
+  }
+
+  const root = JSON.parse(stripped.settingsJson) as Record<string, unknown>;
+  const hooksAfter = root.hooks;
+  const hooksBefore = (JSON.parse(existing) as Record<string, unknown>).hooks;
+  // `hooks` を落とすのは、我々の entry を取り除いた結果として空になったときだけ。
+  // 取り除く前から空だった `hooks` は触らない。
+  if (
+    isNonEmptyObject(hooksBefore) &&
+    typeof hooksAfter === 'object' &&
+    hooksAfter !== null &&
+    !Array.isArray(hooksAfter) &&
+    Object.keys(hooksAfter).length === 0
+  ) {
+    delete root.hooks;
+  }
+  if (Object.keys(root).length === 0) {
+    // ファイルごと消すのは呼び出し側が許したとき (注入が作る settings.local.json)。
+    // 追跡される settings.json は空の設定として残す。
+    return options.deleteIfEmpty === true
+      ? { absolute, content: null }
+      : { absolute, content: '{}\n' };
+  }
+  return { absolute, content: `${JSON.stringify(root, null, 2)}\n` };
 }
 
 /**
@@ -176,7 +216,9 @@ export async function registerHooks(
   }
 
   const legacyRemoval =
-    target === 'local' ? await planLegacyRegistrationRemoval(projectRootPath, pack.name) : null;
+    target === 'local'
+      ? await planHookRemoval(projectRootPath, pack.name, SETTINGS_RELATIVE_PATH)
+      : null;
 
   // 宣言も既存内容も無いなら書かない。hook を持たないパックの注入で、空の
   // 設定ファイルを新規作成しないため。
@@ -188,7 +230,7 @@ export async function registerHooks(
     await writeSettings(settingsAbsolute, relativePath, merged.settingsJson);
   }
 
-  if (legacyRemoval !== null) {
+  if (legacyRemoval !== null && legacyRemoval.content !== null) {
     await writeSettings(legacyRemoval.absolute, SETTINGS_RELATIVE_PATH, legacyRemoval.content);
   }
 
