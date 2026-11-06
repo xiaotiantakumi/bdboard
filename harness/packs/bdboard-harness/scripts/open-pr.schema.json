@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "open-pr.schema.json",
   "title": "open-pr.py --spec",
-  "description": "PR 作成 (verify:quick → push → gh pr create → bd comment PR: → auto-merge) の spec。この 1 ファイルが --spec の検査と --help の正本。スキーマでは書けない次の検査はスクリプトが git/bd/npm (読み取りのみ) で補う: ticket が bd に実在し status が in_progress / カレントが linked worktree でブランチが bd/<ticket> / 未コミットが無い / origin/<mainBranch> (契約の mainBranch。省略時 main) より先行コミットがある / .beads/ 配下の変更が diff に無い / コミットメッセージが契約の commitCheck を通る / title の括弧の中が ticket と一致する。complexity を省略したときは bd metadata bdboard.complexity を読み、無ければ拒否する。検証コマンドは注入先の契約 .claude/bdboard-harness.json の任意キー verifyQuick (PR 前の軽い検証。既定 `npm run verify:quick`) と commitCheck (コミットメッセージ検査。`{range}` が origin/<mainBranch>..HEAD になる。既定 `npm run check:commits -- --range {range}`) から読む。キーがあるのに 1 行の文字列でなければ拒否する。契約の prFlow が pr 以外 (direct / none / local-merge) のときは PR を使わない運用なので、spec を読む前に『この契約では PR を使いません』と明示して止まる (副作用なし)。",
+  "description": "PR 作成 (verify:quick → push → gh pr create → bd comment PR: → auto-merge) の spec。この 1 ファイルが --spec の検査と --help の正本。スキーマでは書けない次の検査はスクリプトが git/bd/npm (読み取りのみ) で補う: ticket が bd に実在し status が in_progress / カレントが linked worktree でブランチが bd/<ticket> / 未コミットが無い / origin/<mainBranch> (契約の mainBranch。省略時 main) より先行コミットがある / .beads/ 配下の変更が diff に無い / コミットメッセージが契約の commitCheck を通る / title の括弧の中が ticket と一致する。complexity を省略したときは bd metadata bdboard.complexity を読み、無ければ拒否する。検証コマンドは注入先の契約 .claude/bdboard-harness.json の任意キー verifyQuick (PR 前の軽い検証。既定 `npm run verify:quick`) と commitCheck (コミットメッセージ検査。`{range}` が origin/<mainBranch>..HEAD になる。既定 `npm run check:commits -- --range {range}`) から読む。キーがあるのに 1 行の文字列でなければ拒否する。契約の prFlow が pr 以外 (direct / none / local-merge) のときは PR を使わない運用なので、spec を読む前に『この契約では PR を使いません』と明示して止まる (副作用なし)。prFlow が未知の値のときは『未知の値です』で止まる。複数チケットを 1 ブランチ・1 PR に束ねるときは bundled_tickets と branch を使う (単独チケットの挙動は変わらない)。",
   "type": "object",
   "additionalProperties": false,
   "required": ["ticket", "title", "summary", "help_content_checked"],
@@ -13,6 +13,24 @@
       "maxLength": 80,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(\\.[A-Za-z0-9]+)*$",
       "description": "PR を出すチケットの id (例: bdboard-7yfj.4)。bd に実在し status が in_progress であること。ブランチは bd/<ticket>。"
+    },
+    "bundled_tickets": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 80,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(\\.[A-Za-z0-9]+)*$"
+      },
+      "description": "束ね PR で追加で閉じるチケットの id の配列 (任意、最大 20 件。ticket と重複不可)。全て bd に実在し in_progress であること。本文に `Closes: <id>` を全て書き、`PR:` コメントを全チケットに付ける。複雑度を省略したときは metadata のある中で最も高いものを使う。ブランチ名が bd/<ticket> でなければ branch で指定する。"
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 100,
+      "pattern": "^bd/[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "PR のブランチ (任意)。省略時は bd/<ticket>。束ね PR で bd/bdboard-l1m1.10-12 のような名前を使うときに指定する。カレントのブランチと一致すること。title の括弧の中は ticket / bundled_tickets / branch の bd/ 以降のどれかでよい。"
     },
     "title": {
       "type": "string",

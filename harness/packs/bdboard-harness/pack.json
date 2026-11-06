@@ -1,6 +1,6 @@
 {
   "name": "bdboard-harness",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "role": "base",
   "requires": [],
   "description": "bd(Beads)運用プロジェクトに従来どおり入れるベースのハーネス(任意パックはこれを前提に別パックで載る。依存してよい前提と制約は references/layering.md)。並列セッションの排他(worktree-first)、lease/heartbeatによる放棄検知、確認待ちのノンブロッキング化(bd human レーン + human gate)、per-ticket worktree+PRフロー(着手・PR作成・レビュー依頼・確認待ち・クローズは scripts/ のスクリプト経由で、入り口の spec をスキーマで検査し違反を理由付きで拒否する)、ハーネス失敗の学習ループ(failure-catalog照合・brushupプロトコル・多層ハーネスの層判定と harness-upstream 還流)、検証コントラクトの models 表に沿った工程×複雑度のモデル振り分け(scripts/aimix-run.sh が aimix の argv を scripts/route.sh のセル候補と照合して aimix run に渡す。理由付きの BDBOARD_ROUTE_OVERRIDE で逸脱可能)の規律を skill として配布する。素の aimix run を止めるのは各プロジェクトの permissions.deny で、注入は permissions を運ばないので references/settings-snippet.json の雛形を注入先が自分の settings.json に貼る。hook は状態だけを見るもの(Stop のチケットゲート・worktree の鮮度警告・期日到来の deferred 表示。宣言は下の hooks)を配り、コマンド文字列を正規表現で読む旧 hook は 0.56.0 で廃止して permissions.deny と isolation: worktree とスクリプトの前提条件検査に置き換えた (bdboard-cm2q)。",

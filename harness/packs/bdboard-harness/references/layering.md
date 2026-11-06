@@ -45,7 +45,7 @@ bdboard-harness は**ベースのハーネス**。bd 運用プロジェクトに
 | 確認待ち | 質問は human gate に書き、回答を待たずに次へ進む | 規律3 |
 | 検証コントラクト | 注入先の `.claude/bdboard-harness.json`（`verify` / `prFlow`（`pr` / `direct` / `none` / `local-merge`）/ `mainBranch` / 任意で `models`・`stopGate.ignorePaths`）が検証・PR 経路・モデル振り分けの正本 | `verification.md` |
 | 入口スクリプト | `scripts/` の start-ticket / open-pr / close-ticket / ask-human-gate / post-review-ticket は、`--spec <json>` を同梱の `*.schema.json` で検査し、違反を理由付きで拒否する | 規律2〜4 |
-| 機械ガード | pack.json の `hooks` に宣言された hook を、注入が `.claude/settings.json` へ登録する。hook は状態だけを見る | `hooks/README.md` |
+| 機械ガード | pack.json の `hooks` に宣言された hook を、注入が `.claude/settings.local.json`（git 管理外）へ登録する。hook は状態だけを見る | `hooks/README.md` |
 | 学習ループ | ハーネス失敗は failure-catalog に記録し、直せないものは `harness` ラベルで起票する | 規律5 |
 
 ### 保証しないもの

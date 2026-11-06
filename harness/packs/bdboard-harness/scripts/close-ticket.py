@@ -196,10 +196,17 @@ PR_FLOWS = ("pr", "direct", "none", "local-merge")
 
 
 def load_contract() -> dict | None:
-    """契約 JSON を読む。無い・壊れている・オブジェクトでないときは None (pr / main 扱い)。"""
-    top = run(["git", "rev-parse", "--show-toplevel"]).stdout.strip()
+    """契約 JSON を読む。無い・壊れている・オブジェクトでないときは None (pr / main 扱い)。
+
+    カレント (worktree) に契約があればそれを、無ければ main checkout (git-common-dir の親) のものを読む
+    (契約が未コミットだと worktree には載らない。bdboard-l1m1.16)。
+    """
+    top = run(["git", "rev-parse", "--show-toplevel"]).stdout.strip() or "."
+    common = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout.strip()
+    roots = [top, *([common[: -len("/.git")]] if common.endswith("/.git") else [])]
+    path = next((Path(r) / CONTRACT_REL for r in roots if (Path(r) / CONTRACT_REL).is_file()), Path(top) / CONTRACT_REL)
     try:
-        with open(Path(top or ".") / CONTRACT_REL, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             contract = json.load(f)
     except (OSError, ValueError):
         return None
@@ -218,7 +225,16 @@ def contract_main_branch(contract: dict | None) -> str | None:
     """契約の mainBranch。省略時は main。git が別の意味に読む形なら None。"""
     value = DEFAULT_MAIN_BRANCH if contract is None or "mainBranch" not in contract else contract["mainBranch"]
     name = value.strip() if isinstance(value, str) else ""
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", name) or ".." in name or name.endswith(("/", ".lock", ".")):
+    # TS 側 (isSafeMainBranchName) と同じ規則。HEAD・a//b・a/.b・a.lock/b などを通さない (bdboard-l1m1.16)。
+    if (
+        not re.fullmatch(r"[A-Za-z0-9._/-]+", name)
+        or name.startswith(("-", "/"))
+        or name.endswith(("/", "."))
+        or "//" in name
+        or ".." in name
+        or name == "HEAD"
+        or any(seg.startswith(".") or seg.endswith(".lock") for seg in name.split("/"))
+    ):
         return None
     return name
 
