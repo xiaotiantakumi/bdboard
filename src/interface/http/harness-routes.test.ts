@@ -128,7 +128,7 @@ function createHarnessApp(options?: {
   const injector: HarnessInjectorPort =
     options?.injector ??
     ({
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(async () => ({
         packs: [
@@ -177,7 +177,7 @@ describe('createHarnessRoutes', () => {
     };
 
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async (rootPath: string) => {
         if (rootPath === projA.rootPath) {
           return {
@@ -294,7 +294,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({
         packs: [
           {
@@ -341,7 +341,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(async () => ({
         packs: [
@@ -399,7 +399,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({
         packs: [
           {
@@ -449,7 +449,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({
         packs: [
           {
@@ -513,7 +513,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({
         packs: [
           {
@@ -550,7 +550,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(async () => ({
         packs: [
@@ -632,7 +632,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(async () => {
         throw new Error('disk full');
@@ -702,7 +702,7 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
       fetchedAt: new Date('2026-08-16T00:00:00Z'),
     });
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({
         packs: [
           {

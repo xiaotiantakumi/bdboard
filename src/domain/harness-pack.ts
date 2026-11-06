@@ -45,7 +45,7 @@ export interface InstalledPackRecord {
   readonly injectedAt: string;
   /** プロジェクトルートからの相対パス */
   readonly files: readonly string[];
-  /** `.claude/settings.json` に登録した hook のコマンド文字列。 */
+  /** `.claude/settings.local.json` (自己注入は `.claude/settings.json`) に登録した hook のコマンド文字列。 */
   readonly hooks?: readonly string[];
 }
 
@@ -58,7 +58,7 @@ export interface ProjectHarnessPackStatus {
   readonly availableVersion: string;
   readonly installedVersion: string | null;
   readonly drift: boolean;
-  /** `.claude/settings.json` への hook 登録状況。drift とは独立に出す。 */
+  /** `.claude/settings.local.json` / `.claude/settings.json` への hook 登録状況 (和集合)。drift とは独立に出す。 */
   readonly hooksState: HarnessHooksState;
   /** 未登録の hook コマンド文字列。`hooksState` が `ok` / `none-declared` なら空。 */
   readonly missingHooks: readonly string[];

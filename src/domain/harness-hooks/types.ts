@@ -14,8 +14,21 @@
  * 分割されている。公開エクスポートの入口は ../harness-hooks.ts (バレル)。
  */
 
-/** 注入先プロジェクトの Claude Code 設定ファイル。 */
+/**
+ * 注入先プロジェクトの Claude Code 設定ファイル (git 追跡される側)。
+ *
+ * bdboard-l1m1.8 以降、通常の注入先では hook をここへ**書かない** (書き込み先は
+ * `LOCAL_SETTINGS_RELATIVE_PATH`)。ここへ書くのは、パック原本を抱える自己注入
+ * (bdboard 自身。設定を追跡する設計) だけ。一方、読み取り (hooksState の判定・
+ * 旧登録の移行) では両方のファイルを見る。
+ */
 export const SETTINGS_RELATIVE_PATH = '.claude/settings.json';
+
+/**
+ * 注入先プロジェクトの Claude Code 個人設定ファイル。通常の注入先で hook を登録する
+ * 書き込み先 (bdboard-l1m1.8)。git の差分に出ないよう、注入時に `.gitignore` へ管理行を足す。
+ */
+export const LOCAL_SETTINGS_RELATIVE_PATH = '.claude/settings.local.json';
 
 /**
  * hook のコマンドに書き込むプロジェクトルート。Claude Code が hook 実行時に

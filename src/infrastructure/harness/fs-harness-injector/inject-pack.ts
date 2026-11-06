@@ -42,9 +42,16 @@ export async function injectPack(
     }
   }
 
-  // hook 登録はマニフェスト書き込みより前。壊れた settings.json で失敗した
+  // hook 登録はマニフェスト書き込みより前。壊れた設定ファイルで失敗した
   // ときに「注入済み」と記録しないため (ファイルのコピーは残ってよい)。
-  const registeredHooks = await registerHooks(projectRootPath, pack);
+  // 登録先は自己注入 (bdboard 自身。設定を追跡する設計) だけ settings.json、それ以外は
+  // git 管理外の settings.local.json (bdboard-l1m1.8)。
+  const selfInjection = await isSelfInjection(projectRootPath, packsRoot);
+  const registeredHooks = await registerHooks(
+    projectRootPath,
+    pack,
+    selfInjection ? 'tracked' : 'local',
+  );
 
   const updatedEntry: InstalledPackRecord = {
     name: pack.name,
@@ -65,7 +72,7 @@ export async function injectPack(
     throw new HarnessInjectionError('failed to write harness manifest', error);
   }
 
-  if (!(await isSelfInjection(projectRootPath, packsRoot))) {
+  if (!selfInjection) {
     try {
       await updateGitignoreForPack(projectRootPath, pack.name);
     } catch (error) {
