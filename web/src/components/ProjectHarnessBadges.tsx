@@ -99,7 +99,8 @@ export function ProjectHarnessBadges({ projectId }: ProjectHarnessBadgesProps) {
               <button
                 type="button"
                 className="project-harness-action"
-                disabled={injectMutation.isPending}
+                disabled={injectMutation.isPending || !pack.injectable.ok}
+                title={pack.injectable.ok ? undefined : pack.injectable.reason}
                 onClick={() => {
                   injectMutation.mutate({ projectId, pack });
                 }}

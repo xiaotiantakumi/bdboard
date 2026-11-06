@@ -1,0 +1,106 @@
+/* bdboard-l1m1.1: 設定画面のハーネスパック選択 (HarnessPacksSection) */
+
+.harness-pack-project {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.harness-pack-project h4 {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.harness-pack-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.harness-pack-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+}
+
+.harness-pack-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.harness-pack-name {
+  font-weight: 600;
+}
+
+.harness-pack-version {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+.harness-pack-description,
+.harness-pack-role-detail,
+.harness-pack-blocked {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.harness-pack-blocked {
+  color: var(--color-text);
+}
+
+.harness-pack-action {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.harness-pack-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.harness-pack-uninject summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+
+.harness-pack-uninject-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.harness-pack-uninject-command {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.harness-pack-copy-feedback {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}

@@ -83,11 +83,15 @@ export function toHarnessStatusJson(status: ProjectHarnessStatus): Record<string
   return {
     packs: status.packs.map((entry) => ({
       name: entry.name,
+      description: entry.description,
+      role: entry.role,
+      requires: entry.requires,
       availableVersion: entry.availableVersion,
       installedVersion: entry.installedVersion,
       drift: entry.drift,
       hooksState: entry.hooksState,
       missingHooks: entry.missingHooks,
+      injectable: entry.injectable,
     })),
     contract: toContractJson(status.contract),
   };

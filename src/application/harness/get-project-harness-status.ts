@@ -8,6 +8,7 @@ import {
   type VerifyPackageScripts,
 } from '../../domain/harness-contract.js';
 import { evaluateHooksState } from '../../domain/harness-hooks.js';
+import { evaluatePackInjectability } from '../../domain/harness-pack-injectability.js';
 import type {
   HarnessManifest,
   PackSummary,
@@ -47,11 +48,15 @@ export function computeProjectHarnessStatus(
 
       return {
         name: available.name,
+        description: available.description,
+        role: available.role,
+        requires: available.requires,
         availableVersion: available.version,
         installedVersion,
         drift,
         hooksState: hooks.state,
         missingHooks: hooks.missingHooks,
+        injectable: evaluatePackInjectability(available, availablePacks, manifest),
       };
     })
     .sort((a, b) => compareStrings(a.name, b.name));

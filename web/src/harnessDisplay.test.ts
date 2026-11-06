@@ -20,17 +20,27 @@ import {
   harnessInjectButtonLabel,
   harnessPackNeedsAction,
 } from './harnessDisplay';
+import {
+  buildHarnessUninjectCommand,
+  formatHarnessPackRole,
+  formatHarnessPackRoleDetail,
+  isHarnessPackSelected,
+} from './harnessPackSelection';
 
 function makePack(
   overrides: Partial<ProjectHarnessPackStatusDto> = {},
 ): ProjectHarnessPackStatusDto {
   return {
     name: 'bdboard-harness',
+    description: '',
+    role: 'base',
+    requires: [],
     availableVersion: '0.2.0',
     installedVersion: null,
     drift: false,
     hooksState: 'none-declared',
     missingHooks: [],
+    injectable: { ok: true },
     ...overrides,
   };
 }
@@ -320,6 +330,7 @@ describe('harnessDisplay hooks state', () => {
       drift: false,
       hooksState: 'missing',
       missingHooks: MISSING,
+      injectable: { ok: true },
     });
     expect(harnessPackNeedsAction(pack)).toBe(true);
     expect(harnessInjectButtonLabel(pack)).toBe('再注入');
@@ -330,6 +341,7 @@ describe('harnessDisplay hooks state', () => {
       installedVersion: '0.2.0',
       hooksState: 'missing',
       missingHooks: MISSING,
+      injectable: { ok: true },
     });
     expect(formatHarnessHooksLabel(pack)).toBe('hook 未登録 (1)');
     expect(formatHarnessHooksDetail(pack)).toContain('再注入');
@@ -504,5 +516,42 @@ describe('harnessContractNeedsAttention with model exclusions', () => {
         modelExclusionWarnings: ['models.routes.review.low: 除外 (cursor) により候補が 0 件になりました (ラッパー scripts/aimix-run.sh は除外中の member の委譲を止め、他の member は表の判定なしで通します)'],
       }),
     ).toBe(true);
+  });
+});
+
+describe('harnessDisplay pack selection (bdboard-l1m1.1)', () => {
+  it('treats an entry in the injection record as selected', () => {
+    expect(isHarnessPackSelected(makePack({ installedVersion: null }))).toBe(false);
+    expect(isHarnessPackSelected(makePack({ installedVersion: '0.2.0' }))).toBe(true);
+  });
+
+  it('distinguishes base from optional packs in labels', () => {
+    expect(formatHarnessPackRole('base')).toBe('ベース');
+    expect(formatHarnessPackRole('optional')).toBe('任意');
+    expect(formatHarnessPackRoleDetail(makePack({ role: 'base' }))).toContain('ベース');
+    expect(
+      formatHarnessPackRoleDetail(makePack({ role: 'optional', requires: ['bdboard-harness'] })),
+    ).toBe('任意パック (前提: bdboard-harness)');
+  });
+
+  it('does not nag about an optional pack that is simply not selected', () => {
+    expect(harnessPackNeedsAction(makePack({ role: 'optional', installedVersion: null }))).toBe(
+      false,
+    );
+    expect(harnessPackNeedsAction(makePack({ role: 'base', installedVersion: null }))).toBe(true);
+    // 導入済みの任意パックのドリフトはベースと同じく要対応。
+    expect(
+      harnessPackNeedsAction(
+        makePack({ role: 'optional', installedVersion: '0.1.0', drift: true }),
+      ),
+    ).toBe(true);
+  });
+
+  it('builds a shell-quoted uninject command for the project and pack', () => {
+    const command = buildHarnessUninjectCommand("/tmp/it's a project", 'video-pack');
+    expect(command).toContain("'/tmp/it'\\''s a project'");
+    expect(command).toContain("'video-pack'");
+    expect(command).not.toContain('<PROJECT_PATH>');
+    expect(command).not.toContain('<PACK_NAME>');
   });
 });

@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  ApiError,
   postProjectHarnessInject,
   type ProjectHarnessPackStatusDto,
 } from '../api';
@@ -10,6 +11,26 @@ import { describeWriteError } from '../writeAccessMessage';
 import { useAutoClearedValue } from './useAutoClearedValue';
 
 const FEEDBACK_MS = 4000;
+
+/** サーバー (harness-inject-routes.ts) の 409 の error 文字列。web/ から src/ は import できないので二重定義。 */
+const SERVER_PACK_NOT_INJECTABLE = 'pack not injectable';
+
+/**
+ * 注入の失敗を文言にする。パックの組み合わせ検査で弾かれた 409 (bdboard-l1m1.1) は
+ * 「他セッションが先に変更した」ではなくサーバーが返した理由をそのまま出す。
+ * それ以外は書き込み共通の説明 (describeWriteError)。
+ */
+export function describeHarnessInjectError(error: unknown): string {
+  if (
+    error instanceof ApiError &&
+    error.status === 409 &&
+    error.errorMessage === SERVER_PACK_NOT_INJECTABLE &&
+    error.reason !== undefined
+  ) {
+    return `注入できません: ${error.reason}`;
+  }
+  return describeWriteError(error, 'ハーネスの注入に失敗しました');
+}
 
 export interface UseHarnessInjectOptions {
   readonly onSuccess?: (message: string) => void;
@@ -37,7 +58,7 @@ export function useHarnessInject(options?: UseHarnessInjectOptions) {
       );
     },
     onError: (error) => {
-      options?.onError?.(describeWriteError(error, 'ハーネスの注入に失敗しました'));
+      options?.onError?.(describeHarnessInjectError(error));
     },
   });
 }
