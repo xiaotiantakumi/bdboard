@@ -417,7 +417,7 @@ describe('createHarnessRoutes', () => {
       ),
     };
     const injector: HarnessInjectorPort = {
-      readSettings: vi.fn(async () => null),
+      readSettings: vi.fn(async () => [null, null]),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(),
     };

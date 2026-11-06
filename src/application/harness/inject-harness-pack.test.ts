@@ -95,7 +95,7 @@ describe('injectHarnessPack', () => {
         }),
       };
       const injector: HarnessInjectorPort = {
-        readSettings: vi.fn(async () => null),
+        readSettings: vi.fn(async () => [null, null]),
         readManifest: vi.fn(async () => ({
           packs: installed.map((name) => ({
             name,
@@ -148,7 +148,7 @@ describe('injectHarnessPack', () => {
         })),
       };
       const injector: HarnessInjectorPort = {
-        readSettings: vi.fn(async () => null),
+        readSettings: vi.fn(async () => [null, null]),
         readManifest: vi.fn(async () => ({ packs: [] })),
         injectPack: vi.fn(),
       };
