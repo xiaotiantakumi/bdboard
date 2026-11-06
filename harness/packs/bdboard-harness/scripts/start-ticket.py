@@ -5,6 +5,9 @@ SKILL.md 規律2 の手順 1〜3 を 1 本にする。排他の正本は git:
   git fetch origin → worktree とブランチの両方が無いことを確認
   → `git worktree add <path> -b <branch> <base>` (失敗 = 既存 = 排他負け)
   → 成功して初めて `bd update <ticket> --claim` → `--set-metadata bdboard.complexity=<c>`。
+remote (origin) の無い repo では git fetch と refs/remotes/origin/<branch> の検査を飛ばし、base の既定を
+refs/heads/<mainBranch> にする (origin があれば origin/<mainBranch>。mainBranch は契約
+.claude/bdboard-harness.json の値、省略時 main。bdboard-l1m1.16)。
 排他負けのときは「ほかのセッションが保持している」と出して非 0 で終わる。相手を戻さない・
 kill しない・claim を打たない。プロジェクト固有の場所や名前は持たない。
 
@@ -143,6 +146,41 @@ def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
+CONTRACT_REL = ".claude/bdboard-harness.json"
+DEFAULT_MAIN_BRANCH = "main"
+
+
+def load_contract() -> dict | None:
+    """契約 JSON を読む。無い・壊れている・オブジェクトでないときは None (main 扱い)。
+
+    コミット済みの契約が worktree に載るので、メインチェックアウトで読むこの値は新しい worktree が読む値と同じ。
+    """
+    top = run(["git", "rev-parse", "--show-toplevel"]).stdout.strip()
+    try:
+        with open(Path(top or ".") / CONTRACT_REL, encoding="utf-8") as f:
+            contract = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return contract if isinstance(contract, dict) else None
+
+
+def contract_main_branch(contract: dict | None) -> str | None:
+    """契約の mainBranch。省略時は main。git が別の意味に読む形なら None (TS の isSafeMainBranchName と同じ規則)。"""
+    value = DEFAULT_MAIN_BRANCH if contract is None or "mainBranch" not in contract else contract["mainBranch"]
+    name = value.strip() if isinstance(value, str) else ""
+    if (
+        not re.fullmatch(r"[A-Za-z0-9._/-]+", name)
+        or name.startswith(("-", "/"))
+        or name.endswith(("/", "."))
+        or "//" in name
+        or ".." in name
+        or name == "HEAD"
+        or any(seg.startswith(".") or seg.endswith(".lock") for seg in name.split("/"))
+    ):
+        return None
+    return name
+
+
 def ticket_status(ticket: str) -> tuple[str | None, str]:
     """bd show (読み取りのみ) で status を返す。(status, 失敗理由)。"""
     r = run(["bd", "show", ticket, "--json"])
@@ -201,8 +239,16 @@ def main() -> int:
     ticket = spec["ticket"]
     branch = spec.get("branch", f"bd/{ticket}")
     worktree = os.path.abspath(spec.get("worktree", f".claude/worktrees/{ticket}"))
-    base = spec.get("base", "origin/main")
     complexity = spec["complexity"]
+    # remote (origin) の無い repo (prFlow=local-merge など) では fetch も origin/<branch> の検査も飛ばし、
+    # base の既定をローカルの <mainBranch> にする (bdboard-l1m1.16)。origin があれば従来どおり origin/<mainBranch>。
+    contract = load_contract()
+    main_branch = contract_main_branch(contract)
+    if main_branch is None:
+        print(f"ERROR: {CONTRACT_REL}: mainBranch は英数字と . _ / - だけのブランチ名である必要があります (何も実行していません)", file=sys.stderr)
+        return 1
+    has_origin = "origin" in run(["git", "remote"]).stdout.split()
+    base = spec.get("base") or (f"origin/{main_branch}" if has_origin else f"refs/heads/{main_branch}")
 
     status, why = ticket_status(ticket)
     if status is None:
@@ -221,8 +267,9 @@ def main() -> int:
         print("ERROR: linked worktree の中では実行できません (ネストする)。メインチェックアウトで実行してください", file=sys.stderr)
         return 1
 
+    fetch = [["git", "fetch", "origin"]] if has_origin else []
     plan = [
-        ["git", "fetch", "origin"],
+        *fetch,
         ["git", "worktree", "add", worktree, "-b", branch, base],
         ["bd", "update", ticket, "--claim"],
         ["bd", "update", ticket, "--set-metadata", f"bdboard.complexity={complexity}"],
@@ -233,26 +280,28 @@ def main() -> int:
         print(worktree)
         return 0
 
-    r = run(plan[0])
-    if r.returncode != 0:
-        sys.stderr.write(r.stderr + r.stdout)
-        print("ERROR: git fetch origin に失敗しました (何も作っていません)", file=sys.stderr)
-        return 1
+    if fetch:
+        r = run(fetch[0])
+        if r.returncode != 0:
+            sys.stderr.write(r.stderr + r.stdout)
+            print("ERROR: git fetch origin に失敗しました (何も作っていません)", file=sys.stderr)
+            return 1
+        plan = plan[1:]
 
     listing = run(["git", "worktree", "list", "--porcelain"]).stdout
     registered = {os.path.realpath(line[len("worktree "):]) for line in listing.splitlines() if line.startswith("worktree ")}
     if os.path.realpath(worktree) in registered or os.path.exists(worktree):
         return lost(f"worktree {worktree} は既に存在します")
-    for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+    for ref in (f"refs/heads/{branch}", *([f"refs/remotes/origin/{branch}"] if has_origin else [])):
         if run(["git", "show-ref", "--verify", "--quiet", ref]).returncode == 0:
             return lost(f"ブランチ {branch} は既に存在します ({ref})")
 
-    r = run(plan[1])
+    r = run(plan[0])
     if r.returncode != 0:
         sys.stderr.write(r.stderr + r.stdout)
         return lost("git worktree add が失敗しました (排他負け)")
 
-    for cmd in plan[2:]:
+    for cmd in plan[1:]:
         r = run(cmd)
         if r.returncode != 0:
             sys.stderr.write(r.stderr + r.stdout)

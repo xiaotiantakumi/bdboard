@@ -406,6 +406,148 @@ describe.skipIf(process.platform === 'win32' || !HAS_TOOLS)(
       expect(r.stderr).toContain('この契約では PR を使いません');
     });
 
+    describe('contract lookup when the worktree has none (bdboard-l1m1.16)', () => {
+      const contractAt = (dir: string, contract: unknown): void => {
+        mkdirSync(path.join(dir, '.claude'), { recursive: true });
+        writeFileSync(path.join(dir, '.claude', 'bdboard-harness.json'), JSON.stringify(contract), 'utf8');
+      };
+
+      it('reads an uncommitted contract from the main checkout', async () => {
+        await makeWorktree('proj-low');
+        contractAt(repo, { version: 1, verify: 'x', prFlow: 'local-merge' });
+        const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'low' })]);
+        expect(r.exitCode).toBe(1);
+        expect(r.stderr).toContain('この契約では PR を使いません');
+        expect(sideEffects()).toEqual([]);
+      });
+
+      it('prefers the worktree contract when both exist', async () => {
+        await makeWorktree('proj-low');
+        contractAt(repo, { version: 1, verify: 'x', prFlow: 'local-merge' });
+        contractAt(wt, { version: 1, verify: 'x', prFlow: 'pr', verifyQuick: 'npm run wt-quick' });
+        const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'low' }), '--dry-run']);
+        // 未コミットの契約は status を汚すので PR 作成の検査には通らないが、契約は worktree 側が読まれている。
+        expect(r.stderr).not.toContain('この契約では PR を使いません');
+        expect(r.stderr).toContain('未コミット');
+      });
+
+      it('falls back to the defaults when neither has a contract', async () => {
+        await makeWorktree('proj-low');
+        const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'low' }), '--dry-run']);
+        expect(r.exitCode, r.stderr).toBe(0);
+        expect(r.stdout).toContain('+ npm run verify:quick');
+      });
+    });
+
+    it.each([['weird'], [7], [null]])(
+      'stops with 未知の値です for an unknown prFlow %j, before any side effect (bdboard-l1m1.16)',
+      async (prFlow) => {
+        await makeWorktree('proj-low', {
+          'b.txt': 'b\n',
+          '.claude/bdboard-harness.json': JSON.stringify({ version: 1, verify: 'x', prFlow }),
+        });
+        const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'low' })]);
+        expect(r.exitCode).toBe(1);
+        expect(r.stderr).toContain('未知の値です');
+        expect(r.stderr).toContain('pr / direct / none / local-merge');
+        expect(r.stderr).not.toContain('この契約では PR を使いません');
+        expect(sideEffects()).toEqual([]);
+        const remote = await git(repo, 'ls-remote', '--heads', 'origin', 'bd/proj-low');
+        expect(remote.stdout).toBe('');
+      },
+    );
+
+    it.each(['HEAD', 'a//b', 'a/.b', 'a.lock/b', '-x'])(
+      'rejects an unsafe contract mainBranch %j like the TS parser does (bdboard-l1m1.16)',
+      async (mainBranch) => {
+        await makeWorktree('proj-low', {
+          'b.txt': 'b\n',
+          '.claude/bdboard-harness.json': JSON.stringify({ prFlow: 'pr', mainBranch }),
+        });
+        const r = await run(['--spec', writeSpec({ ...baseSpec('proj-low'), complexity: 'low' })]);
+        expect(r.exitCode).toBe(1);
+        expect(r.stderr).toContain('mainBranch');
+        expect(sideEffects()).toEqual([]);
+      },
+    );
+
+    describe('bundling several tickets into one branch / PR (bdboard-l1m1.15)', () => {
+      const bundleBranch = 'bd/proj-low-and-high';
+
+      async function makeBundleWorktree(): Promise<void> {
+        await git(repo, 'worktree', 'add', wt, '-b', bundleBranch, 'origin/main');
+        writeFileSync(path.join(wt, 'b.txt'), 'b\n', 'utf8');
+        await git(wt, 'add', '-A');
+        await git(wt, 'commit', '-m', 'feat(proj-low): add b');
+      }
+
+      const bundleSpec = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+        ...baseSpec('proj-low'),
+        bundled_tickets: ['proj-high'],
+        branch: bundleBranch,
+        ...extra,
+      });
+
+      it('creates one PR for the bundle branch, writes every Closes:, comments PR: on every ticket, follows the highest complexity', async () => {
+        await makeBundleWorktree();
+        const r = await run(['--spec', writeSpec(bundleSpec())]);
+        expect(r.exitCode, r.stderr).toBe(0);
+        expect(r.stdout).toContain('議長のレビュー待ち');
+        const c = calls();
+        const create = c.find((x) => x.tool === 'gh' && x.args[1] === 'create');
+        const body = create?.args[create.args.indexOf('--body') + 1] ?? '';
+        expect(body.startsWith('Closes: proj-low\nCloses: proj-high\n\n')).toBe(true);
+        const comments = c.filter((x) => x.tool === 'bd' && x.args[0] === 'comment').map((x) => x.args.join(' '));
+        expect(comments).toContain('comment proj-low PR: https://github.com/example/repo/pull/7');
+        expect(comments).toContain('comment proj-high PR: https://github.com/example/repo/pull/7');
+        expect(c.some((x) => x.tool === 'gh' && x.args[1] === 'merge')).toBe(false);
+        const remote = await git(repo, 'ls-remote', '--heads', 'origin', bundleBranch);
+        expect(remote.stdout).toContain(`refs/heads/${bundleBranch}`);
+      });
+
+      it('lets the title parenthesis be the bundled ticket or the branch name', async () => {
+        await makeBundleWorktree();
+        const r = await run([
+          '--spec',
+          writeSpec(bundleSpec({ title: 'feat(proj-low-and-high): add b', complexity: 'low' })),
+          '--dry-run',
+        ]);
+        expect(r.exitCode, r.stderr).toBe(0);
+        expect(r.stdout).toContain('+ bd comment proj-high "PR: <url>"');
+        expect(r.stdout).toContain('gh pr merge');
+      });
+
+      it('rejects a bundled ticket that is not in_progress, with all reasons and no side effect', async () => {
+        await makeBundleWorktree();
+        const r = await run(['--spec', writeSpec(bundleSpec({ bundled_tickets: ['proj-open', 'proj-missing'] }))]);
+        expect(r.exitCode).toBe(1);
+        expect(r.stderr).toContain('spec.bundled_tickets[0]: status が in_progress ではありません');
+        expect(r.stderr).toContain('spec.bundled_tickets[1]: bd にチケットが見つかりません');
+        expect(sideEffects()).toEqual([]);
+      });
+
+      it('rejects duplicates, a bad branch name and a branch that differs from the current one', async () => {
+        await makeBundleWorktree();
+        const dup = await run(['--spec', writeSpec(bundleSpec({ bundled_tickets: ['proj-low'] }))]);
+        expect(dup.exitCode).toBe(1);
+        expect(dup.stderr).toContain('重複');
+        const bad = await run(['--spec', writeSpec(bundleSpec({ branch: 'feature/x' }))]);
+        expect(bad.exitCode).toBe(1);
+        expect(bad.stderr).toContain('ERROR: spec.branch');
+        const other = await run(['--spec', writeSpec(bundleSpec({ branch: 'bd/other-bundle' }))]);
+        expect(other.exitCode).toBe(1);
+        expect(other.stderr).toContain('bd/other-bundle ではありません');
+        expect(sideEffects()).toEqual([]);
+      });
+
+      it('still ties a single ticket to bd/<ticket> when branch is omitted', async () => {
+        await makeBundleWorktree();
+        const r = await run(['--spec', writeSpec(baseSpec('proj-low')), '--dry-run']);
+        expect(r.exitCode).toBe(1);
+        expect(r.stderr).toContain('bd/proj-low ではありません');
+      });
+    });
+
     it('uses the contract mainBranch as the base instead of a fixed origin/main', async () => {
       await git(repo, 'push', 'origin', 'main:trunk');
       await git(repo, 'fetch', 'origin');

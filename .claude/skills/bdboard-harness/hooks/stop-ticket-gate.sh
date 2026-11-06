@@ -275,8 +275,19 @@ PR_FLOW=''
 IGNORE_COUNT=0
 IGNORE_PATHSPEC=()
 REPO_ROOT="$(git -C "$HOOK_CWD" rev-parse --show-toplevel 2>/dev/null)"
-if [ -n "$REPO_ROOT" ] && [ -r "$REPO_ROOT/.claude/bdboard-harness.json" ]; then
-  CONTRACT_JSON="$(cat "$REPO_ROOT/.claude/bdboard-harness.json" 2>/dev/null)"
+# 契約は worktree にあればそれを、無ければ main checkout (git-common-dir の親) のものを読む
+# (契約が未コミットだと worktree には載らない。bdboard-l1m1.16)。
+CONTRACT_FILE=''
+if [ -n "$REPO_ROOT" ]; then
+  COMMON_DIR="$(git -C "$HOOK_CWD" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  for contract_dir in "$REPO_ROOT" "${COMMON_DIR%/.git}"; do
+    [ -n "$contract_dir" ] && [ -r "$contract_dir/.claude/bdboard-harness.json" ] || continue
+    CONTRACT_FILE="$contract_dir/.claude/bdboard-harness.json"
+    break
+  done
+fi
+if [ -n "$CONTRACT_FILE" ]; then
+  CONTRACT_JSON="$(cat "$CONTRACT_FILE" 2>/dev/null)"
   CONTRACT_MAIN="$(json_field "$CONTRACT_JSON" mainBranch)"
   [ -z "$CONTRACT_MAIN" ] || MAIN_BRANCH="$CONTRACT_MAIN"
   PR_FLOW="$(json_field "$CONTRACT_JSON" prFlow)"
@@ -303,11 +314,15 @@ esac
 # コミット数であり、ブランチを push した後もマージまでは減らない (bdboard-pkr6.25)。
 # 比較先は origin/<main>、無ければローカルの <main> (remote の無い repo。bdboard-l1m1.11)。
 # prFlow=local-merge はローカルの <main> が正本なので順序を逆にする。direct / none は
-# マージの概念が無いので数えない。どちらの ref も無ければこの判定は skip する (fail-open)。
+# <main> に直接コミットする運用なので、HEAD が <main> のときは数えない (別のブランチにいるときは数える。
+# bdboard-l1m1.16)。どちらの ref も無ければこの判定は skip する (fail-open)。
 UNMERGED_COUNT=0
+COUNT_UNMERGED=1
 case "$PR_FLOW" in
-  direct | none) ;;
-  *)
+  direct | none) [ "$BRANCH" != "$MAIN_BRANCH" ] || COUNT_UNMERGED=0 ;;
+esac
+case "$COUNT_UNMERGED" in
+  1)
     if git check-ref-format --branch "$MAIN_BRANCH" >/dev/null 2>&1; then
       UNMERGED_CANDIDATES="refs/remotes/origin/$MAIN_BRANCH refs/heads/$MAIN_BRANCH"
       [ "$PR_FLOW" != 'local-merge' ] || UNMERGED_CANDIDATES="refs/heads/$MAIN_BRANCH refs/remotes/origin/$MAIN_BRANCH"

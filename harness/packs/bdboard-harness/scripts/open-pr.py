@@ -13,6 +13,9 @@ spec JSON のキーと制約は同じ scripts/ の open-pr.schema.json が正本
 副作用 (verify・push・gh pr create・bd comment・auto-merge) は検査の後だけ。
 契約の prFlow が pr 以外 (direct / none / local-merge) のときは PR を使わない運用なので、何も検査・実行せず
 `この契約では PR を使いません` と明示して終了コード 1 で止まる (bdboard-l1m1.12。契約が無い・読めないときは pr 扱い)。
+prFlow が pr / direct / none / local-merge のどれでもなければ『未知の値です』で止まる (close-ticket.py・hook と同じ扱い。bdboard-l1m1.16)。
+複数チケットを 1 ブランチ・1 PR に束ねるときは、spec の bundled_tickets (追加で閉じるチケット) と branch (ブランチ名。既定 bd/<ticket>)
+を使う。本文に Closes: を全チケット分書き、PR: コメントを全チケットに付け、全チケットが in_progress であることを検査する (bdboard-l1m1.15)。
 
 動作: verifyQuick → git push -u origin <branch> → gh pr create → bd comment <ticket> "PR: <url>"
 → complexity が low/med なら gh pr merge --auto --squash --delete-branch (high は打たず
@@ -35,6 +38,8 @@ from pathlib import Path
 SCHEMA_PATH = Path(__file__).resolve().with_name("open-pr.schema.json")
 GENERATED_LINE = "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 DEFAULT_MAIN_BRANCH = "main"
+PR_FLOWS = ("pr", "direct", "none", "local-merge")
+TICKET_RE = r"[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9]+)*"
 CONTRACT_REL = ".claude/bdboard-harness.json"
 DEFAULT_VERIFY_QUICK = "npm run verify:quick"
 DEFAULT_COMMIT_CHECK = "npm run check:commits -- --range {range}"
@@ -87,6 +92,12 @@ def _validate(value: object, schema: dict, where: str, errors: list[str]) -> Non
             errors.append(f"{where}: 長すぎます ({len(value)} 字 > 上限 {schema['maxLength']} 字)")
         elif "pattern" in schema and not re.search(schema["pattern"], value):
             errors.append(f"{where}: 形式が合いません {_short(value)} — {schema.get('description', '')}")
+    elif isinstance(value, list):
+        if len(value) > schema.get("maxItems", len(value)):
+            errors.append(f"{where}: 多すぎます ({len(value)} 件 > 上限 {schema['maxItems']} 件)")
+        if isinstance(schema.get("items"), dict):
+            for i, item in enumerate(value):
+                _validate(item, schema["items"], f"{where}[{i}]", errors)
     elif isinstance(value, dict):
         props = schema.get("properties", {})
         for key in schema.get("required", []):
@@ -133,10 +144,17 @@ def load_spec(path: str) -> dict:
 
 
 def load_contract() -> dict | None:
-    """契約 JSON を読む。無い・壊れている・オブジェクトでないときは None (呼び出し側は既定に倒す)。"""
-    top = run(["git", "rev-parse", "--show-toplevel"]).stdout.strip()
+    """契約 JSON を読む。無い・壊れている・オブジェクトでないときは None (呼び出し側は既定に倒す)。
+
+    worktree に契約があればそれを、無ければ main checkout (git-common-dir の親) のものを読む
+    (契約が未コミットだと worktree には載らない。bdboard-l1m1.16)。
+    """
+    top = run(["git", "rev-parse", "--show-toplevel"]).stdout.strip() or "."
+    common = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout.strip()
+    roots = [top, *([common[: -len("/.git")]] if common.endswith("/.git") else [])]
+    path = next((Path(r) / CONTRACT_REL for r in roots if (Path(r) / CONTRACT_REL).is_file()), Path(top) / CONTRACT_REL)
     try:
-        with open(Path(top or ".") / CONTRACT_REL, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             contract = json.load(f)
     except (OSError, ValueError):
         return None
@@ -157,7 +175,16 @@ def contract_main_branch(contract: dict | None, errors: list[str]) -> str | None
         return None
     value = contract["mainBranch"]
     name = value.strip() if isinstance(value, str) else ""
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", name) or ".." in name or name.endswith(("/", ".lock", ".")):
+    # TS 側 (isSafeMainBranchName) と同じ規則。HEAD・a//b・a/.b・a.lock/b などを通さない。
+    if (
+        not re.fullmatch(r"[A-Za-z0-9._/-]+", name)
+        or name.startswith(("-", "/"))
+        or name.endswith(("/", "."))
+        or "//" in name
+        or ".." in name
+        or name == "HEAD"
+        or any(seg.startswith(".") or seg.endswith(".lock") for seg in name.split("/"))
+    ):
         errors.append(f"{CONTRACT_REL}: mainBranch は英数字と . _ / - だけのブランチ名である必要があります")
         return None
     return name
@@ -203,27 +230,27 @@ def run_checked(cmd: list[str], what: str) -> subprocess.CompletedProcess[str]:
     return r
 
 
-def read_ticket(ticket: str, errors: list[str]) -> dict | None:
+def read_ticket(ticket: str, errors: list[str], where: str = "spec.ticket") -> dict | None:
     r = run(["bd", "show", ticket, "--json"])
     if r.returncode != 0:
-        errors.append(f"spec.ticket: bd にチケットが見つかりません: {ticket}")
+        errors.append(f"{where}: bd にチケットが見つかりません: {ticket}")
         return None
     try:
         obj = json.loads(r.stdout)
     except json.JSONDecodeError:
-        errors.append(f"spec.ticket: bd show の出力を読めません: {ticket}")
+        errors.append(f"{where}: bd show の出力を読めません: {ticket}")
         return None
     if isinstance(obj, list):
         obj = obj[0] if obj else None
     if not isinstance(obj, dict):
-        errors.append(f"spec.ticket: bd にチケットが見つかりません: {ticket}")
+        errors.append(f"{where}: bd にチケットが見つかりません: {ticket}")
         return None
     if obj.get("status") != "in_progress":
-        errors.append(f"spec.ticket: status が in_progress ではありません ({obj.get('status')})。先に start-ticket で着手してください")
+        errors.append(f"{where}: status が in_progress ではありません ({obj.get('status')})。先に start-ticket で着手してください")
     return obj
 
 
-def check_git_state(ticket: str, branch: str, base: str, commit_check: str, errors: list[str]) -> bool:
+def check_git_state(branch: str, base: str, commit_check: str, errors: list[str]) -> bool:
     """git の状態を検査する。linked worktree でなければ以降を調べず False を返す。"""
     gd = run(["git", "rev-parse", "--path-format=absolute", "--git-dir"]).stdout.strip()
     common = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout.strip()
@@ -269,11 +296,20 @@ def references_issue(summary: str, number: int) -> bool:
     return re.search(rf"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s*:?\s*#{number}\b", text, re.IGNORECASE) is not None
 
 
-def build_body(spec: dict, issue_number: int | None = None) -> str:
+def build_body(spec: dict, issue_numbers: list[int] | None = None) -> str:
+    """本文。束ねるチケットがあるときは Closes: を 1 行ずつ全て書く (bdboard-l1m1.15)。"""
     summary = spec["summary"].strip()
-    if issue_number is not None and not references_issue(summary, issue_number):
-        summary += f"\n\nCloses #{issue_number}"
-    return f"Closes: {spec['ticket']}\n\n{summary}\n\n{GENERATED_LINE}"
+    for number in issue_numbers or []:
+        if not references_issue(summary, number):
+            summary += f"\n\nCloses #{number}"
+    closes = "\n".join(f"Closes: {t}" for t in all_tickets(spec))
+    return f"{closes}\n\n{summary}\n\n{GENERATED_LINE}"
+
+
+def all_tickets(spec: dict) -> list[str]:
+    """PR が閉じるチケット (代表の ticket が先頭、束ねる bundled_tickets が続く)。"""
+    bundled = spec.get("bundled_tickets")
+    return [spec["ticket"], *(bundled if isinstance(bundled, list) else [])]
 
 
 def skip_verify_comment(verify_cmd: list[str], reason: str) -> str:
@@ -298,6 +334,13 @@ def main() -> int:
     # PR を使わない契約 (prFlow が pr 以外) では、spec の検査より前に明示して止まる (副作用なし)。
     contract = load_contract()
     pr_flow = contract_pr_flow(contract)
+    if pr_flow not in PR_FLOWS:
+        print(
+            f"ERROR: {CONTRACT_REL}: prFlow={pr_flow} は未知の値です ({' / '.join(PR_FLOWS)} のいずれか)。"
+            "verify・push・PR 作成はしていません。契約の prFlow を直してください",
+            file=sys.stderr,
+        )
+        return 1
     if pr_flow != "pr":
         print(
             f"ERROR: この契約では PR を使いません ({CONTRACT_REL}: prFlow={pr_flow})。verify・push・PR 作成はしていません。"
@@ -322,28 +365,45 @@ def main() -> int:
 
     ticket = spec.get("ticket") if isinstance(spec.get("ticket"), str) else None
     title = spec.get("title") if isinstance(spec.get("title"), str) else None
+    bundled = [t for t in spec.get("bundled_tickets", []) if isinstance(t, str)] if isinstance(spec.get("bundled_tickets"), list) else []
+    # 束ね (bdboard-l1m1.15): bundled_tickets を足したときは、ブランチ名を branch で指定できる (既定 bd/<ticket>)。
+    branch_spec = spec.get("branch") if isinstance(spec.get("branch"), str) else None
+    if bundled and ticket and len({ticket, *bundled}) != 1 + len(bundled):
+        errors.append("spec.bundled_tickets: ticket と重複、または同じ id が複数あります")
+    if branch_spec is not None and run(["git", "check-ref-format", f"refs/heads/{branch_spec}"]).returncode != 0:
+        errors.append(f"spec.branch: git のブランチ名として不正です: {branch_spec}")
     if ticket and title:
         m = re.match(r"^[a-z]+\(([^()]+)\):", title)
-        if m and m.group(1) != ticket:
-            errors.append(f"spec.title: 括弧の中が ticket と一致しません ({m.group(1)} != {ticket})")
+        allowed = [ticket, *bundled, *([branch_spec[len("bd/"):]] if branch_spec and branch_spec.startswith("bd/") else [])]
+        if m and m.group(1) not in allowed:
+            errors.append(f"spec.title: 括弧の中が ticket と一致しません ({m.group(1)} != {' / '.join(allowed)})")
 
     verify_cmd, commit_check = read_contract_commands(contract, errors)
     explicit_main = contract_main_branch(contract, errors)
     main_branch = explicit_main or DEFAULT_MAIN_BRANCH
     base = f"origin/{main_branch}"
     complexity = spec.get("complexity") if spec.get("complexity") in ("low", "med", "high") else None
-    issue_number: int | None = None
-    if ticket and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9]+)*", ticket):
-        issue = read_ticket(ticket, errors)
-        issue_number = issue_number_from_external_ref(issue)
-        if issue is not None and "complexity" not in spec:
-            meta = issue.get("metadata")
+    issue_numbers: list[int] = []
+    if ticket and re.fullmatch(TICKET_RE, ticket):
+        order = {"low": 0, "med": 1, "high": 2}
+        found: list[str] = []
+        for t, where in [(ticket, "spec.ticket"), *((b, f"spec.bundled_tickets[{i}]") for i, b in enumerate(bundled))]:
+            if not re.fullmatch(TICKET_RE, t):
+                continue
+            issue = read_ticket(t, errors, where)
+            number = issue_number_from_external_ref(issue)
+            if number is not None and number not in issue_numbers:
+                issue_numbers.append(number)
+            meta = issue.get("metadata") if issue is not None else None
             value = meta.get("bdboard.complexity") if isinstance(meta, dict) else None
-            if value in ("low", "med", "high"):
-                complexity = value
-            else:
+            if value in order:
+                found.append(value)
+            elif issue is not None and "complexity" not in spec and t == ticket:
                 errors.append("spec.complexity: 省略時は bd metadata bdboard.complexity が要りますが、ありません (spec に書くか start-ticket で記録)")
-        check_git_state(ticket, f"bd/{ticket}", base, commit_check, errors)
+        if "complexity" not in spec and found:
+            # 束ねたときは、metadata のある中で最も高い複雑度に合わせる (high を low の auto-merge に紛れ込ませない)。
+            complexity = max(found, key=lambda v: order[v])
+        check_git_state(branch_spec or f"bd/{ticket}", base, commit_check, errors)
 
     if errors:
         for err in errors:
@@ -352,8 +412,8 @@ def main() -> int:
         return 1
 
     assert ticket and complexity
-    branch = f"bd/{ticket}"
-    body = build_body(spec, issue_number)
+    branch = branch_spec or f"bd/{ticket}"
+    body = build_body(spec, issue_numbers)
     # 契約が mainBranch を明示したときだけ --base を渡す (未指定ならリポジトリの既定ブランチ = 従来どおり)。
     base_args = ["--base", explicit_main] if explicit_main else []
     steps: list[tuple[str, list[str]]] = []
@@ -367,7 +427,8 @@ def main() -> int:
         for _, cmd in steps:
             print("+ " + " ".join(cmd))
         print(f"+ gh pr create --title {json.dumps(spec['title'], ensure_ascii=False)} --body {json.dumps(body, ensure_ascii=False)}" + "".join(f" {a}" for a in base_args))
-        print(f'+ bd comment {ticket} "PR: <url>"')
+        for t in all_tickets(spec):
+            print(f'+ bd comment {t} "PR: <url>"')
         if complexity == "high":
             print("(complexity high: auto-merge は打たない。議長のレビュー待ち)")
         else:
@@ -385,7 +446,8 @@ def main() -> int:
         print(f"ERROR: gh pr create の出力から PR URL を取得できませんでした: {created.stdout!r}", file=sys.stderr)
         return 1
     try:
-        run_checked(["bd", "comment", ticket, f"PR: {url}"], "bd comment PR:")
+        for t in all_tickets(spec):
+            run_checked(["bd", "comment", t, f"PR: {url}"], f"bd comment PR: ({t})")
         if complexity == "high":
             print("complexity high: auto-merge は有効にしていません。議長のレビュー待ち")
         else:

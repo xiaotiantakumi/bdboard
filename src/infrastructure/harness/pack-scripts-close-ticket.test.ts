@@ -335,6 +335,17 @@ describe.skipIf(process.platform === 'win32' || !HAS_TOOLS)(
       expect(writes()).toEqual([]);
     });
 
+    it.each(['HEAD', 'a//b', 'a/.b', 'a.lock/b', '-x'])(
+      'rejects an unsafe contract mainBranch %j like the TS parser does (bdboard-l1m1.16)',
+      async (mainBranch) => {
+        writeContract({ version: 1, verify: 'x', prFlow: 'pr', mainBranch });
+        const r = await run(['--spec', writeSpec(spec)]);
+        expect(r.exitCode).toBe(1);
+        expect(r.stderr).toContain('mainBranch');
+        expect(writes()).toEqual([]);
+      },
+    );
+
     it('prFlow=pr follows the contract mainBranch for the reachability check', async () => {
       writeContract({ version: 1, verify: 'x', prFlow: 'pr', mainBranch: 'trunk' });
       const missing = await run(['--spec', writeSpec(spec)]);

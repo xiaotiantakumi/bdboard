@@ -2,7 +2,7 @@
 #
 # bdboard-harness / 作業フォルダの鮮度警告 (bdboard-flpp)。
 #
-# hook の登録 (.claude/settings.json) も本体 (.claude/skills/<pack>/hooks/ など) も、セッションを
+# hook の登録 (.claude/settings.local.json、旧版の注入先は settings.json) も本体 (.claude/skills/<pack>/hooks/ など) も、セッションを
 # 起動した checkout (= $CLAUDE_PROJECT_DIR) から読まれる。Agent ツールで起動したサブエージェントの
 # hook も親と同じ $CLAUDE_PROJECT_DIR から読まれる。何日も動く議長セッションの checkout は誰も
 # 更新しないので、main に入った hook の追加・修正が議長にも、議長が起動した全サブエージェントにも
@@ -147,9 +147,13 @@ TOP="$(git -C "$PROJECT_DIR" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ -n "$TOP" ] || exit 0
 
 CONTRACT_JSON='{}'
-if [ -r "$TOP/.claude/bdboard-harness.json" ]; then
-  CONTRACT_JSON="$(cat "$TOP/.claude/bdboard-harness.json" 2>/dev/null)"
-fi
+# worktree に契約が無い (未コミット) ときは main checkout (git-common-dir の親) のものを読む (bdboard-l1m1.16)。
+COMMON_TOP="$(git -C "$TOP" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+for contract_dir in "$TOP" "${COMMON_TOP%/.git}"; do
+  [ -n "$contract_dir" ] && [ -r "$contract_dir/.claude/bdboard-harness.json" ] || continue
+  CONTRACT_JSON="$(cat "$contract_dir/.claude/bdboard-harness.json" 2>/dev/null)"
+  break
+done
 CONTRACT="$(json_fields "$CONTRACT_JSON" mainBranch prFlow alwaysOnServer.restartScript)"
 MAIN_BRANCH=''
 PR_FLOW=''
@@ -189,6 +193,8 @@ for candidate in $BASE_CANDIDATES; do
 done
 [ -n "$HEAD_SHA" ] && [ -n "$BASE_SHA" ] || exit 0
 
+# 案内する merge の引数は完全修飾 ref (BASE_REF)。短縮名 main / origin/main は同名のタグがあると
+# タグに解決される (bdboard-l1m1.16)。
 # 同じ状態 (HEAD / 既定ブランチの先端) は REMIND_MINUTES に 1 回だけ言う。UserPromptSubmit と
 # PostToolUse は毎回走るので、以降の git を起こす前にここで打ち切る。状態ファイルは checkout の
 # 外に置く (中に置くと git status を汚し、Stop ゲートの dirty 判定に響く)。
@@ -308,17 +314,17 @@ elif [ "$LEVEL" = 'behind' ]; then
   elif [ -z "$BRANCH" ] || [ "$IN_PROGRESS" -eq 1 ]; then
     BODY="HEAD が detached か merge/rebase などの途中なので、追従コマンドは案内しません。その操作を終えてから追従してください。"
   elif [ "$DIRTY_COUNT" -gt 0 ]; then
-    BODY="未コミットの変更が ${DIRTY_COUNT} ファイルあります。ユーザーに確認のうえ、コミットしてから git -C '${TOP}' merge ${BASE} で追従してください。"
+    BODY="未コミットの変更が ${DIRTY_COUNT} ファイルあります。ユーザーに確認のうえ、コミットしてから git -C '${TOP}' merge ${BASE_REF} で追従してください。"
   elif [ "$MERGE_BASE" = "$HEAD_SHA" ]; then
-    BODY="独自のコミットが無く作業ツリーも clean なので、git -C '${TOP}' merge --ff-only ${BASE} で早送りできます。"
+    BODY="独自のコミットが無く作業ツリーも clean なので、git -C '${TOP}' merge --ff-only ${BASE_REF} で早送りできます。"
   else
-    BODY="独自のコミットがあるので、ユーザーに確認のうえ git -C '${TOP}' merge ${BASE} で取り込んでください (rebase ではなく merge)。"
+    BODY="独自のコミットがあるので、ユーザーに確認のうえ git -C '${TOP}' merge ${BASE_REF} で取り込んでください (rebase ではなく merge)。"
   fi
   if [ "$LOCK_BEHIND" -gt 0 ]; then
     BODY="$BODY 依存 (package-lock.json) も変わっているので、追従後に npm install を実行してください。"
   fi
   if [ "$SETTINGS_BEHIND" -gt 0 ]; then
-    BODY="$BODY hook の登録 (.claude/settings.json) も変わっています。追従後に /hooks で新しい hook が載っているか確認し、載っていなければセッションを起動し直してください。"
+    BODY="$BODY hook の登録 (.claude/settings.json。注入された登録は git 管理外の .claude/settings.local.json にあり追従では変わらないので、パックの再注入で直ります) も変わっています。追従後に /hooks で新しい hook が載っているか確認し、載っていなければセッションを起動し直してください。"
   fi
 fi
 if [ "$MISSING_COUNT" -gt 0 ]; then

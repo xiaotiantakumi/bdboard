@@ -2,7 +2,7 @@
 
 failure-catalog の「D: 文章で禁止しても再発する操作ミス」を、文章ではなく Claude Code
 の hook で機械的に止める仕組み (bdboard-pkr6.1 / docs/HARNESS-EVALUATION.md
-§2.3・§5 P1)。`.claude/settings.json` への登録は注入 API 側が行う (bdboard-pkr6.2)。
+§2.3・§5 P1)。hook の登録は注入 API 側が `.claude/settings.local.json` (git 管理外) へ行う (bdboard-pkr6.2。登録先は bdboard-l1m1.8 で settings.json から移った。旧版で注入済みの settings.json の登録は、版上げの再注入で移る)。
 
 bdboard-cm2q.10 (2026-09) で、コマンド文字列/パスを正規表現や argv で読んで判定していた
 `pre-bash-guard.sh` / `pre-edit-guard.sh` / `server-guard.sh` / `worktree-owner-guard.sh` と
@@ -30,7 +30,7 @@ bdboard-cm2q.10 (2026-09) で、コマンド文字列/パスを正規表現や a
 | pre-edit-guard 規則2 (main checkout への Edit/Write) | サブエージェントが main checkout のファイルを直接編集 | `isolation: "worktree"` の File edits チェック |
 | pre-edit-guard 規則3 (`.beads/` への Edit) | bd 台帳ファイルを直接編集して CI の diff チェックに落ちる | `permissions.deny` (`Edit(**/.beads/**)`。旧規則のブランチ条件は deny では表せないので無条件) |
 
-**pack 注入は `permissions` を配らない** — 注入 API が `.claude/settings.json` へ
+**pack 注入は `permissions` を配らない** — 注入 API が `.claude/settings.local.json` へ
 自動登録するのは `hooks` キーだけで、`permissions` はパックの管轄外 (各プロジェクトが
 自分で設定する領域だから)。このパックを新しく注入するプロジェクトは、
 `references/settings-snippet.json` の内容を自分の `.claude/settings.json` の
@@ -76,7 +76,8 @@ kill だけは元々これを説明する hook 側の案内が無く、deny が�
 6. それ以外は通過。
 
 手順 5 は契約 `.claude/bdboard-harness.json` を読む (bdboard-l1m1.10 / .11 / .12。契約が無い・壊れている・
-キーの形が違うときはすべて従来どおり = fail-open):
+キーの形が違うときはすべて従来どおり = fail-open。契約は worktree にあればそれを、無ければ main checkout
+(`git rev-parse --git-common-dir` の親) のものを読む。bdboard-l1m1.16):
 
 - `stopGate.ignorePaths` (文字列の配列): 未コミット差分の数え方から外す git pathspec
   (`git status --porcelain -- . ':(exclude)<path>'`、リポジトリルート基準)。生成物が常に未コミットの repo が
@@ -100,7 +101,7 @@ kill だけは元々これを説明する hook 側の案内が無く、deny が�
 
 ### なぜ要るか
 
-hook の登録 (`.claude/settings.json`) も本体 (この `hooks/` や `scripts/*.mjs`) も、セッションを
+hook の登録 (`.claude/settings.local.json`。旧版の注入先は `.claude/settings.json`) も本体 (この `hooks/` や `scripts/*.mjs`) も、セッションを
 起動した checkout (`$CLAUDE_PROJECT_DIR`) から読まれる。Agent ツールで起動したサブエージェントの
 hook も**親と同じ** `$CLAUDE_PROJECT_DIR` から読まれる。何日も動く議長セッションの checkout は
 誰も更新しないので、main に入った hook の追加・修正が議長にも、議長が起動した全サブエージェントにも
@@ -140,7 +141,7 @@ hook を直している PR worktree は自分のコミットでは警告され�
 - 独自のコミットがある → 「ユーザーに確認のうえ `git merge origin/<main>`」(rebase は案内しない)。
   案内を読んだ議長がそのまま実行しうるので、merge コミットを作る案内には確認を添える。
 - `HEAD..origin/<main>` に `package-lock.json` を触ったコミットがある → 追従後の `npm install` を添える。
-- `HEAD..origin/<main>` に `.claude/settings.json` を触ったコミットがある → 「追従後に `/hooks`
+- `HEAD..origin/<main>` に `.claude/settings.json` を触ったコミットがある (settings.local.json は git の外なので数えない) → 「追従後に `/hooks`
   で新しい hook が載っているか確認し、載っていなければセッションを起動し直す」を添える
   (本体は毎回読み直されるが、登録の変更がいつ反映されるかは Claude Code 側の版に依存するため)。
 
@@ -225,21 +226,24 @@ failure-catalog に追加する。
 ## pack.json の `hooks[]` 宣言 (P1b への契約)
 
 各エントリは `event` / `matcher` / `script` / `timeout` を持つ。P1b (bdboard-pkr6.2) が
-`.claude/settings.json` へ登録するときは、**この 4 つをそのまま書き写す**。現在の
+`.claude/settings.local.json` へ登録するときは、**この 4 つをそのまま書き写す**。現在の
 エントリは 3 スクリプト・5 エントリ — `stop-ticket-gate.sh` (Stop)・`worktree-freshness.sh`
 (SessionStart / UserPromptSubmit / PostToolUse)・`deferred-due.sh` (SessionStart。timeout 15) — で、PreToolUse の登録は無い
 (コマンド文字列/パスを読む hook を bdboard-cm2q.10 で全廃したため)。
 
 - **`timeout` は秒。契約値として `10` を宣言してある** — P1b は自分で決めずこの値を
-  settings.json に書く。Claude Code の command hook の既定 timeout は 600 秒で、Stop
+  settings.local.json に書く。Claude Code の command hook の既定 timeout は 600 秒で、Stop
   イベントにはそれを短くする既定が無い。`bd` が刺さると 10 分セッションが止まりうるので、
   「fail-open のガードが原因で作業が止まる」ことのないよう明示的に縮める。
 - **Stop / SessionStart / UserPromptSubmit エントリの `matcher` は空文字**。空文字は「matcher 無し」の
-  意味で置いてあるだけなので、**P1b は settings.json に `matcher` キーを書かない**
+  意味で置いてあるだけなので、**P1b は settings.local.json に `matcher` キーを書かない**
   (PostToolUse の `Agent|Task` は書く)。同じ script を複数 event に宣言してよい
   (worktree-freshness.sh は 3 event)。登録状態の評価は event ごとに見る。
 
 ## 手で試す
+
+**stdin に `/dev/null` か JSON を渡して実行する。** `worktree-freshness.sh` は stdin が閉じていないと EOF を待ち、
+手で起動すると 2 分以上返らない (下の例は JSON をパイプで渡すので EOF に届く)。
 
 ```bash
 echo '{"hook_event_name":"Stop","stop_hook_active":false,"cwd":"'"$PWD"'"}' \

@@ -219,6 +219,78 @@ describe.skipIf(process.platform === 'win32' || !HAS_TOOLS)(
       expect(calls().filter((c) => c.args[0] === 'update')).toEqual([]);
     });
 
+    describe('in a repo without a remote (prFlow=local-merge, bdboard-l1m1.16)', () => {
+      beforeEach(async () => {
+        await git(repo, 'remote', 'remove', 'origin');
+      });
+
+      it('skips git fetch, bases the worktree on the local main, then claims', async () => {
+        const dry = await run(['--spec', writeSpec(spec), '--dry-run']);
+        expect(dry.exitCode, dry.stderr).toBe(0);
+        expect(dry.stdout).not.toContain('git fetch');
+        expect(dry.stdout).toContain(`git worktree add ${wt()} -b bd/proj-a1 refs/heads/main`);
+
+        const r = await run(['--spec', writeSpec(spec)]);
+        expect(r.exitCode, r.stderr).toBe(0);
+        expect(r.stdout.trim().split('\n').pop()).toBe(wt());
+        expect(existsSync(path.join(wt(), 'a.txt'))).toBe(true);
+        const head = await git(wt(), 'branch', '--show-current');
+        expect(head.stdout.trim()).toBe('bd/proj-a1');
+        const mainSha = (await git(repo, 'rev-parse', 'refs/heads/main')).stdout.trim();
+        expect((await git(wt(), 'rev-parse', 'HEAD')).stdout.trim()).toBe(mainSha);
+        expect(calls().filter((c) => c.args[0] === 'update').map((c) => c.args)).toEqual([
+          ['update', 'proj-a1', '--claim'],
+          ['update', 'proj-a1', '--set-metadata', 'bdboard.complexity=med'],
+        ]);
+      });
+
+      it('still loses on an existing local branch: no claim, no worktree', async () => {
+        await git(repo, 'branch', 'bd/proj-a1');
+        const r = await run(['--spec', writeSpec(spec)]);
+        expect(r.exitCode).toBe(2);
+        expect(r.stderr).toContain('ほかのセッションが保持');
+        expect(existsSync(wt())).toBe(false);
+        expect(calls().filter((c) => c.args[0] === 'update')).toEqual([]);
+      });
+
+      it('reads mainBranch from the contract for the default base', async () => {
+        await git(repo, 'branch', '-m', 'main', 'trunk');
+        mkdirSync(path.join(repo, '.claude'), { recursive: true });
+        writeFileSync(
+          path.join(repo, '.claude', 'bdboard-harness.json'),
+          JSON.stringify({ version: 1, verify: 'true', prFlow: 'local-merge', mainBranch: 'trunk' }),
+          'utf8',
+        );
+        const r = await run(['--spec', writeSpec(spec)]);
+        expect(r.exitCode, r.stderr).toBe(0);
+        const trunkSha = (await git(repo, 'rev-parse', 'refs/heads/trunk')).stdout.trim();
+        expect((await git(wt(), 'rev-parse', 'HEAD')).stdout.trim()).toBe(trunkSha);
+      });
+    });
+
+    it('keeps origin/<mainBranch> as the default base and fetches when origin exists', async () => {
+      const r = await run(['--spec', writeSpec(spec), '--dry-run']);
+      expect(r.stdout).toContain('git fetch origin');
+      expect(r.stdout).toContain('origin/main');
+    });
+
+    it.each(['HEAD', 'a//b', 'a/.b', '-x', 'a.lock'])(
+      'rejects an unsafe contract mainBranch %j before touching anything',
+      async (mainBranch) => {
+        mkdirSync(path.join(repo, '.claude'), { recursive: true });
+        writeFileSync(
+          path.join(repo, '.claude', 'bdboard-harness.json'),
+          JSON.stringify({ version: 1, verify: 'true', prFlow: 'pr', mainBranch }),
+          'utf8',
+        );
+        const r = await run(['--spec', writeSpec(spec)]);
+        expect(r.exitCode).toBe(1);
+        expect(r.stderr).toContain('mainBranch');
+        expect(existsSync(wt())).toBe(false);
+        expect(calls().filter((c) => c.args[0] === 'update')).toEqual([]);
+      },
+    );
+
     it('--help lists the schema keys', async () => {
       const r = await run(['--help']);
       expect(r.exitCode).toBe(0);

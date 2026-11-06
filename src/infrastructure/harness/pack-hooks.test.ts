@@ -854,11 +854,13 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
 
         async function setup(
           contract: unknown,
+          where: { branch?: string; repoDir?: string } = {},
         ): Promise<{ repo: string; env: Record<string, string> }> {
           const { repo, env } = await setupTicketWorktree({
-            branch: 'bd/test-1',
+            branch: where.branch ?? 'bd/test-1',
             comments: '[]',
             dirty: false,
+            ...(where.repoDir === undefined ? {} : { repoDir: where.repoDir }),
             jsonTool,
           });
           mkdirSync(path.join(repo, '.claude'), { recursive: true });
@@ -874,6 +876,61 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
         function stop(repo: string, env: Record<string, string>): Promise<CommandResult> {
           return runHook(STOP_TICKET_GATE, { hook_event_name: 'Stop', cwd: repo }, { cwd: repo, env });
         }
+
+        // 契約が未コミットだと linked worktree には載らない。worktree に無ければ main checkout の契約を読む (bdboard-l1m1.16)。
+        async function setupLinkedWorktree(): Promise<{ main: string; linked: string; env: Record<string, string> }> {
+          const { repo: main, env } = await setupTicketWorktree({
+            branch: 'main',
+            comments: '[]',
+            dirty: false,
+            jsonTool,
+          });
+          const linked = path.join(tmpRoot, 'linked-wt');
+          await runGit(main, ['worktree', 'add', '-q', '-b', 'bd/test-1', linked], env);
+          writeFileSync(path.join(linked, 'render_times.tsv'), 'x\n', 'utf8');
+          return { main, linked, env };
+        }
+
+        const writeContractAt = (dir: string, contract: unknown): void => {
+          mkdirSync(path.join(dir, '.claude'), { recursive: true });
+          writeFileSync(path.join(dir, CONTRACT_REL), `${JSON.stringify(contract)}\n`, 'utf8');
+        };
+
+        it('reads the contract from the main checkout when the worktree has none', async () => {
+          const { main, linked, env } = await setupLinkedWorktree();
+          writeContractAt(main, { stopGate: { ignorePaths: ['render_times.tsv'] } });
+
+          const result = await stop(linked, env);
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+        });
+
+        it('prefers the contract in the worktree over the main checkout when both exist', async () => {
+          const { main, linked, env } = await setupLinkedWorktree();
+          writeContractAt(main, { stopGate: { ignorePaths: ['render_times.tsv'] } });
+          writeContractAt(linked, { prFlow: 'pr' });
+
+          const result = await stop(linked, env);
+          expect(result.exitCode).toBe(2);
+          expect(result.stderr).toContain('未コミット差分: 2 ファイル');
+        });
+
+        it('falls back to the defaults when neither checkout has a contract', async () => {
+          const { linked, env } = await setupLinkedWorktree();
+
+          const result = await stop(linked, env);
+          expect(result.exitCode).toBe(2);
+          expect(result.stderr).toContain('コミットして PR を開き');
+        });
+
+        it('uses the prFlow of the main checkout contract for the message', async () => {
+          const { main, linked, env } = await setupLinkedWorktree();
+          writeContractAt(main, { prFlow: 'direct' });
+
+          const result = await stop(linked, env);
+          expect(result.exitCode).toBe(2);
+          expect(result.stderr).toContain('prFlow=direct');
+        });
 
         it('passes when only ignored paths are dirty (untracked generated files)', async () => {
           const { repo, env } = await setup({
@@ -934,14 +991,36 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
           },
         );
 
-        it('ignores unmerged commits when prFlow=direct (nothing to merge)', async () => {
-          const { repo, env } = await setup({ prFlow: 'direct' });
-          await addOriginRemote(repo, env, 'main');
-          await commitExtra(repo, env, 'unpushed.txt');
+        it.each(['direct', 'none'])(
+          'counts unmerged commits on a branch other than main when prFlow=%s (bdboard-l1m1.16)',
+          async (prFlow) => {
+            const { repo, env } = await setup({ prFlow });
+            await addOriginRemote(repo, env, 'main');
+            await commitExtra(repo, env, 'unpushed.txt');
 
-          const result = await stop(repo, env);
-          expect(result.exitCode).toBe(0);
-        });
+            const result = await stop(repo, env);
+            expect(result.exitCode).toBe(2);
+            expect(result.stderr).toContain('main 未取り込みのコミット: 1 件');
+          },
+        );
+
+        it.each(['direct', 'none'])(
+          'does not count unmerged commits while HEAD is the main branch itself when prFlow=%s',
+          async (prFlow) => {
+            // ブランチ名からは per-ticket と分からないので、worktree 名 (.claude/worktrees/test-1) で ticket を特定する。
+            const { repo, env } = await setup(
+              { prFlow },
+              { branch: 'main', repoDir: path.join(tmpRoot, '.claude', 'worktrees', 'test-1') },
+            );
+            await addOriginRemote(repo, env, 'main');
+            await commitExtra(repo, env, 'direct-commit.txt');
+            await runGit(repo, ['update-ref', '-d', 'refs/remotes/origin/main'], env);
+            await runGit(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD~1'], env);
+
+            const result = await stop(repo, env);
+            expect(result.exitCode).toBe(0);
+          },
+        );
 
         it('uses the local main for the unmerged count when there is no remote', async () => {
           const { repo, env } = await setup({});

@@ -7,7 +7,7 @@
 | 段階 | スクリプト | 誰が | 場所 |
 |---|---|---|---|
 | 着手（worktree 作成 → claim） | `scripts/start-ticket.py --spec <json>` | 議長 | メインチェックアウト（worker は isolation で worktree をもらうので呼ばない） |
-| PR 作成（verify → push → PR → `PR:` コメント → auto-merge） | `scripts/open-pr.py --spec <json>` | worker・議長 | チケットの worktree |
+| PR 作成（verify → push → PR → `PR:` コメント → auto-merge。複数チケットを 1 ブランチ・1 PR に束ねるときは spec の `bundled_tickets` と `branch`） | `scripts/open-pr.py --spec <json>` | worker・議長 | チケットの worktree |
 | 確認待ち gate | `scripts/ask-human-gate.py --spec <json>` | worker・議長 | どこでも |
 | 確認チケット | `scripts/post-review-ticket.py --spec <json>` | worker・議長 | どこでも |
 | close と掃除 | `scripts/close-ticket.py --spec <json>` | 議長 | メインチェックアウト |
@@ -26,8 +26,8 @@ AGENTS.md → (3) どちらにも無ければ検証せずに進めない**（SKI
 | `verifyQuick`（任意） | PR 前の軽い検証。`open-pr.py` が読む。既定 `npm run verify:quick` |
 | `commitCheck`（任意） | コミットメッセージ検査。`{range}` が `origin/<mainBranch>..HEAD` になる。既定 `npm run check:commits -- --range {range}` |
 | `prFlow` | `pr` = PR 必須 / `direct` = main 直コミット可 / `none` = git 手順を省く / `local-merge` = ブランチを切ってローカルで main へ `--no-ff` マージ（remote の有無は問わない）。各値の手順は下の「prFlow ごとの手順」 |
-| `mainBranch` | 基準ブランチ名（省略時 `main`）。`open-pr.py`・`close-ticket.py`・hook が読む |
-| `stopGate.ignorePaths`（任意） | Stop ゲートの「未コミット差分」の数え方から外すパスの配列（リポジトリルート基準の git pathspec。ワイルドカードの `*` は `/` も越える。例 `["render_times.tsv", "output/", "*.wav"]`）。生成物が常に未コミットの repo で毎回差し戻されないため。絶対パス・`..` を含む値、文字列以外は無視。キーが無い・形が違う・契約が壊れているときは除外なし |
+| `mainBranch` | 基準ブランチ名（省略時 `main`）。`start-ticket.py`・`open-pr.py`・`close-ticket.py`・hook が読む。英数字と `. _ / -` だけで、先頭の `-`・`/`、`..`・`//`・`HEAD`・`.` 始まり／`.lock` 終わりの区切りは不可（ボードの契約検査と 3 本のスクリプトが同じ規則で拒否する） |
+| `stopGate.ignorePaths`（任意） | Stop ゲートの「未コミット差分」の数え方から外すパスの配列（リポジトリルート基準の git pathspec。ワイルドカードの `*` は `/` も越える。例 `["render_times.tsv", "output/", "*.wav"]`）。生成物が常に未コミットの repo で毎回差し戻されないため。絶対パス・`..` を含む値、文字列以外は無視。キーが無い・形が違う・契約が壊れているときは除外なし。**`.` や `*` を書くと全ファイルが除外され、未コミット差分の判定が丸ごと無効になる**（生成物だけを指す具体的なパスにする）。キー名の typo（`stopGate.ignorePath` など）は黙って無視され、ボードも警告しない |
 | `merge`（任意） | `mode` は `S0`（GitHub auto-merge）。`S1`/`S2` は廃止（§5） |
 
 (3) に落ちたら `bd comment <id> "検証ループ未定義: このプロジェクトに検証コマンドの宣言がありません (.claude/bdboard-harness.json を作成してください)"`
@@ -47,13 +47,25 @@ AGENTS.md → (3) どちらにも無ければ検証せずに進めない**（SKI
 | マージ | auto-merge（GitHub） | 議長が main で `git merge --no-ff bd/<id>`。push は別（ユーザーの指示があるときだけ） | 不要 | 不要 |
 | `close-ticket.py` | `pr_url` 必須。MERGED と `origin/<main>` 到達を検査 | `pr_url` なし。ブランチ先端がローカル `<main>` の祖先であることを検査 | `pr_url` なし。ブランチが残っていれば先端が main の祖先であることを検査 | 同左 |
 | 証拠コメント | `PR: <url> merged (<sha>)` | `PR: なし (prFlow=local-merge, merged <sha>)` | `PR: なし (prFlow=direct[, merged <sha>])` | `PR: なし (prFlow=none[, merged <sha>])` |
-| Stop ゲート | PR 無し・コメント無しで未コミット差分／main 未取り込みがあると差し戻し（PR を求める） | PR を求めず「現状と残作業を `bd comment` に」だけ求める。未取り込みの比較先はローカル `<main>` | 同左。未取り込みは数えない | 同左 |
+| Stop ゲート | PR 無し・コメント無しで未コミット差分／main 未取り込みがあると差し戻し（PR を求める） | PR を求めず「現状と残作業を `bd comment` に」だけ求める。未取り込みの比較先はローカル `<main>` | 同左。未取り込みは **HEAD が `<main>` 以外のときだけ**数える（`<main>` に直接コミットしている間は数えない） | 同左 |
 | 鮮度警告・Stop ゲートの比較先 | `origin/<main>` → 無ければローカル `<main>` | ローカル `<main>` → 無ければ `origin/<main>` | `origin/<main>` → ローカル `<main>` | 同左 |
 | フル検証 | CI | **ローカルで回す**（CI が無い） | 同左 | 同左 |
 
 `local-merge` の流れ: `start-ticket.py` で `bd/<id>` の worktree を作る → 実装・コミット → `verify` を回す → 議長が main のチェックアウトで
 `git merge --no-ff bd/<id>`（マージ代行のスクリプトは無い。`git push` はユーザーの指示があるときだけ）→ `close-ticket.py --spec <json>`（`pr_url` なし）。
-remote が無い repo では `close-ticket.py` は `git fetch` も `git remote prune origin` も打たない。
+remote が無い repo では `start-ticket.py` は `git fetch origin` と `refs/remotes/origin/<branch>` の検査を飛ばし、`base` の既定を
+`refs/heads/<mainBranch>` にする（origin があれば従来どおり `origin/<mainBranch>`）。`close-ticket.py` も `git fetch` も `git remote prune origin` も打たない。
+
+`prFlow` が上の 4 値以外（typo など）のときの扱い: `open-pr.py` と `close-ticket.py` は『未知の値です (pr / direct / none / local-merge)』で副作用の前に止まる。
+hook は `pr` として動く（従来どおりの差し戻し）。ボードの契約は `invalid` になる。`start-ticket.py` は `prFlow` を読まない。
+
+**契約はコミットしたほうが望ましい。** 契約を読む側（Stop ゲート・鮮度警告 hook・`open-pr.py`・`close-ticket.py`）は、worktree に契約があればそれを、
+無ければ main checkout（`git rev-parse --git-common-dir` の親）の契約を読む（両方にあれば worktree 優先）。未コミットの契約でも main checkout に
+置いてあれば効くが、worktree ごとに内容が分かれうるのと、別マシン・別クローンに渡らないので、足したらコミットし、契約より前に切った worktree は
+`git merge` で取り込むのが確実。どちらにも無ければ既定（`pr`・除外なし）で動く。
+
+`local-merge` でマージ後にブランチを先に消してしまったとき: `close-ticket.py` は『ブランチ bd/<id> がありません』で止まる（先端が `<main>` の祖先であることが
+証拠のため）。`git branch bd/<id> <マージしたコミット>` で作り直してから `close-ticket.py` を実行する。
 
 契約の雛形（`.claude/bdboard-harness.json`。`verify` と `prFlow` は必須、`version` は 1 固定）:
 
@@ -123,6 +135,10 @@ remote が無い repo では `close-ticket.py` は `git fetch` も `git remote p
 （`prFlow` が `pr` 以外ならこの節は使わない。上の「prFlow ごとの手順」。）`python3 .claude/skills/bdboard-harness/scripts/open-pr.py --spec <spec.json>`（キーと検査は `--help`）。
 verifyQuick → push → `gh pr create`（本文は `Closes: <id>` 始まり）→ `bd comment <id> "PR: <url>"` → low/med は
 auto-merge、high は議長待ち。手で `gh pr create` を打たない。PR を開いた時点では close しない（規律4）。
+
+複数チケットを 1 ブランチ・1 PR に束ねたときは、spec に `bundled_tickets`（追加で閉じるチケットの配列）と、ブランチ名が `bd/<ticket>` でなければ `branch` を書く。
+本文には `Closes: <id>` が全チケット分並び、`PR:` コメントも全チケットに付く。全チケットが in_progress であることを検査し、複雑度を省略したときは
+metadata のある中で最も高いものに従う。close は PR のマージ後にチケットごとに `close-ticket.py`（`pr_url` は同じ。束ねたブランチ・worktree の掃除は 1 回目に `branch` / `worktree` を指定して行い、残りは `--keep-worktree`）を呼ぶ。
 
 **`Closes: <id>`（bd チケット）と `Closes #N`（GitHub issue）は別物。** 前者は社内記法で GitHub の closing keyword
 ではない。チケットの external-ref が `gh-<N>` のとき、issue を閉じるには PR 本文に別途 `Closes #N` / `Fixes #N` /

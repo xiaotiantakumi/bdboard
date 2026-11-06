@@ -144,7 +144,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
     expect(output.systemMessage).toContain('hook 関連 1');
     expect(output.hookSpecificOutput?.hookEventName).toBe('SessionStart');
     const context = output.hookSpecificOutput?.additionalContext ?? '';
-    expect(context).toContain(`git -C '${worktree}' merge --ff-only origin/main`);
+    expect(context).toContain(`git -C '${worktree}' merge --ff-only refs/remotes/origin/main`);
     expect(context).toContain('/hooks');
     expect(context).toContain('自動では checkout / merge しません');
   });
@@ -153,7 +153,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
     await advanceOrigin('.claude/skills/p/hooks/other.sh', 'exit 0\n');
 
     const context = parse(await runFreshness(SESSION_START)).hookSpecificOutput?.additionalContext ?? '';
-    expect(context).toContain('merge --ff-only origin/main');
+    expect(context).toContain('merge --ff-only refs/remotes/origin/main');
     expect(context).not.toContain('/hooks');
   });
 
@@ -176,7 +176,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
     await advanceOrigin('.claude/settings.json', '{}\n');
 
     const context = parse(await runFreshness(SESSION_START)).hookSpecificOutput?.additionalContext ?? '';
-    expect(context).toContain(`git -C '${worktree}' merge origin/main`);
+    expect(context).toContain(`git -C '${worktree}' merge refs/remotes/origin/main`);
     expect(context).toContain('ユーザーに確認のうえ');
     expect(context).not.toContain('--ff-only');
     expect(context).toContain('rebase ではなく merge');
@@ -304,7 +304,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
       expect(output.systemMessage).toContain('hook 関連 1');
       expect(output.systemMessage).not.toContain('origin/');
       const context = output.hookSpecificOutput?.additionalContext ?? '';
-      expect(context).toContain(`git -C '${worktree}' merge --ff-only main`);
+      expect(context).toContain(`git -C '${worktree}' merge --ff-only refs/heads/main`);
       expect(context).not.toContain('origin/');
     });
 
@@ -325,6 +325,25 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
       expectSilent(await runFreshness(SESSION_START));
     });
 
+    // 契約が未コミットだと worktree には載らない。worktree に無ければ main checkout の契約を読む (bdboard-l1m1.16)。
+    it('reads an uncommitted contract from the main checkout when the worktree has none', async () => {
+      await advanceLocalMain('.claude/settings.json', '{}\n');
+      writeRepoFile(mainClone, '.claude/bdboard-harness.json', JSON.stringify({ prFlow: 'local-merge' }));
+
+      // 契約を読めなければ pr 扱いで origin/main (進めていない) と比べて静かになる。出力が出ること自体が証拠。
+      const output = parse(await runFreshness(SESSION_START));
+      expect(output.hookSpecificOutput?.additionalContext).toContain('merge --ff-only refs/heads/main');
+    });
+
+    it('prefers the worktree contract over the main checkout one', async () => {
+      await advanceLocalMain('.claude/settings.json', '{}\n');
+      writeRepoFile(mainClone, '.claude/bdboard-harness.json', JSON.stringify({ prFlow: 'local-merge' }));
+      writeRepoFile(worktree, '.claude/bdboard-harness.json', JSON.stringify({ prFlow: 'pr' }));
+
+      // prFlow=pr なら比較先は origin/main (進めていない) なので静か。
+      expectSilent(await runFreshness(SESSION_START));
+    });
+
     it('prefers the local main when the contract says prFlow=local-merge', async () => {
       writeRepoFile(worktree, '.claude/bdboard-harness.json', JSON.stringify({ prFlow: 'local-merge' }));
       await commitAll(worktree, 'contract: local-merge');
@@ -332,7 +351,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
 
       const output = parse(await runFreshness(SESSION_START));
       expect(output.systemMessage).toContain('hook 関連 1');
-      expect(output.hookSpecificOutput?.additionalContext).toContain('merge main');
+      expect(output.hookSpecificOutput?.additionalContext).toContain('merge refs/heads/main');
     });
   });
 
@@ -373,7 +392,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
     await advanceOrigin('.claude/settings.json', '{}\n');
 
     const context = parse(await runFreshness(SESSION_START)).hookSpecificOutput?.additionalContext ?? '';
-    expect(context).toContain(`git -C '${worktree}' merge --ff-only origin/main`);
+    expect(context).toContain(`git -C '${worktree}' merge --ff-only refs/remotes/origin/main`);
     expect(context).not.toContain('scripts/restart.sh');
   });
 
@@ -396,7 +415,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
     const context =
       parse(await runFreshness(SESSION_START, { projectDir: spaced })).hookSpecificOutput
         ?.additionalContext ?? '';
-    expect(context).toContain(`git -C '${spaced}' merge --ff-only origin/main`);
+    expect(context).toContain(`git -C '${spaced}' merge --ff-only refs/remotes/origin/main`);
   });
 
   it('reminds again once the reminder interval has passed', async () => {
@@ -451,7 +470,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree-freshnes
 
     const output = parse(await runFreshness(SESSION_START, { env: pythonEnv }));
     expect(output.systemMessage).toContain('hook 関連 1');
-    expect(output.hookSpecificOutput?.additionalContext).toContain('merge --ff-only origin/main');
+    expect(output.hookSpecificOutput?.additionalContext).toContain('merge --ff-only refs/remotes/origin/main');
     expectSilent(await runFreshness({ ...SESSION_START, agent_id: 'a' }, { env: pythonEnv }));
   });
 
