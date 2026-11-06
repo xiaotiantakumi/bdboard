@@ -97,8 +97,8 @@ describe('parseHarnessContract', () => {
     expect(result.message).toContain('prFlow');
   });
 
-  it('accepts direct and none for prFlow', () => {
-    for (const prFlow of ['direct', 'none'] as const) {
+  it('accepts direct, none and local-merge for prFlow', () => {
+    for (const prFlow of ['direct', 'none', 'local-merge'] as const) {
       const result = parse({ version: 1, verify: 'make check', prFlow });
       expect(result.ok).toBe(true);
       if (!result.ok) continue;

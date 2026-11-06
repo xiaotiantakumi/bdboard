@@ -28,7 +28,8 @@ PR: <url>  CI: <run url または「未使用」>
 
 ## 書き方の規律
 
-- **`PR:` 行は必ず含める**（機械の検索キー。`close-ticket.py` が付ける）。PR を使わないフロー（`prFlow` が `direct` / `none`）は `PR: なし (prFlow=<値>)`。
+- **`PR:` 行は必ず含める**（機械の検索キー。`close-ticket.py` が付ける）。PR を使わないフロー（`prFlow` が `direct` / `none` / `local-merge`）は `PR: なし (prFlow=<値>, merged <短縮 SHA>)`
+  （`close-ticket.py` が付ける。ブランチが無い `direct` / `none` は `merged` 部分なし。手順は worktree-pr-flow.md の「prFlow ごとの手順」）。
 - **`検証: … exit=` に書いてよいのは、自分がこのセッションで実行した検証だけ。** 委譲先の「全部通りました」を転記しない
   （[verification.md](verification.md)）。実行した worktree / ブランチまで書く。exit は検証コマンド自身のもの（ラッパーやバックグラウンドの
   終了コードは失敗を 0 に化けさせる。failure-catalog.md の verify-exit-masked）。

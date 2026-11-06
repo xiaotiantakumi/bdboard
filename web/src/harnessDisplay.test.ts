@@ -398,6 +398,20 @@ describe('formatHarnessContractDetail with models', () => {
     ).toBe('検証: npm run verify / PR 必須 / main: main');
   });
 
+  it('labels the local-merge prFlow (bdboard-l1m1.12)', () => {
+    expect(
+      formatHarnessContractDetail({
+        state: 'ok',
+        verify: 'make check',
+        prFlow: 'local-merge',
+        mainBranch: 'main',
+        models: null,
+        expiredExcludeCount: 0,
+        modelExclusionWarnings: [],
+      }),
+    ).toBe('検証: make check / ローカルマージ (PR なし) / main: main');
+  });
+
   it('appends the routing summary when models is declared', () => {
     expect(
       formatHarnessContractDetail({

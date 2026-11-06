@@ -27,7 +27,7 @@ export interface ProjectHarnessPackStatusDto {
   missingHooks: string[];
 }
 
-export type HarnessPrFlowDto = 'pr' | 'direct' | 'none';
+export type HarnessPrFlowDto = 'pr' | 'direct' | 'none' | 'local-merge';
 
 /** `models` 節の要約 1 工程ぶん。候補列そのものは API に出さない。 */
 export interface ProjectHarnessModelStageDto {

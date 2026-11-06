@@ -5,13 +5,22 @@ SKILL.md 規律4 の手順 1〜4 の後半を 1 本にする。close はマー�
 close した事故の再発防止)。
 検査 (読み取りのみ。すべて通るまで副作用なし):
   gh pr view <pr_url> --json state,mergeCommit → state が MERGED であること
-  git fetch origin → mergeCommit が origin/main に含まれること (git merge-base --is-ancestor)
+  git fetch origin → mergeCommit が origin/<mainBranch> に含まれること (git merge-base --is-ancestor)
   worktree があるなら lsof -a -d cwd +D <worktree> で他プロセスが居ないこと
   bd show <ticket> で実在し status が closed でないこと
 動作 (検査の後):
   bd comment <ticket> "PR: <url> merged (<mergeCommit 短縮>)" → bd close <ticket>
   → git worktree remove --force <worktree> → git branch -D <branch> → git remote prune origin
 プロジェクト固有の場所や名前は持たない。
+
+契約 `.claude/bdboard-harness.json` の prFlow を読む (bdboard-l1m1.12。mainBranch も読み、省略時は main)。
+  pr (契約なし・prFlow なしも同じ): 上のとおり。pr_url が必須。
+  direct / none / local-merge: PR を使わないので pr_url は渡さない (渡すと拒否)。gh と git fetch は使わず、
+    ブランチ bd/<ticket> の先端が main の祖先であること (git merge-base --is-ancestor。local-merge はローカルの
+    main を先に、direct / none は origin/main を先に見る) を「マージ済み」の証拠にする。
+    証拠コメントは `PR: なし (prFlow=<値>, merged <先端の短縮 SHA>)`。local-merge ではブランチが必須。
+    direct / none でブランチが無ければ検査なしで `PR: なし (prFlow=<値>)`。
+  remote (origin) が無い repo では git remote prune origin を飛ばす。
 
 spec JSON のキーと制約は同じ scripts/ の close-ticket.schema.json が正本 (--help にも同じ内容を
 出す)。違反は 1 件ずつ `ERROR: spec.<path>: <理由>` を全件出して終了コード 1 で止まる
@@ -181,6 +190,63 @@ def worktree_users(worktree: str) -> tuple[list[str], str]:
     return lines, ""
 
 
+CONTRACT_REL = ".claude/bdboard-harness.json"
+DEFAULT_MAIN_BRANCH = "main"
+PR_FLOWS = ("pr", "direct", "none", "local-merge")
+
+
+def load_contract() -> dict | None:
+    """契約 JSON を読む。無い・壊れている・オブジェクトでないときは None (pr / main 扱い)。"""
+    top = run(["git", "rev-parse", "--show-toplevel"]).stdout.strip()
+    try:
+        with open(Path(top or ".") / CONTRACT_REL, encoding="utf-8") as f:
+            contract = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return contract if isinstance(contract, dict) else None
+
+
+def contract_pr_flow(contract: dict | None) -> str:
+    """契約の prFlow。契約・キーが無いときは pr。未知の値はそのまま返す (呼び出し側で拒否する)。"""
+    if contract is None or "prFlow" not in contract:
+        return "pr"
+    value = contract["prFlow"]
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+def contract_main_branch(contract: dict | None) -> str | None:
+    """契約の mainBranch。省略時は main。git が別の意味に読む形なら None。"""
+    value = DEFAULT_MAIN_BRANCH if contract is None or "mainBranch" not in contract else contract["mainBranch"]
+    name = value.strip() if isinstance(value, str) else ""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", name) or ".." in name or name.endswith(("/", ".lock", ".")):
+        return None
+    return name
+
+
+def resolve_main_ref(main_branch: str, prefer_local: bool) -> tuple[str, str] | None:
+    """(git に渡す完全な ref, 表示名) を返す。local-merge はローカルの main を先に、それ以外は origin/main を先に見る。"""
+    candidates = [(f"refs/heads/{main_branch}", main_branch), (f"refs/remotes/origin/{main_branch}", f"origin/{main_branch}")]
+    for ref, shown in candidates if prefer_local else reversed(candidates):
+        if run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"]).returncode == 0:
+            return ref, shown
+    return None
+
+
+def branch_merge_evidence(branch: str, main_branch: str, pr_flow: str, problems: list[str]) -> str | None:
+    """PR を使わない契約の「マージ済み」の証拠。ブランチ先端の SHA を返す (ブランチが無ければ None)。未取り込みは problems に足す。"""
+    tip = run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}"]).stdout.strip()
+    if not tip:
+        if pr_flow == "local-merge":
+            problems.append(f"ブランチ {branch} がありません — local-merge では「ブランチの先端が {main_branch} に取り込まれている」ことが close の証拠です")
+        return None
+    resolved = resolve_main_ref(main_branch, prefer_local=pr_flow == "local-merge")
+    if resolved is None:
+        problems.append(f"{main_branch} をローカルにも origin にも解決できません (契約の mainBranch を確認してください)")
+    elif run(["git", "merge-base", "--is-ancestor", tip, resolved[0]]).returncode != 0:
+        problems.append(f"ブランチ {branch} の先端 {tip[:SHORT_SHA]} が {resolved[1]} に取り込まれていません — close はマージ後だけ (--no-ff でマージしてから実行する)")
+    return tip
+
+
 def main() -> int:
     try:
         epilog = schema_help(load_schema())
@@ -213,7 +279,7 @@ def main() -> int:
         return 1
 
     ticket = spec["ticket"]
-    pr_url = spec["pr_url"]
+    pr_url = spec.get("pr_url")
     branch = spec.get("branch", f"bd/{ticket}")
     worktree = os.path.abspath(spec.get("worktree", f".claude/worktrees/{ticket}"))
 
@@ -234,19 +300,36 @@ def main() -> int:
     elif status == "closed":
         problems.append(f"spec.ticket: 既に closed です: {ticket}")
 
-    state, oid, why = pr_merge_info(pr_url)
-    if state is None:
-        problems.append(why)
-    elif state != "MERGED":
-        problems.append(f"spec.pr_url: PR の state が {state} です — close はマージ後だけ (MERGED になってから実行する。CI 赤・未マージで close しない)")
-    elif oid is None:
-        problems.append(f"spec.pr_url: MERGED なのに mergeCommit を取得できません: {pr_url}")
+    contract = load_contract()
+    pr_flow = contract_pr_flow(contract)
+    main_branch = contract_main_branch(contract)
+    oid: str | None = None
+    evidence_tip: str | None = None
+    if pr_flow not in PR_FLOWS:
+        problems.append(f"{CONTRACT_REL}: prFlow={pr_flow} は未知の値です ({' / '.join(PR_FLOWS)} のいずれか)")
+    elif main_branch is None:
+        problems.append(f"{CONTRACT_REL}: mainBranch は英数字と . _ / - だけのブランチ名である必要があります")
+    elif pr_flow != "pr":
+        if pr_url is not None:
+            problems.append(f"spec.pr_url: この契約 (prFlow={pr_flow}) では PR を使いません。pr_url を外してください")
+        else:
+            evidence_tip = branch_merge_evidence(branch, main_branch, pr_flow, problems)
+    elif pr_url is None:
+        problems.append("spec.pr_url: 必須キー pr_url がありません (prFlow=pr。PR を使わない運用なら契約の prFlow を宣言する)")
     else:
-        f = run(["git", "fetch", "origin"])
-        if f.returncode != 0:
-            problems.append(f"git fetch origin に失敗しました: {(f.stderr or f.stdout).strip()}")
-        elif run(["git", "merge-base", "--is-ancestor", oid, "origin/main"]).returncode != 0:
-            problems.append(f"mergeCommit {oid[:SHORT_SHA]} が origin/main に含まれていません (マージ先が main でない、または fetch 後も未到達)")
+        state, oid, why = pr_merge_info(pr_url)
+        if state is None:
+            problems.append(why)
+        elif state != "MERGED":
+            problems.append(f"spec.pr_url: PR の state が {state} です — close はマージ後だけ (MERGED になってから実行する。CI 赤・未マージで close しない)")
+        elif oid is None:
+            problems.append(f"spec.pr_url: MERGED なのに mergeCommit を取得できません: {pr_url}")
+        else:
+            f = run(["git", "fetch", "origin"])
+            if f.returncode != 0:
+                problems.append(f"git fetch origin に失敗しました: {(f.stderr or f.stdout).strip()}")
+            elif run(["git", "merge-base", "--is-ancestor", oid, f"origin/{main_branch}"]).returncode != 0:
+                problems.append(f"mergeCommit {oid[:SHORT_SHA]} が origin/{main_branch} に含まれていません (マージ先が {main_branch} でない、または fetch 後も未到達)")
 
     do_cleanup = (not args.keep_worktree) and os.path.isdir(worktree)
     if do_cleanup:
@@ -261,9 +344,15 @@ def main() -> int:
         print(f"ERROR: {len(problems)} 件の検査に失敗しました (bd にも git にも書いていません)", file=sys.stderr)
         return 1
 
-    assert oid is not None
+    if pr_flow == "pr":
+        assert oid is not None
+        evidence = f"PR: {pr_url} merged ({oid[:SHORT_SHA]})"
+    elif evidence_tip:
+        evidence = f"PR: なし (prFlow={pr_flow}, merged {evidence_tip[:SHORT_SHA]})"
+    else:
+        evidence = f"PR: なし (prFlow={pr_flow})"
     plan: list[list[str]] = [
-        ["bd", "comment", ticket, f"PR: {pr_url} merged ({oid[:SHORT_SHA]})"],
+        ["bd", "comment", ticket, evidence],
         ["bd", "close", ticket],
     ]
     if do_cleanup:
@@ -271,7 +360,9 @@ def main() -> int:
     if do_cleanup:
         if run(["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0:
             plan.append(["git", "branch", "-D", branch])
-        plan.append(["git", "remote", "prune", "origin"])
+        # remote の無い repo (local-merge など) では prune する相手が無い。
+        if "origin" in run(["git", "remote"]).stdout.split():
+            plan.append(["git", "remote", "prune", "origin"])
 
     if args.dry_run:
         for cmd in plan:
