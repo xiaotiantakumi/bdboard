@@ -150,18 +150,43 @@ CONTRACT_JSON='{}'
 if [ -r "$TOP/.claude/bdboard-harness.json" ]; then
   CONTRACT_JSON="$(cat "$TOP/.claude/bdboard-harness.json" 2>/dev/null)"
 fi
-CONTRACT="$(json_fields "$CONTRACT_JSON" mainBranch alwaysOnServer.restartScript)"
-MAIN_BRANCH="${CONTRACT%%"$US_SEPARATOR"*}"
+CONTRACT="$(json_fields "$CONTRACT_JSON" mainBranch prFlow alwaysOnServer.restartScript)"
+MAIN_BRANCH=''
+PR_FLOW=''
 RESTART_SCRIPT=''
-case "$CONTRACT" in *"$US_SEPARATOR"*) RESTART_SCRIPT="${CONTRACT#*"$US_SEPARATOR"}" ;; esac
+case "$CONTRACT" in
+  *"$US_SEPARATOR"*"$US_SEPARATOR"*)
+    MAIN_BRANCH="${CONTRACT%%"$US_SEPARATOR"*}"
+    CONTRACT="${CONTRACT#*"$US_SEPARATOR"}"
+    PR_FLOW="${CONTRACT%%"$US_SEPARATOR"*}"
+    RESTART_SCRIPT="${CONTRACT#*"$US_SEPARATOR"}"
+    ;;
+esac
 [ -n "$MAIN_BRANCH" ] || MAIN_BRANCH='main'
 git check-ref-format --branch "$MAIN_BRANCH" >/dev/null 2>&1 || exit 0
-BASE="origin/$MAIN_BRANCH"
 
 git_top() { git -C "$TOP" "$@" 2>/dev/null; }
 
 HEAD_SHA="$(git_top rev-parse --verify --quiet HEAD)" || exit 0
-BASE_SHA="$(git_top rev-parse --verify --quiet "$BASE^{commit}")" || exit 0
+# 比較先 (bdboard-l1m1.11): origin/<main> があればそれ、無ければローカルの <main> (remote の無い repo)。
+# prFlow=local-merge はローカルの <main> が正本なので順序を逆にする。どちらも無ければ黙る。
+BASE=''
+BASE_REF=''
+BASE_SHA=''
+if [ "$PR_FLOW" = 'local-merge' ]; then
+  BASE_CANDIDATES="refs/heads/$MAIN_BRANCH refs/remotes/origin/$MAIN_BRANCH"
+else
+  BASE_CANDIDATES="refs/remotes/origin/$MAIN_BRANCH refs/heads/$MAIN_BRANCH"
+fi
+for candidate in $BASE_CANDIDATES; do
+  BASE_SHA="$(git_top rev-parse --verify --quiet "$candidate^{commit}")" || BASE_SHA=''
+  if [ -n "$BASE_SHA" ]; then
+    BASE_REF="$candidate"
+    BASE="${candidate#refs/remotes/}"
+    BASE="${BASE#refs/heads/}"
+    break
+  fi
+done
 [ -n "$HEAD_SHA" ] && [ -n "$BASE_SHA" ] || exit 0
 
 # 同じ状態 (HEAD / 既定ブランチの先端) は REMIND_MINUTES に 1 回だけ言う。UserPromptSubmit と
@@ -181,7 +206,7 @@ fi
 
 count_behind() {
   local counted
-  counted="$(git_top rev-list --count "HEAD..$BASE" -- "$@")"
+  counted="$(git_top rev-list --count "HEAD..$BASE_REF" -- "$@")"
   case "$counted" in
     '' | *[!0-9]*) printf '0' ;;
     *) printf '%s' "$counted" ;;
@@ -219,7 +244,7 @@ EOF
 # 見えないだけのことがあるので、その場合は判定しない。
 # exit 1 だけが「祖先なし」。それ以外の失敗 (オブジェクト破損など) は判定しない。
 NO_BASE=0
-MERGE_BASE="$(git_top merge-base HEAD "$BASE")"
+MERGE_BASE="$(git_top merge-base HEAD "$BASE_REF")"
 MERGE_BASE_STATUS=$?
 if [ "$MERGE_BASE_STATUS" -eq 1 ] && [ "$(git_top rev-parse --is-shallow-repository)" != 'true' ]; then
   NO_BASE=1
@@ -261,7 +286,7 @@ COMMON_DIR="$(cd "$TOP" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/d
 TOP_REAL="$(cd "$TOP" 2>/dev/null && pwd -P)"
 IS_MAIN_CHECKOUT=0
 [ -n "$COMMON_DIR" ] && [ "$COMMON_DIR" = "$TOP_REAL/.git" ] && IS_MAIN_CHECKOUT=1
-BASE_AGE="$(git_top log -1 --format=%cr "$BASE")"
+BASE_AGE="$(git_top log -1 --format=%cr "$BASE_REF")"
 
 IN_PROGRESS=0
 for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG rebase-merge rebase-apply; do

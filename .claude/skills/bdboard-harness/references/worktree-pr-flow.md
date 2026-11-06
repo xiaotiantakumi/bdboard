@@ -24,15 +24,52 @@ AGENTS.md → (3) どちらにも無ければ検証せずに進めない**（SKI
 |---|---|
 | `verify` | フル検証。exit 0 が合格。PR 前には回さない（CI が唯一のフル実行場所） |
 | `verifyQuick`（任意） | PR 前の軽い検証。`open-pr.py` が読む。既定 `npm run verify:quick` |
-| `commitCheck`（任意） | コミットメッセージ検査。`{range}` が `origin/main..HEAD` になる。既定 `npm run check:commits -- --range {range}` |
-| `prFlow` | `pr` = PR 必須 / `direct` = main 直コミット可 / `none` = git 手順を省く |
-| `mainBranch` | PR の基準ブランチ名（省略時 `main`） |
+| `commitCheck`（任意） | コミットメッセージ検査。`{range}` が `origin/<mainBranch>..HEAD` になる。既定 `npm run check:commits -- --range {range}` |
+| `prFlow` | `pr` = PR 必須 / `direct` = main 直コミット可 / `none` = git 手順を省く / `local-merge` = ブランチを切ってローカルで main へ `--no-ff` マージ（remote の有無は問わない）。各値の手順は下の「prFlow ごとの手順」 |
+| `mainBranch` | 基準ブランチ名（省略時 `main`）。`open-pr.py`・`close-ticket.py`・hook が読む |
+| `stopGate.ignorePaths`（任意） | Stop ゲートの「未コミット差分」の数え方から外すパスの配列（リポジトリルート基準の git pathspec。ワイルドカードの `*` は `/` も越える。例 `["render_times.tsv", "output/", "*.wav"]`）。生成物が常に未コミットの repo で毎回差し戻されないため。絶対パス・`..` を含む値、文字列以外は無視。キーが無い・形が違う・契約が壊れているときは除外なし |
 | `merge`（任意） | `mode` は `S0`（GitHub auto-merge）。`S1`/`S2` は廃止（§5） |
 
 (3) に落ちたら `bd comment <id> "検証ループ未定義: このプロジェクトに検証コマンドの宣言がありません (.claude/bdboard-harness.json を作成してください)"`
 を残し、human gate（規律3）を付けて次のチケットへ回る。「たぶん通る」で PR を開かない。
 
 ブランチ命名・worktree 置き場は CLAUDE.md / AGENTS.md が正。既定は `bd/<id>` と `.claude/worktrees/<id>/`。
+
+## prFlow ごとの手順（bdboard-l1m1.12）
+
+契約が無い・壊れている・`prFlow` が無いときは `pr`。以下は `pr` 以外の運用（remote が無い repo、PR を出さない repo）を契約で宣言するための表。
+本文の「PR 作成」「マージ」は `pr` の話で、他の値では次のとおり置き換わる。
+
+| | `pr` | `local-merge` | `direct` | `none` |
+|---|---|---|---|---|
+| ブランチ | `bd/<id>` + worktree | `bd/<id>` + worktree | main に直接コミット（ブランチは任意） | git 手順を省く |
+| PR 作成 | `open-pr.py` | **使わない**（`open-pr.py` は『この契約では PR を使いません』と副作用の前に止まる） | 使わない（同左） | 使わない（同左） |
+| マージ | auto-merge（GitHub） | 議長が main で `git merge --no-ff bd/<id>`。push は別（ユーザーの指示があるときだけ） | 不要 | 不要 |
+| `close-ticket.py` | `pr_url` 必須。MERGED と `origin/<main>` 到達を検査 | `pr_url` なし。ブランチ先端がローカル `<main>` の祖先であることを検査 | `pr_url` なし。ブランチが残っていれば先端が main の祖先であることを検査 | 同左 |
+| 証拠コメント | `PR: <url> merged (<sha>)` | `PR: なし (prFlow=local-merge, merged <sha>)` | `PR: なし (prFlow=direct[, merged <sha>])` | `PR: なし (prFlow=none[, merged <sha>])` |
+| Stop ゲート | PR 無し・コメント無しで未コミット差分／main 未取り込みがあると差し戻し（PR を求める） | PR を求めず「現状と残作業を `bd comment` に」だけ求める。未取り込みの比較先はローカル `<main>` | 同左。未取り込みは数えない | 同左 |
+| 鮮度警告・Stop ゲートの比較先 | `origin/<main>` → 無ければローカル `<main>` | ローカル `<main>` → 無ければ `origin/<main>` | `origin/<main>` → ローカル `<main>` | 同左 |
+| フル検証 | CI | **ローカルで回す**（CI が無い） | 同左 | 同左 |
+
+`local-merge` の流れ: `start-ticket.py` で `bd/<id>` の worktree を作る → 実装・コミット → `verify` を回す → 議長が main のチェックアウトで
+`git merge --no-ff bd/<id>`（マージ代行のスクリプトは無い。`git push` はユーザーの指示があるときだけ）→ `close-ticket.py --spec <json>`（`pr_url` なし）。
+remote が無い repo では `close-ticket.py` は `git fetch` も `git remote prune origin` も打たない。
+
+契約の雛形（`.claude/bdboard-harness.json`。`verify` と `prFlow` は必須、`version` は 1 固定）:
+
+```json
+{ "version": 1, "verify": "npm run verify", "verifyQuick": "npm run verify:quick", "prFlow": "pr", "mainBranch": "main" }
+```
+
+```json
+{ "version": 1, "verify": "make check", "prFlow": "direct", "stopGate": { "ignorePaths": ["render_times.tsv", "output/"] } }
+```
+
+```json
+{ "version": 1, "verify": "make check", "prFlow": "local-merge", "mainBranch": "main", "stopGate": { "ignorePaths": ["render_times.tsv", "output/"] } }
+```
+
+契約ファイルは各プロジェクトの宣言なので、パックは作らない。上の雛形を注入先のセッションが自分の repo に合わせて書く（`stopGate` は不要なら省く）。
 
 ## 規律2 の手順（全文）
 
@@ -79,11 +116,11 @@ AGENTS.md → (3) どちらにも無ければ検証せずに進めない**（SKI
 2026-10-22 のユーザー決定（bdboard-415t）以降、PR 前は**型チェック + lint + 触った範囲のテスト**だけ。
 契約の `verifyQuick`（`open-pr.py` が実行）と、触った範囲の `npx vitest related --run <変更ファイル>`（落ちても push は止めない）。
 フル `verify` は PR 前に回さず、rebase と再検証も不要（衝突は GitHub の mergeable 判定、意味的衝突は main の push CI が拾う）。
-`prFlow` が `direct` / `none` で CI が無いときだけフル検証を回す。
+`prFlow` が `direct` / `none` / `local-merge` で CI が無いときだけフル検証を回す。
 
 ### 4. PR 作成
 
-`python3 .claude/skills/bdboard-harness/scripts/open-pr.py --spec <spec.json>`（キーと検査は `--help`）。
+（`prFlow` が `pr` 以外ならこの節は使わない。上の「prFlow ごとの手順」。）`python3 .claude/skills/bdboard-harness/scripts/open-pr.py --spec <spec.json>`（キーと検査は `--help`）。
 verifyQuick → push → `gh pr create`（本文は `Closes: <id>` 始まり）→ `bd comment <id> "PR: <url>"` → low/med は
 auto-merge、high は議長待ち。手で `gh pr create` を打たない。PR を開いた時点では close しない（規律4）。
 
