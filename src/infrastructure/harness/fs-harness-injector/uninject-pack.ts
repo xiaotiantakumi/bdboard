@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { compareStrings } from '../../../domain/compare.js';
 import { removeGitignoreEntries } from '../../../domain/harness-gitignore-removal.js';
 import { LOCAL_SETTINGS_RELATIVE_PATH, SETTINGS_RELATIVE_PATH } from '../../../domain/harness-hooks.js';
 import type { PackSummary } from '../../../domain/harness-pack.js';
@@ -11,6 +10,7 @@ import {
 } from '../../../domain/harness-pack-removability.js';
 import {
   GITIGNORE_FILENAME,
+  isSafePackName,
   MANIFEST_RELATIVE_PATH,
   resolveUnderClaudeDir,
 } from '../../../domain/harness-path.js';
@@ -18,9 +18,10 @@ import {
   HarnessInjectionError,
   HarnessPathTraversalError,
 } from '../../../application/ports/harness-injector.js';
-import { readManifestFromDisk, serializeManifest } from './manifest.js';
+import { serializeManifest } from './manifest.js';
 import { isSelfInjection } from './self-injection.js';
 import { planHookRemoval, type PlannedWrite } from './settings-hooks.js';
+import { checkRecordedFiles, findSymlinkOnPath, readManifestStrict, type CheckedFile } from './uninject-safety.js';
 
 /**
  * パックを外す (uninject。bdboard-l1m1.7)。注入 (`injectPack`) が作ったものを、注入記録
@@ -37,6 +38,9 @@ export type UninjectRefusalCode =
   | PackRemovabilityCode
   | 'self-injection'
   | 'unsafe-path'
+  | 'invalid-pack-name'
+  | 'manifest-unreadable'
+  | 'unresolved-installed-pack'
   | 'settings-unreadable';
 
 export interface UninjectRefusal {
@@ -50,11 +54,8 @@ export interface UninjectPlan {
   readonly projectRootPath: string;
   readonly packName: string;
   /** 記録された skill ファイル (プロジェクトルートからの相対)。`exists` は計画時点。 */
-  readonly files: readonly { readonly relativePath: string; readonly exists: boolean }[];
-  readonly settings: readonly {
-    readonly relativePath: string;
-    readonly write: PlannedWrite;
-  }[];
+  readonly files: readonly CheckedFile[];
+  readonly settings: readonly { readonly relativePath: string; readonly write: PlannedWrite }[];
   readonly gitignore: { readonly absolute: string; readonly content: string } | null;
   /** 最後のパックなら注入記録ファイルごと消す。 */
   readonly manifest: {
@@ -62,7 +63,7 @@ export interface UninjectPlan {
     readonly content: string | null;
     readonly remainingPacks: readonly string[];
   };
-  /** 注入記録にあるがレジストリに無く、依存の判定に入れられなかったパック。 */
+  /** 注入記録にあるがレジストリに無く、依存の判定に入れられなかったパック (`allowUnresolved` で通したときのみ非空)。 */
   readonly unresolvedPacks: readonly string[];
 }
 
@@ -73,6 +74,8 @@ export interface PlanUninjectInput {
   readonly packsRoot: string;
   /** レジストリが知っているパック一覧 (`requires` の出どころ)。 */
   readonly available: readonly PackSummary[];
+  /** レジストリに無い注入済みパックがあっても、依存を確かめられないまま進める (既定は拒否)。 */
+  readonly allowUnresolved?: boolean;
 }
 
 function refuse(code: UninjectRefusalCode, reason: string): UninjectRefusal {
@@ -90,60 +93,42 @@ async function readTextOrNull(absolute: string): Promise<string | null> {
   }
 }
 
-async function exists(absolute: string): Promise<boolean> {
+/**
+ * 注入先がパック原本を抱える repo (自己注入先) か。`packsRoot` の内側にあるか (isSelfInjection) に加え、
+ * `<project>/harness/packs/<pack>/pack.json` がある repo も自己注入とみなす — bdboard の別 clone や
+ * worktree は、実行中の bdboard とは別の packsRoot を持つため前者だけでは拾えない。
+ */
+async function holdsPackOriginals(
+  projectRootPath: string,
+  packsRoot: string,
+  packName: string,
+): Promise<boolean> {
+  if (await isSelfInjection(projectRootPath, packsRoot)) {
+    return true;
+  }
   try {
-    await fs.promises.access(absolute);
+    await fs.promises.access(path.join(projectRootPath, 'harness', 'packs', packName, 'pack.json'));
     return true;
   } catch {
     return false;
   }
 }
 
-export async function planUninject(
-  input: PlanUninjectInput,
-): Promise<UninjectPlan | UninjectRefusal> {
-  const { projectRootPath, packName, packsRoot, available } = input;
-
-  // 自己注入先 (パック原本を抱える repo。bdboard 自身) は、パックと設定を git で追跡する設計。
-  // ここから外すと原本と注入コピーが食い違うので、スクリプトでは外さない。
-  if (await isSelfInjection(projectRootPath, packsRoot)) {
-    return refuse(
-      'self-injection',
-      `${projectRootPath} はパック原本を抱える repo (自己注入先) です。ここのパックはスクリプトでは外しません`,
-    );
-  }
-
-  const manifest = await readManifestFromDisk(projectRootPath);
-  const removability = evaluatePackRemovability(packName, available, manifest);
-  if (!removability.ok) {
-    return refuse(removability.code, removability.reason);
-  }
-
-  const record = manifest.packs.find((entry) => entry.name === packName);
-  if (record === undefined) {
-    return refuse('not-injected', `${packName} は注入記録にありません`);
-  }
-
-  const files: { relativePath: string; exists: boolean }[] = [];
-  for (const relativePath of [...record.files].sort(compareStrings)) {
-    const absolute = resolveUnderClaudeDir(projectRootPath, relativePath);
-    if (absolute === null) {
-      return refuse(
-        'unsafe-path',
-        `注入記録に .claude/ の外を指すパスがあります: ${relativePath} (記録を直してから外してください)`,
-      );
-    }
-    files.push({ relativePath, exists: await exists(absolute) });
-  }
-
-  const settings: { relativePath: string; write: PlannedWrite }[] = [];
+async function planSettings(
+  projectRootPath: string,
+  packName: string,
+): Promise<PlannedWrite[] | UninjectRefusal> {
+  const settings: PlannedWrite[] = [];
   try {
     for (const relativePath of [SETTINGS_RELATIVE_PATH, LOCAL_SETTINGS_RELATIVE_PATH]) {
+      // 設定ファイルを消してよいのは settings.local.json (注入が作る個人設定) だけ。
+      // settings.json は空になっても `{}` で残す (追跡される人のファイル)。
       const write = await planHookRemoval(projectRootPath, packName, relativePath, {
         pruneEmpty: true,
+        deleteIfEmpty: relativePath === LOCAL_SETTINGS_RELATIVE_PATH,
       });
       if (write !== null) {
-        settings.push({ relativePath, write });
+        settings.push(write);
       }
     }
   } catch (error) {
@@ -152,18 +137,71 @@ export async function planUninject(
     }
     throw error;
   }
+  return settings;
+}
 
-  const remainingPacks = manifest.packs
-    .filter((entry) => entry.name !== packName)
-    .map((entry) => entry.name);
+export async function planUninject(
+  input: PlanUninjectInput,
+): Promise<UninjectPlan | UninjectRefusal> {
+  const { projectRootPath, packName, packsRoot, available } = input;
+
+  if (!isSafePackName(packName)) {
+    return refuse('invalid-pack-name', `パック名が安全ではありません: ${packName}`);
+  }
+
+  // 自己注入先 (パック原本を抱える repo。bdboard 自身) は、パックと設定を git で追跡する設計。
+  // ここから外すと原本と注入コピーが食い違うので、スクリプトでは外さない。
+  if (await holdsPackOriginals(projectRootPath, packsRoot, packName)) {
+    return refuse(
+      'self-injection',
+      `${projectRootPath} はパック原本を抱える repo (自己注入先) です。ここのパックはスクリプトでは外しません`,
+    );
+  }
+
+  const read = await readManifestStrict(projectRootPath);
+  if (read.kind === 'unreadable') {
+    return refuse('manifest-unreadable', read.reason);
+  }
+  const manifest = read.manifest;
+  const removability = evaluatePackRemovability(packName, available, manifest);
+  if (!removability.ok) {
+    return refuse(removability.code, removability.reason);
+  }
+
+  // レジストリに無い注入済みパックは requires を辿れず、外す対象を前提にしていても気づけない。
+  // 既定は拒否し、確かめたうえで --allow-unresolved で通させる。
+  const unresolved = unresolvedInstalledPacks(available, manifest).filter((name) => name !== packName);
+  if (unresolved.length > 0 && input.allowUnresolved !== true) {
+    return refuse(
+      'unresolved-installed-pack',
+      `${unresolved.join(', ')} はパック一覧に無く、${packName} を前提にしていないか確かめられません。確かめたうえで進めるなら --allow-unresolved を付けてください`,
+    );
+  }
+
+  const record = manifest.packs.find((entry) => entry.name === packName);
+  if (record === undefined) {
+    return refuse('not-injected', `${packName} は注入記録にありません`);
+  }
+
+  const packDirLink = await findSymlinkOnPath(projectRootPath, `.claude/skills/${packName}`);
+  if (packDirLink !== null) {
+    return refuse('unsafe-path', `${packDirLink} がシンボリックリンクです。リンク先を消さないため、スクリプトでは外しません`);
+  }
+  const checked = await checkRecordedFiles(projectRootPath, packName, [...record.files].sort());
+  if ('code' in checked) {
+    return refuse(checked.code, checked.reason);
+  }
+
+  const settingsPlans = await planSettings(projectRootPath, packName);
+  if (!Array.isArray(settingsPlans)) {
+    return settingsPlans;
+  }
+
   const manifestAbsolute = resolveUnderClaudeDir(projectRootPath, MANIFEST_RELATIVE_PATH);
   if (manifestAbsolute === null) {
     return refuse('unsafe-path', '注入記録のパスが .claude/ の外を指しています');
   }
-  const manifestContent =
-    remainingPacks.length === 0
-      ? null
-      : serializeManifest({ packs: manifest.packs.filter((entry) => entry.name !== packName) });
+  const remainingEntries = manifest.packs.filter((entry) => entry.name !== packName);
 
   const gitignoreAbsolute = path.join(projectRootPath, GITIGNORE_FILENAME);
   const gitignoreBefore = await readTextOrNull(gitignoreAbsolute);
@@ -171,20 +209,27 @@ export async function planUninject(
     gitignoreBefore === null
       ? null
       : removeGitignoreEntries(gitignoreBefore, packName, {
-          removeManifestEntry: remainingPacks.length === 0,
+          removeManifestEntry: remainingEntries.length === 0,
         });
 
   return {
     ok: true,
     projectRootPath,
     packName,
-    files,
-    settings,
+    files: checked.files,
+    settings: settingsPlans.map((write) => ({
+      relativePath: path.relative(projectRootPath, write.absolute).split(path.sep).join('/'),
+      write,
+    })),
     gitignore:
       gitignoreBefore !== null && gitignoreAfter !== null && gitignoreAfter !== gitignoreBefore
         ? { absolute: gitignoreAbsolute, content: gitignoreAfter }
         : null,
-    manifest: { absolute: manifestAbsolute, content: manifestContent, remainingPacks },
-    unresolvedPacks: unresolvedInstalledPacks(available, manifest),
+    manifest: {
+      absolute: manifestAbsolute,
+      content: remainingEntries.length === 0 ? null : serializeManifest({ packs: remainingEntries }),
+      remainingPacks: remainingEntries.map((entry) => entry.name),
+    },
+    unresolvedPacks: unresolved,
   };
 }

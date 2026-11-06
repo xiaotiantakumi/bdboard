@@ -3,6 +3,7 @@ import path from 'node:path';
 import { resolveUnderClaudeDir } from '../../../domain/harness-path.js';
 import { HarnessPathTraversalError } from '../../../application/ports/harness-injector.js';
 import type { UninjectPlan } from './uninject-pack.js';
+import { findSymlinkOnPath } from './uninject-safety.js';
 
 async function unlinkIfPresent(absolute: string): Promise<void> {
   try {
@@ -35,6 +36,10 @@ async function pruneEmptyDirectories(
   const deepestFirst = [...candidates].sort((a, b) => b.length - a.length);
   for (const directory of deepestFirst) {
     try {
+      // シンボリックリンクは辿らない (リンクそのものも消さない)。
+      if ((await fs.promises.lstat(directory)).isSymbolicLink()) {
+        continue;
+      }
       // rmdir は空でなければ失敗する。他人のファイルが残るディレクトリは消えない。
       await fs.promises.rmdir(directory);
     } catch {
@@ -65,6 +70,11 @@ export async function applyUninject(plan: UninjectPlan): Promise<void> {
     const absolute = resolveUnderClaudeDir(plan.projectRootPath, relativePath);
     if (absolute === null) {
       throw new HarnessPathTraversalError(`removal blocked outside .claude/: ${relativePath}`);
+    }
+    // 計画の後でリンクに替えられた場合に備えて、消す直前にもう一度見る。
+    const link = await findSymlinkOnPath(plan.projectRootPath, path.posix.dirname(relativePath));
+    if (link !== null) {
+      throw new HarnessPathTraversalError(`removal blocked: ${link} is a symbolic link`);
     }
     await unlinkIfPresent(absolute);
     removedPaths.push(absolute);

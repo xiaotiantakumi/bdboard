@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -57,9 +57,11 @@ describe('runHarnessUninject', () => {
   function run(
     argv: string[],
     stdinIsTty: boolean,
-  ): Promise<{ code: number; out: string; err: string }> {
+    options: { insideAgent?: boolean; ttyAnswer?: string | null } = {},
+  ): Promise<{ code: number; out: string; err: string; asked: string[] }> {
     let out = '';
     let err = '';
+    const asked: string[] = [];
     const io: UninjectCliIo = {
       out: (text) => {
         out += text;
@@ -68,8 +70,15 @@ describe('runHarnessUninject', () => {
         err += text;
       },
       stdinIsTty,
+      insideAgent: options.insideAgent ?? false,
+      askTty: (question) => {
+        asked.push(question);
+        // 既定は正しいパック名を答える (引数の --pack と同じ)。
+        const pack = argv[argv.indexOf('--pack') + 1] ?? '';
+        return Promise.resolve(options.ttyAnswer === undefined ? pack : options.ttyAnswer);
+      },
     };
-    return runHarnessUninject(argv, io, packsRoot).then((code) => ({ code, out, err }));
+    return runHarnessUninject(argv, io, packsRoot).then((code) => ({ code, out, err, asked }));
   }
 
   const skillFile = (name: string): string =>
@@ -107,6 +116,62 @@ describe('runHarnessUninject', () => {
     expect(result.out).toContain('コミットは別途');
     expect(existsSync(skillFile('video-pack'))).toBe(false);
     expect(existsSync(skillFile('base-pack'))).toBe(true);
+  });
+
+  it('refuses --yes inside Claude Code (CLAUDECODE set) even on a TTY, and tells the user to use a normal terminal', async () => {
+    const result = await run(['--project', projectRoot, '--pack', 'video-pack', '--yes'], true, {
+      insideAgent: true,
+    });
+
+    expect(result.code).toBe(EXIT_USAGE);
+    expect(result.err).toContain('Claude Code の外');
+    expect(result.asked).toEqual([]);
+    expect(existsSync(skillFile('video-pack'))).toBe(true);
+  });
+
+  it('allows the dry-run inside Claude Code (it only prints)', async () => {
+    const result = await run(['--project', projectRoot, '--pack', 'video-pack'], false, {
+      insideAgent: true,
+    });
+
+    expect(result.code).toBe(EXIT_OK);
+  });
+
+  it('asks the user to type the pack name after the list, and removes nothing when the answer differs', async () => {
+    const result = await run(['--project', projectRoot, '--pack', 'video-pack', '--yes'], true, {
+      ttyAnswer: 'something-else',
+    });
+
+    expect(result.asked).toHaveLength(1);
+    expect(result.asked[0]).toContain('video-pack');
+    expect(result.code).toBe(EXIT_REFUSED);
+    expect(result.err).toContain('一致しません');
+    expect(existsSync(skillFile('video-pack'))).toBe(true);
+  });
+
+  it('refuses (changes nothing) when the controlling terminal cannot be opened for the confirmation', async () => {
+    const result = await run(['--project', projectRoot, '--pack', 'video-pack', '--yes'], true, {
+      ttyAnswer: null,
+    });
+
+    expect(result.code).toBe(EXIT_USAGE);
+    expect(result.err).toContain('/dev/tty');
+    expect(existsSync(skillFile('video-pack'))).toBe(true);
+  });
+
+  it('refuses a pack unknown to the registry by default and accepts --allow-unresolved', async () => {
+    const manifestPath = path.join(projectRoot, '.claude/bdboard-packs.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { packs: unknown[] };
+    manifest.packs.push({ name: 'ghost-pack', version: '1', injectedAt: '2026-11-06T00:00:00Z', files: [] });
+    writeFileSync(manifestPath, JSON.stringify(manifest), 'utf8');
+
+    const refused = await run(['--project', projectRoot, '--pack', 'video-pack'], false);
+    expect(refused.code).toBe(EXIT_REFUSED);
+    expect(refused.err).toContain('--allow-unresolved');
+
+    const allowed = await run(['--project', projectRoot, '--pack', 'video-pack', '--allow-unresolved'], false);
+    expect(allowed.code).toBe(EXIT_OK);
+    expect(allowed.out).toContain('ghost-pack');
   });
 
   it('refuses removing the base while an optional pack that requires it is injected (even with --yes on a TTY)', async () => {

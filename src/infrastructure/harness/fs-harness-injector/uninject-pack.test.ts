@@ -1,4 +1,14 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -185,7 +195,29 @@ describe('planUninject / applyUninject', () => {
     ]);
     await applyUninject(plan);
 
-    expect(Object.keys(snapshot(projectRoot)).filter((key) => key.startsWith('.claude'))).toEqual([]);
+    // settings.local.json (注入が作った個人設定) は空になれば消すが、追跡される settings.json は
+    // `{}` で残す (ファイルごと消さない)。
+    const after = snapshot(projectRoot);
+    expect(Object.keys(after).filter((key) => key.startsWith('.claude'))).toEqual([
+      '.claude/',
+      '.claude/settings.json',
+    ]);
+    expect(after['.claude/settings.json']).toBe('{}\n');
+  });
+
+  it('keeps an originally-empty hooks key and other keys; only drops hooks it emptied itself', async () => {
+    setupPacks();
+    await inject('base-pack');
+    const local = JSON.parse(readFileSync(path.join(projectRoot, '.claude/settings.local.json'), 'utf8')) as {
+      hooks: Record<string, unknown>;
+    };
+    // 我々の Stop と、もともと空だった別 event の配列。
+    local.hooks.PostToolUse = [];
+    writeFileSync(path.join(projectRoot, '.claude/settings.local.json'), JSON.stringify(local), 'utf8');
+
+    await applyUninject(await planOk('base-pack'));
+
+    expect(readJson('.claude/settings.local.json')).toEqual({ hooks: { PostToolUse: [] } });
   });
 
   it('removes the pack entry from the manifest and keeps the other packs intact', async () => {
@@ -340,15 +372,196 @@ describe('planUninject / applyUninject', () => {
     expect(snapshot(projectRoot)).toEqual(before);
   });
 
-  it('can be re-run after a partial failure (files already gone are fine)', async () => {
+  it('can be re-run after apply stopped half way (re-plan from disk and finish)', async () => {
     setupPacks();
     await inject('base-pack');
-    const first = await planOk('base-pack');
-    // 先に一部のファイルだけ消えた状態を作る。
-    rmSync(path.join(projectRoot, '.claude/skills/base-pack/SKILL.md'));
+    const full = await planOk('base-pack');
+    // 途中で止まった実行を再現する: hook の除去と一部のファイル削除だけ済み、注入記録・.gitignore は未着手。
+    await applyUninject({
+      ...full,
+      files: full.files.slice(0, 1),
+      gitignore: null,
+      manifest: {
+        ...full.manifest,
+        content: readFileSync(path.join(projectRoot, '.claude/bdboard-packs.json'), 'utf8'),
+      },
+    });
+    expect(existsSync(path.join(projectRoot, '.claude/bdboard-packs.json'))).toBe(true);
 
-    await applyUninject(first);
+    await applyUninject(await planOk('base-pack'));
 
     expect(Object.keys(snapshot(projectRoot)).filter((key) => key.startsWith('.claude'))).toEqual([]);
+  });
+
+  describe('safety (bdboard-l1m1.7 review)', () => {
+    async function planRaw(packName: string, extra: { allowUnresolved?: boolean } = {}) {
+      return planUninject({
+        projectRootPath: projectRoot,
+        packName,
+        packsRoot,
+        available: await available(),
+        ...extra,
+      });
+    }
+
+    function makeUserSkillDir(): string {
+      const userDir = path.join(tmpDir, 'user-shared-skill');
+      mkdirSync(path.join(userDir, 'references'), { recursive: true });
+      mkdirSync(path.join(userDir, 'hooks'), { recursive: true });
+      writeFileSync(path.join(userDir, 'SKILL.md'), 'USER OWN\n', 'utf8');
+      writeFileSync(path.join(userDir, 'references/note.md'), 'USER NOTE\n', 'utf8');
+      writeFileSync(path.join(userDir, 'hooks/run.sh'), 'user\n', 'utf8');
+      return userDir;
+    }
+
+    it('refuses when .claude/skills/<pack> was replaced by a symlink, and leaves the link target alone', async () => {
+      setupPacks();
+      await inject('base-pack');
+      const userDir = makeUserSkillDir();
+      rmSync(path.join(projectRoot, '.claude/skills/base-pack'), { recursive: true });
+      symlinkSync(userDir, path.join(projectRoot, '.claude/skills/base-pack'));
+
+      const result = await planRaw('base-pack');
+
+      expect(result).toMatchObject({ ok: false, code: 'unsafe-path' });
+      expect(readFileSync(path.join(userDir, 'SKILL.md'), 'utf8')).toBe('USER OWN\n');
+    });
+
+    it('refuses when .claude/skills (an ancestor) is a symlink', async () => {
+      setupPacks();
+      await inject('base-pack');
+      const moved = path.join(tmpDir, 'moved-skills');
+      renameSync(path.join(projectRoot, '.claude/skills'), moved);
+      symlinkSync(moved, path.join(projectRoot, '.claude/skills'));
+
+      expect(await planRaw('base-pack')).toMatchObject({ ok: false, code: 'unsafe-path' });
+      expect(existsSync(path.join(moved, 'base-pack/SKILL.md'))).toBe(true);
+    });
+
+    it('refuses when a sub directory of the pack (references/) is a symlink', async () => {
+      setupPacks();
+      await inject('base-pack');
+      const userDir = makeUserSkillDir();
+      rmSync(path.join(projectRoot, '.claude/skills/base-pack/references'), { recursive: true });
+      symlinkSync(path.join(userDir, 'references'), path.join(projectRoot, '.claude/skills/base-pack/references'));
+
+      expect(await planRaw('base-pack')).toMatchObject({ ok: false, code: 'unsafe-path' });
+      expect(readFileSync(path.join(userDir, 'references/note.md'), 'utf8')).toBe('USER NOTE\n');
+    });
+
+    it('apply re-checks and does not follow a link created after planning', async () => {
+      setupPacks();
+      await inject('base-pack');
+      const plan = await planOk('base-pack');
+      const userDir = makeUserSkillDir();
+      rmSync(path.join(projectRoot, '.claude/skills/base-pack/references'), { recursive: true });
+      symlinkSync(path.join(userDir, 'references'), path.join(projectRoot, '.claude/skills/base-pack/references'));
+
+      await expect(applyUninject(plan)).rejects.toThrow(/symbolic link/);
+      expect(readFileSync(path.join(userDir, 'references/note.md'), 'utf8')).toBe('USER NOTE\n');
+    });
+
+    it('refuses a recorded path outside .claude/skills/<pack>/ (e.g. the user own agent file)', async () => {
+      setupPacks();
+      await inject('base-pack');
+      mkdirSync(path.join(projectRoot, '.claude/agents'), { recursive: true });
+      writeFileSync(path.join(projectRoot, '.claude/agents/mine.md'), 'user agent\n', 'utf8');
+      const manifestPath = path.join(projectRoot, '.claude/bdboard-packs.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { packs: { files: string[] }[] };
+      manifest.packs[0]?.files.push('.claude/agents/mine.md');
+      writeFileSync(manifestPath, JSON.stringify(manifest), 'utf8');
+
+      expect(await planRaw('base-pack')).toMatchObject({ ok: false, code: 'unsafe-path' });
+      expect(readFileSync(path.join(projectRoot, '.claude/agents/mine.md'), 'utf8')).toBe('user agent\n');
+    });
+
+    it('refuses a pack name that is not a safe pack name', async () => {
+      setupPacks();
+      await inject('base-pack');
+
+      expect(await planRaw('../base-pack')).toMatchObject({ ok: false, code: 'invalid-pack-name' });
+    });
+
+    it('says the manifest is unreadable (not "not in the manifest") when the JSON is broken', async () => {
+      setupPacks();
+      await inject('base-pack');
+      writeFileSync(path.join(projectRoot, '.claude/bdboard-packs.json'), '{ broken', 'utf8');
+
+      const result = await planRaw('base-pack');
+
+      expect(result).toMatchObject({ ok: false, code: 'manifest-unreadable' });
+      if (!result.ok) {
+        expect(result.reason).toContain('読めません');
+        expect(result.reason).not.toContain('注入記録にありません');
+      }
+    });
+
+    it('refuses without changing anything when a recorded path became a directory', async () => {
+      setupPacks();
+      await inject('base-pack');
+      rmSync(path.join(projectRoot, '.claude/skills/base-pack/references/note.md'));
+      mkdirSync(path.join(projectRoot, '.claude/skills/base-pack/references/note.md'));
+      const before = snapshot(projectRoot);
+
+      const result = await planRaw('base-pack');
+
+      expect(result).toMatchObject({ ok: false, code: 'unsafe-path' });
+      if (!result.ok) {
+        expect(result.reason).toContain('ディレクトリ');
+      }
+      expect(snapshot(projectRoot)).toEqual(before);
+    });
+
+    it('refuses by default when an injected pack is unknown to the registry; --allow-unresolved lets it through', async () => {
+      setupPacks();
+      await inject('base-pack');
+      const manifestPath = path.join(projectRoot, '.claude/bdboard-packs.json');
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { packs: unknown[] };
+      manifest.packs.push({ name: 'ghost-pack', version: '1', injectedAt: '2026-11-06T00:00:00Z', files: [] });
+      writeFileSync(manifestPath, JSON.stringify(manifest), 'utf8');
+
+      const refused = await planRaw('base-pack');
+      expect(refused).toMatchObject({ ok: false, code: 'unresolved-installed-pack' });
+
+      const allowed = await planRaw('base-pack', { allowUnresolved: true });
+      expect(allowed.ok).toBe(true);
+      if (allowed.ok) {
+        expect(allowed.unresolvedPacks).toEqual(['ghost-pack']);
+      }
+    });
+
+    it('treats a repo holding harness/packs/<pack>/pack.json as a self-injection target (another clone or worktree)', async () => {
+      setupPacks();
+      await inject('base-pack');
+      mkdirSync(path.join(projectRoot, 'harness/packs/base-pack'), { recursive: true });
+      writeFileSync(path.join(projectRoot, 'harness/packs/base-pack/pack.json'), '{}', 'utf8');
+
+      expect(await planRaw('base-pack')).toMatchObject({ ok: false, code: 'self-injection' });
+    });
+
+    it('does not touch .gitignore lines the user wrote before the managed header', async () => {
+      setupPacks();
+      writeFileSync(path.join(projectRoot, '.gitignore'), '.claude/skills/base-pack/\n', 'utf8');
+      await inject('base-pack');
+
+      await applyUninject(await planOk('base-pack'));
+
+      expect(snapshot(projectRoot)['.gitignore']).toContain('.claude/skills/base-pack/\n# bdboard-harness');
+    });
+
+    it('keeps settings.json as {} (does not delete the tracked file) when only our hooks were in it', async () => {
+      setupPacks();
+      await inject('base-pack');
+      writeFileSync(
+        path.join(projectRoot, '.claude/settings.json'),
+        readFileSync(path.join(projectRoot, '.claude/settings.local.json'), 'utf8'),
+        'utf8',
+      );
+
+      await applyUninject(await planOk('base-pack'));
+
+      expect(existsSync(path.join(projectRoot, '.claude/settings.json'))).toBe(true);
+      expect(existsSync(path.join(projectRoot, '.claude/settings.local.json'))).toBe(false);
+    });
   });
 });

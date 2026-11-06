@@ -99,6 +99,12 @@ async function writeSettings(
   }
 }
 
+function isNonEmptyObject(value: unknown): boolean {
+  return (
+    typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length > 0
+  );
+}
+
 export interface PlannedWrite {
   readonly absolute: string;
   /** 書き込む本文。`null` はファイルごと削除する (取り除いた結果が空の設定になるとき)。 */
@@ -119,15 +125,16 @@ export interface PlannedWrite {
  * - マーカーがあるのに JSON として解釈できないときは、重複が無いと確かめられないので
  *   失敗させる (壊れたファイルは上書きしない)。
  * - 取り除くものが無かったときは null (書かない)。
- * - `pruneEmpty` (uninject 用): 取り除いた結果 `hooks` が空になったら `hooks` キーごと落とし、
- *   設定全体が空 (`{}`) になったらファイルごと削除する計画 (`content: null`) にする。
- *   注入が作った settings.local.json を、往復で元の「無い」状態に戻すため。
+ * - `pruneEmpty` (uninject 用): 我々の entry を取り除いた結果 `hooks` が空になったときだけ
+ *   `hooks` キーごと落とす (もともと空だった `hooks` は触らない)。設定全体が空 (`{}`) になったら、
+ *   `deleteIfEmpty` ならファイルごと削除する計画 (`content: null`)、そうでなければ `{}` を書いて残す。
+ *   注入が作った settings.local.json を、往復で元の「無い」状態に戻すため (settings.json は消さない)。
  */
 export async function planHookRemoval(
   projectRootPath: string,
   packName: string,
   relativePath: string,
-  options: { readonly pruneEmpty?: boolean } = {},
+  options: { readonly pruneEmpty?: boolean; readonly deleteIfEmpty?: boolean } = {},
 ): Promise<PlannedWrite | null> {
   const absolute = resolveSettingsAbsolute(projectRootPath, relativePath);
   const existing = await readSettingsForWrite(absolute, relativePath);
@@ -158,17 +165,25 @@ export async function planHookRemoval(
   }
 
   const root = JSON.parse(stripped.settingsJson) as Record<string, unknown>;
-  const hooks = root.hooks;
+  const hooksAfter = root.hooks;
+  const hooksBefore = (JSON.parse(existing) as Record<string, unknown>).hooks;
+  // `hooks` を落とすのは、我々の entry を取り除いた結果として空になったときだけ。
+  // 取り除く前から空だった `hooks` は触らない。
   if (
-    typeof hooks === 'object' &&
-    hooks !== null &&
-    !Array.isArray(hooks) &&
-    Object.keys(hooks).length === 0
+    isNonEmptyObject(hooksBefore) &&
+    typeof hooksAfter === 'object' &&
+    hooksAfter !== null &&
+    !Array.isArray(hooksAfter) &&
+    Object.keys(hooksAfter).length === 0
   ) {
     delete root.hooks;
   }
   if (Object.keys(root).length === 0) {
-    return { absolute, content: null };
+    // ファイルごと消すのは呼び出し側が許したとき (注入が作る settings.local.json)。
+    // 追跡される settings.json は空の設定として残す。
+    return options.deleteIfEmpty === true
+      ? { absolute, content: null }
+      : { absolute, content: '{}\n' };
   }
   return { absolute, content: `${JSON.stringify(root, null, 2)}\n` };
 }

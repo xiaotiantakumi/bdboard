@@ -40,12 +40,19 @@ describe('harness-uninject.mjs', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  function run(args) {
+  // CLAUDECODE の有無はテスト対象なので、親 (Claude Code の中で走る vitest) の値は引き継がず、各テストが決める。
+  function run(args, { claudeCode = false } = {}) {
+    const env = { ...process.env };
+    delete env.CLAUDECODE;
+    if (claudeCode) {
+      env.CLAUDECODE = '1';
+    }
     return spawnSync(process.execPath, [SCRIPT, ...args], {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
       input: '',
       timeout: 60_000,
+      env,
     });
   }
 
@@ -54,6 +61,16 @@ describe('harness-uninject.mjs', () => {
 
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('ユーザーが自分の端末');
+    expect(existsSync(skillFile)).toBe(true);
+  });
+
+  it('refuses --yes when CLAUDECODE is set, telling the user to use a terminal outside Claude Code', () => {
+    const result = run(['--project', projectRoot, '--pack', 'bdboard-harness', '--yes'], {
+      claudeCode: true,
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Claude Code の外');
     expect(existsSync(skillFile)).toBe(true);
   });
 

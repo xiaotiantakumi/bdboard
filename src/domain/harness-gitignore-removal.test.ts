@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { removeGitignoreEntries } from './harness-gitignore-removal.js';
 import { appendGitignoreEntries } from './harness-path.js';
 
+const HEADER = '# bdboard-harness: managed pack injections (do not edit lines below by hand)';
+
 describe('removeGitignoreEntries', () => {
   it('undoes appendGitignoreEntries except for the shared header and settings.local.json line', () => {
     const original = 'node_modules\ndist/\n';
@@ -30,10 +32,22 @@ describe('removeGitignoreEntries', () => {
   });
 
   it('matches whole lines only (a longer path that merely contains the entry is not touched)', () => {
-    const content = '.claude/skills/base-pack/\n.claude/skills/base-pack-extra/\nfoo/.claude/skills/base-pack/\n';
+    const content = `${HEADER}\n.claude/skills/base-pack/\n.claude/skills/base-pack-extra/\nfoo/.claude/skills/base-pack/\n`;
     expect(removeGitignoreEntries(content, 'base-pack', { removeManifestEntry: false })).toBe(
-      '.claude/skills/base-pack-extra/\nfoo/.claude/skills/base-pack/\n',
+      `${HEADER}\n.claude/skills/base-pack-extra/\nfoo/.claude/skills/base-pack/\n`,
     );
+  });
+
+  it('only touches lines after the managed header (the user own identical lines before it stay)', () => {
+    const content = `.claude/skills/base-pack/\n.claude/bdboard-packs.json\n${HEADER}\n.claude/bdboard-packs.json\n.claude/skills/base-pack/\n`;
+    expect(removeGitignoreEntries(content, 'base-pack', { removeManifestEntry: true })).toBe(
+      `.claude/skills/base-pack/\n.claude/bdboard-packs.json\n${HEADER}\n`,
+    );
+  });
+
+  it('does nothing without the managed header (no managed lines exist)', () => {
+    const content = '.claude/skills/base-pack/\n';
+    expect(removeGitignoreEntries(content, 'base-pack', { removeManifestEntry: true })).toBe(content);
   });
 
   it('returns the input unchanged when there is nothing to remove', () => {
