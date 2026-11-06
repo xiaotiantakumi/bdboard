@@ -108,4 +108,44 @@ describe('evaluatePackInjectability', () => {
     const result = evaluatePackInjectability(bad, [bad], manifestOf());
     expect(result).toMatchObject({ ok: false, code: 'base-has-requires' });
   });
+
+  describe('when the not-injected dependency is itself broken (bdboard-l1m1.14)', () => {
+    it('does not tell the user to inject a dependency that cannot be injected', () => {
+      // 依存先の B はベースなのに requires を宣言していて、注入できない。
+      const broken = pack('broken-base', { role: 'base', requires: ['base-pack'] });
+      const target = pack('video-pack', { role: 'optional', requires: ['broken-base'] });
+      const result = evaluatePackInjectability(
+        target,
+        [BASE, broken, target],
+        manifestOf('base-pack'),
+      );
+      expect(result).toMatchObject({ ok: false, code: 'requires-not-injected' });
+      const reason = result.ok === false ? result.reason : '';
+      expect(reason).not.toContain('先に broken-base を注入してください');
+      expect(reason).toContain('broken-base 自体が注入できない状態です');
+      // 依存先の拒否理由 (pack.json を直す) を添える。
+      expect(reason).toContain('ベースですが requires');
+    });
+
+    it('still advises injecting a healthy dependency, and flags only the broken one', () => {
+      const broken = pack('broken-base', { role: 'base', requires: ['base-pack'] });
+      const target = pack('multi-pack', {
+        role: 'optional',
+        requires: ['base-pack', 'broken-base'],
+      });
+      const result = evaluatePackInjectability(target, [BASE, broken, target], manifestOf());
+      const reason = result.ok === false ? result.reason : '';
+      expect(reason).toContain('先に base-pack を注入してください');
+      expect(reason).toContain('broken-base 自体が注入できない状態です');
+    });
+
+    it('keeps the plain advice when the dependency is only waiting for its own dependency', () => {
+      const middle = pack('middle-pack', { role: 'optional', requires: ['base-pack'] });
+      const target = pack('top-pack', { role: 'optional', requires: ['middle-pack'] });
+      const result = evaluatePackInjectability(target, [BASE, middle, target], manifestOf());
+      const reason = result.ok === false ? result.reason : '';
+      expect(reason).toContain('先に middle-pack を注入してください');
+      expect(reason).not.toContain('自体が注入できない');
+    });
+  });
 });

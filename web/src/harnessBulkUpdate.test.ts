@@ -40,6 +40,18 @@ describe('describeHarnessBulkFailure', () => {
     ).toBe('injection failed: disk full');
   });
 
+  it('does not report the pack-not-injectable 409 as another session changing it (bdboard-l1m1.14)', () => {
+    const message = describeHarnessBulkFailure(
+      new ApiError(409, 'pack not injectable', {
+        errorMessage: 'pack not injectable',
+        code: 'requires-not-injected',
+        reason: 'ベースが未注入です',
+      }),
+    );
+    expect(message).toBe('注入できません: ベースが未注入です');
+    expect(message).not.toContain('他のセッション');
+  });
+
   it('uses the plain message when there is no detail', () => {
     expect(describeHarnessBulkFailure(new Error('boom'))).toBe('boom');
   });

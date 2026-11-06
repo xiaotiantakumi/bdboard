@@ -79,8 +79,12 @@ export function toContractJson(contract: ContractState): Record<string, unknown>
   }
 }
 
-export function toHarnessStatusJson(status: ProjectHarnessStatus): Record<string, unknown> {
+export function toHarnessStatusJson(
+  status: ProjectHarnessStatus,
+  bdboardRootPath?: string,
+): Record<string, unknown> {
   return {
+    ...(bdboardRootPath !== undefined ? { bdboardRootPath } : {}),
     packs: status.packs.map((entry) => ({
       name: entry.name,
       description: entry.description,

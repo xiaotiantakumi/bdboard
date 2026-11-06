@@ -6,6 +6,7 @@ import {
   CONFLICT_WRITE_HELP,
   CROSS_SITE_HELP,
   NETWORK_FETCH_HELP,
+  PACK_NOT_INJECTABLE_HELP,
   RATE_LIMITED_HELP,
   TUNNEL_NOT_RUNNING_HELP,
   TUNNEL_WRITE_HELP,
@@ -18,7 +19,7 @@ import {
 function apiError(
   status: number,
   errorMessage?: string,
-  options?: { code?: string },
+  options?: { code?: string; reason?: string },
 ): ApiError {
   return new ApiError(status, errorMessage ?? `HTTP ${status}`, {
     ...(errorMessage !== undefined ? { errorMessage } : {}),
@@ -102,6 +103,23 @@ describe('describeWriteError', () => {
         'fallback',
       ),
     ).toBe(CHAT_BUSY_HELP);
+  });
+
+  it('shows the server reason for the pack-not-injectable 409 instead of the conflict message (bdboard-l1m1.14)', () => {
+    expect(
+      describeWriteError(
+        apiError(409, 'pack not injectable', {
+          code: 'requires-not-injected',
+          reason: 'video-pack は bdboard-harness が未注入のため注入できません',
+        }),
+        'fallback',
+      ),
+    ).toBe('注入できません: video-pack は bdboard-harness が未注入のため注入できません');
+    // 理由が無い (古いサーバーなど) ときも「他のセッションが先に変更した」にはしない。
+    expect(describeWriteError(apiError(409, 'pack not injectable'), 'fallback')).toBe(
+      PACK_NOT_INJECTABLE_HELP,
+    );
+    expect(PACK_NOT_INJECTABLE_HELP).not.toBe(CONFLICT_WRITE_HELP);
   });
 
   it('falls back to CONFLICT_WRITE_HELP for issue-writer style and unknown 409 strings', () => {
