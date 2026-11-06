@@ -19,7 +19,10 @@ import {
   HarnessInjectionError,
   HarnessPathTraversalError,
 } from '../../application/ports/harness-injector.js';
-import { SETTINGS_RELATIVE_PATH } from '../../domain/harness-hooks.js';
+import {
+  LOCAL_SETTINGS_RELATIVE_PATH,
+  SETTINGS_RELATIVE_PATH,
+} from '../../domain/harness-hooks.js';
 import {
   GITIGNORE_MANAGED_HEADER,
   MANIFEST_RELATIVE_PATH,
@@ -320,6 +323,8 @@ describe('createFsHarnessInjector', () => {
     expect(gitignore).toContain(GITIGNORE_MANAGED_HEADER);
     expect(gitignore).toContain(MANIFEST_RELATIVE_PATH);
     expect(gitignore).toContain('.claude/skills/bdboard-harness/');
+    // hook の登録先は Claude Code 標準の ignore に頼らず管理行で明示する (bdboard-l1m1.8)。
+    expect(gitignore.split('\n')).toContain(LOCAL_SETTINGS_RELATIVE_PATH);
   });
 
   it('appends gitignore entries without modifying existing content', async () => {
@@ -374,6 +379,7 @@ describe('createFsHarnessInjector', () => {
     const lines = gitignore.split('\n').filter((line) => line.length > 0);
     expect(lines.filter((line) => line === GITIGNORE_MANAGED_HEADER)).toHaveLength(1);
     expect(lines.filter((line) => line === MANIFEST_RELATIVE_PATH)).toHaveLength(1);
+    expect(lines.filter((line) => line === LOCAL_SETTINGS_RELATIVE_PATH)).toHaveLength(1);
     expect(lines.filter((line) => line === '.claude/skills/bdboard-harness/')).toHaveLength(1);
   });
 
@@ -413,6 +419,7 @@ describe('createFsHarnessInjector', () => {
     const lines = gitignore.split('\n').filter((line) => line.length > 0);
     expect(lines.filter((line) => line === GITIGNORE_MANAGED_HEADER)).toHaveLength(1);
     expect(lines.filter((line) => line === MANIFEST_RELATIVE_PATH)).toHaveLength(1);
+    expect(lines.filter((line) => line === LOCAL_SETTINGS_RELATIVE_PATH)).toHaveLength(1);
     expect(lines.filter((line) => line === '.claude/skills/alpha-pack/')).toHaveLength(1);
     expect(lines.filter((line) => line === '.claude/skills/beta-pack/')).toHaveLength(1);
   });
@@ -546,11 +553,162 @@ describe('createFsHarnessInjector', () => {
       });
     }
 
+    /** hook の登録先 (git 管理外)。bdboard-l1m1.8 以降の書き込み先。 */
     function settingsPath(): string {
+      return path.join(projectRoot, LOCAL_SETTINGS_RELATIVE_PATH);
+    }
+
+    /** git 追跡される設定。自己注入の書き込み先で、移行前の注入先が旧登録を持つ場所。 */
+    function trackedSettingsPath(): string {
       return path.join(projectRoot, SETTINGS_RELATIVE_PATH);
     }
 
-    it('registers declared hooks in .claude/settings.json', async () => {
+    /** 旧版が settings.json に書いていた形 (我々の entry + 他人の hook)。 */
+    function writeLegacyTrackedSettings(indent: number | string = 2): string {
+      const ownCommand = (script: string): string =>
+        `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/${script}"`;
+      const text = `${JSON.stringify(
+        {
+          permissions: { allow: ['Bash(ls)'] },
+          hooks: {
+            SessionStart: [{ hooks: [{ type: 'command', command: 'bd prime --hook-json' }] }],
+            PostToolUse: [
+              {
+                matcher: 'Agent|Task',
+                hooks: [
+                  { type: 'command', command: ownCommand('worktree-freshness.sh'), timeout: 10 },
+                ],
+              },
+            ],
+            Stop: [
+              {
+                hooks: [
+                  { type: 'command', command: 'echo user-stop' },
+                  { type: 'command', command: ownCommand('stop-ticket-gate.sh'), timeout: 20 },
+                ],
+              },
+            ],
+          },
+        },
+        null,
+        indent,
+      )}\n`;
+      mkdirSync(path.dirname(trackedSettingsPath()), { recursive: true });
+      writeFileSync(trackedSettingsPath(), text, 'utf8');
+      return text;
+    }
+
+    /** 両ファイルに登録されているコマンド文字列を全部集める (二重登録の検査用)。 */
+    function collectCommands(file: string): string[] {
+      if (!existsSync(file)) {
+        return [];
+      }
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as {
+        hooks?: Record<string, { hooks: { command: string }[] }[]>;
+      };
+      return Object.values(parsed.hooks ?? {}).flatMap((groups) =>
+        groups.flatMap((group) => group.hooks.map((entry) => entry.command)),
+      );
+    }
+
+    it('registers declared hooks only in .claude/settings.local.json, leaving settings.json untouched', async () => {
+      const injector = setupFixture();
+      writeHookedPack();
+
+      await injector.injectPack(projectRoot, HOOKED_PACK, new Date('2026-09-04T10:00:00.000Z'));
+
+      expect(existsSync(settingsPath())).toBe(true);
+      expect(existsSync(trackedSettingsPath())).toBe(false);
+    });
+
+    it('migrates a legacy settings.json registration without double-registering (bdboard-l1m1.8)', async () => {
+      const injector = setupFixture();
+      writeHookedPack();
+      writeLegacyTrackedSettings();
+
+      await injector.injectPack(projectRoot, HOOKED_PACK, new Date('2026-09-04T10:00:00.000Z'));
+
+      const marker = '/.claude/skills/bdboard-harness/hooks/';
+      const trackedCommands = collectCommands(trackedSettingsPath());
+      const localCommands = collectCommands(settingsPath());
+      // 我々の entry は local にだけ、2 件。
+      expect(localCommands.filter((command) => command.includes(marker))).toHaveLength(2);
+      expect(trackedCommands.filter((command) => command.includes(marker))).toEqual([]);
+      // 他人の設定は settings.json に残る (hook・permissions・同じ group 内の他人の entry)。
+      const tracked = JSON.parse(readFileSync(trackedSettingsPath(), 'utf8'));
+      expect(tracked.permissions).toEqual({ allow: ['Bash(ls)'] });
+      expect(tracked.hooks.SessionStart).toEqual([
+        { hooks: [{ type: 'command', command: 'bd prime --hook-json' }] },
+      ]);
+      expect(tracked.hooks.Stop).toEqual([
+        { hooks: [{ type: 'command', command: 'echo user-stop' }] },
+      ]);
+      // 我々だけだった event は空配列を残さず消える。
+      expect(tracked.hooks.PostToolUse).toBeUndefined();
+    });
+
+    it('does not rewrite settings.json again once the legacy registration is gone', async () => {
+      const injector = setupFixture();
+      writeHookedPack();
+      writeLegacyTrackedSettings();
+
+      await injector.injectPack(projectRoot, HOOKED_PACK, new Date('2026-09-04T10:00:00.000Z'));
+      const trackedAfterMigration = readFileSync(trackedSettingsPath(), 'utf8');
+      const trackedMtime = statSync(trackedSettingsPath()).mtimeMs;
+      const localAfterMigration = readFileSync(settingsPath(), 'utf8');
+      const localMtime = statSync(settingsPath()).mtimeMs;
+
+      await injector.injectPack(projectRoot, HOOKED_PACK, new Date('2026-09-04T11:00:00.000Z'));
+
+      expect(readFileSync(trackedSettingsPath(), 'utf8')).toBe(trackedAfterMigration);
+      expect(statSync(trackedSettingsPath()).mtimeMs).toBe(trackedMtime);
+      expect(readFileSync(settingsPath(), 'utf8')).toBe(localAfterMigration);
+      expect(statSync(settingsPath()).mtimeMs).toBe(localMtime);
+    });
+
+    it('leaves a settings.json without our entries byte-for-byte (no reformatting)', async () => {
+      const injector = setupFixture();
+      writeHookedPack();
+      // 4 スペース字下げ。JSON.stringify(…, null, 2) に直すと無意味な git 差分になる。
+      const original = writeLegacyTrackedSettings(4).replaceAll(
+        '/.claude/skills/bdboard-harness/hooks/',
+        '/.claude/skills/other-pack/hooks/',
+      );
+      writeFileSync(trackedSettingsPath(), original, 'utf8');
+
+      await injector.injectPack(projectRoot, HOOKED_PACK, new Date('2026-09-04T10:00:00.000Z'));
+
+      expect(readFileSync(trackedSettingsPath(), 'utf8')).toBe(original);
+    });
+
+    it('fails without writing anything when settings.json holds our marker but is broken', async () => {
+      const injector = setupFixture();
+      writeHookedPack();
+      const broken = '{ "hooks": { "Stop": [ /.claude/skills/bdboard-harness/hooks/ ';
+      mkdirSync(path.dirname(trackedSettingsPath()), { recursive: true });
+      writeFileSync(trackedSettingsPath(), broken, 'utf8');
+
+      await expect(
+        injector.injectPack(projectRoot, HOOKED_PACK, new Date('2026-09-04T10:00:00.000Z')),
+      ).rejects.toBeInstanceOf(HarnessInjectionError);
+
+      expect(readFileSync(trackedSettingsPath(), 'utf8')).toBe(broken);
+      // 検証は書き込みより前: 新しい登録も作らず、マニフェストも書かない。
+      expect(existsSync(settingsPath())).toBe(false);
+      expect(existsSync(path.join(projectRoot, MANIFEST_RELATIVE_PATH))).toBe(false);
+    });
+
+    it('still writes settings.json (not settings.local.json) on self-injection', async () => {
+      const injector = setupSelfInjectionFixture();
+      writeHookedPack();
+
+      await injector.injectPack(projectRoot, HOOKED_PACK, new Date('2026-09-04T10:00:00.000Z'));
+
+      expect(collectCommands(trackedSettingsPath())).toHaveLength(2);
+      expect(existsSync(settingsPath())).toBe(false);
+    });
+
+    it('registers declared hooks in .claude/settings.local.json', async () => {
       const injector = setupFixture();
       writeHookedPack();
 
@@ -642,7 +800,7 @@ describe('createFsHarnessInjector', () => {
       ]);
     });
 
-    it('fails the injection and writes no manifest when settings.json is broken', async () => {
+    it('fails the injection and writes no manifest when settings.local.json is broken', async () => {
       const injector = setupFixture();
       writeHookedPack();
       mkdirSync(path.dirname(settingsPath()), { recursive: true });
@@ -657,7 +815,7 @@ describe('createFsHarnessInjector', () => {
       expect(readFileSync(settingsPath(), 'utf8')).toBe('{ "hooks": ');
     });
 
-    it('does not create settings.json for a pack without hooks', async () => {
+    it('creates neither settings file for a pack without hooks', async () => {
       const injector = setupFixture();
       writePack('plain-pack', '0.1.0', { 'SKILL.md': '# plain' });
 
@@ -676,10 +834,11 @@ describe('createFsHarnessInjector', () => {
       );
 
       expect(existsSync(settingsPath())).toBe(false);
+      expect(existsSync(trackedSettingsPath())).toBe(false);
     });
 
     it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-      'fails the injection when settings.json exists but cannot be read',
+      'fails the injection when settings.local.json exists but cannot be read',
       async () => {
         // EACCES を ENOENT と同じ「無い」に丸めると、既存の設定が丸ごと消える。
         const injector = setupFixture();
@@ -703,7 +862,7 @@ describe('createFsHarnessInjector', () => {
       },
     );
 
-    it('does not rewrite settings.json when the merge changes nothing', async () => {
+    it('does not rewrite settings.local.json when the merge changes nothing', async () => {
       const injector = setupFixture();
       writeHookedPack();
 
@@ -754,13 +913,43 @@ describe('createFsHarnessInjector', () => {
       },
     );
 
-    it('reads back the settings file through readSettings', async () => {
+    it('reads back both settings files through readSettings, in [settings.json, settings.local.json] order', async () => {
       const injector = setupFixture();
       writeHookedPack();
 
-      expect(await injector.readSettings(projectRoot)).toBeNull();
+      expect(await injector.readSettings(projectRoot)).toEqual([null, null]);
       await injector.injectPack(projectRoot, HOOKED_PACK, new Date('2026-09-04T10:00:00.000Z'));
-      expect(await injector.readSettings(projectRoot)).toContain('worktree-freshness.sh');
+      const [tracked, local] = await injector.readSettings(projectRoot);
+      expect(tracked).toBeNull();
+      expect(local).toContain('worktree-freshness.sh');
+
+      const legacy = writeLegacyTrackedSettings();
+      expect(await injector.readSettings(projectRoot)).toEqual([legacy, local]);
     });
+  });
+
+  it('appends only the settings.local.json line to a .gitignore written before bdboard-l1m1.8', async () => {
+    const injector = setupFixture();
+    writePack('bdboard-harness', '0.1.0', { 'SKILL.md': '# harness' });
+    const before = `node_modules/\n${GITIGNORE_MANAGED_HEADER}\n${MANIFEST_RELATIVE_PATH}\n.claude/skills/bdboard-harness/\n`;
+    writeFileSync(path.join(projectRoot, '.gitignore'), before, 'utf8');
+
+    await injector.injectPack(
+      projectRoot,
+      {
+        name: 'bdboard-harness',
+        version: '0.1.0',
+        description: 'test',
+        hooks: [],
+        role: 'base' as const,
+        requires: [],
+        files: [{ relativePath: 'SKILL.md' }],
+      },
+      new Date('2026-11-06T10:00:00.000Z'),
+    );
+
+    expect(readFileSync(path.join(projectRoot, '.gitignore'), 'utf8')).toBe(
+      `${before}${LOCAL_SETTINGS_RELATIVE_PATH}\n`,
+    );
   });
 });

@@ -9,8 +9,12 @@ import type {
 /** 注入先が検証コントラクトを置くパス。文言に埋め込むのでここに固定する。 */
 export const HARNESS_CONTRACT_PATH = '.claude/bdboard-harness.json';
 
-/** 注入先で hook を登録するファイル。文言に埋め込むのでここに固定する。 */
-export const HARNESS_SETTINGS_PATH = '.claude/settings.json';
+/**
+ * 注入先で hook を登録するファイル。文言に埋め込むのでここに固定する。
+ * 通常の注入先の登録先は git 管理外の settings.local.json (bdboard-l1m1.8)。自己注入
+ * (bdboard 自身) と移行前の注入先は settings.json で、状態の判定は両方の和集合で行う。
+ */
+export const HARNESS_SETTINGS_PATH = '.claude/settings.local.json (または .claude/settings.json)';
 
 export function formatHarnessPackStatusLabel(
   pack: ProjectHarnessPackStatusDto,

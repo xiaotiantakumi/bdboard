@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { LOCAL_SETTINGS_RELATIVE_PATH } from './harness-hooks/types.js';
 
 export const CLAUDE_DIR = '.claude';
 export const MANIFEST_RELATIVE_PATH = '.claude/bdboard-packs.json';
@@ -107,6 +108,11 @@ export function gitignoreManifestEntry(): string {
   return MANIFEST_RELATIVE_PATH;
 }
 
+/** `.gitignore` 用の個人設定ファイル行 (hook 登録先。bdboard-l1m1.8)。 */
+export function gitignoreLocalSettingsEntry(): string {
+  return LOCAL_SETTINGS_RELATIVE_PATH;
+}
+
 /** `.gitignore` 用のパック別スキルディレクトリ行。unsafe な packName は null。 */
 export function gitignorePackSkillDirEntry(packName: string): string | null {
   if (!isSafePackName(packName)) {
@@ -137,6 +143,13 @@ export function gitignoreLinesToAppend(content: string, packName: string): strin
   const manifestEntry = gitignoreManifestEntry();
   if (!existing.has(manifestEntry.trim())) {
     lines.push(manifestEntry);
+  }
+
+  // hook の登録先 (bdboard-l1m1.8)。Claude Code 標準の ignore に頼らず、管理行として明示する
+  // (標準の ignore が無い環境・古い環境でも git の差分に出さないため)。
+  const localSettingsEntry = gitignoreLocalSettingsEntry();
+  if (!existing.has(localSettingsEntry.trim())) {
+    lines.push(localSettingsEntry);
   }
 
   const packEntry = gitignorePackSkillDirEntry(packName);

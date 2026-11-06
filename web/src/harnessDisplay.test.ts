@@ -333,9 +333,9 @@ describe('harnessDisplay hooks state', () => {
     });
     expect(formatHarnessHooksLabel(pack)).toBe('hook 未登録 (1)');
     expect(formatHarnessHooksDetail(pack)).toContain('再注入');
-    expect(formatHarnessHooksDetail(pack)).toContain('.claude/settings.json');
+    expect(formatHarnessHooksDetail(pack)).toContain('.claude/settings.local.json');
     expect(buildHarnessHooksMessage(pack)).toBe(
-      'bdboard-harness: hook 1 件が .claude/settings.json に未登録です (再注入で解消)',
+      'bdboard-harness: hook 1 件が .claude/settings.local.json (または .claude/settings.json) に未登録です (再注入で解消)',
     );
   });
 });

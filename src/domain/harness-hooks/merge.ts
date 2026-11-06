@@ -27,11 +27,15 @@ function failure(error: string): MergeHarnessHooksResult {
  * - 同じ matcher の既存 group があっても**別 group として追加**する。他人の
  *   group の hooks 配列に混ぜると、削除時に境界が曖昧になるため。
  * - 既存キーの順序は保つ (`JSON.parse` → 破壊的編集 → `JSON.stringify`)。
+ * - `settingsPath` はエラーメッセージに出すファイル名だけに使う (書き込み先は呼び出し側が
+ *   決める。settings.json / settings.local.json のどちらにも使うため、bdboard-l1m1.8)。
+ * - `pack.hooks` が空なら「我々の entry を取り除くだけ」になる (旧登録の移行に使う)。
  */
 export function mergeHarnessHooks(
   existingSettingsJson: string | null,
   pack: HarnessHookPack,
   installRoot: string = CLAUDE_PROJECT_DIR_PLACEHOLDER,
+  settingsPath: string = SETTINGS_RELATIVE_PATH,
 ): MergeHarnessHooksResult {
   let root: JsonObject;
   if (existingSettingsJson === null || existingSettingsJson.trim().length === 0) {
@@ -41,10 +45,10 @@ export function mergeHarnessHooks(
     try {
       parsed = JSON.parse(existingSettingsJson);
     } catch {
-      return failure(`${SETTINGS_RELATIVE_PATH} を JSON として解釈できません`);
+      return failure(`${settingsPath} を JSON として解釈できません`);
     }
     if (!isPlainObject(parsed)) {
-      return failure(`${SETTINGS_RELATIVE_PATH} のトップレベルがオブジェクトではありません`);
+      return failure(`${settingsPath} のトップレベルがオブジェクトではありません`);
     }
     root = parsed;
   }
@@ -56,7 +60,7 @@ export function mergeHarnessHooks(
   } else if (isPlainObject(existingHooks)) {
     hooksObject = existingHooks;
   } else {
-    return failure(`${SETTINGS_RELATIVE_PATH} の hooks がオブジェクトではありません`);
+    return failure(`${settingsPath} の hooks がオブジェクトではありません`);
   }
 
   const marker = harnessHookMarker(pack.name);
@@ -127,7 +131,7 @@ export function mergeHarnessHooks(
       emptiedEvents.delete(declaration.event);
     } else {
       return failure(
-        `${SETTINGS_RELATIVE_PATH} の hooks.${declaration.event} が配列ではありません`,
+        `${settingsPath} の hooks.${declaration.event} が配列ではありません`,
       );
     }
     registered.push(command);

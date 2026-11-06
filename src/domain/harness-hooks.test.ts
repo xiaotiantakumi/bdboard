@@ -442,4 +442,48 @@ describe('evaluateHooksState', () => {
 
     expect(evaluateHooksState(settings, PACK).state).toBe('ok');
   });
+
+  // bdboard-l1m1.8: 登録先が settings.local.json に移ったので、判定は両ファイルの和集合。
+  describe('with several settings files (settings.json + settings.local.json)', () => {
+    function settingsWithout(...events: string[]): string {
+      const merged = mergeHarnessHooks(null, PACK);
+      if (!merged.ok) throw new Error(merged.error);
+      const parsed = JSON.parse(merged.settingsJson);
+      for (const event of events) {
+        delete parsed.hooks[event];
+      }
+      return JSON.stringify(parsed);
+    }
+
+    const ALL = (() => {
+      const merged = mergeHarnessHooks(null, PACK);
+      if (!merged.ok) throw new Error(merged.error);
+      return merged.settingsJson;
+    })();
+
+    it('is ok when everything is registered only in the second file (the new write target)', () => {
+      expect(evaluateHooksState([null, ALL], PACK).state).toBe('ok');
+    });
+
+    it('is ok when everything is registered only in the first file (self-injection / legacy)', () => {
+      expect(evaluateHooksState([ALL, null], PACK).state).toBe('ok');
+    });
+
+    it('unions registrations split across the files', () => {
+      expect(evaluateHooksState([settingsWithout('Stop'), settingsWithout('PostToolUse')], PACK))
+        .toEqual({ state: 'ok', missingHooks: [] });
+    });
+
+    it('still reports missing when neither file has them, and ignores a broken file', () => {
+      expect(evaluateHooksState([null, null], PACK).state).toBe('missing');
+      expect(evaluateHooksState(['{ oops', ALL], PACK).state).toBe('ok');
+      expect(evaluateHooksState(['{ oops', '{ oops'], PACK).state).toBe('missing');
+    });
+
+    it('reports partial when only some hooks are present across the files', () => {
+      expect(
+        evaluateHooksState([settingsWithout('Stop'), null], PACK),
+      ).toEqual({ state: 'partial', missingHooks: [STOP_COMMAND] });
+    });
+  });
 });
