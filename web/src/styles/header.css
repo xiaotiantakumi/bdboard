@@ -251,6 +251,36 @@
   color: var(--color-text);
 }
 
+/* bdboard-sb45: タイトルはボードに戻るボタン。見た目はタイトルのまま、押せると分かる
+   カーソルとフォーカスリングだけ足す。 */
+.header-title-btn {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.header-title-btn:hover {
+  background: var(--badge-neutral-bg);
+}
+
+.header-title-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* アイコンはスマホ幅だけ (header-6.css)。 */
+.header-title-icon {
+  display: none;
+}
+
 .header-group {
   display: flex;
   flex-wrap: wrap;

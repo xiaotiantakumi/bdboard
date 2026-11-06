@@ -81,7 +81,34 @@ export function GlobalBar({
   return (
     <div className="global-bar">
       <div className="header-brand">
-        <h1 className="header-title">bdboard</h1>
+        {/* bdboard-sb45: タイトルは「ボード (チケット画面) に戻る」ボタン。設定などの別ビューから
+            戻る入口になる。見出し (h1) の意味は残し、押せるのは中のボタン。スマホ幅は文字を畳み
+            (CSS)、家のアイコンを 44px の押せる面として出す。 */}
+        <h1 className="header-title">
+          <button
+            type="button"
+            className="header-title-btn"
+            aria-label="bdboard ボードに戻る"
+            onClick={() => onViewChange('split')}
+          >
+            <span className="header-title-text">bdboard</span>
+            <svg
+              className="header-title-icon"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 11.5 12 4l9 7.5" />
+              <path d="M5.5 10v10h13V10" />
+            </svg>
+          </button>
+        </h1>
         <StatusPill {...status} />
       </div>
 

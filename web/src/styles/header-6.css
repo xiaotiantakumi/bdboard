@@ -240,14 +240,27 @@
     gap: 6px;
   }
 
-  /* タイトル文字は畳む (プロジェクト名がタイトル代わり)。丸は接続状態の入口として残す。 */
-  .header-title {
+  /* タイトル文字は畳む (プロジェクト名がタイトル代わり)。丸は接続状態の入口として残す。
+     bdboard-sb45: 代わりに家のアイコンを「ボードに戻る」ボタンとして 44px の面で出す。 */
+  .header-title-text {
     position: absolute;
     width: 1px;
     height: 1px;
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+
+  .header-title-btn {
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    border-radius: var(--radius-pill);
+  }
+
+  .header-title-icon {
+    display: block;
   }
 
   .global-bar > .project-picker {
