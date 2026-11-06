@@ -53,8 +53,28 @@ export interface HarnessManifest {
   readonly packs: readonly InstalledPackRecord[];
 }
 
+/**
+ * パックを注入できない理由の種別 (bdboard-l1m1.1)。UI は文言 (`reason`) を表示するだけで、
+ * 規則を複製しない。`code` はテストと API 利用側の分岐用。判定は
+ * `evaluatePackInjectability` (harness-pack-injectability.ts)。
+ */
+export type PackInjectabilityCode =
+  | 'base-has-requires'
+  | 'optional-without-requires'
+  | 'requires-pack-missing'
+  | 'requires-cycle'
+  | 'requires-not-injected';
+
+export type PackInjectability =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly code: PackInjectabilityCode; readonly reason: string };
+
 export interface ProjectHarnessPackStatus {
   readonly name: string;
+  /** 選択 UI に出す pack.json 由来の表示情報 (bdboard-l1m1.1)。 */
+  readonly description: string;
+  readonly role: PackRole;
+  readonly requires: readonly string[];
   readonly availableVersion: string;
   readonly installedVersion: string | null;
   readonly drift: boolean;
@@ -62,6 +82,12 @@ export interface ProjectHarnessPackStatus {
   readonly hooksState: HarnessHooksState;
   /** 未登録の hook コマンド文字列。`hooksState` が `ok` / `none-declared` なら空。 */
   readonly missingHooks: readonly string[];
+  /**
+   * このプロジェクトに今このパックを注入できるか (bdboard-l1m1.1)。選択状態は注入記録
+   * (`.claude/bdboard-packs.json`) が正で、ここは「選べるか」の判定と理由だけ。
+   * 規則は `evaluatePackInjectability` の 1 か所 (UI に複製しない)。
+   */
+  readonly injectable: PackInjectability;
 }
 
 export interface ProjectHarnessStatus {

@@ -56,6 +56,18 @@ export function createHarnessInjectRoutes(
       if (result.failure.kind === 'pack-not-found') {
         return c.json({ error: 'pack not found' }, 404);
       }
+      if (result.failure.kind === 'not-injectable') {
+        // role/requires の組み合わせ違反・依存先の未注入 (bdboard-l1m1.1)。理由は
+        // 画面のメッセージにそのまま出せる文言で返す。
+        return c.json(
+          {
+            error: 'pack not injectable',
+            code: result.failure.code,
+            reason: result.failure.reason,
+          },
+          409,
+        );
+      }
       return c.json({ error: 'injection failed', detail: result.failure.detail }, 500);
     }
 

@@ -18,13 +18,28 @@ export interface HarnessPackSummaryDto {
  */
 export type HarnessHooksStateDto = 'ok' | 'missing' | 'partial' | 'none-declared';
 
+/**
+ * このプロジェクトに今このパックを注入できるか (bdboard-l1m1.1)。判定はサーバー
+ * (`evaluatePackInjectability`) の 1 か所で、UI は `reason` を表示するだけ。
+ * `code` は機械可読な種別 (`requires-not-injected` など)。
+ */
+export type HarnessPackInjectabilityDto =
+  | { ok: true }
+  | { ok: false; code: string; reason: string };
+
 export interface ProjectHarnessPackStatusDto {
   name: string;
+  /** pack.json の description (選択 UI に出す)。 */
+  description: string;
+  role: HarnessPackRoleDto;
+  /** 依存先のパック名。ベースは空。 */
+  requires: string[];
   availableVersion: string;
   installedVersion: string | null;
   drift: boolean;
   hooksState: HarnessHooksStateDto;
   missingHooks: string[];
+  injectable: HarnessPackInjectabilityDto;
 }
 
 export type HarnessPrFlowDto = 'pr' | 'direct' | 'none' | 'local-merge';

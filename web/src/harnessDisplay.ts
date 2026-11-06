@@ -28,10 +28,17 @@ export function formatHarnessPackStatusLabel(
   return `v${pack.installedVersion}`;
 }
 
+/**
+ * 見出しのバッジに警告として出すか。未導入が要対応なのはベースだけ — 任意パックは
+ * 入れないのが通常の状態なので、見出しには出さない (入れるかどうかは設定画面の
+ * パック選択で決める / bdboard-l1m1.1)。導入済みの任意パックのドリフトと hook 不足は
+ * ベースと同じく出す。
+ */
 export function harnessPackNeedsAction(pack: ProjectHarnessPackStatusDto): boolean {
-  return (
-    pack.installedVersion === null || pack.drift || harnessHooksNeedAttention(pack)
-  );
+  if (pack.installedVersion === null) {
+    return pack.role === 'base';
+  }
+  return pack.drift || harnessHooksNeedAttention(pack);
 }
 
 export function harnessInjectButtonLabel(

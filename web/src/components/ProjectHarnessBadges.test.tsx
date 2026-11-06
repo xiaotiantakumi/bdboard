@@ -53,11 +53,15 @@ describe('ProjectHarnessBadges', () => {
       packs: [
         {
           name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
           availableVersion: '0.2.0',
           installedVersion: null,
           drift: false,
           hooksState: 'none-declared',
           missingHooks: [],
+          injectable: { ok: true },
         },
       ],
     });
@@ -82,11 +86,15 @@ describe('ProjectHarnessBadges', () => {
       packs: [
         {
           name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
           availableVersion: '0.2.0',
           installedVersion: null,
           drift: false,
           hooksState: 'none-declared',
           missingHooks: [],
+          injectable: { ok: true },
         },
       ],
     });
@@ -132,11 +140,15 @@ describe('ProjectHarnessBadges', () => {
       packs: [
         {
           name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
           availableVersion: '0.2.0',
           installedVersion: '0.1.0',
           drift: true,
           hooksState: 'none-declared',
           missingHooks: [],
+          injectable: { ok: true },
         },
       ],
     });
@@ -153,6 +165,9 @@ describe('ProjectHarnessBadges', () => {
       packs: [
         {
           name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
           availableVersion: '0.2.0',
           installedVersion: '0.2.0',
           drift: false,
@@ -160,6 +175,7 @@ describe('ProjectHarnessBadges', () => {
           missingHooks: [
             'bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh"',
           ],
+          injectable: { ok: true },
         },
       ],
     });
@@ -170,17 +186,67 @@ describe('ProjectHarnessBadges', () => {
     expect(screen.getByRole('button', { name: '再注入' })).toBeInTheDocument();
   });
 
+  it('does not nag about an optional pack that is not selected, but disables the base button with the reason when it cannot be injected (bdboard-l1m1.1)', async () => {
+    fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
+      packs: [
+        {
+          name: 'broken-base',
+          description: '',
+          role: 'base',
+          requires: ['other'],
+          availableVersion: '1.0.0',
+          installedVersion: null,
+          drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
+          injectable: {
+            ok: false,
+            code: 'base-has-requires',
+            reason: 'broken-base はベースですが requires を宣言しています',
+          },
+        },
+        {
+          name: 'video-pack',
+          description: '',
+          role: 'optional',
+          requires: ['bdboard-harness'],
+          availableVersion: '1.0.0',
+          installedVersion: null,
+          drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
+          injectable: { ok: true },
+        },
+      ],
+    });
+
+    renderBadges();
+
+    const button = await screen.findByRole('button', { name: '注入' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute(
+      'title',
+      'broken-base はベースですが requires を宣言しています',
+    );
+    expect(screen.queryByText('video-pack')).not.toBeInTheDocument();
+  });
+
   it('hides the hook badge for a pack that is not installed', async () => {
     fetchProjectHarnessStatusMock.mockResolvedValue({
       contract: NOT_APPLICABLE_CONTRACT,
       packs: [
         {
           name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
           availableVersion: '0.2.0',
           installedVersion: null,
           drift: false,
           hooksState: 'missing',
           missingHooks: ['bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/a.sh"'],
+          injectable: { ok: true },
         },
       ],
     });
@@ -197,11 +263,15 @@ describe('ProjectHarnessBadges', () => {
       packs: [
         {
           name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
           availableVersion: '0.2.0',
           installedVersion: '0.2.0',
           drift: false,
           hooksState: 'none-declared',
           missingHooks: [],
+          injectable: { ok: true },
         },
       ],
     });
@@ -229,11 +299,15 @@ describe('ProjectHarnessBadges', () => {
       packs: [
         {
           name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
           availableVersion: '0.2.0',
           installedVersion: null,
           drift: false,
           hooksState: 'none-declared',
           missingHooks: [],
+          injectable: { ok: true },
         },
       ],
     });
@@ -242,11 +316,15 @@ describe('ProjectHarnessBadges', () => {
       packs: [
         {
           name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
           availableVersion: '0.2.0',
           installedVersion: '0.2.0',
           drift: false,
           hooksState: 'none-declared',
           missingHooks: [],
+          injectable: { ok: true },
         },
       ],
     });
@@ -273,11 +351,15 @@ describe('ProjectHarnessBadges', () => {
       packs: [
         {
           name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
           availableVersion: '0.2.0',
           installedVersion: null,
           drift: false,
           hooksState: 'none-declared',
           missingHooks: [],
+          injectable: { ok: true },
         },
       ],
     });
@@ -305,11 +387,15 @@ describe('ProjectHarnessBadges', () => {
       packs: [
         {
           name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
           availableVersion: '0.2.0',
           installedVersion: '0.2.0',
           drift: false,
           hooksState: 'none-declared',
           missingHooks: [],
+          injectable: { ok: true },
         },
       ],
     });
@@ -327,11 +413,15 @@ describe('ProjectHarnessBadges', () => {
       packs: [
         {
           name: 'bdboard-harness',
+          description: '',
+          role: 'base',
+          requires: [],
           availableVersion: '0.2.0',
           installedVersion: '0.2.0',
           drift: false,
           hooksState: 'none-declared',
           missingHooks: [],
+          injectable: { ok: true },
         },
       ],
     });

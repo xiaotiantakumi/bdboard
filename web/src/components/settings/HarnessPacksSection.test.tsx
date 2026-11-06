@@ -1,0 +1,192 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError, type ProjectHarnessPackStatusDto, type ProjectHarnessStatusDto } from '../../api';
+import { expectNoA11yViolations } from '../../test/axe';
+import { HarnessPacksSection } from './HarnessPacksSection';
+
+vi.mock('../../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api')>();
+  return {
+    ...actual,
+    fetchProjects: vi.fn(),
+    fetchProjectHarnessStatus: vi.fn(),
+    postProjectHarnessInject: vi.fn(),
+  };
+});
+
+import { fetchProjectHarnessStatus, fetchProjects, postProjectHarnessInject } from '../../api';
+
+const fetchProjectsMock = vi.mocked(fetchProjects);
+const fetchStatusMock = vi.mocked(fetchProjectHarnessStatus);
+const postInjectMock = vi.mocked(postProjectHarnessInject);
+
+const PROJECT = {
+  id: 'example-project',
+  name: 'example-project',
+  rootPath: '/tmp/example-project',
+  prefixes: ['ex'],
+  incompleteTicketCount: 0,
+};
+
+function pack(overrides: Partial<ProjectHarnessPackStatusDto> = {}): ProjectHarnessPackStatusDto {
+  return {
+    name: 'bdboard-harness',
+    description: 'ベースのハーネス',
+    role: 'base',
+    requires: [],
+    availableVersion: '1.0.0',
+    installedVersion: null,
+    drift: false,
+    hooksState: 'none-declared',
+    missingHooks: [],
+    injectable: { ok: true },
+    ...overrides,
+  };
+}
+
+const OPTIONAL_BLOCKED = pack({
+  name: 'video-pack',
+  description: '動画向けパック',
+  role: 'optional',
+  requires: ['bdboard-harness'],
+  injectable: {
+    ok: false,
+    code: 'requires-not-injected',
+    reason: 'video-pack は bdboard-harness が未注入のため注入できません。',
+  },
+});
+
+function status(packs: ProjectHarnessPackStatusDto[]): ProjectHarnessStatusDto {
+  return { packs, contract: { state: 'not-applicable' } };
+}
+
+function renderSection() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <HarnessPacksSection />
+    </QueryClientProvider>,
+  );
+}
+
+describe('HarnessPacksSection', () => {
+  beforeEach(() => {
+    fetchProjectsMock.mockReset();
+    fetchStatusMock.mockReset();
+    postInjectMock.mockReset();
+    fetchProjectsMock.mockResolvedValue([PROJECT]);
+  });
+
+  it('lists name, version, description and the base/optional distinction per project', async () => {
+    fetchStatusMock.mockResolvedValue(status([pack(), OPTIONAL_BLOCKED]));
+
+    renderSection();
+
+    expect(await screen.findByText('bdboard-harness')).toBeInTheDocument();
+    expect(screen.getByText('ベースのハーネス')).toBeInTheDocument();
+    expect(screen.getByText('ベース')).toBeInTheDocument();
+    expect(screen.getByText('任意')).toBeInTheDocument();
+    expect(screen.getByText('動画向けパック')).toBeInTheDocument();
+    expect(screen.getByText('任意パック (前提: bdboard-harness)')).toBeInTheDocument();
+    expect(screen.getAllByText(/未選択 \(最新 v1\.0\.0\)/)).toHaveLength(2);
+  });
+
+  it('has no a11y violations with selected, unselected and blocked packs', async () => {
+    fetchStatusMock.mockResolvedValue(
+      status([pack({ installedVersion: '1.0.0' }), OPTIONAL_BLOCKED]),
+    );
+
+    const { container } = renderSection();
+
+    await screen.findByText('動画向けパック');
+    await expectNoA11yViolations(container);
+  });
+
+  it('shows the server-provided reason and disables the button for a pack that cannot be selected', async () => {
+    fetchStatusMock.mockResolvedValue(status([pack(), OPTIONAL_BLOCKED]));
+
+    renderSection();
+
+    expect(await screen.findByText(/選べません: video-pack は bdboard-harness が未注入/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'example-project に video-pack を選択して注入' }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'example-project に bdboard-harness を選択して注入' }),
+    ).toBeEnabled();
+  });
+
+  it('injects immediately when a selectable pack is chosen', async () => {
+    const user = userEvent.setup();
+    fetchStatusMock.mockResolvedValue(status([pack()]));
+    postInjectMock.mockResolvedValue(status([pack({ installedVersion: '1.0.0' })]));
+
+    renderSection();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'example-project に bdboard-harness を選択して注入' }),
+    );
+
+    await waitFor(() => {
+      expect(postInjectMock).toHaveBeenCalledWith('example-project', 'bdboard-harness');
+    });
+  });
+
+  it('shows the 409 reason from the server instead of a generic conflict message', async () => {
+    const user = userEvent.setup();
+    fetchStatusMock.mockResolvedValue(status([pack()]));
+    postInjectMock.mockRejectedValue(
+      new ApiError(409, 'pack not injectable', {
+        errorMessage: 'pack not injectable',
+        code: 'requires-not-injected',
+        reason: 'bdboard-harness の前提が未注入です',
+      }),
+    );
+
+    renderSection();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'example-project に bdboard-harness を選択して注入' }),
+    );
+
+    expect(await screen.findByText('注入できません: bdboard-harness の前提が未注入です')).toBeInTheDocument();
+  });
+
+  it('shows the selected state from the injection record and a copyable uninject command', async () => {
+    const user = userEvent.setup();
+    fetchStatusMock.mockResolvedValue(status([pack({ installedVersion: '1.0.0' })]));
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+
+    renderSection();
+
+    expect(await screen.findByText(/選択済み \(v1\.0\.0\)/)).toBeInTheDocument();
+    // 最新で hook も揃っているので注入ボタンは出ない。
+    expect(screen.queryByRole('button', { name: /に bdboard-harness を/ })).not.toBeInTheDocument();
+
+    const row = screen.getByRole('listitem');
+    await user.click(within(row).getByText('外す'));
+    expect(within(row).getByText(/node scripts\/uninject-harness-pack\.mjs '\/tmp\/example-project' 'bdboard-harness'/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'bdboard-harness を外すコマンドをコピー' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(
+        "node scripts/uninject-harness-pack.mjs '/tmp/example-project' 'bdboard-harness'",
+      );
+    });
+  });
+
+  it('reflects a pack that disappeared from the injection record after reload', async () => {
+    const user = userEvent.setup();
+    fetchStatusMock.mockResolvedValueOnce(status([pack({ installedVersion: '1.0.0' })]));
+    fetchStatusMock.mockResolvedValue(status([pack({ installedVersion: null })]));
+
+    renderSection();
+
+    expect(await screen.findByText(/選択済み/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'example-project のパック状態を再読み込み' }));
+    expect(await screen.findByText(/未選択/)).toBeInTheDocument();
+  });
+});

@@ -25,7 +25,7 @@ const EXPECTED_IMPORT_ORDER = [
   'header-2.css', 'settings-3.css', 'help-2.css', 'ticket-detail-5.css', 'settings-4.css',
   'board-5.css', 'header-3.css', 'settings-5.css', 'ticket-detail-6.css', 'base-5.css', 'chat.css',
   'chat-2.css', 'responsive.css', 'chat-3.css', 'responsive-2.css', 'header-4.css', 'board-6.css',
-  'board-7.css', 'header-5.css', 'settings-6.css', 'base-6.css',
+  'board-7.css', 'header-5.css', 'settings-6.css', 'settings-7.css', 'base-6.css',
   'ticket-detail-8.css', 'base-7.css', 'ticket-detail-9.css',
   'local-files.css',
   'header-6.css',
