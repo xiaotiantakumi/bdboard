@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "close-ticket.schema.json",
   "title": "close-ticket.py --spec",
-  "description": "チケット close (マージ確認 → 証拠コメント → bd close → worktree 掃除) の spec。この 1 ファイルが --spec の検査と --help の正本。ticket が bd に実在し status が closed でないこと、pr_url の PR が MERGED で mergeCommit が origin/main に含まれること、worktree を他プロセスが使っていないことは、スキーマでは書けないのでスクリプトが bd show / gh pr view / git / lsof (どれも読み取りのみ) で補って検査する。close はマージ後だけ。",
+  "description": "チケット close (マージ確認 → 証拠コメント → bd close → worktree 掃除) の spec。この 1 ファイルが --spec の検査と --help の正本。ticket が bd に実在し status が closed でないこと、pr_url の PR が MERGED で mergeCommit が origin/<mainBranch> に含まれること、worktree を他プロセスが使っていないことは、スキーマでは書けないのでスクリプトが bd show / gh pr view / git / lsof (どれも読み取りのみ) で補って検査する。close はマージ後だけ。契約 .claude/bdboard-harness.json の prFlow が pr (契約なしも同じ) のとき pr_url は必須。direct / none / local-merge のときは PR を使わないので pr_url を渡さず (渡すと拒否)、ブランチ bd/<ticket> の先端が main に取り込まれていること (git merge-base --is-ancestor) を証拠にして `PR: なし (prFlow=<値>, merged <sha>)` を残す。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ticket", "pr_url"],
+  "required": ["ticket"],
   "properties": {
     "ticket": {
       "type": "string",
@@ -19,7 +19,7 @@
       "minLength": 1,
       "maxLength": 300,
       "pattern": "^https://github\\.com/[^/]+/[^/]+/pull/\\d+$",
-      "description": "マージ済みの PR の URL (https://github.com/<owner>/<repo>/pull/<N>)。state が MERGED であること。"
+      "description": "マージ済みの PR の URL (https://github.com/<owner>/<repo>/pull/<N>)。契約の prFlow=pr のとき必須で、state が MERGED であること。prFlow が direct / none / local-merge のときは渡さない。"
     },
     "worktree": {
       "type": "string",

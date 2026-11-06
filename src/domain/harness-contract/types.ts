@@ -18,10 +18,13 @@ export const HARNESS_CONTRACT_VERSION = 1;
 /** 既定のメインブランチ名 (`mainBranch` 省略時)。 */
 export const DEFAULT_MAIN_BRANCH = 'main';
 
-/** そのプロジェクトの git 運用。`pr` = PR 必須 / `direct` = main 直コミット可 / `none` = git 運用なし。 */
-export type HarnessPrFlow = 'pr' | 'direct' | 'none';
+/**
+ * そのプロジェクトの git 運用。`pr` = PR 必須 / `direct` = main 直コミット可 / `none` = git 運用なし /
+ * `local-merge` = ブランチを切ってローカルで main へ --no-ff マージ (remote の有無は問わない。PR は使わない。bdboard-l1m1.12)。
+ */
+export type HarnessPrFlow = 'pr' | 'direct' | 'none' | 'local-merge';
 
-export const HARNESS_PR_FLOWS: readonly HarnessPrFlow[] = ['pr', 'direct', 'none'];
+export const HARNESS_PR_FLOWS: readonly HarnessPrFlow[] = ['pr', 'direct', 'none', 'local-merge'];
 
 /**
  * モデル振り分け表の複雑度。**`low` / `med` / `high` の 3 段で固定**し、

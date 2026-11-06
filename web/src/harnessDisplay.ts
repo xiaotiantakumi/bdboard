@@ -63,6 +63,7 @@ const PR_FLOW_LABELS: Record<HarnessPrFlowDto, string> = {
   pr: 'PR 必須',
   direct: 'main 直コミット可',
   none: 'git 運用なし',
+  'local-merge': 'ローカルマージ (PR なし)',
 };
 
 /**

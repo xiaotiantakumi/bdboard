@@ -96,7 +96,7 @@ function buildMissingContent(
       '',
       '- version: 1 固定',
       '- verify: フルの検証コマンド (exit 0 が合格。プロジェクトに合わせて調整してください)',
-      '- prFlow: pr (PR必須) / direct (main直コミット可) / none (git運用なし) のいずれか',
+      '- prFlow: pr (PR必須) / direct (main直コミット可) / none (git運用なし) / local-merge (ローカルで main へマージ。PR なし) のいずれか',
       '- mainBranch: 省略可 (既定 main)',
     ].join('\n'),
   };
@@ -112,7 +112,7 @@ function buildInvalidContent(message: string): HarnessContractTicketContent {
       '',
       'version / verify / prFlow / mainBranch の型・値を見直して修正してください' +
         ' (version は 1 固定、verify は改行を含まない空でない1行の文字列、' +
-        ' prFlow は pr / direct / none のいずれか)。',
+        ' prFlow は pr / direct / none / local-merge のいずれか)。',
     ].join('\n'),
   };
 }

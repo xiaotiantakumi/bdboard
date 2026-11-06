@@ -50,7 +50,7 @@ export function parseHarnessContract(text: string): ParseHarnessContractResult {
     typeof prFlow !== 'string' ||
     !HARNESS_PR_FLOWS.includes(prFlow as HarnessPrFlow)
   ) {
-    return schemaFailure('prFlow は pr / direct / none のいずれかである必要があります');
+    return schemaFailure('prFlow は pr / direct / none / local-merge のいずれかである必要があります');
   }
 
   let mainBranch = DEFAULT_MAIN_BRANCH;

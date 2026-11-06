@@ -248,6 +248,105 @@ describe.skipIf(process.platform === 'win32' || !HAS_TOOLS)(
       expect(existsSync(wt())).toBe(true);
     });
 
+    // ---- prFlow (bdboard-l1m1.12) ----
+
+    function writeContract(contract: Record<string, unknown>): void {
+      mkdirSync(path.join(repo, '.claude'), { recursive: true });
+      writeFileSync(path.join(repo, '.claude', 'bdboard-harness.json'), JSON.stringify(contract), 'utf8');
+    }
+
+    /** remote を持たない repo にし、gh を呼ばれたら失敗するようにして、worktree のブランチに 1 コミット積む。 */
+    async function noRemoteWithBranchCommit(): Promise<string> {
+      await git(repo, 'remote', 'remove', 'origin');
+      rmSync(path.join(tmpRoot, 'gh.json'));
+      writeFileSync(path.join(wt(), 'b.txt'), 'b\n', 'utf8');
+      await git(wt(), 'add', 'b.txt');
+      await git(wt(), 'commit', '-m', 'feat(proj-a1): b');
+      return (await git(wt(), 'rev-parse', 'HEAD')).stdout.trim();
+    }
+
+    it('prFlow=local-merge: closes a merged branch without a PR or a remote, using the merge as evidence', async () => {
+      writeContract({ version: 1, verify: 'x', prFlow: 'local-merge' });
+      const tip = await noRemoteWithBranchCommit();
+      await git(repo, 'merge', '--no-ff', 'bd/proj-a1', '-m', 'Merge bd/proj-a1');
+
+      const r = await run(['--spec', writeSpec({ ticket: 'proj-a1' })]);
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(writes()).toEqual([
+        ['comment', 'proj-a1', `PR: なし (prFlow=local-merge, merged ${tip.slice(0, 9)})`],
+        ['close', 'proj-a1'],
+      ]);
+      expect(existsSync(wt())).toBe(false);
+      expect((await git(repo, 'branch', '--list', 'bd/proj-a1')).stdout.trim()).toBe('');
+    });
+
+    it('prFlow=local-merge: refuses to close a branch that is not in the local main yet', async () => {
+      writeContract({ version: 1, verify: 'x', prFlow: 'local-merge' });
+      await noRemoteWithBranchCommit();
+
+      const r = await run(['--spec', writeSpec({ ticket: 'proj-a1' })]);
+      expect(r.exitCode).toBe(1);
+      expect(r.stderr).toContain('main に取り込まれていません');
+      expect(writes()).toEqual([]);
+      expect(existsSync(wt())).toBe(true);
+    });
+
+    it('prFlow=local-merge: the evidence is the local main even when origin/main exists and is stale', async () => {
+      writeContract({ version: 1, verify: 'x', prFlow: 'local-merge' });
+      writeFileSync(path.join(wt(), 'b.txt'), 'b\n', 'utf8');
+      await git(wt(), 'add', 'b.txt');
+      await git(wt(), 'commit', '-m', 'feat(proj-a1): b');
+      await git(repo, 'merge', '--no-ff', 'bd/proj-a1', '-m', 'Merge bd/proj-a1');
+      rmSync(path.join(tmpRoot, 'gh.json'));
+
+      const r = await run(['--spec', writeSpec({ ticket: 'proj-a1' })]);
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(writes().map((c) => c[0])).toEqual(['comment', 'close']);
+    });
+
+    it('prFlow=local-merge: a pr_url in the spec is rejected (the contract does not use PRs)', async () => {
+      writeContract({ version: 1, verify: 'x', prFlow: 'local-merge' });
+      const r = await run(['--spec', writeSpec(spec)]);
+      expect(r.exitCode).toBe(1);
+      expect(r.stderr).toContain('prFlow=local-merge');
+      expect(r.stderr).toContain('pr_url');
+      expect(writes()).toEqual([]);
+    });
+
+    it('prFlow=direct: closes without a PR; the comment has no merge sha when there is no branch', async () => {
+      writeContract({ version: 1, verify: 'x', prFlow: 'direct' });
+      await git(repo, 'remote', 'remove', 'origin');
+      await git(repo, 'worktree', 'remove', '--force', wt());
+      await git(repo, 'branch', '-D', 'bd/proj-a1');
+
+      const r = await run(['--spec', writeSpec({ ticket: 'proj-a1' })]);
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(writes()).toEqual([
+        ['comment', 'proj-a1', 'PR: なし (prFlow=direct)'],
+        ['close', 'proj-a1'],
+      ]);
+    });
+
+    it.each([undefined, 'pr'])('prFlow=%s still requires pr_url', async (prFlow) => {
+      if (prFlow !== undefined) writeContract({ version: 1, verify: 'x', prFlow });
+      const r = await run(['--spec', writeSpec({ ticket: 'proj-a1' })]);
+      expect(r.exitCode).toBe(1);
+      expect(r.stderr).toContain('pr_url');
+      expect(writes()).toEqual([]);
+    });
+
+    it('prFlow=pr follows the contract mainBranch for the reachability check', async () => {
+      writeContract({ version: 1, verify: 'x', prFlow: 'pr', mainBranch: 'trunk' });
+      const missing = await run(['--spec', writeSpec(spec)]);
+      expect(missing.exitCode).toBe(1);
+      expect(missing.stderr).toContain('origin/trunk');
+      expect(writes()).toEqual([]);
+
+      await git(repo, 'push', 'origin', 'main:trunk');
+      const ok = await run(['--spec', writeSpec(spec)]);
+      expect(ok.exitCode, ok.stderr).toBe(0);
+    });
+
     it('--help lists the schema keys', async () => {
       const r = await run(['--help']);
       expect(r.exitCode).toBe(0);
