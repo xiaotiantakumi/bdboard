@@ -16,6 +16,25 @@ async function expectProcessToBeGone(pid: number): Promise<void> {
 describe('NodeCommandRunner', () => {
   const runner = new NodeCommandRunner();
 
+  // bdboard-59u3: 3 バイト文字 ('見' = E8 A6 8B) の途中でチャンクが割れても
+  // U+FFFD に化けない。間隔を空けて別チャンクとして届けさせる。
+  it('decodes a multibyte character split across stdout/stderr chunks without U+FFFD', async () => {
+    const script = [
+      "const b = Buffer.from('あ見い', 'utf8');",
+      // 'あ' (3 バイト) + '見' の先頭 1 バイトで 1 回目、残り 2 バイト + 'い' で 2 回目。
+      'process.stdout.write(b.subarray(0, 4)); process.stderr.write(b.subarray(0, 5));',
+      'setTimeout(() => { process.stdout.write(b.subarray(4)); process.stderr.write(b.subarray(5)); }, 100);',
+    ].join('\n');
+
+    const result = await runner.run(process.execPath, ['-e', script]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('あ見い');
+    expect(result.stderr).toBe('あ見い');
+    expect(result.stdout).not.toContain('�');
+    expect(result.stderr).not.toContain('�');
+  });
+
   it('writes input to child stdin', async () => {
     const result = await runner.run(
       process.execPath,
