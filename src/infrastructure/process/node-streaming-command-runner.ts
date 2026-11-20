@@ -168,6 +168,11 @@ export class NodeStreamingCommandRunner implements StreamingCommandRunner {
         }
       };
 
+      // bdboard-59u3: チャンクごとに Buffer#toString すると、3 バイト文字の途中で
+      // パイプのチャンク境界が来たとき前後が U+FFFD になる。setEncoding なら
+      // ストリーム内部の StringDecoder が境界をまたいで保持し、終端で flush する。
+      child.stdout?.setEncoding('utf8');
+      child.stderr?.setEncoding('utf8');
       child.stdout?.on('data', (chunk: Buffer | string) => onData('stdout', chunk));
       child.stderr?.on('data', (chunk: Buffer | string) => onData('stderr', chunk));
 
